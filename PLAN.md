@@ -189,8 +189,8 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `let` → let-binding via μ̃ over value
 - [x] `if/else` → sum elimination
 - [ ] `spawn` → new command in multiset (deferred to runtime)
-- [ ] `dual(e)` → polarity flip on terms/co-terms
-- [ ] `@` interaction → cut
+- [x] `dual(e)` → polarity flip on terms/co-terms
+- [x] `@` interaction → cut
 - [x] Test: round-trip property `parse(print(lower(ast)))` α-equivalent
 
 **Deliverable:** a `.sl` file can be parsed and lowered to well-typed core IR.

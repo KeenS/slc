@@ -403,6 +403,44 @@ mod tests {
     }
 
     #[test]
+    fn lower_dual_is_polarity_only() {
+        // dual(e) denotes the same witness; polarity is handled by checkers.
+        let out = lower_str("dual(42)");
+        assert_eq!(out[0].1, Term::Var("$int_42".into()));
+    }
+
+    #[test]
+    fn lower_interaction_with_named_consumer_is_cut() {
+        let out = lower_str("42 @ k");
+        assert_eq!(
+            out[0].1,
+            Term::Mu(
+                "k".into(),
+                Box::new(Command::Cut(Term::Var("$int_42".into()), CoTerm::Covar("k".into())))
+            )
+        );
+    }
+
+    #[test]
+    fn lower_interaction_with_compound_consumer_applies_it() {
+        let out = lower_str("42 @ fn(x: +i32) -> i32 { x }");
+        assert!(matches!(
+            &out[0].1,
+            Term::Mu(name, command)
+                if matches!(
+                    command.as_ref(),
+                    Command::Cut(
+                        Term::Lam(param, body),
+                        CoTerm::CoLam(co_param, _)
+                    ) if name == "__interaction"
+                        && param == "x"
+                        && co_param == "__f"
+                        && matches!(&**body, Term::Var(value) if value == "x")
+                )
+        ));
+    }
+
+    #[test]
     fn lower_negative_type() {
         // -i32 → Neg(I32)
         let inner = Node {
