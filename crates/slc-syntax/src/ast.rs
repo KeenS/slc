@@ -83,6 +83,8 @@ pub enum TypeExpr {
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     List(Box<Node<TypeExpr>>),
     Dual(Box<Node<TypeExpr>>),
+    /// `Command<I, O>` — the symmetric agent type.
+    Command(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Unit,
     Bottom,
 }

@@ -48,6 +48,12 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         }
         TypeExpr::List(inner) => Ok(Type::List(Box::new(lower_type(&inner.kind)?))),
         TypeExpr::Dual(inner) => Ok(Type::Dual(Box::new(lower_type(&inner.kind)?))),
+        TypeExpr::Command(input, output) => {
+            // Command<I, O> ≡ dual(I) ⅋ O.
+            let i = lower_type(&input.kind)?;
+            let o = lower_type(&output.kind)?;
+            Ok(Type::Par(Box::new(i.dual()), Box::new(o)))
+        }
         TypeExpr::Unit => Ok(Type::One),
         TypeExpr::Bottom => Ok(Type::Bottom),
     }

@@ -330,14 +330,14 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
 
 **Goal:** enough surface area to write realistic programs.
 
-- [ ] Prelude:
+- [x] Prelude:
   - [x] `Option<T>`
   - [x] `Result<T, E>` (boundary type only)
   - [x] `List<T>`
   - [x] `Map<K, V>`
   - [x] `Set<T>`
   - [x] `String`
-  - [ ] `Command<I, O>` type former
+  - [x] `Command<I, O>` type former
 - [x] Multi-continuation error handling:
   - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
   - [x] File read (success/not-found/permission)

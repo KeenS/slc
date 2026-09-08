@@ -332,7 +332,16 @@ impl Parser {
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
-                TypeExpr::Base(s)
+                // `Command<I, O>` is a type former, not a base name.
+                if s == "Command" && self.eat(&TokenKind::Lt) {
+                    let input = self.parse_type()?;
+                    self.expect(TokenKind::Comma, "`,` in `Command<I, O>`")?;
+                    let output = self.parse_type()?;
+                    self.expect(TokenKind::Gt, "`>` after `Command<I, O>`")?;
+                    TypeExpr::Command(Box::new(input), Box::new(output))
+                } else {
+                    TypeExpr::Base(s)
+                }
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -803,5 +812,22 @@ mod tests {
     fn parse_interaction() {
         let p = parse_str("f @ dual(42)");
         assert_eq!(p.decls.len(), 1);
+    }
+
+    #[test]
+    fn parse_command_type() {
+        let src = "fn parse(text: Command<i64, +i64>) -> i64 { 1 }";
+        let toks = lex(src).unwrap();
+        let ast = parse(toks).unwrap();
+        let Decl::Fn { params, .. } = &ast.decls[0].kind else {
+            panic!("expected fn declaration");
+        };
+        assert!(matches!(
+            &params[0].ty,
+            TypeExpr::Command(input, output)
+                if matches!(&input.kind, TypeExpr::Base(base) if base == "i64")
+                    && matches!(&output.kind, TypeExpr::Positive(inner)
+                        if matches!(&inner.kind, TypeExpr::Base(out) if out == "i64"))
+        ));
     }
 }
