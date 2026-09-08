@@ -68,10 +68,12 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::Mu { binder, return_type: _, body } => {
-            // mu(k: -T) { body } → μα. ⟨ body' ∥ α ⟩
+            // mu(k: -T) { body } → the body, with the binder noted.
+            // k(v) inside the body means "escape with v". The evaluator
+            // treats k as the mu's continuation via Activate.
             let b = lower_expr(body)?;
             let a = binder.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| "k".into());
-            Ok(Term::Mu(a.clone(), Box::new(Command::Cut(b, CoTerm::Covar(a)))))
+            Ok(Term::Mu(a, Box::new(Command::Cut(b, CoTerm::Covar("__answer".into())))))
         }
 
         Expr::Call { callee, args } => {
@@ -133,22 +135,20 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::Let { name, value, body } => {
-            // let x = v; body → ⟨ λx. body' ∥ μ̃x. v' ⟩ (via application)
+            // let x = v; body → μlet. ⟨ v ∥ λ̄x. ⟨ body' ∥ let ⟩ ⟩
             let v = lower_expr(value)?;
             let b = body
                 .as_ref()
                 .map(|b| lower_expr(b))
                 .transpose()?
-                .unwrap_or_else(|| Term::Var("unit".into()));
-            // (λx. b) v
-            let lam = Term::Lam(name.clone(), Box::new(b));
+                .unwrap_or_else(|| Term::Var("$unit".into()));
             Ok(Term::Mu(
                 "let".into(),
                 Box::new(Command::Cut(
-                    lam,
-                    CoTerm::MuTilde(
+                    v,
+                    CoTerm::CoLam(
                         name.clone(),
-                        Box::new(Command::Cut(v, CoTerm::Covar("let".into()))),
+                        Box::new(Command::Cut(b, CoTerm::Covar("let".into()))),
                     ),
                 )),
             ))
@@ -180,6 +180,31 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         Expr::ErrorProp { expr: _ } => Err(LowerError::Unsupported("?".into())),
 
         Expr::Match { scrutinee: _, arms: _ } => Err(LowerError::Unsupported("match".into())),
+
+        Expr::Block(exprs) => {
+            // A block evaluates expressions in order; the value is the last.
+            // Lower to: μseq. ⟨ e1 ∥ λ̄_. μseq. ⟨ e2 ∥ ... ⟩ ∥ seq ⟩ —
+            // i.e., evaluate e1, discard, continue with the rest.
+            let mut exprs = exprs.clone();
+            let last = exprs.pop().map(|e| lower_expr(&e)).transpose()?;
+            let mut result = last.unwrap_or_else(|| Term::Var("$unit".into()));
+            // Wrap in reverse: each earlier expr is evaluated then discarded
+            // by threading the continuation.
+            for e in exprs.iter().rev() {
+                let t = lower_expr(e)?;
+                result = Term::Mu(
+                    "__seq".into(),
+                    Box::new(Command::Cut(
+                        t,
+                        CoTerm::CoLam(
+                            "__discarded".into(),
+                            Box::new(Command::Cut(result.clone(), CoTerm::Covar("__seq".into()))),
+                        ),
+                    )),
+                );
+            }
+            Ok(result)
+        }
 
         Expr::CommandDef { name: _, params: _, body: _ } => {
             Err(LowerError::Unsupported("command expressions".into()))

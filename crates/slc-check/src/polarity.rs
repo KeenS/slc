@@ -176,6 +176,11 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
             check_expr(lhs, diags);
             check_expr(rhs, diags);
         }
+        Expr::Block(exprs) => {
+            for e in exprs {
+                check_expr(e, diags);
+            }
+        }
         _ => {}
     }
 }

@@ -69,6 +69,8 @@ pub enum Expr {
     ErrorProp {
         expr: Box<Node<Expr>>,
     },
+    /// A sequence of expressions; the value of the last one.
+    Block(Vec<Node<Expr>>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -62,14 +62,20 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { name, params, body, .. } => {
             let bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+            // Let-bound variables inside the body are also linear.
+            let mut let_bound = Vec::new();
+            collect_let_bindings(body, &mut let_bound);
             let uses = count_uses(body);
             for p in params {
-                let n = p.name.as_str();
-                let _ = n;
                 let u = uses.get(&p.name);
                 report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
             }
-            let _ = bound;
+            for lb in let_bound {
+                if !bound.contains(&lb) {
+                    let u = uses.get(&lb);
+                    report_linearity(name, &lb, u, false, body.span, diags);
+                }
+            }
         }
         Decl::Command { name, params, body } => {
             let uses = count_uses(body);
@@ -79,6 +85,55 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
             }
         }
         Decl::Struct { .. } | Decl::Enum { .. } => {}
+    }
+}
+
+/// Collect names bound by `let` expressions (recursively).
+fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
+    match &e.kind {
+        Expr::Let { name, value, body } => {
+            out.push(name.clone());
+            collect_let_bindings(value, out);
+            if let Some(b) = body {
+                collect_let_bindings(b, out);
+            }
+        }
+        Expr::Lambda { body, .. } => collect_let_bindings(body, out),
+        Expr::Mu { body, .. } => collect_let_bindings(body, out),
+        Expr::Call { callee, args } => {
+            collect_let_bindings(callee, out);
+            for a in args {
+                collect_let_bindings(a, out);
+            }
+        }
+        Expr::Pair(items) => {
+            for i in items {
+                collect_let_bindings(i, out);
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            collect_let_bindings(scrutinee, out);
+            for arm in arms {
+                collect_let_bindings(&arm.body, out);
+            }
+        }
+        Expr::If { cond, then, otherwise } => {
+            collect_let_bindings(cond, out);
+            collect_let_bindings(then, out);
+            if let Some(o) = otherwise {
+                collect_let_bindings(o, out);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            collect_let_bindings(lhs, out);
+            collect_let_bindings(rhs, out);
+        }
+        Expr::Block(exprs) => {
+            for e in exprs {
+                collect_let_bindings(e, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -180,6 +235,11 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
         Expr::Dual { body } => go(body, m),
         Expr::ErrorProp { expr } => go(expr, m),
         Expr::CommandDef { body, .. } => go(body, m),
+        Expr::Block(exprs) => {
+            for e in exprs {
+                go(e, m);
+            }
+        }
         _ => {}
     }
 }

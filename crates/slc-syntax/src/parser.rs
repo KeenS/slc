@@ -243,15 +243,7 @@ impl Parser {
             self.eat(&TokenKind::Semicolon);
             exprs.push(e);
         }
-        let last = exprs.pop();
-        let kind = match last {
-            Some(l) => {
-                // sequence: fold as let bindings are expressions, so just return last
-                let _ = exprs;
-                l.kind
-            }
-            None => Expr::Int(0),
-        };
+        let kind = if exprs.is_empty() { Expr::Int(0) } else { Expr::Block(exprs) };
         Ok(Node { span: Span { start, end: self.pos }, kind })
     }
 

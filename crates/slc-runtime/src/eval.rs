@@ -58,7 +58,7 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
                 }
                 "true" => return Ok(Value::Bool(true)),
                 "false" => return Ok(Value::Bool(false)),
-                "unit" => return Ok(Value::Unit),
+                "$unit" | "unit" => return Ok(Value::Unit),
                 _ => {}
             }
             env.lookup(x).cloned().ok_or(EvalError::Unbound(x.clone()))
@@ -71,11 +71,12 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
         }),
 
         Term::Mu(a, command) => {
-            // μ abstraction: evaluate the command body.
-            // The co-variable binding (a) is handled by the command context.
-            let _ = a;
+            // μ abstraction: evaluate the command body. The co-variable
+            // (a) is bound to an escape continuation: activating it with
+            // a value terminates this mu with that value.
             let mut env2 = env.clone();
             env2.push();
+            env2.define(a, Value::Builtin("__mu_escape".into()));
             let result = eval_command(command, &mut env2, fuel)?;
             env2.pop();
             Ok(result)
@@ -178,6 +179,10 @@ fn apply_builtin_call(
     // Single argument or a tensor of arguments
     let mut args = Vec::new();
     collect_args(&arg, &mut args);
+    // mu escape: k(v) terminates the mu with v
+    if name == "__mu_escape" {
+        return Ok(args.into_iter().next().unwrap_or(Value::Unit));
+    }
     // IO builtins go through a separate path (no stdout lock needed)
     if matches!(name, "read_file" | "write_file" | "file_exists") {
         return crate::builtins::apply_io_builtin(name, &args)
