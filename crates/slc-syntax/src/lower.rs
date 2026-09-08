@@ -279,6 +279,9 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             ))
         }
 
+        Expr::Service { .. } => Err(LowerError::Unsupported("`.to` service application".into())),
+        Expr::Job { .. } => Err(LowerError::Unsupported("`.partial` job application".into())),
+
         Expr::Block(exprs) => {
             // A block evaluates expressions in order. A trailing `let`
             // scopes over the rest of the block, so fold from the end:

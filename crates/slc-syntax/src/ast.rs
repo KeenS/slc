@@ -69,8 +69,24 @@ pub enum Expr {
     ErrorProp {
         expr: Box<Node<Expr>>,
     },
+    /// `agent.to(k, h)` — wire continuation ports first.
+    Service {
+        agent: Box<Node<Expr>>,
+        continuations: Vec<Node<Expr>>,
+    },
+    /// `fn.partial(a)` — wire value ports first.
+    Job {
+        agent: Box<Node<Expr>>,
+        values: Vec<Node<Expr>>,
+    },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PartialKind {
+    Service,
+    Job,
 }
 
 #[derive(Debug, Clone, PartialEq)]

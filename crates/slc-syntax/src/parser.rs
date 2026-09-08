@@ -231,6 +231,22 @@ impl Parser {
         Ok(params)
     }
 
+    /// Parse the two partial-agent forms:
+    ///
+    /// - `step.to(k, h)` — connect output ports first (`Service`)
+    /// - `f.partial(a)` — connect input ports first (`Job`)
+    fn parse_partial(&mut self) -> Result<PartialKind, ParseError> {
+        let name = self.expect_ident("partial application method")?;
+        match name.as_str() {
+            "to" => Ok(PartialKind::Service),
+            "partial" => Ok(PartialKind::Job),
+            other => Err(ParseError {
+                message: format!("expected `.to` or `.partial`, found `.{other}`"),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            }),
+        }
+    }
+
     fn parse_block(&mut self) -> Result<Node<Expr>, ParseError> {
         let start = self.pos;
         self.expect(TokenKind::LBrace, "`{`")?;
@@ -257,6 +273,10 @@ impl Parser {
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 Ok(s)
+            }
+            Some(TokenKind::To) => {
+                self.pos += 1;
+                Ok("to".into())
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -457,6 +477,49 @@ impl Parser {
                         span: Span { start: e.span.start, end },
                         kind: Expr::ErrorProp { expr: Box::new(e) },
                     };
+                }
+                Some(TokenKind::Dot) => {
+                    self.pos += 1;
+                    match self.parse_partial()? {
+                        PartialKind::Service => {
+                            self.expect(TokenKind::LParen, "`(` after `.to`")?;
+                            let mut continuations = Vec::new();
+                            loop {
+                                if self.eat(&TokenKind::RParen) {
+                                    break;
+                                }
+                                continuations.push(self.parse_expr()?);
+                                if !self.eat(&TokenKind::Comma) {
+                                    self.expect(TokenKind::RParen, "`)`")?;
+                                    break;
+                                }
+                            }
+                            let end = self.pos;
+                            e = Node {
+                                span: Span { start: e.span.start, end },
+                                kind: Expr::Service { agent: Box::new(e), continuations },
+                            };
+                        }
+                        PartialKind::Job => {
+                            self.expect(TokenKind::LParen, "`(` after `.partial`")?;
+                            let mut values = Vec::new();
+                            loop {
+                                if self.eat(&TokenKind::RParen) {
+                                    break;
+                                }
+                                values.push(self.parse_expr()?);
+                                if !self.eat(&TokenKind::Comma) {
+                                    self.expect(TokenKind::RParen, "`)`")?;
+                                    break;
+                                }
+                            }
+                            let end = self.pos;
+                            e = Node {
+                                span: Span { start: e.span.start, end },
+                                kind: Expr::Job { agent: Box::new(e), values },
+                            };
+                        }
+                    }
                 }
                 Some(TokenKind::At) => {
                     self.pos += 1;
@@ -829,5 +892,39 @@ mod tests {
                     && matches!(&output.kind, TypeExpr::Positive(inner)
                         if matches!(&inner.kind, TypeExpr::Base(out) if out == "i64"))
         ));
+    }
+
+    #[test]
+    fn parse_service_partial_application() {
+        let p = parse_str("step.to(k, h)");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::Service { agent, continuations }
+                if matches!(&agent.kind, Expr::Ident(name) if name == "step")
+                    && continuations.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parse_job_partial_application() {
+        let p = parse_str("f.partial(42)");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::Job { agent, values }
+                if matches!(&agent.kind, Expr::Ident(name) if name == "f")
+                    && values.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_unknown_partial_method() {
+        let toks = lex("f.whatever(42)").unwrap();
+        assert!(parse(toks).is_err());
     }
 }
