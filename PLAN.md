@@ -418,9 +418,9 @@ speedup on arithmetic-heavy programs.
 - [x] `cargo fmt` in CI
 - [x] `cargo clippy -- -D warnings` in CI
 - [x] `cargo test` in CI
-- [ ] `proptest` for duality and substitution laws
-- [ ] `insta` for diagnostics and pretty-printed IR snapshots
-- [ ] `tracing` spans around lowering, checking, reduction
+- [x] `proptest` for duality and substitution laws
+- [x] `insta` for diagnostics and pretty-printed IR snapshots
+- [x] `tracing` spans around lowering, checking, reduction
 
 ## Immediate next step
 
