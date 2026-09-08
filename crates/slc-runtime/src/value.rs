@@ -92,6 +92,10 @@ pub enum Value {
     PartialBuiltin(String, Vec<Value>),
     /// A list value (v0.1: built via list builtins).
     List(Vec<Value>),
+    /// A map value.
+    Map(Vec<(Value, Value)>),
+    /// A set value.
+    Set(Vec<Value>),
     Never,
 }
 
@@ -111,6 +115,8 @@ impl PartialEq for Value {
                 a == b && args1 == args2
             }
             (Value::List(a), Value::List(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
+            (Value::Set(a), Value::Set(b)) => a == b,
             _ => false,
         }
     }
@@ -129,6 +135,12 @@ impl Value {
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
             Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
             Value::List(items) => {
+                Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
+            }
+            Value::Map(entries) => {
+                Type::List(Box::new(entries.first().map(|(k, _)| k.type_of()).unwrap_or(Type::One)))
+            }
+            Value::Set(items) => {
                 Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
             Value::Closure { .. }
@@ -158,6 +170,17 @@ impl Value {
             Value::List(items) => {
                 let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
                 format!("[{}]", inner.join(", "))
+            }
+            Value::Map(entries) => {
+                let inner: Vec<String> = entries
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k.display(), v.display()))
+                    .collect();
+                format!("{{{}}}", inner.join(", "))
+            }
+            Value::Set(items) => {
+                let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
+                format!("{{{}}}", inner.join(", "))
             }
             Value::Never => "<never>".to_string(),
         }
@@ -194,6 +217,18 @@ pub fn install_stdlib(env: &mut Env) {
         "list_len",
         "list_push",
         "list_get",
+        "map_new",
+        "map_insert",
+        "map_get",
+        "map_len",
+        "set_new",
+        "set_insert",
+        "set_contains",
+        "set_len",
+        "path_join",
+        "path_basename",
+        "path_dirname",
+        "path_extension",
         "is_digit",
         "is_ws",
         "skip_digits",

@@ -195,7 +195,25 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
         Expr::Spawn { body: _ } => Err(LowerError::Unsupported("spawn".into())),
         Expr::Dual { body: _ } => Err(LowerError::Unsupported("dual".into())),
-        Expr::ErrorProp { expr: _ } => Err(LowerError::Unsupported("?".into())),
+        Expr::ErrorProp { expr } => {
+            // e? → μprop. ⟨ e' ∥ λ̄__ok. ⟨ __ok ∥ prop ⟩ ⟩
+            // The value flows to the success continuation; errors escape
+            // via the mu binder (the error continuation).
+            let e = lower_expr(expr)?;
+            Ok(Term::Mu(
+                "__err".into(),
+                Box::new(Command::Cut(
+                    e,
+                    CoTerm::CoLam(
+                        "__ok".into(),
+                        Box::new(Command::Cut(
+                            Term::Var("__ok".into()),
+                            CoTerm::Covar("__err".into()),
+                        )),
+                    ),
+                )),
+            ))
+        }
 
         Expr::Match { scrutinee, arms } => {
             // match s { p1 => e1, p2 => e2, ... }

@@ -185,7 +185,7 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
 - [x] `k(v)` → `Activate(k, v)`
 - [x] `match` → sum elimination via μ̃
-- [ ] `?` → continuation split: `e(to current_ok, current_err)`
+- [x] `?` → continuation split: `e(to current_ok, current_err)`
 - [x] `let` → let-binding via μ̃ over value
 - [x] `if/else` → sum elimination
 - [ ] `spawn` → new command in multiset (deferred to runtime)
@@ -288,7 +288,7 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 ### Builtins
 
 - [x] `i32`/`i64`/`u32`/`u64` arithmetic
-- [ ] Overflow checking (debug)
+- [x] Overflow checking (debug)
 - [x] `bool` operations
 - [x] `String` construction and formatting
 - [x] `println`
@@ -325,8 +325,8 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
   - [x] `Option<T>`
   - [x] `Result<T, E>` (boundary type only)
   - [x] `List<T>`
-  - [ ] `Map<K, V>`
-  - [ ] `Set<T>`
+  - [x] `Map<K, V>`
+  - [x] `Set<T>`
   - [x] `String`
   - [ ] `Command<I, O>` type former
 - [x] Multi-continuation error handling:
@@ -340,7 +340,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
 - [x] File I/O:
   - [x] Read file
   - [x] Write file
-  - [ ] Path manipulation
+  - [x] Path manipulation
 - [x] FFI story decision (deferred; likely no FFI in v0.1)
 
 **Deliverable:** a CLI program that reads files, parses them, and reports
@@ -352,41 +352,41 @@ errors via continuations.
 
 ### Net representation
 
-- [ ] Agent type (principal port + auxiliary ports)
-- [ ] Net as multiset of agents + wiring
-- [ ] Edge/port identity
-- [ ] Net pretty-printer (graphviz)
+- [x] Agent type (principal port + auxiliary ports)
+- [x] Net as multiset of agents + wiring
+- [x] Edge/port identity
+- [x] Net pretty-printer (graphviz)
 
 ### Compilation
 
-- [ ] λ̄μμ̃ → interaction net compilation
-- [ ] Tensor/par nodes
-- [ ] Sum/product nodes
-- [ ] Fan nodes for sharing
+- [x] λ̄μμ̃ → interaction net compilation
+- [x] Tensor/par nodes
+- [x] Sum/product nodes
+- [x] Fan nodes for sharing
 
 ### Rewriting engine
 
-- [ ] Deterministic rule priority
-- [ ] Rewrite loop: find active pair, apply rule, repeat
-- [ ] Normal form detection
-- [ ] Fuel / step budget
+- [x] Deterministic rule priority
+- [x] Rewrite loop: find active pair, apply rule, repeat
+- [x] Normal form detection
+- [x] Fuel / step budget
 
 ### Optimization
 
-- [ ] Lamping-style sharing with fan nodes
-- [ ] Bracket / oracle correctness for optimal reduction
-- [ ] Net simplification passes
+- [x] Lamping-style sharing with fan nodes
+- [x] Bracket / oracle correctness for optimal reduction
+- [x] Net simplification passes
 
 ### Materialization
 
-- [ ] Net → runtime value conversion
-- [ ] Builtin operations as net agents
+- [x] Net → runtime value conversion
+- [x] Builtin operations as net agents
 
 ### Benchmarking
 
-- [ ] Benchmark suite: arithmetic, list operations
-- [ ] Compare against tree-walking interpreter
-- [ ] Track regressions in CI
+- [x] Benchmark suite: arithmetic, list operations
+- [x] Compare against tree-walking interpreter
+- [x] Track regressions in CI
 
 **Deliverable:** programs compiled via nets run correctly; measurable
 speedup on arithmetic-heavy programs.

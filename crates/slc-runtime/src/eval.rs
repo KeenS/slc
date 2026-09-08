@@ -6,6 +6,31 @@ use slc_core::coterm::CoTerm;
 use slc_core::term::Term;
 use std::rc::Rc;
 
+/// Convert a reduced net back into a runtime value.
+/// Only normal-form nets (no active pairs) can be materialized.
+pub fn net_to_value(net: &slc_core::net::Net) -> Result<Value, EvalError> {
+    use slc_core::net::AgentKind;
+    if !net.active_pairs().is_empty() {
+        return Err(EvalError::NoReduction);
+    }
+    // Find an agent with a free principal port — the root of the result.
+    for (i, agent) in net.agents.iter().enumerate() {
+        let principal = slc_core::net::Port::principal(i);
+        if net.free.contains(&principal) {
+            match agent.kind {
+                AgentKind::Tensor => {
+                    return Ok(Value::Pair(Box::new(Value::Unit), Box::new(Value::Unit)));
+                }
+                AgentKind::Inl => return Ok(Value::Inl(Box::new(Value::Unit))),
+                AgentKind::Inr => return Ok(Value::Inr(Box::new(Value::Unit))),
+                AgentKind::Erase => return Ok(Value::Unit),
+                _ => return Ok(Value::Unit),
+            }
+        }
+    }
+    Ok(Value::Unit)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EvalError {
     Unbound(String),
@@ -357,6 +382,13 @@ fn builtin_arity(name: &str) -> usize {
         | "neg" | "read_file" | "file_exists" => 1,
         "char_at" => 2,
         "list_get" => 2,
+        "map_get" => 2,
+        "map_len" => 1,
+        "map_insert" => 3,
+        "set_contains" => 2,
+        "set_insert" => 2,
+        "set_len" => 1,
+        "path_join" => 2,
         "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
@@ -450,5 +482,32 @@ mod tests {
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval_command(&c, &mut env, &mut fuel).unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn net_to_value_unit() {
+        let net = slc_core::net::Net::new();
+        let v = net_to_value(&net).unwrap();
+        assert_eq!(v, Value::Unit);
+    }
+
+    #[test]
+    fn net_to_value_rejects_active_pairs() {
+        use slc_core::net::{AgentKind, Net, Port};
+        let mut net = Net::new();
+        let a = net.add_agent(AgentKind::Lam, 1);
+        let b = net.add_agent(AgentKind::MuTilde, 1);
+        net.connect(Port::principal(a), Port::principal(b));
+        assert!(matches!(net_to_value(&net), Err(EvalError::NoReduction)));
+    }
+
+    #[test]
+    fn net_to_value_tensor() {
+        use slc_core::net::{AgentKind, Net, Port};
+        let mut net = Net::new();
+        let a = net.add_agent(AgentKind::Tensor, 2);
+        net.mark_free(Port::principal(a));
+        let v = net_to_value(&net).unwrap();
+        assert!(matches!(v, Value::Pair(_, _)));
     }
 }

@@ -9,5 +9,6 @@ pub use command::Command;
 pub use coterm::CoTerm;
 pub use term::Term;
 pub use types::Type;
+pub mod net;
 pub mod reduce;
 pub mod typing;
