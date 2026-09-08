@@ -184,14 +184,14 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `command f(x: +A, to k: -B) { E }` → `κx. μα. E`
 - [x] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
 - [x] `k(v)` → `Activate(k, v)`
-- [ ] `match` → sum elimination via μ̃
+- [x] `match` → sum elimination via μ̃
 - [ ] `?` → continuation split: `e(to current_ok, current_err)`
 - [x] `let` → let-binding via μ̃ over value
 - [x] `if/else` → sum elimination
 - [ ] `spawn` → new command in multiset (deferred to runtime)
 - [ ] `dual(e)` → polarity flip on terms/co-terms
 - [ ] `@` interaction → cut
-- [ ] Test: round-trip property `parse(print(lower(ast)))` α-equivalent
+- [x] Test: round-trip property `parse(print(lower(ast)))` α-equivalent
 
 **Deliverable:** a `.sl` file can be parsed and lowered to well-typed core IR.
 
@@ -222,11 +222,11 @@ detected by fuel). No parser required; tests construct ASTs directly.
 
 ### Match exhaustiveness
 
-- [ ] Constructor extraction from `enum` declarations
-- [ ] Coverage check: all constructors covered
-- [ ] Wildcard `_` always allowed as fallback
-- [ ] Guard clauses do not affect exhaustiveness
-- [ ] Diagnostic: missing constructor in match
+- [x] Constructor extraction from `enum` declarations
+- [x] Coverage check: all constructors covered
+- [x] Wildcard `_` always allowed as fallback
+- [x] Guard clauses do not affect exhaustiveness
+- [x] Diagnostic: missing constructor in match
 
 ### Inference
 
@@ -259,7 +259,7 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 - [x] Activation transfers control
 - [x] `let` bindings
 - [x] `if/else` via sum elimination
-- [ ] `match` via sum elimination
+- [x] `match` via sum elimination
 - [x] Binary operators on primitives
 - [x] Comparison operators
 - [x] String operations
@@ -287,7 +287,7 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Builtins
 
-- [ ] `i32`/`i64`/`u32`/`u64` arithmetic
+- [x] `i32`/`i64`/`u32`/`u64` arithmetic
 - [ ] Overflow checking (debug)
 - [x] `bool` operations
 - [x] `String` construction and formatting

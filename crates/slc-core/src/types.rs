@@ -5,6 +5,8 @@
 pub enum Base {
     I32,
     I64,
+    U32,
+    U64,
     Bool,
     Str,
     Unit,

@@ -45,6 +45,13 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
     slc_check::linearity::check_linearity(&program).map_err(|diags| {
         diags.iter().map(|d| format!("linearity: {}", d.message)).collect::<Vec<_>>().join("\n")
     })?;
+    slc_check::exhaustive::check_exhaustiveness(&program).map_err(|diags| {
+        diags
+            .iter()
+            .map(|d| format!("exhaustiveness: {}", d.message))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
 
     let defs = slc_syntax::lower::lower_program(&program).map_err(|e| format!("lowering: {e}"))?;
 
@@ -55,6 +62,17 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
     slc_runtime::value::install_stdlib(&mut env);
     // Functions are installed into the shared globals frame, so closures
     // resolve each other at call time regardless of definition order.
+    // Enum constructors are also injected as string-valued globals.
+    for d in &program.decls {
+        if let slc_syntax::ast::Decl::Enum { name, variants } = &d.kind {
+            for (v, _) in variants {
+                env.define_global(
+                    format!("{name}_{v}"),
+                    slc_runtime::value::Value::Str(format!("{name}::{v}")),
+                );
+            }
+        }
+    }
     for (name, term) in &defs {
         if name == "main" {
             continue;

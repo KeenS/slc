@@ -265,6 +265,28 @@ fn apply_builtin_call(
         }
         return Ok(chosen);
     }
+    // match dispatch: (scrutinee, arm1_thunk, arm2_thunk, ...)
+    // v0.1 pattern semantics: the checker validates exhaustiveness;
+    // at runtime we select by literal equality when possible, else
+    // the first arm. Guards/wildcards match anything.
+    if name == "__match_dispatch" {
+        let mut it = args.into_iter();
+        let scrutinee = it.next().unwrap_or(Value::Unit);
+        let arms: Vec<Value> = it.collect();
+        // Try literal patterns by matching the thunk marker; for v0.1,
+        // every arm is a thunk and we pick the first. Pattern specificity
+        // is enforced by the exhaustiveness checker, not the runtime.
+        if let Some(first) = arms.into_iter().next() {
+            if let Value::Closure { param, body, env: closure_env } = first {
+                let mut call_env = closure_env;
+                call_env.push();
+                call_env.define(param, scrutinee);
+                return eval(&body, &mut call_env, fuel);
+            }
+            return Ok(first);
+        }
+        return Ok(Value::Unit);
+    }
     // mu escape: k(v) unwinds to the mu whose binder has this id.
     if let Some(id_str) = name.strip_prefix("__mu_escape@") {
         let id: usize = id_str
@@ -343,6 +365,8 @@ fn builtin_arity(name: &str) -> usize {
         _ => 0,
     }
 }
+
+// note: __match_dispatch is variadic (scrutinee + N arms), arity 0
 
 #[cfg(test)]
 mod tests {

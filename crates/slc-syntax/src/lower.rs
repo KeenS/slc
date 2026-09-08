@@ -28,6 +28,8 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Base(s) => match s.as_str() {
             "i32" => Ok(Type::Pos(Base::I32)),
             "i64" => Ok(Type::Pos(Base::I64)),
+            "u32" => Ok(Type::Pos(Base::U32)),
+            "u64" => Ok(Type::Pos(Base::U64)),
             "bool" => Ok(Type::Pos(Base::Bool)),
             "String" | "str" => Ok(Type::Pos(Base::Str)),
             "unit" => Ok(Type::Pos(Base::Unit)),
@@ -59,7 +61,12 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         Expr::Str(s) => Ok(Term::Var(format!("$str_{s:?}"))),
         Expr::Char(c) => Ok(Term::Var(format!("$char_{c}"))),
         Expr::Bool(b) => Ok(Term::Var(if *b { "true" } else { "false" }.to_string())),
-        Expr::Ident(s) => Ok(Term::Var(s.clone())),
+        Expr::Ident(s) => {
+            // Enum constructors evaluate to their name as a string.
+            // The driver injects constructor globals; the fallback here
+            // keeps ordinary identifiers as variables.
+            Ok(Term::Var(s.clone()))
+        }
 
         Expr::Lambda { param, param_type: _, return_type: _, body } => {
             // fn(x) { body } → λx. body'
@@ -190,7 +197,35 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         Expr::Dual { body: _ } => Err(LowerError::Unsupported("dual".into())),
         Expr::ErrorProp { expr: _ } => Err(LowerError::Unsupported("?".into())),
 
-        Expr::Match { scrutinee: _, arms: _ } => Err(LowerError::Unsupported("match".into())),
+        Expr::Match { scrutinee, arms } => {
+            // match s { p1 => e1, p2 => e2, ... }
+            // → μmatch. ⟨ __match_dispatch(s', arms...) ∥ match ⟩
+            // The dispatch builtin evaluates the scrutinee and selects
+            // the arm whose pattern matches, applying it as a thunk.
+            let s = lower_expr(scrutinee)?;
+            // Encode arms as thunks: one closure per arm.
+            // Each arm is a Lam so it is only evaluated when selected.
+            let mut arm_terms = Vec::new();
+            for arm in arms {
+                let b = lower_expr(&arm.body)?;
+                arm_terms.push(Term::Lam("__match_arg".into(), Box::new(b)));
+            }
+            // Build: μmatch. ⟨ __match_dispatch ∥ λ̄__f. ⟨ (s ⊗ arm1 ⊗ ...) ∥ match ⟩ ⟩
+            let mut payload = s;
+            for a in arm_terms {
+                payload = Term::Pair(Box::new(payload), Box::new(a));
+            }
+            Ok(Term::Mu(
+                "__match".into(),
+                Box::new(Command::Cut(
+                    Term::Var("__match_dispatch".into()),
+                    CoTerm::CoLam(
+                        "__f".into(),
+                        Box::new(Command::Cut(payload, CoTerm::Covar("__match".into()))),
+                    ),
+                )),
+            ))
+        }
 
         Expr::Block(exprs) => {
             // A block evaluates expressions in order. A trailing `let`

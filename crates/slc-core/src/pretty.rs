@@ -10,6 +10,8 @@ impl std::fmt::Display for Base {
         match self {
             Base::I32 => write!(f, "i32"),
             Base::I64 => write!(f, "i64"),
+            Base::U32 => write!(f, "u32"),
+            Base::U64 => write!(f, "u64"),
             Base::Bool => write!(f, "bool"),
             Base::Str => write!(f, "String"),
             Base::Unit => write!(f, "unit"),

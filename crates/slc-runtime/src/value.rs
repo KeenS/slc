@@ -189,6 +189,7 @@ pub fn install_stdlib(env: &mut Env) {
         "write_file",
         "file_exists",
         "__if_dispatch",
+        "__match_dispatch",
         "char_at",
         "list_len",
         "list_push",

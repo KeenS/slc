@@ -632,6 +632,25 @@ impl Parser {
                 if s == "_" {
                     return Ok(Pattern::Wildcard);
                 }
+                // Path pattern: Enum::Variant or Enum::Variant(fields)
+                if self.peek_kind() == Some(&TokenKind::ColonColon) {
+                    self.pos += 1;
+                    let variant = self.expect_ident("variant name")?;
+                    let mut fields = Vec::new();
+                    if self.eat(&TokenKind::LParen) {
+                        loop {
+                            if self.eat(&TokenKind::RParen) {
+                                break;
+                            }
+                            fields.push(self.parse_pattern()?);
+                            if !self.eat(&TokenKind::Comma) {
+                                self.expect(TokenKind::RParen, "`)`")?;
+                                break;
+                            }
+                        }
+                    }
+                    return Ok(Pattern::Enum { name: s, variant, fields });
+                }
                 // Check for enum pattern: Name(variant)
                 if self.peek_kind() == Some(&TokenKind::LParen) {
                     self.pos += 1;
