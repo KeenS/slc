@@ -22,6 +22,7 @@ impl std::fmt::Display for Base {
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Var(v) => write!(f, "?{v}"),
             Type::Pos(b) => write!(f, "+{b}"),
             Type::Neg(b) => write!(f, "-{b}"),
             Type::Tensor(a, b) => write!(f, "({a} ⊗ {b})"),

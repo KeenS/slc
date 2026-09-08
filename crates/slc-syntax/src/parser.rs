@@ -104,6 +104,7 @@ impl Parser {
                         span: e.span,
                         kind: Decl::Fn {
                             name: "main".into(),
+                            type_params: vec![],
                             params: vec![],
                             return_type: None,
                             body: e,
@@ -123,6 +124,7 @@ impl Parser {
                     span: Span { start, end },
                     kind: Decl::Fn {
                         name: "main".into(),
+                        type_params: vec![],
                         params: vec![],
                         return_type: None,
                         body: e,
@@ -189,11 +191,30 @@ impl Parser {
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
+        let type_params = self.parse_type_params()?;
         let params = self.parse_params()?;
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         let body = self.parse_block()?;
-        Ok(Node { span: t.span, kind: Decl::Fn { name, params, return_type, body } })
+        Ok(Node { span: t.span, kind: Decl::Fn { name, type_params, params, return_type, body } })
+    }
+
+    fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
+        let mut params = Vec::new();
+        if !self.eat(&TokenKind::Lt) {
+            return Ok(params);
+        }
+        loop {
+            if self.eat(&TokenKind::Gt) {
+                break;
+            }
+            params.push(self.expect_ident("type parameter")?);
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::Gt, "`>` after type parameters")?;
+                break;
+            }
+        }
+        Ok(params)
     }
 
     fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {

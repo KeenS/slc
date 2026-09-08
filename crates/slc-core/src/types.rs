@@ -15,6 +15,8 @@ pub enum Base {
 /// A type in the λ̄μμ̃ calculus, with explicit positive/negative polarity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
+    /// Inference variable.
+    Var(usize),
     /// Positive atom: `+B`.
     Pos(Base),
     /// Negative atom: `-B`.
@@ -45,6 +47,7 @@ impl Type {
     /// The dual of a type. An involution: `dual(dual(t)) == t`.
     pub fn dual(&self) -> Type {
         match self {
+            Type::Var(v) => Type::Var(*v),
             Type::Pos(b) => Type::Neg(*b),
             Type::Neg(b) => Type::Pos(*b),
             Type::Tensor(a, b) => Type::Par(Box::new(a.dual()), Box::new(b.dual())),
@@ -64,7 +67,8 @@ impl Type {
     pub fn is_positive(&self) -> bool {
         matches!(
             self,
-            Type::Pos(_)
+            Type::Var(_)
+                | Type::Pos(_)
                 | Type::Tensor(..)
                 | Type::One
                 | Type::Sum(..)
@@ -75,7 +79,7 @@ impl Type {
 
     /// Is this a negative type?
     pub fn is_negative(&self) -> bool {
-        matches!(self, Type::Neg(_) | Type::Par(..) | Type::Bottom | Type::With(..))
+        matches!(self, Type::Var(_) | Type::Neg(_) | Type::Par(..) | Type::Bottom | Type::With(..))
     }
 }
 

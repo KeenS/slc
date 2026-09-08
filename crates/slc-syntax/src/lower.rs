@@ -341,7 +341,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     let mut out = Vec::new();
     for d in &p.decls {
         match &d.kind {
-            Decl::Fn { name, params, return_type: _, body } => {
+            Decl::Fn { name, params, return_type: _, body, type_params: _ } => {
                 // Multi-param fn: nest lambdas
                 let mut term = lower_expr(body)?;
                 for p in params.iter().rev() {

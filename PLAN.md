@@ -233,11 +233,11 @@ detected by fuel). No parser required; tests construct ASTs directly.
 
 ### Inference
 
-- [ ] Bidirectional inference for `fn`, `mu`, `command`
-- [ ] Type variables for generic functions
-- [ ] Occurs check for recursive types
-- [ ] Unification with polarity constraints
-- [ ] Diagnostic: cannot infer type
+- [x] Bidirectional inference for `fn`, `mu`, `command`
+- [x] Type variables for generic functions
+- [x] Occurs check for recursive types
+- [x] Unification with polarity constraints
+- [x] Diagnostic: cannot infer type
 
 **Deliverable:** well-typed programs accepted; ill-typed programs rejected
 with good diagnostics. Property test: checker agrees with core IR checker.

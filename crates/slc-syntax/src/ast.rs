@@ -147,10 +147,26 @@ pub enum BinOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
-    Struct { name: String, fields: Vec<(String, TypeExpr)> },
-    Enum { name: String, variants: Vec<(String, Vec<TypeExpr>)> },
-    Fn { name: String, params: Vec<Param>, return_type: Option<TypeExpr>, body: Node<Expr> },
-    Command { name: String, params: Vec<Param>, body: Node<Expr> },
+    Struct {
+        name: String,
+        fields: Vec<(String, TypeExpr)>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<(String, Vec<TypeExpr>)>,
+    },
+    Fn {
+        name: String,
+        type_params: Vec<String>,
+        params: Vec<Param>,
+        return_type: Option<TypeExpr>,
+        body: Node<Expr>,
+    },
+    Command {
+        name: String,
+        params: Vec<Param>,
+        body: Node<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
