@@ -6,6 +6,7 @@ use crate::value::Value;
 pub enum BuiltinError {
     TypeMismatch(String),
     DivisionByZero,
+    ArithmeticOverflow(String),
     UnknownBuiltin(String),
 }
 
@@ -14,6 +15,7 @@ impl std::fmt::Display for BuiltinError {
         match self {
             BuiltinError::TypeMismatch(m) => write!(f, "builtin type mismatch: {m}"),
             BuiltinError::DivisionByZero => write!(f, "division by zero"),
+            BuiltinError::ArithmeticOverflow(m) => write!(f, "arithmetic overflow: {m}"),
             BuiltinError::UnknownBuiltin(n) => write!(f, "unknown builtin: {n}"),
         }
     }
@@ -45,9 +47,15 @@ pub fn apply_builtin(
         "add" | "sub" | "mul" | "div" | "rem" => {
             let (a, b) = two_ints(name, args)?;
             let r = match name {
-                "add" => a.wrapping_add(b),
-                "sub" => a.wrapping_sub(b),
-                "mul" => a.wrapping_mul(b),
+                "add" => a
+                    .checked_add(b)
+                    .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("add({a}, {b})")))?,
+                "sub" => a
+                    .checked_sub(b)
+                    .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("sub({a}, {b})")))?,
+                "mul" => a
+                    .checked_mul(b)
+                    .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("mul({a}, {b})")))?,
                 "div" => {
                     if b == 0 {
                         return Err(BuiltinError::DivisionByZero);
@@ -188,6 +196,25 @@ pub fn apply_builtin(
             (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Bool(a == b)),
             _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
         },
+        "list_len" => match args.first() {
+            Some(Value::List(items)) => Ok(Value::Int(items.len() as i64)),
+            _ => Err(BuiltinError::TypeMismatch("list_len expects a List".into())),
+        },
+        "list_push" => match (args.first(), args.get(1)) {
+            (Some(Value::List(items)), Some(v)) => {
+                let mut new_items = items.clone();
+                new_items.push(v.clone());
+                Ok(Value::List(new_items))
+            }
+            _ => Err(BuiltinError::TypeMismatch("list_push expects (List, value)".into())),
+        },
+        "list_get" => match (args.first(), args.get(1)) {
+            (Some(Value::List(items)), Some(Value::Int(i))) => items
+                .get(*i as usize)
+                .cloned()
+                .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range"))),
+            _ => Err(BuiltinError::TypeMismatch("list_get expects (List, i64)".into())),
+        },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
 }
@@ -263,6 +290,27 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let r = apply_builtin("nope", &[], &mut buf);
         assert!(matches!(r, Err(BuiltinError::UnknownBuiltin(_))));
+    }
+
+    #[test]
+    fn overflow_detected() {
+        let mut buf: Vec<u8> = Vec::new();
+        let r = apply_builtin("mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
+        assert!(matches!(r, Err(BuiltinError::ArithmeticOverflow(_))));
+    }
+
+    #[test]
+    fn list_operations() {
+        let mut buf: Vec<u8> = Vec::new();
+        let empty = Value::List(vec![]);
+        let l1 = apply_builtin("list_push", &[empty, Value::Int(1)], &mut buf).unwrap();
+        assert_eq!(l1, Value::List(vec![Value::Int(1)]));
+        let l2 = apply_builtin("list_push", &[l1, Value::Int(2)], &mut buf).unwrap();
+        assert_eq!(l2, Value::List(vec![Value::Int(1), Value::Int(2)]));
+        let n = apply_builtin("list_len", &[l2.clone()], &mut buf).unwrap();
+        assert_eq!(n, Value::Int(2));
+        let item = apply_builtin("list_get", &[l2, Value::Int(1)], &mut buf).unwrap();
+        assert_eq!(item, Value::Int(2));
     }
 }
 

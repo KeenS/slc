@@ -90,6 +90,8 @@ pub enum Value {
     Builtin(String),
     /// A builtin that has already received some arguments.
     PartialBuiltin(String, Vec<Value>),
+    /// A list value (v0.1: built via list builtins).
+    List(Vec<Value>),
     Never,
 }
 
@@ -108,6 +110,7 @@ impl PartialEq for Value {
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
             }
+            (Value::List(a), Value::List(b)) => a == b,
             _ => false,
         }
     }
@@ -125,6 +128,9 @@ impl Value {
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
             Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
+            Value::List(items) => {
+                Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
+            }
             Value::Closure { .. }
             | Value::Continuation(_)
             | Value::Builtin(_)
@@ -148,6 +154,10 @@ impl Value {
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
+            }
+            Value::List(items) => {
+                let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
+                format!("[{}]", inner.join(", "))
             }
             Value::Never => "<never>".to_string(),
         }
@@ -180,6 +190,9 @@ pub fn install_stdlib(env: &mut Env) {
         "file_exists",
         "__if_dispatch",
         "char_at",
+        "list_len",
+        "list_push",
+        "list_get",
         "is_digit",
         "is_ws",
         "skip_digits",

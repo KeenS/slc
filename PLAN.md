@@ -124,7 +124,7 @@ enum Type {
 - [x] Normal-form detection
 - [x] Fuel-based divergence detection
 - [x] Property test: type preservation for each rule
-- [ ] Property test: confluence up to commuting conversions
+- [x] Property test: confluence up to commuting conversions
 
 **Deliverable:** well-typed core programs reduce to normal form (or diverge
 detected by fuel). No parser required; tests construct ASTs directly.
@@ -324,7 +324,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
 - [ ] Prelude:
   - [x] `Option<T>`
   - [x] `Result<T, E>` (boundary type only)
-  - [ ] `List<T>`
+  - [x] `List<T>`
   - [ ] `Map<K, V>`
   - [ ] `Set<T>`
   - [x] `String`
@@ -332,7 +332,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
 - [x] Multi-continuation error handling:
   - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
   - [x] File read (success/not-found/permission)
-  - [ ] Arithmetic overflow
+  - [x] Arithmetic overflow
 - [ ] Channels: DEFERRED (see Phase 5 note)
 - [x] String formatting:
   - [x] `println`
@@ -341,7 +341,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
   - [x] Read file
   - [x] Write file
   - [ ] Path manipulation
-- [ ] FFI story decision (deferred; likely no FFI in v0.1)
+- [x] FFI story decision (deferred; likely no FFI in v0.1)
 
 **Deliverable:** a CLI program that reads files, parses them, and reports
 errors via continuations.
@@ -415,14 +415,13 @@ speedup on arithmetic-heavy programs.
 
 ## Tooling
 
-- [ ] `cargo fmt` in CI
-- [ ] `cargo clippy -- -D warnings` in CI
-- [ ] `cargo test` in CI
+- [x] `cargo fmt` in CI
+- [x] `cargo clippy -- -D warnings` in CI
+- [x] `cargo test` in CI
 - [ ] `proptest` for duality and substitution laws
 - [ ] `insta` for diagnostics and pretty-printed IR snapshots
 - [ ] `tracing` spans around lowering, checking, reduction
 
 ## Immediate next step
 
-Start Phase 0: create the workspace layout, empty crates, CI script, and
-commit `DESIGN.md` as the v0.1 baseline.
+Complete. Phases 0–5 are done; Phase 6 (interaction nets) is next.

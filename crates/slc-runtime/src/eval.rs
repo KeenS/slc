@@ -334,6 +334,8 @@ fn builtin_arity(name: &str) -> usize {
         "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "str_to_int"
         | "neg" | "read_file" | "file_exists" => 1,
         "char_at" => 2,
+        "list_get" => 2,
+        "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
         "find_char" | "substring" => 3,
