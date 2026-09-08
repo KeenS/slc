@@ -245,25 +245,25 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Values
 
-- [ ] Value enum: closures, continuations, primitives, pairs, sums, thunks
-- [ ] Environment as persistent map (chain of frames)
-- [ ] Continuation values as closures over environment
+- [x] Value enum: closures, continuations, primitives, pairs, sums, thunks
+- [x] Environment as persistent map (chain of frames)
+- [x] Continuation values as closures over environment
 
 ### Evaluation
 
 - [ ] Cut dispatch:
-  - [ ] `⟨ λ ∥ μ̃ ⟩` β-rule
-  - [ ] `⟨ μ ∥ e ⟩` μ-rule
-  - [ ] `⟨ t ∥ λ̄ ⟩` co-β-rule
-- [ ] `command` bodies evaluate to `Never`
-- [ ] Activation transfers control
-- [ ] `let` bindings
+  - [x] `⟨ λ ∥ μ̃ ⟩` β-rule
+  - [x] `⟨ μ ∥ e ⟩` μ-rule
+  - [x] `⟨ t ∥ λ̄ ⟩` co-β-rule
+- [x] `command` bodies evaluate to `Never`
+- [x] Activation transfers control
+- [x] `let` bindings
 - [ ] `if/else` via sum elimination
 - [ ] `match` via sum elimination
 - [ ] Binary operators on primitives
 - [ ] Comparison operators
 - [ ] String operations
-- [ ] Fuel counter for divergence detection (debug)
+- [x] Fuel counter for divergence detection (debug)
 
 ### Partial application
 
@@ -275,8 +275,8 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Error handling
 
-- [ ] `?` lowers to continuation wiring
-- [ ] No `Result` allocation in the happy path
+- [x] `?` lowers to continuation wiring
+- [x] No `Result` allocation in the happy path
 - [ ] Multi-continuation operations dispatch directly
 
 ### Concurrency primitives
