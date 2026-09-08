@@ -92,6 +92,18 @@ fn check_expr(
             check_expr(right, enums, diags);
         }
         Expr::CommandDef { body, .. } => check_expr(body, enums, diags),
+        Expr::Service { agent, continuations } => {
+            check_expr(agent, enums, diags);
+            for k in continuations {
+                check_expr(k, enums, diags);
+            }
+        }
+        Expr::Job { agent, values } => {
+            check_expr(agent, enums, diags);
+            for v in values {
+                check_expr(v, enums, diags);
+            }
+        }
         Expr::Block(exprs) => {
             for ex in exprs {
                 check_expr(ex, enums, diags);

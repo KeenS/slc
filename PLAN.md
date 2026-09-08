@@ -216,9 +216,9 @@ detected by fuel). No parser required; tests construct ASTs directly.
 
 - [x] Every `+` variable used exactly once in its scope
 - [x] Every `-` continuation activated exactly once
-- [ ] `Job` must be run exactly once
-- [ ] `Service` must be invoked exactly once
-- [ ] Partial application agents are linear
+- [x] `Job` must be run exactly once
+- [x] `Service` must be invoked exactly once
+- [x] Partial application agents are linear
 - [x] Diagnostic: used 0 times / used 2 times, with span
 - [ ] Diagnostic: dangling continuation on some path
 - [x] Exception: types annotated `Drop` may be discarded

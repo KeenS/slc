@@ -266,6 +266,18 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
         Expr::Dual { body } => go(body, m),
         Expr::ErrorProp { expr } => go(expr, m),
         Expr::CommandDef { body, .. } => go(body, m),
+        Expr::Service { agent, continuations } => {
+            go(agent, m);
+            for k in continuations {
+                go(k, m);
+            }
+        }
+        Expr::Job { agent, values } => {
+            go(agent, m);
+            for v in values {
+                go(v, m);
+            }
+        }
         Expr::Block(exprs) => {
             for e in exprs {
                 go(e, m);
@@ -324,5 +336,29 @@ mod tests {
         let r = check("command bad(x: +i32, to k: -i32) { x }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("continuation"));
+    }
+
+    #[test]
+    fn service_agent_linear() {
+        assert!(check("fn f(svc: -i32) -> i32 { step.to(svc) }").is_ok());
+    }
+
+    #[test]
+    fn service_agent_double_use_fails() {
+        let r = check("fn f(svc: -i32) -> i32 { step.to(svc); step.to(svc) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("more than once"));
+    }
+
+    #[test]
+    fn job_agent_linear() {
+        assert!(check("fn f(job: -i32) -> i32 { g.partial(job) }").is_ok());
+    }
+
+    #[test]
+    fn job_agent_double_use_fails() {
+        let r = check("fn f(job: -i32) -> i32 { g.partial(job); g.partial(job) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("more than once"));
     }
 }

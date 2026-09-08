@@ -184,6 +184,18 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
         Expr::Spawn { body } => check_expr(body, diags),
         Expr::ErrorProp { expr } => check_expr(expr, diags),
         Expr::CommandDef { body, .. } => check_expr(body, diags),
+        Expr::Service { agent, continuations } => {
+            check_expr(agent, diags);
+            for k in continuations {
+                check_expr(k, diags);
+            }
+        }
+        Expr::Job { agent, values } => {
+            check_expr(agent, diags);
+            for v in values {
+                check_expr(v, diags);
+            }
+        }
         Expr::Block(exprs) => {
             for e in exprs {
                 check_expr(e, diags);
