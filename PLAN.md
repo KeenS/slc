@@ -220,7 +220,7 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `Service` must be invoked exactly once
 - [x] Partial application agents are linear
 - [x] Diagnostic: used 0 times / used 2 times, with span
-- [ ] Diagnostic: dangling continuation on some path
+- [x] Diagnostic: dangling continuation on some path
 - [x] Exception: types annotated `Drop` may be discarded
 
 ### Match exhaustiveness

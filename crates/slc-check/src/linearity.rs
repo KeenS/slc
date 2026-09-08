@@ -11,6 +11,89 @@ pub struct Diagnostic {
     pub span: Span,
 }
 
+/// Continue checking after `if` without an `else`: a linear continuation
+/// that is used only in the taken branch is left dangling when control
+/// falls through.
+fn check_dangling_continuations(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        Expr::If { otherwise: None, then, .. } => {
+            for (name, uses) in count_uses(e).uses {
+                if uses == Use::One
+                    && is_continuation_name(name.as_str())
+                    && count_uses(then).get(&name) == Use::One
+                    && let Some(span) = find_ident_span(e, &name)
+                {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "continuation `{name}` dangles on the false path of this `if`"
+                        ),
+                        span,
+                    });
+                }
+            }
+            check_dangling_continuations(then, diags);
+        }
+        Expr::If { then, otherwise: Some(otherwise), .. } => {
+            check_dangling_continuations(then, diags);
+            check_dangling_continuations(otherwise, diags);
+        }
+        Expr::Let { value, body: Some(body), .. } => {
+            check_dangling_continuations(value, diags);
+            check_dangling_continuations(body, diags);
+        }
+        Expr::Match { scrutinee, arms } => {
+            check_dangling_continuations(scrutinee, diags);
+            for arm in arms {
+                check_dangling_continuations(&arm.body, diags);
+            }
+        }
+        Expr::Block(exprs) => {
+            for e in exprs {
+                check_dangling_continuations(e, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_continuation_name(name: &str) -> bool {
+    name == "k" || name == "ok" || name.ends_with("_cont") || name.starts_with("cont")
+}
+
+fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
+    match &e.kind {
+        Expr::Ident(x) if x == name => Some(e.span),
+        Expr::Lambda { body, .. }
+        | Expr::Mu { body, .. }
+        | Expr::Spawn { body }
+        | Expr::Dual { body }
+        | Expr::ErrorProp { expr: body } => find_ident_span(body, name),
+        Expr::Call { callee, args } => find_ident_span(callee, name)
+            .or_else(|| args.iter().find_map(|a| find_ident_span(a, name))),
+        Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
+        Expr::Match { scrutinee, arms } => find_ident_span(scrutinee, name)
+            .or_else(|| arms.iter().find_map(|arm| find_ident_span(&arm.body, name))),
+        Expr::Let { value, body, .. } => find_ident_span(value, name)
+            .or_else(|| body.as_ref().and_then(|body| find_ident_span(body, name))),
+        Expr::If { cond, then, otherwise } => find_ident_span(cond, name)
+            .or_else(|| find_ident_span(then, name))
+            .or_else(|| otherwise.as_ref().and_then(|otherwise| find_ident_span(otherwise, name))),
+        Expr::BinOp { lhs, rhs, .. } => {
+            find_ident_span(lhs, name).or_else(|| find_ident_span(rhs, name))
+        }
+        Expr::Interaction { left, right } => {
+            find_ident_span(left, name).or_else(|| find_ident_span(right, name))
+        }
+        Expr::CommandDef { body, .. } => find_ident_span(body, name),
+        Expr::Service { agent, continuations } => find_ident_span(agent, name)
+            .or_else(|| continuations.iter().find_map(|c| find_ident_span(c, name))),
+        Expr::Job { agent, values } => find_ident_span(agent, name)
+            .or_else(|| values.iter().find_map(|v| find_ident_span(v, name))),
+        Expr::Block(exprs) => exprs.iter().find_map(|e| find_ident_span(e, name)),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Use {
     Zero,
@@ -75,6 +158,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 let u = uses.get(&p.name);
                 report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
             }
+            check_dangling_continuations(body, diags);
             for lb in let_bound {
                 if !bound.contains(&lb) {
                     // let-bound values are currently always base values
@@ -96,6 +180,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 let u = uses.get(&p.name);
                 report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
             }
+            check_dangling_continuations(body, diags);
         }
         Decl::Struct { .. } | Decl::Enum { .. } => {}
     }
@@ -243,14 +328,10 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
             go(cond, m);
             let mut t = UseMap::default();
             go(then, &mut t);
-            let f = otherwise
-                .as_ref()
-                .map(|o| {
-                    let mut m2 = UseMap::default();
-                    go(o, &mut m2);
-                    m2
-                })
-                .unwrap_or_default();
+            let mut f = UseMap::default();
+            if let Some(o) = otherwise {
+                go(o, &mut f);
+            }
             t.merge(&f);
             m.merge(&t);
         }
@@ -360,5 +441,22 @@ mod tests {
         let r = check("fn f(job: -i32) -> i32 { g.partial(job); g.partial(job) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("more than once"));
+    }
+
+    #[test]
+    fn dangling_continuation_on_false_path_fails() {
+        let r = check("fn f(flag: +bool, k: -i32) -> i32 { if flag { k(42) } }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().iter().any(|d| d.message.contains("dangles")));
+    }
+
+    #[test]
+    fn continuation_used_in_both_paths_ok() {
+        assert!(
+            check(
+                "fn f(flag: +bool, k: -i32, h: -i32) -> i32 { if flag { k(42) } else { h(43) } }"
+            )
+            .is_ok()
+        );
     }
 }
