@@ -135,53 +135,53 @@ detected by fuel). No parser required; tests construct ASTs directly.
 
 ### Lexer
 
-- [ ] Token enum with spans
-- [ ] Rust-like token set:
-  - [ ] identifiers, keywords
-  - [ ] integer literals (`i32`, `i64`, `u32`, `u64`)
-  - [ ] float literals (`f32`, `f64`)
-  - [ ] string literals (escape sequences)
-  - [ ] char literals
-  - [ ] boolean literals (`true`, `false`)
-  - [ ] punctuation: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `;`, `:`, `::`, `.`
-  - [ ] operators: `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `<=`, `>=`
-  - [ ] interaction: `@`
-  - [ ] arrow: `->`
-  - [ ] polarity: `+Type`, `-Type`
-  - [ ] Unicode operators: `⅋` (par), `⊗` (tensor)
-- [ ] Comments: `//` line, `/* */` block (nested)
-- [ ] Lexer error recovery: continue after invalid character
+- [x] Token enum with spans
+- [x] Rust-like token set:
+  - [x] identifiers, keywords
+  - [x] integer literals (`i32`, `i64`, `u32`, `u64`)
+  - [x] float literals (`f32`, `f64`)
+  - [x] string literals (escape sequences)
+  - [x] char literals
+  - [x] boolean literals (`true`, `false`)
+  - [x] punctuation: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `;`, `:`, `::`, `.`
+  - [x] operators: `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `<=`, `>=`
+  - [x] interaction: `@`
+  - [x] arrow: `->`
+  - [x] polarity: `+Type`, `-Type`
+  - [x] Unicode operators: `⅋` (par), `⊗` (tensor)
+- [x] Comments: `//` line, `/* */` block (nested)
+- [x] Lexer error recovery: continue after invalid character
 
 ### Parser
 
-- [ ] Hand-written recursive descent
-- [ ] Precedence climbing for binary operators
-- [ ] Pratt parsing for postfix/prefix operators
-- [ ] Parse `fn` definitions and expressions
-- [ ] Parse `mu` in three forms:
-  - [ ] `mu(k: -A) { E }`
-  - [ ] `mu() -> A { E }`
-  - [ ] `mu(x: +A) -> B { E }`
-- [ ] Parse `command` with `to` clauses
-- [ ] Parse `match` expressions
-- [ ] Parse `let` bindings
-- [ ] Parse `if` / `else`
-- [ ] Parse `struct` / `enum` declarations
-- [ ] Parse `spawn` expressions
-- [ ] Parse `dual` expressions
-- [ ] Parse `@` interaction
-- [ ] Parse partial application: `.to(k, h)` and `.partial(v)`
-- [ ] Parse `?` operator
-- [ ] Error recovery: synchronize on `;` and `}` after expression errors
-- [ ] AST pretty-printer (used for round-trip testing)
+- [x] Hand-written recursive descent
+- [x] Precedence climbing for binary operators
+- [x] Pratt parsing for postfix/prefix operators
+- [x] Parse `fn` definitions and expressions
+- [x] Parse `mu` in three forms:
+  - [x] `mu(k: -A) { E }`
+  - [x] `mu() -> A { E }`
+  - [x] `mu(x: +A) -> B { E }`
+- [x] Parse `command` with `to` clauses
+- [x] Parse `match` expressions
+- [x] Parse `let` bindings
+- [x] Parse `if` / `else`
+- [x] Parse `struct` / `enum` declarations
+- [x] Parse `spawn` expressions
+- [x] Parse `dual` expressions
+- [x] Parse `@` interaction
+- [x] Parse partial application: `.to(k, h)` and `.partial(v)`
+- [x] Parse `?` operator
+- [x] Error recovery: synchronize on `;` and `}` after expression errors
+- [x] AST pretty-printer (used for round-trip testing)
 
 ### AST → core lowering
 
-- [ ] Lowering context: variables, continuations, types
-- [ ] `fn(x: +A) -> B { E }` → `λx. μα. E`
-- [ ] `mu(k: -A) { E }` → `μα. E`
+- [x] Lowering context: variables, continuations, types
+- [x] `fn(x: +A) -> B { E }` → `λx. μα. E`
+- [x] `mu(k: -A) { E }` → `μα. E`
 - [ ] `mu(x: +A) -> B { E }` → `λ̄x. ⟨ E ∥ α ⟩`
-- [ ] `command f(x: +A, to k: -B) { E }` → `κx. μα. E`
+- [x] `command f(x: +A, to k: -B) { E }` → `κx. μα. E`
 - [ ] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
 - [ ] `k(v)` → `Activate(k, v)`
 - [ ] `match` → sum elimination via μ̃
