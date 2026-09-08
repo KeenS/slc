@@ -1,0 +1,9 @@
+[package]
+name = "slc-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+slc-core = { path = "../slc-core" }
+slc-syntax = { path = "../slc-syntax" }

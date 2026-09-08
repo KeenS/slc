@@ -1,0 +1,15 @@
+[package]
+name = "slc-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "slc"
+path = "src/main.rs"
+
+[dependencies]
+slc-core = { path = "../slc-core" }
+slc-syntax = { path = "../slc-syntax" }
+slc-check = { path = "../slc-check" }
+slc-runtime = { path = "../slc-runtime" }
