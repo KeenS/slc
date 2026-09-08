@@ -334,11 +334,11 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
   - [ ] File read (success/not-found/permission)
   - [ ] Arithmetic overflow
 - [ ] Channels: DEFERRED (see Phase 5 note)
-- [ ] String formatting:
-  - [ ] `println`
+- [x] String formatting:
+  - [x] `println`
   - `format`
 - [ ] File I/O:
-  - [ ] Read file
+  - [x] Read file
   - [ ] Write file
   - [ ] Path manipulation
 - [ ] FFI story decision (deferred; likely no FFI in v0.1)

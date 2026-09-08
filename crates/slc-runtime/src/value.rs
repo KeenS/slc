@@ -127,3 +127,33 @@ impl Value {
         }
     }
 }
+
+/// Install the standard library builtins into an environment.
+pub fn install_stdlib(env: &mut Env) {
+    let builtins = [
+        "println",
+        "print",
+        "format",
+        "add",
+        "sub",
+        "mul",
+        "div",
+        "rem",
+        "eq",
+        "ne",
+        "lt",
+        "gt",
+        "le",
+        "ge",
+        "str_len",
+        "str_concat",
+        "int_to_str",
+        "read_file",
+        "write_file",
+        "file_exists",
+    ];
+    env.push();
+    for b in builtins {
+        env.define(b, Value::Builtin(b.to_string()));
+    }
+}

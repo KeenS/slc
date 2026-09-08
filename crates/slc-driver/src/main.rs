@@ -52,6 +52,7 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
     let main = defs.iter().find(|(name, _)| name == "main").ok_or("no `main` function")?;
 
     let mut env = slc_runtime::value::Env::new();
+    slc_runtime::value::install_stdlib(&mut env);
     let mut fuel = 1_000_000;
     let value =
         slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;

@@ -38,15 +38,23 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
         Term::Var(x) => {
             // Builtins
             match x.as_str() {
-                n if n.starts_with("int_") => {
-                    let v: i64 = n[4..].parse().map_err(|_| EvalError::Unbound(x.clone()))?;
+                n if n.starts_with("$int_") => {
+                    let v: i64 = n[5..].parse().map_err(|_| EvalError::Unbound(x.clone()))?;
                     return Ok(Value::Int(v));
                 }
-                n if n.starts_with("str_") => {
-                    let s = &n[4..];
+                n if n.starts_with("$str_") => {
+                    let s = &n[5..];
                     let s = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s);
                     let s = s.replace("\\n", "\n").replace("\\t", "\t");
                     return Ok(Value::Str(s));
+                }
+                n if n.starts_with("$float_") => {
+                    let v: f64 = n[7..].parse().map_err(|_| EvalError::Unbound(x.clone()))?;
+                    return Ok(Value::Float(v));
+                }
+                n if n.starts_with("$char_") => {
+                    let c = n[6..].chars().next().ok_or(EvalError::Unbound(x.clone()))?;
+                    return Ok(Value::Char(c));
                 }
                 "true" => return Ok(Value::Bool(true)),
                 "false" => return Ok(Value::Bool(false)),
@@ -63,12 +71,14 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
         }),
 
         Term::Mu(a, command) => {
-            // μ abstraction: capture the environment as a continuation
+            // μ abstraction: evaluate the command body.
+            // The co-variable binding (a) is handled by the command context.
             let _ = a;
-            Ok(Value::Continuation(crate::value::Cont {
-                env: env.clone(),
-                command: Rc::new((**command).clone()),
-            }))
+            let mut env2 = env.clone();
+            env2.push();
+            let result = eval_command(command, &mut env2, fuel)?;
+            env2.pop();
+            Ok(result)
         }
 
         Term::Pair(t1, t2) => {
@@ -101,7 +111,25 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                 CoTerm::CoLam(x, c2) => {
                     let mut env2 = env.clone();
                     env2.push();
-                    env2.define(x.clone(), v);
+                    env2.define(x.clone(), v.clone());
+                    // Builtin application: if the value is a Builtin, apply it
+                    // to the argument produced by the inner command.
+                    if let Value::Builtin(name) = &v {
+                        return apply_builtin_call(name, c2, &mut env2, fuel);
+                    }
+                    // Closure application: bind param to arg, eval body
+                    if let Value::Closure { param, body, env: closure_env } = v.clone() {
+                        // Closure application: bind the parameter to the
+                        // argument, then evaluate the body with the closed env.
+                        let arg = match c2.as_ref() {
+                            Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
+                            other => eval_command(other, &mut env2, fuel)?,
+                        };
+                        let mut call_env = closure_env;
+                        call_env.push();
+                        call_env.define(param, arg);
+                        return eval(&body, &mut call_env, fuel);
+                    }
                     let r = eval_command(c2, &mut env2, fuel)?;
                     Ok(r)
                 }
@@ -135,13 +163,50 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
     }
 }
 
+/// When a builtin is applied, evaluate the argument command and dispatch.
+fn apply_builtin_call(
+    name: &str,
+    arg_command: &Command,
+    env: &mut Env,
+    fuel: &mut usize,
+) -> Result<Value, EvalError> {
+    // The argument command has the form ⟨ arg ∥ __call ⟩; extract arg.
+    let arg = match arg_command {
+        Command::Cut(t, CoTerm::Covar(_)) => eval(t, env, fuel)?,
+        _ => eval_command(arg_command, env, fuel)?,
+    };
+    // Single argument or a tensor of arguments
+    let mut args = Vec::new();
+    collect_args(&arg, &mut args);
+    // IO builtins go through a separate path (no stdout lock needed)
+    if matches!(name, "read_file" | "write_file" | "file_exists") {
+        return crate::builtins::apply_io_builtin(name, &args)
+            .map_err(|e| EvalError::TypeMismatch(e.to_string()));
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    crate::builtins::apply_builtin(name, &args, &mut lock)
+        .map_err(|e| EvalError::TypeMismatch(e.to_string()))
+}
+
+fn collect_args(v: &Value, out: &mut Vec<Value>) {
+    match v {
+        Value::Pair(a, b) => {
+            collect_args(a, out);
+            collect_args(b, out);
+        }
+        Value::Unit => {}
+        other => out.push(other.clone()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn eval_int_literal() {
-        let t = Term::Var("int_42".into());
+        let t = Term::Var("$int_42".into());
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Int(42));
@@ -149,7 +214,7 @@ mod tests {
 
     #[test]
     fn eval_string_literal() {
-        let t = Term::Var("str_hello".into());
+        let t = Term::Var("$str_hello".into());
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Str("hello".into()));
@@ -175,7 +240,7 @@ mod tests {
     #[test]
     fn eval_pair() {
         let t =
-            Term::Pair(Box::new(Term::Var("int_1".into())), Box::new(Term::Var("int_2".into())));
+            Term::Pair(Box::new(Term::Var("$int_1".into())), Box::new(Term::Var("$int_2".into())));
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(
@@ -194,7 +259,7 @@ mod tests {
 
     #[test]
     fn eval_fuel_exhaustion() {
-        let t = Term::Var("int_1".into());
+        let t = Term::Var("$int_1".into());
         let mut env = Env::new();
         let mut fuel = 0;
         assert!(matches!(eval(&t, &mut env, &mut fuel), Err(EvalError::Diverged)));
@@ -202,7 +267,7 @@ mod tests {
 
     #[test]
     fn eval_cut_returns_term() {
-        let c = Command::Cut(Term::Var("int_7".into()), CoTerm::Covar("k".into()));
+        let c = Command::Cut(Term::Var("$int_7".into()), CoTerm::Covar("k".into()));
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval_command(&c, &mut env, &mut fuel).unwrap(), Value::Int(7));
@@ -212,7 +277,8 @@ mod tests {
     fn eval_colam_binds() {
         // ⟨ int_5 ∥ λ̄x. ⟨ x ∥ k ⟩ ⟩ → 5
         let inner = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
-        let c = Command::Cut(Term::Var("int_5".into()), CoTerm::CoLam("x".into(), Box::new(inner)));
+        let c =
+            Command::Cut(Term::Var("$int_5".into()), CoTerm::CoLam("x".into(), Box::new(inner)));
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval_command(&c, &mut env, &mut fuel).unwrap(), Value::Int(5));

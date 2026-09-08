@@ -41,8 +41,60 @@ fn linearity_error() {
 
 #[test]
 fn no_input_file() {
-    let out = Command::new(env!("CARGO_BIN_EXE_slc"))
-        .output()
-        .expect("failed to run slc");
+    let out = Command::new(env!("CARGO_BIN_EXE_slc")).output().expect("failed to run slc");
     assert!(!out.status.success());
+}
+
+#[test]
+fn builtin_add() {
+    let dir = std::env::temp_dir().join("slc_test_add.sl");
+    std::fs::write(&dir, "fn main() -> i32 { add(1, 2) }").unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.contains("3"));
+}
+
+#[test]
+fn builtin_println() {
+    let dir = std::env::temp_dir().join("slc_test_println.sl");
+    std::fs::write(&dir, "fn main() -> i32 { println(42) }").unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.contains("42"));
+}
+
+#[test]
+fn lambda_application() {
+    let dir = std::env::temp_dir().join("slc_test_lambda.sl");
+    std::fs::write(&dir, "fn main() -> i32 { fn(x: +i32) -> i32 { x }(5) }").unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.contains("5"));
+}
+
+#[test]
+fn string_operations() {
+    let dir = std::env::temp_dir().join("slc_test_str.sl");
+    std::fs::write(&dir, "fn main() -> i32 { str_concat(int_to_str(1), int_to_str(2)) }").unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.contains("12"));
+}
+
+#[test]
+fn comparison() {
+    let dir = std::env::temp_dir().join("slc_test_cmp.sl");
+    std::fs::write(&dir, "fn main() -> i32 { eq(1, 1) }").unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert!(stdout.contains("true"));
+}
+
+#[test]
+fn division_by_zero_rejected() {
+    let dir = std::env::temp_dir().join("slc_test_div.sl");
+    std::fs::write(&dir, "fn main() -> i32 { div(1, 0) }").unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("division by zero"));
 }

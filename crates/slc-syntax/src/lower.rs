@@ -54,10 +54,10 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
 /// Lower an expression to a core term.
 pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
     match &e.kind {
-        Expr::Int(n) => Ok(Term::Var(format!("int_{n}"))),
-        Expr::Float(n) => Ok(Term::Var(format!("float_{n}"))),
-        Expr::Str(s) => Ok(Term::Var(format!("str_{s:?}"))),
-        Expr::Char(c) => Ok(Term::Var(format!("char_{c}"))),
+        Expr::Int(n) => Ok(Term::Var(format!("$int_{n}"))),
+        Expr::Float(n) => Ok(Term::Var(format!("$float_{n}"))),
+        Expr::Str(s) => Ok(Term::Var(format!("$str_{s:?}"))),
+        Expr::Char(c) => Ok(Term::Var(format!("$char_{c}"))),
         Expr::Bool(b) => Ok(Term::Var(if *b { "true" } else { "false" }.to_string())),
         Expr::Ident(s) => Ok(Term::Var(s.clone())),
 
@@ -75,9 +75,40 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::Call { callee, args } => {
-            // f(a) → ⟨ f' ∥ μ̃x. ... ⟩ (simplified: f' applied to args)
-            let _ = args;
-            lower_expr(callee)
+            // f(a, b) → nested tensor application, encoded as:
+            //   ⟨ f' ∥ μ̃args. ⟨ args ∥ λ̄p. apply body ⟩ ⟩
+            // Simplified for v0.1: wrap the call in a special term the
+            // evaluator recognizes. We encode calls as Mu-bound commands:
+            //   f'(arg1 ⊗ arg2 ⊗ ...)
+            let f = lower_expr(callee)?;
+            let mut argv = Vec::new();
+            for a in args {
+                argv.push(lower_expr(a)?);
+            }
+            // Right-fold into a tensor
+            let arg_term = match argv.len() {
+                0 => Term::Var("unit".into()),
+                1 => argv.pop().unwrap(),
+                _ => {
+                    let mut it = argv.into_iter().rev();
+                    let mut acc = it.next().unwrap();
+                    for t in it {
+                        acc = Term::Pair(Box::new(t), Box::new(acc));
+                    }
+                    acc
+                }
+            };
+            // Encode application as: μcall. ⟨ f ∥ λ̄args. ⟨ args ∥ call ⟩ ⟩
+            Ok(Term::Mu(
+                "__call".into(),
+                Box::new(Command::Cut(
+                    f,
+                    CoTerm::CoLam(
+                        "__args".into(),
+                        Box::new(Command::Cut(arg_term, CoTerm::Covar("__call".into()))),
+                    ),
+                )),
+            ))
         }
 
         Expr::Pair(items) => {
@@ -217,7 +248,7 @@ mod tests {
     #[test]
     fn lower_int() {
         let out = lower_str("42");
-        assert_eq!(out[0].1, Term::Var("int_42".into()));
+        assert_eq!(out[0].1, Term::Var("$int_42".into()));
     }
 
     #[test]
