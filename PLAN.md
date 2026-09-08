@@ -297,46 +297,27 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 **Deliverable:** nontrivial programs run correctly, including `mu`-based
 early exit and multi-continuation error handling.
 
-## Phase 5: Concurrency and channels (2 weeks)
+## Note: Concurrency deferred
 
-**Goal:** interaction-net-style concurrent semantics on a single scheduler.
+**Decision:** Concurrency is not necessary for v0.1. The symmetric core
+does not require a multiset scheduler to be useful, and the interaction-net
+backend (Phase 7) provides the right substrate for concurrent evaluation
+later. Skip this phase; revisit after the stdlib and net compiler are
+working.
 
-### Channels
+Removed scope for v0.1:
 
-- [ ] Channel endpoints as dual co-variables
-- [ ] `send` / `receive` as cuts
-- [ ] Bounded channels
-- [ ] Unbounded channels
-- [ ] `select` over multiple channels
+- ~~Channel endpoints as dual co-variables~~
+- ~~`send` / `receive` as cuts~~
+- ~~Bounded / unbounded channels~~
+- ~~`select`~~
+- ~~`Multiset<Command>` scheduler~~
+- ~~Deadlock detection~~
+- ~~Producer/consumer and pipeline programs~~
 
-### Runtime
+When revisited, the design already in `DESIGN.md` (§7) remains the target.
 
-- [ ] `Multiset<Command>` as the program state
-- [ ] Ready queue of active commands
-- [ ] Round-robin scheduler
-- [ ] Deterministic mode: fixed priority order
-- [ ] Debug mode: race detection, dangling continuation detection
-- [ ] `spawn` creates a new active command in the multiset
-- [ ] Termination: multiset empty
-
-### Deadlock detection
-
-- [ ] Wait-for graph over agents
-- [ ] Cycle detection
-- [ ] Diagnostic: which agents are in the cycle
-- [ ] Debug assertion in deterministic mode
-
-### Testing
-
-- [ ] Producer/consumer programs
-- [ ] Pipeline programs
-- [ ] Property test: scheduler-invariant results
-- [ ] Property test: same final multiset regardless of interleaving
-
-**Deliverable:** producer/consumer and pipeline programs run with
-deterministic semantics.
-
-## Phase 6: Standard library (2 weeks)
+## Phase 5: Standard library (2 weeks)
 
 **Goal:** enough surface area to write realistic programs.
 
@@ -352,10 +333,7 @@ deterministic semantics.
   - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
   - [ ] File read (success/not-found/permission)
   - [ ] Arithmetic overflow
-- [ ] Channels:
-  - [ ] `channel<T>()` creation
-  - [ ] `send` / `receive`
-  - [ ] `select`
+- [ ] Channels: DEFERRED (see Phase 5 note)
 - [ ] String formatting:
   - [ ] `println`
   - `format`
@@ -368,7 +346,7 @@ deterministic semantics.
 **Deliverable:** a CLI program that reads files, parses them, and reports
 errors via continuations.
 
-## Phase 7: Compiler to interaction nets (3–4 weeks)
+## Phase 6: Compiler to interaction nets (3–4 weeks)
 
 **Goal:** compile IR to Lafont-style interaction nets and execute them.
 
@@ -406,7 +384,7 @@ errors via continuations.
 
 ### Benchmarking
 
-- [ ] Benchmark suite: arithmetic, list operations, channels
+- [ ] Benchmark suite: arithmetic, list operations
 - [ ] Compare against tree-walking interpreter
 - [ ] Track regressions in CI
 
@@ -422,9 +400,9 @@ speedup on arithmetic-heavy programs.
 | M2 Syntax | `.sl` files parse and lower |
 | M3 Types | polarity + linearity checking |
 | M4 Interpreter | realistic programs execute |
-| M5 Concurrency | deterministic multiset semantics |
-| M6 Stdlib | file-parsing CLI runs |
-| M7 Nets | interaction-net backend works |
+| M5 Concurrency | DEFERRED |
+| M5 Stdlib | file-parsing CLI runs |
+| M6 Nets | interaction-net backend works |
 
 ## Risks and mitigations
 
@@ -434,7 +412,6 @@ speedup on arithmetic-heavy programs.
 | Interaction nets too slow for v0.1 | Ship tree-walking interpreter first; nets are a later phase |
 | Surface syntax drift before semantics is fixed | Freeze design per phase; changes via design notes |
 | Error messages become unmanageable | Every phase ships diagnostics, not just acceptance |
-| Continuation leak across `spawn` | Linearity checker rejects cross-spawn capture |
 
 ## Tooling
 
