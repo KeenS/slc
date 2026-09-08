@@ -83,6 +83,20 @@ pub enum Value {
         body: Rc<slc_core::term::Term>,
         env: Env,
     },
+    /// A command whose output ports have been connected first.
+    Service {
+        command: Rc<slc_core::term::Term>,
+        continuations: Vec<Value>,
+        env: Env,
+        used: std::cell::Cell<bool>,
+    },
+    /// A function whose input ports have been connected first.
+    Job {
+        closure: Rc<Value>,
+        values: Vec<Value>,
+        env: Env,
+        used: std::cell::Cell<bool>,
+    },
     Continuation(Cont),
     Pair(Box<Value>, Box<Value>),
     Inl(Box<Value>),
@@ -111,6 +125,14 @@ impl PartialEq for Value {
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
+            (
+                Value::Service { command: a, continuations: x, .. },
+                Value::Service { command: b, continuations: y, .. },
+            ) => a == b && x == y,
+            (
+                Value::Job { closure: a, values: x, .. },
+                Value::Job { closure: b, values: y, .. },
+            ) => a == b && x == y,
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
             }
@@ -144,6 +166,8 @@ impl Value {
                 Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
             Value::Closure { .. }
+            | Value::Service { .. }
+            | Value::Job { .. }
             | Value::Continuation(_)
             | Value::Builtin(_)
             | Value::PartialBuiltin(..) => Type::Bottom,
@@ -162,6 +186,8 @@ impl Value {
             Value::Inl(a) => format!("inl({})", a.display()),
             Value::Inr(a) => format!("inr({})", a.display()),
             Value::Closure { .. } => "<closure>".to_string(),
+            Value::Service { .. } => "<service>".to_string(),
+            Value::Job { .. } => "<job>".to_string(),
             Value::Continuation(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
@@ -190,6 +216,8 @@ impl Value {
 /// Install the standard library builtins into an environment.
 pub fn install_stdlib(env: &mut Env) {
     let builtins = [
+        "__service",
+        "__job",
         "println",
         "print",
         "format",

@@ -279,8 +279,20 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             ))
         }
 
-        Expr::Service { .. } => Err(LowerError::Unsupported("`.to` service application".into())),
-        Expr::Job { .. } => Err(LowerError::Unsupported("`.partial` job application".into())),
+        Expr::Service { agent, continuations } => {
+            let mut args = vec![lower_expr(agent)?];
+            for k in continuations {
+                args.push(lower_expr(k)?);
+            }
+            Ok(call_curried(Term::Var("__service".into()), args))
+        }
+        Expr::Job { agent, values } => {
+            let mut args = vec![lower_expr(agent)?];
+            for v in values {
+                args.push(lower_expr(v)?);
+            }
+            Ok(call_curried(Term::Var("__job".into()), args))
+        }
 
         Expr::Block(exprs) => {
             // A block evaluates expressions in order. A trailing `let`
@@ -370,6 +382,23 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
         }
     }
     Ok(out)
+}
+
+fn call_curried(callee: Term, args: Vec<Term>) -> Term {
+    let mut result = callee;
+    for arg in args {
+        result = Term::Mu(
+            "__call".into(),
+            Box::new(Command::Cut(
+                result,
+                CoTerm::CoLam(
+                    "__f".into(),
+                    Box::new(Command::Cut(arg, CoTerm::Covar("__call".into()))),
+                ),
+            )),
+        );
+    }
+    result
 }
 
 #[cfg(test)]

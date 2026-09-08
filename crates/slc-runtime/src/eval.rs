@@ -333,6 +333,9 @@ fn apply_builtin_call(
 
 /// Dispatch a builtin with a complete argument list.
 fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<Value, EvalError> {
+    if name == "__service" || name == "__job" {
+        return make_partial_agent(name, args);
+    }
     if name == "__if_dispatch" {
         let mut it = args.into_iter();
         let cond = it.next().unwrap_or(Value::Bool(false));
@@ -364,6 +367,33 @@ fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<V
         .map_err(|e| EvalError::TypeMismatch(e.to_string()))
 }
 
+fn make_partial_agent(name: &str, args: Vec<Value>) -> Result<Value, EvalError> {
+    let mut it = args.into_iter();
+    let agent = it
+        .next()
+        .ok_or_else(|| EvalError::TypeMismatch(format!("{name} requires an agent argument")))?;
+    let rest = it.collect::<Vec<_>>();
+    let env = Env::new();
+    if name == "__service" {
+        Ok(Value::Service {
+            command: Rc::new(match agent {
+                Value::Closure { body, .. } => (*body).clone(),
+                other => Term::Var(format!("__partial_agent_{}", other.display())),
+            }),
+            continuations: rest,
+            env,
+            used: std::cell::Cell::new(false),
+        })
+    } else {
+        Ok(Value::Job {
+            closure: Rc::new(agent),
+            values: rest,
+            env,
+            used: std::cell::Cell::new(false),
+        })
+    }
+}
+
 fn collect_args(v: &Value, out: &mut Vec<Value>) {
     match v {
         Value::Pair(a, b) => {
@@ -393,7 +423,8 @@ fn builtin_arity(name: &str) -> usize {
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
         "find_char" | "substring" => 3,
-        "format" => 0, // variadic: apply immediately
+        "__service" | "__job" => 0, // variadic: agent + ports
+        "format" => 0,              // variadic: apply immediately
         _ => 0,
     }
 }

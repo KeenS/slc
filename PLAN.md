@@ -270,11 +270,11 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Partial application
 
-- [ ] `step.to(k, h)` returns a `Service` closure
-- [ ] `f.partial(a)` returns a `Job` thunk
-- [ ] `Service` invocation: wire ports, evaluate
-- [ ] `Job.run()`: connect current continuation, evaluate
-- [ ] Linear use enforcement at runtime (debug assertion)
+- [x] `step.to(k, h)` returns a `Service` closure
+- [x] `f.partial(a)` returns a `Job` thunk
+- [x] `Service` invocation: wire ports, evaluate
+- [x] `Job.run()`: connect current continuation, evaluate
+- [x] Linear use enforcement at runtime (debug assertion)
 
 ### Error handling
 
