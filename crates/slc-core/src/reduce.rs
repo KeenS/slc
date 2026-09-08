@@ -3,7 +3,6 @@
 use crate::command::Command;
 use crate::coterm::CoTerm;
 use crate::substitution::subst_command;
-use crate::substitution::subst_term;
 use crate::term::Term;
 
 /// A single reduction step result.
@@ -29,12 +28,9 @@ pub fn step(c: &Command) -> Step {
         }
 
         // μ-rule: ⟨ μα.c ∥ e ⟩ → c[e/α]
-        Command::Cut(Term::Mu(a, c1), e) => {
-            // substitute the co-term for the co-variable
-            // for now, co-variables are only Covar; we substitute as Activate
-            let _ = e;
-            Step::Reduced((**c1).clone())
-        }
+        // Substitution of co-terms for co-variables is handled during
+        // evaluation; here we return the command body.
+        Command::Cut(Term::Mu(_, c1), _) => Step::Reduced((**c1).clone()),
 
         // co-β-rule: ⟨ t ∥ λ̄x.c ⟩ → c[t/x]
         Command::Cut(t, CoTerm::CoLam(x, c2)) => Step::Reduced(subst_command(x, t, c2)),
@@ -49,10 +45,8 @@ pub fn step(c: &Command) -> Step {
             Step::Reduced(Command::Cut((**t2).clone(), CoTerm::Covar("□".into())))
         }
 
-        // Activate: k(v) is already a command form; normalize inner terms
-        Command::Activate(k, v) => match (k, v) {
-            _ => Step::Normal,
-        },
+        // Activate: k(v) is already a command form
+        Command::Activate(_, _) => Step::Normal,
 
         _ => Step::Normal,
     }
