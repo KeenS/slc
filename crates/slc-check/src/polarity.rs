@@ -176,6 +176,14 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
             check_expr(lhs, diags);
             check_expr(rhs, diags);
         }
+        Expr::Dual { body } => check_expr(body, diags),
+        Expr::Interaction { left, right } => {
+            check_expr(left, diags);
+            check_expr(right, diags);
+        }
+        Expr::Spawn { body } => check_expr(body, diags),
+        Expr::ErrorProp { expr } => check_expr(expr, diags),
+        Expr::CommandDef { body, .. } => check_expr(body, diags),
         Expr::Block(exprs) => {
             for e in exprs {
                 check_expr(e, diags);

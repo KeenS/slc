@@ -84,6 +84,14 @@ fn check_expr(
             check_expr(lhs, enums, diags);
             check_expr(rhs, enums, diags);
         }
+        Expr::Dual { body } | Expr::Spawn { body } | Expr::ErrorProp { expr: body } => {
+            check_expr(body, enums, diags);
+        }
+        Expr::Interaction { left, right } => {
+            check_expr(left, enums, diags);
+            check_expr(right, enums, diags);
+        }
+        Expr::CommandDef { body, .. } => check_expr(body, enums, diags),
         Expr::Block(exprs) => {
             for ex in exprs {
                 check_expr(ex, enums, diags);
