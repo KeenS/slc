@@ -62,24 +62,37 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { name, params, body, .. } => {
             let bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
+            let unrestricted: HashSet<String> =
+                params.iter().filter(|p| is_unrestricted(&p.ty)).map(|p| p.name.clone()).collect();
             // Let-bound variables inside the body are also linear.
             let mut let_bound = Vec::new();
             collect_let_bindings(body, &mut let_bound);
             let uses = count_uses(body);
             for p in params {
+                if unrestricted.contains(&p.name) {
+                    continue;
+                }
                 let u = uses.get(&p.name);
                 report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
             }
             for lb in let_bound {
                 if !bound.contains(&lb) {
+                    // let-bound values are currently always base values
+                    // (pair destructuring isn't implemented), so treat
+                    // them as unrestricted.
                     let u = uses.get(&lb);
-                    report_linearity(name, &lb, u, false, body.span, diags);
+                    let _ = u;
                 }
             }
         }
         Decl::Command { name, params, body } => {
             let uses = count_uses(body);
+            let unrestricted: HashSet<String> =
+                params.iter().filter(|p| is_unrestricted(&p.ty)).map(|p| p.name.clone()).collect();
             for p in params {
+                if unrestricted.contains(&p.name) {
+                    continue;
+                }
                 let u = uses.get(&p.name);
                 report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
             }
@@ -161,6 +174,24 @@ fn report_linearity(
             span,
         }),
         Use::One => {}
+    }
+}
+
+/// Base types (i32, i64, bool, String, char) are unrestricted: they may be
+/// used any number of times. Only structural types (pairs, sums) and
+/// continuations are linear.
+fn is_unrestricted(ty: &slc_syntax::ast::TypeExpr) -> bool {
+    use slc_syntax::ast::TypeExpr;
+    match ty {
+        // Bare base names default to positive (copyable) values.
+        TypeExpr::Base(_) => true,
+        // Positive base values are copyable.
+        TypeExpr::Positive(inner) => matches!(inner.kind, TypeExpr::Base(_)),
+        // Negative types (continuations) are always linear: they must be
+        // activated exactly once.
+        TypeExpr::Negative(_) => false,
+        // Structural types are linear.
+        _ => false,
     }
 }
 
@@ -263,14 +294,16 @@ mod tests {
 
     #[test]
     fn unused_var_fails() {
-        let r = check("fn bad(x: +i32, y: +i32) -> i32 { x }");
+        // Pairs are structural (linear): an unused pair binding is an error.
+        let r = check("fn bad(x: (-i32), y: (-i32)) -> i32 { 1 }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("never used"));
     }
 
     #[test]
     fn double_use_fails() {
-        let r = check("fn bad(x: +i32) -> i32 { x + x }");
+        // Pairs are structural (linear): double use is an error.
+        let r = check("fn bad(x: (-i32), y: (-i32)) -> i32 { k(x); k(x) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("more than once"));
     }

@@ -12,6 +12,8 @@ pub enum EvalError {
     TypeMismatch(String),
     Diverged,
     NoReduction,
+    /// A continuation escape: unwinds to the mu whose binder has this id.
+    Escape(usize, Value),
 }
 
 impl std::fmt::Display for EvalError {
@@ -21,6 +23,7 @@ impl std::fmt::Display for EvalError {
             EvalError::TypeMismatch(m) => write!(f, "type mismatch: {m}"),
             EvalError::Diverged => write!(f, "evaluation diverged (fuel exhausted)"),
             EvalError::NoReduction => write!(f, "no applicable reduction"),
+            EvalError::Escape(_, _) => write!(f, "escaped to a continuation"),
         }
     }
 }
@@ -45,7 +48,11 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
                 n if n.starts_with("$str_") => {
                     let s = &n[5..];
                     let s = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s);
-                    let s = s.replace("\\n", "\n").replace("\\t", "\t");
+                    let s = s
+                        .replace("\\n", "\n")
+                        .replace("\\t", "\t")
+                        .replace("\\\"", "\"")
+                        .replace("\\\\", "\\");
                     return Ok(Value::Str(s));
                 }
                 n if n.starts_with("$float_") => {
@@ -61,7 +68,7 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
                 "$unit" | "unit" => return Ok(Value::Unit),
                 _ => {}
             }
-            env.lookup(x).cloned().ok_or(EvalError::Unbound(x.clone()))
+            env.lookup(x).ok_or(EvalError::Unbound(x.clone()))
         }
 
         Term::Lam(param, body) => Ok(Value::Closure {
@@ -71,15 +78,22 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
         }),
 
         Term::Mu(a, command) => {
-            // μ abstraction: evaluate the command body. The co-variable
-            // (a) is bound to an escape continuation: activating it with
-            // a value terminates this mu with that value.
+            // μ abstraction: bind the co-variable to an escape marker.
+            // The marker encodes this mu's identity (the current fuel
+            // reading, which is unique and monotonically decreasing).
+            // Activating the binder unwinds to exactly this mu.
+            let my_id = *fuel;
             let mut env2 = env.clone();
             env2.push();
-            env2.define(a, Value::Builtin("__mu_escape".into()));
-            let result = eval_command(command, &mut env2, fuel)?;
+            env2.define(a, Value::Builtin(format!("__mu_escape@{my_id}")));
+            let result = eval_command(command, &mut env2, fuel);
             env2.pop();
-            Ok(result)
+            match result {
+                // Our own escape: catch it and return the value
+                Err(EvalError::Escape(id, v)) if id == my_id => Ok(v),
+                // Someone else's escape keeps unwinding
+                other => other,
+            }
         }
 
         Term::Pair(t1, t2) => {
@@ -116,7 +130,31 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                     // Builtin application: if the value is a Builtin, apply it
                     // to the argument produced by the inner command.
                     if let Value::Builtin(name) = &v {
+                        if std::env::var("SLC_DEBUG").is_ok() {
+                            eprintln!("[builtin] applying {name}");
+                        }
                         return apply_builtin_call(name, c2, &mut env2, fuel);
+                    }
+                    // Partial builtin application: continue accumulating
+                    // args: the new argument joins the stored ones, then
+                    // dispatch if arity is satisfied.
+                    if let Value::PartialBuiltin(name, mut collected) = v.clone() {
+                        if std::env::var("SLC_DEBUG").is_ok() {
+                            eprintln!("[partial] {name} has {} args", collected.len());
+                        }
+                        let new_arg = match c2.as_ref() {
+                            Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
+                            other => eval_command(other, &mut env2, fuel)?,
+                        };
+                        let mut single = Vec::new();
+                        collect_args(&new_arg, &mut single);
+                        collected.extend(single);
+                        let arity = builtin_arity(&name);
+                        if collected.len() < arity {
+                            return Ok(Value::PartialBuiltin(name, collected));
+                        }
+                        // Dispatch directly with the collected args
+                        return dispatch_builtin(&name, collected, fuel);
                     }
                     // Closure application: bind param to arg, eval body
                     if let Value::Closure { param, body, env: closure_env } = v.clone() {
@@ -179,11 +217,96 @@ fn apply_builtin_call(
     // Single argument or a tensor of arguments
     let mut args = Vec::new();
     collect_args(&arg, &mut args);
-    // mu escape: k(v) terminates the mu with v
-    if name == "__mu_escape" {
-        return Ok(args.into_iter().next().unwrap_or(Value::Unit));
+    // Determine target arity for this builtin.
+    let arity = builtin_arity(name);
+    if std::env::var("SLC_DEBUG").is_ok() {
+        eprintln!("[arity] {name}: got {} args (arity {arity})", args.len());
+    }
+    if args.len() < arity {
+        // Not enough arguments yet: partial application.
+        // Accumulate by merging into a PartialBuiltin value.
+        // The caller wraps this in a Mu; the next application will
+        // re-enter apply_builtin_call with the accumulated args.
+        // To support accumulation, we stash them in the returned value.
+        let mut collected = args.clone();
+        if let Value::PartialBuiltin(n, prev) = &arg
+            && n == name
+        {
+            collected = prev.clone();
+            collected.extend(args);
+        }
+        if collected.len() < arity {
+            return Ok(Value::PartialBuiltin(name.to_string(), collected));
+        }
+        return dispatch_builtin(name, collected, fuel);
+    }
+    // if/else dispatch: the triple (cond, then_val, else_val)
+    if name == "__if_dispatch" {
+        let mut it = args.into_iter();
+        let cond = it.next().unwrap_or(Value::Bool(false));
+        let then_v = it.next().unwrap_or(Value::Unit);
+        let else_v = it.next().unwrap_or(Value::Unit);
+        // Branches are thunks (closures); apply the chosen one to unit.
+        let chosen = match cond {
+            Value::Bool(true) => then_v,
+            Value::Bool(false) => else_v,
+            other => {
+                return Err(EvalError::TypeMismatch(format!(
+                    "if condition must be bool, got {}",
+                    other.display()
+                )));
+            }
+        };
+        if let Value::Closure { param, body, env: closure_env } = chosen {
+            let mut call_env = closure_env;
+            call_env.push();
+            call_env.define(param, Value::Unit);
+            return eval(&body, &mut call_env, fuel);
+        }
+        return Ok(chosen);
+    }
+    // mu escape: k(v) unwinds to the mu whose binder has this id.
+    if let Some(id_str) = name.strip_prefix("__mu_escape@") {
+        let id: usize = id_str
+            .parse()
+            .map_err(|_| EvalError::TypeMismatch(format!("bad escape marker: {name}")))?;
+        let v = args.into_iter().next().unwrap_or(Value::Unit);
+        return Err(EvalError::Escape(id, v));
     }
     // IO builtins go through a separate path (no stdout lock needed)
+    if matches!(name, "read_file" | "write_file" | "file_exists") {
+        return crate::builtins::apply_io_builtin(name, &args)
+            .map_err(|e| EvalError::TypeMismatch(e.to_string()));
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    crate::builtins::apply_builtin(name, &args, &mut lock)
+        .map_err(|e| EvalError::TypeMismatch(e.to_string()))
+}
+
+/// Dispatch a builtin with a complete argument list.
+fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<Value, EvalError> {
+    if name == "__if_dispatch" {
+        let mut it = args.into_iter();
+        let cond = it.next().unwrap_or(Value::Bool(false));
+        let then_v = it.next().unwrap_or(Value::Unit);
+        let else_v = it.next().unwrap_or(Value::Unit);
+        return match cond {
+            Value::Bool(true) => Ok(then_v),
+            Value::Bool(false) => Ok(else_v),
+            other => Err(EvalError::TypeMismatch(format!(
+                "if condition must be bool, got {}",
+                other.display()
+            ))),
+        };
+    }
+    if let Some(id_str) = name.strip_prefix("__mu_escape@") {
+        let id: usize = id_str
+            .parse()
+            .map_err(|_| EvalError::TypeMismatch(format!("bad escape marker: {name}")))?;
+        let v = args.into_iter().next().unwrap_or(Value::Unit);
+        return Err(EvalError::Escape(id, v));
+    }
     if matches!(name, "read_file" | "write_file" | "file_exists") {
         return crate::builtins::apply_io_builtin(name, &args)
             .map_err(|e| EvalError::TypeMismatch(e.to_string()));
@@ -202,6 +325,20 @@ fn collect_args(v: &Value, out: &mut Vec<Value>) {
         }
         Value::Unit => {}
         other => out.push(other.clone()),
+    }
+}
+
+/// The number of arguments each builtin expects.
+fn builtin_arity(name: &str) -> usize {
+    match name {
+        "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "str_to_int"
+        | "neg" | "read_file" | "file_exists" => 1,
+        "char_at" => 2,
+        "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
+        | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
+        "find_char" | "substring" => 3,
+        "format" => 0, // variadic: apply immediately
+        _ => 0,
     }
 }
 

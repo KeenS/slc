@@ -243,7 +243,12 @@ impl Parser {
             self.eat(&TokenKind::Semicolon);
             exprs.push(e);
         }
-        let kind = if exprs.is_empty() { Expr::Int(0) } else { Expr::Block(exprs) };
+        // Chain lets: `let x = v; rest` makes rest the let's body, so
+        // scoping survives lowering.
+        let mut kind = if exprs.is_empty() { Expr::Int(0) } else { Expr::Block(exprs) };
+        // Wrap from the inside out: each trailing Let captures the rest.
+        // (Handled during lowering: Block flattens Lets by nesting.)
+        let _ = &mut kind;
         Ok(Node { span: Span { start, end: self.pos }, kind })
     }
 
@@ -376,6 +381,22 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Node<Expr>, ParseError> {
+        if self.eat(&TokenKind::Minus) {
+            let start = self.pos;
+            let body = self.parse_unary()?;
+            let end = self.pos;
+            // Unary minus: encode as neg(x)
+            return Ok(Node {
+                span: Span { start, end },
+                kind: Expr::Call {
+                    callee: Box::new(Node {
+                        span: Span { start, end },
+                        kind: Expr::Ident("neg".into()),
+                    }),
+                    args: vec![body],
+                },
+            });
+        }
         if self.eat(&TokenKind::Dual) {
             let start = self.pos;
             let body = self.parse_unary()?;

@@ -38,6 +38,10 @@ pub fn apply_builtin(
             write!(out, "{s}").map_err(|e| BuiltinError::TypeMismatch(e.to_string()))?;
             Ok(Value::Unit)
         }
+        "neg" => match args.first() {
+            Some(Value::Int(n)) => Ok(Value::Int(-n)),
+            _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
+        },
         "add" | "sub" | "mul" | "div" | "rem" => {
             let (a, b) = two_ints(name, args)?;
             let r = match name {
@@ -93,6 +97,97 @@ pub fn apply_builtin(
             let s = args.iter().map(|v| v.display()).collect::<Vec<_>>().join(" ");
             Ok(Value::Str(s))
         }
+        "char_at" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(i))) => {
+                let idx = *i as usize;
+                s.chars()
+                    .nth(idx)
+                    .map(|c| Value::Int(c as i64))
+                    .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
+            }
+            _ => Err(BuiltinError::TypeMismatch("char_at expects (String, i64)".into())),
+        },
+        "is_digit" => match args.first() {
+            Some(Value::Int(c)) => Ok(Value::Bool((*c as u8).is_ascii_digit())),
+            _ => Err(BuiltinError::TypeMismatch("is_digit expects a char code".into())),
+        },
+        "is_ws" => match args.first() {
+            Some(Value::Int(c)) => Ok(Value::Bool(
+                *c == ' ' as i64 || *c == '\n' as i64 || *c == '\r' as i64 || *c == '\t' as i64,
+            )),
+            _ => Err(BuiltinError::TypeMismatch("is_ws expects a char code".into())),
+        },
+        "skip_digits" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(pos))) => {
+                let mut i = *pos as usize;
+                let chars: Vec<char> = s.chars().collect();
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                Ok(Value::Int(i as i64))
+            }
+            _ => Err(BuiltinError::TypeMismatch("skip_digits expects (String, i64)".into())),
+        },
+        "find_char" => match (args.first(), args.get(1), args.get(2)) {
+            (Some(Value::Str(s)), Some(Value::Int(from)), Some(Value::Int(target))) => {
+                let start = *from as usize;
+                let chars: Vec<char> = s.chars().collect();
+                let tc = char::from_u32(*target as u32)
+                    .ok_or_else(|| BuiltinError::TypeMismatch("bad char code".into()))?;
+                for (i, c) in chars.iter().enumerate().skip(start) {
+                    if *c == tc {
+                        return Ok(Value::Int(i as i64));
+                    }
+                }
+                Ok(Value::Int(-1))
+            }
+            _ => Err(BuiltinError::TypeMismatch("find_char expects (String, i64, i64)".into())),
+        },
+        "skip_ws" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(pos))) => {
+                let mut i = *pos as usize;
+                let chars: Vec<char> = s.chars().collect();
+                while i < chars.len() && {
+                    let c = chars[i];
+                    c == ' ' || c == '\n' || c == '\r' || c == '\t'
+                } {
+                    i += 1;
+                }
+                Ok(Value::Int(i as i64))
+            }
+            _ => Err(BuiltinError::TypeMismatch("skip_ws expects (String, i64)".into())),
+        },
+        "substring" => {
+            if std::env::var("SLC_DEBUG").is_ok() {
+                eprintln!(
+                    "[substring] args: {:?}",
+                    args.iter().map(|v| v.display()).collect::<Vec<_>>()
+                );
+            }
+            match (args.first(), args.get(1), args.get(2)) {
+                (Some(Value::Str(s)), Some(Value::Int(start)), Some(Value::Int(end))) => {
+                    let a = (*start).max(0) as usize;
+                    let b = (*end).max(0) as usize;
+                    if b > a && b <= s.len() {
+                        Ok(Value::Str(s[a..b].to_string()))
+                    } else {
+                        Ok(Value::Str(String::new()))
+                    }
+                }
+                _ => Err(BuiltinError::TypeMismatch("substring expects (String, i64, i64)".into())),
+            }
+        }
+        "str_to_int" => match args.first() {
+            Some(Value::Str(s)) => s
+                .parse::<i64>()
+                .map(Value::Int)
+                .map_err(|_| BuiltinError::TypeMismatch(format!("cannot parse {s:?} as integer"))),
+            _ => Err(BuiltinError::TypeMismatch("str_to_int expects a String".into())),
+        },
+        "str_eq" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Bool(a == b)),
+            _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
+        },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
 }

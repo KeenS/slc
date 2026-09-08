@@ -1,18 +1,21 @@
 //! Runtime values for the Slant interpreter.
 
 use slc_core::types::Type;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 /// A persistent environment: chain of frames.
 #[derive(Debug, Clone)]
 pub struct Env {
+    /// Shared global definitions, visible in every frame.
+    globals: Rc<RefCell<HashMap<String, Value>>>,
     frames: Vec<HashMap<String, Value>>,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Self { frames: vec![] }
+        Self { globals: Rc::new(RefCell::new(HashMap::new())), frames: vec![] }
     }
 
     pub fn push(&mut self) {
@@ -26,16 +29,24 @@ impl Env {
     pub fn define(&mut self, name: impl Into<String>, v: Value) {
         if let Some(frame) = self.frames.last_mut() {
             frame.insert(name.into(), v);
+        } else {
+            self.globals.borrow_mut().insert(name.into(), v);
         }
     }
 
-    pub fn lookup(&self, name: &str) -> Option<&Value> {
+    /// Define a global (top-level) binding, visible from every env
+    /// derived from this one via clone.
+    pub fn define_global(&mut self, name: impl Into<String>, v: Value) {
+        self.globals.borrow_mut().insert(name.into(), v);
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<Value> {
         for frame in self.frames.iter().rev() {
             if let Some(v) = frame.get(name) {
-                return Some(v);
+                return Some(v.clone());
             }
         }
-        None
+        self.globals.borrow().get(name).cloned()
     }
 }
 
@@ -67,12 +78,18 @@ pub enum Value {
     Bool(bool),
     Char(char),
     Unit,
-    Closure { param: String, body: Rc<slc_core::term::Term>, env: Env },
+    Closure {
+        param: String,
+        body: Rc<slc_core::term::Term>,
+        env: Env,
+    },
     Continuation(Cont),
     Pair(Box<Value>, Box<Value>),
     Inl(Box<Value>),
     Inr(Box<Value>),
     Builtin(String),
+    /// A builtin that has already received some arguments.
+    PartialBuiltin(String, Vec<Value>),
     Never,
 }
 
@@ -88,6 +105,9 @@ impl PartialEq for Value {
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
+            (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
+                a == b && args1 == args2
+            }
             _ => false,
         }
     }
@@ -105,7 +125,10 @@ impl Value {
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
             Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
-            Value::Closure { .. } | Value::Continuation(_) | Value::Builtin(_) => Type::Bottom,
+            Value::Closure { .. }
+            | Value::Continuation(_)
+            | Value::Builtin(_)
+            | Value::PartialBuiltin(..) => Type::Bottom,
         }
     }
 
@@ -123,6 +146,9 @@ impl Value {
             Value::Closure { .. } => "<closure>".to_string(),
             Value::Continuation(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
+            Value::PartialBuiltin(s, args) => {
+                format!("<partial {s} with {} args>", args.len())
+            }
             Value::Never => "<never>".to_string(),
         }
     }
@@ -134,6 +160,7 @@ pub fn install_stdlib(env: &mut Env) {
         "println",
         "print",
         "format",
+        "neg",
         "add",
         "sub",
         "mul",
@@ -151,6 +178,16 @@ pub fn install_stdlib(env: &mut Env) {
         "read_file",
         "write_file",
         "file_exists",
+        "__if_dispatch",
+        "char_at",
+        "is_digit",
+        "is_ws",
+        "skip_digits",
+        "find_char",
+        "skip_ws",
+        "substring",
+        "str_to_int",
+        "str_eq",
     ];
     env.push();
     for b in builtins {

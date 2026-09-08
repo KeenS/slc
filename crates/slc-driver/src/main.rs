@@ -53,6 +53,17 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
 
     let mut env = slc_runtime::value::Env::new();
     slc_runtime::value::install_stdlib(&mut env);
+    // Functions are installed into the shared globals frame, so closures
+    // resolve each other at call time regardless of definition order.
+    for (name, term) in &defs {
+        if name == "main" {
+            continue;
+        }
+        let mut fuel = 1_000_000;
+        let v =
+            slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;
+        env.define_global(name, v);
+    }
     let mut fuel = 1_000_000;
     let value =
         slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;

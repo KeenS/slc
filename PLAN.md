@@ -119,7 +119,7 @@ enum Type {
 - [x] μ-rule: `⟨ μα.c ∥ e ⟩ → c[e/α]`
 - [x] co-β-rule: `⟨ t ∥ λ̄x.c ⟩ → c[t/x]`
 - [x] Tensor projection: `⟨ (t1, t2) ∥ fst ⟩ → t1`, similarly `snd`
-- [ ] Par elimination rules
+- [x] Par elimination rules
 - [x] Small-step semantics with reduction context
 - [x] Normal-form detection
 - [x] Fuel-based divergence detection
@@ -180,14 +180,14 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] Lowering context: variables, continuations, types
 - [x] `fn(x: +A) -> B { E }` → `λx. μα. E`
 - [x] `mu(k: -A) { E }` → `μα. E`
-- [ ] `mu(x: +A) -> B { E }` → `λ̄x. ⟨ E ∥ α ⟩`
+- [x] `mu(x: +A) -> B { E }` → `λ̄x. ⟨ E ∥ α ⟩`
 - [x] `command f(x: +A, to k: -B) { E }` → `κx. μα. E`
-- [ ] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
-- [ ] `k(v)` → `Activate(k, v)`
+- [x] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
+- [x] `k(v)` → `Activate(k, v)`
 - [ ] `match` → sum elimination via μ̃
 - [ ] `?` → continuation split: `e(to current_ok, current_err)`
-- [ ] `let` → let-binding via μ̃ over value
-- [ ] `if/else` → sum elimination
+- [x] `let` → let-binding via μ̃ over value
+- [x] `if/else` → sum elimination
 - [ ] `spawn` → new command in multiset (deferred to runtime)
 - [ ] `dual(e)` → polarity flip on terms/co-terms
 - [ ] `@` interaction → cut
@@ -206,7 +206,7 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `command` value ports `+`
 - [x] `command` continuation ports `-`
 - [x] `dual` flips polarity
-- [ ] `->` arrow desugaring checks source/target polarity
+- [x] `->` arrow desugaring checks source/target polarity
 - [x] Diagnostic: expected `+`, found `-` with span
 
 ### Linearity checking
@@ -218,7 +218,7 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [ ] Partial application agents are linear
 - [x] Diagnostic: used 0 times / used 2 times, with span
 - [ ] Diagnostic: dangling continuation on some path
-- [ ] Exception: types annotated `Drop` may be discarded
+- [x] Exception: types annotated `Drop` may be discarded
 
 ### Match exhaustiveness
 
@@ -251,18 +251,18 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Evaluation
 
-- [ ] Cut dispatch:
+- [x] Cut dispatch:
   - [x] `⟨ λ ∥ μ̃ ⟩` β-rule
   - [x] `⟨ μ ∥ e ⟩` μ-rule
   - [x] `⟨ t ∥ λ̄ ⟩` co-β-rule
 - [x] `command` bodies evaluate to `Never`
 - [x] Activation transfers control
 - [x] `let` bindings
-- [ ] `if/else` via sum elimination
+- [x] `if/else` via sum elimination
 - [ ] `match` via sum elimination
-- [ ] Binary operators on primitives
-- [ ] Comparison operators
-- [ ] String operations
+- [x] Binary operators on primitives
+- [x] Comparison operators
+- [x] String operations
 - [x] Fuel counter for divergence detection (debug)
 
 ### Partial application
@@ -277,7 +277,7 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 - [x] `?` lowers to continuation wiring
 - [x] No `Result` allocation in the happy path
-- [ ] Multi-continuation operations dispatch directly
+- [x] Multi-continuation operations dispatch directly
 
 ### Concurrency primitives
 
@@ -289,10 +289,10 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 - [ ] `i32`/`i64`/`u32`/`u64` arithmetic
 - [ ] Overflow checking (debug)
-- [ ] `bool` operations
-- [ ] `String` construction and formatting
-- [ ] `println`
-- [ ] Basic comparison
+- [x] `bool` operations
+- [x] `String` construction and formatting
+- [x] `println`
+- [x] Basic comparison
 
 **Deliverable:** nontrivial programs run correctly, including `mu`-based
 early exit and multi-continuation error handling.
@@ -322,24 +322,24 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
 **Goal:** enough surface area to write realistic programs.
 
 - [ ] Prelude:
-  - [ ] `Option<T>`
-  - [ ] `Result<T, E>` (boundary type only)
+  - [x] `Option<T>`
+  - [x] `Result<T, E>` (boundary type only)
   - [ ] `List<T>`
   - [ ] `Map<K, V>`
   - [ ] `Set<T>`
-  - [ ] `String`
+  - [x] `String`
   - [ ] `Command<I, O>` type former
-- [ ] Multi-continuation error handling:
+- [x] Multi-continuation error handling:
   - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
-  - [ ] File read (success/not-found/permission)
+  - [x] File read (success/not-found/permission)
   - [ ] Arithmetic overflow
 - [ ] Channels: DEFERRED (see Phase 5 note)
 - [x] String formatting:
   - [x] `println`
   - `format`
-- [ ] File I/O:
+- [x] File I/O:
   - [x] Read file
-  - [ ] Write file
+  - [x] Write file
   - [ ] Path manipulation
 - [ ] FFI story decision (deferred; likely no FFI in v0.1)
 

@@ -77,40 +77,24 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::Call { callee, args } => {
-            // f(a, b) → nested tensor application, encoded as:
-            //   ⟨ f' ∥ μ̃args. ⟨ args ∥ λ̄p. apply body ⟩ ⟩
-            // Simplified for v0.1: wrap the call in a special term the
-            // evaluator recognizes. We encode calls as Mu-bound commands:
-            //   f'(arg1 ⊗ arg2 ⊗ ...)
-            let f = lower_expr(callee)?;
-            let mut argv = Vec::new();
+            // f(a, b) lowers to nested single-argument applications:
+            //   f(a) applied to (b)
+            // Multi-arg functions are curried: fn f(x, y) → λx. λy. body.
+            let mut result = lower_expr(callee)?;
             for a in args {
-                argv.push(lower_expr(a)?);
+                let arg = lower_expr(a)?;
+                result = Term::Mu(
+                    "__call".into(),
+                    Box::new(Command::Cut(
+                        result,
+                        CoTerm::CoLam(
+                            "__f".into(),
+                            Box::new(Command::Cut(arg, CoTerm::Covar("__call".into()))),
+                        ),
+                    )),
+                );
             }
-            // Right-fold into a tensor
-            let arg_term = match argv.len() {
-                0 => Term::Var("unit".into()),
-                1 => argv.pop().unwrap(),
-                _ => {
-                    let mut it = argv.into_iter().rev();
-                    let mut acc = it.next().unwrap();
-                    for t in it {
-                        acc = Term::Pair(Box::new(t), Box::new(acc));
-                    }
-                    acc
-                }
-            };
-            // Encode application as: μcall. ⟨ f ∥ λ̄args. ⟨ args ∥ call ⟩ ⟩
-            Ok(Term::Mu(
-                "__call".into(),
-                Box::new(Command::Cut(
-                    f,
-                    CoTerm::CoLam(
-                        "__args".into(),
-                        Box::new(Command::Cut(arg_term, CoTerm::Covar("__call".into()))),
-                    ),
-                )),
-            ))
+            Ok(result)
         }
 
         Expr::Pair(items) => {
@@ -155,17 +139,44 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::If { cond, then, otherwise } => {
-            // if c { t } else { e } → match c { true => t', false => e' }
+            // Branches are wrapped in λ so they are only evaluated when
+            // chosen — if must be lazy, or mu escapes in the untaken branch
+            // would fire eagerly.
             let c = lower_expr(cond)?;
-            let t = lower_expr(then)?;
+            let t = Term::Lam("__unused".into(), Box::new(lower_expr(then)?));
             let e = otherwise
                 .as_ref()
-                .map(|e| lower_expr(e))
+                .map(|e| lower_expr(e).map(|b| Term::Lam("__unused".into(), Box::new(b))))
                 .transpose()?
-                .unwrap_or_else(|| Term::Var("unit".into()));
-            // Encode as sum: inl(t) if true, inr(e) if false
-            let _ = c;
-            Ok(Term::Inl(Box::new(t.clone())).join_or(Term::Inr(Box::new(e))))
+                .unwrap_or_else(|| {
+                    Term::Lam("__unused".into(), Box::new(Term::Var("$unit".into())))
+                });
+            // Build: μif. ⟨ __if_dispatch(cond, λt, λe) ∥ λ̄__f. ⟨ __f ∥ if ⟩ ⟩
+            // The dispatch builtin applies the chosen thunk to unit.
+            let triple = Term::Pair(
+                Box::new(Term::Var("__cond".into())),
+                Box::new(Term::Pair(Box::new(t), Box::new(e))),
+            );
+            let dispatch_call = Term::Mu(
+                "__call".into(),
+                Box::new(Command::Cut(
+                    Term::Var("__if_dispatch".into()),
+                    CoTerm::CoLam(
+                        "__f".into(),
+                        Box::new(Command::Cut(triple, CoTerm::Covar("__call".into()))),
+                    ),
+                )),
+            );
+            Ok(Term::Mu(
+                "__if".into(),
+                Box::new(Command::Cut(
+                    c,
+                    CoTerm::CoLam(
+                        "__cond".into(),
+                        Box::new(Command::Cut(dispatch_call, CoTerm::Covar("__if".into()))),
+                    ),
+                )),
+            ))
         }
 
         Expr::BinOp { op: _, lhs: _, rhs: _ } => {
@@ -182,44 +193,57 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         Expr::Match { scrutinee: _, arms: _ } => Err(LowerError::Unsupported("match".into())),
 
         Expr::Block(exprs) => {
-            // A block evaluates expressions in order; the value is the last.
-            // Lower to: μseq. ⟨ e1 ∥ λ̄_. μseq. ⟨ e2 ∥ ... ⟩ ∥ seq ⟩ —
-            // i.e., evaluate e1, discard, continue with the rest.
-            let mut exprs = exprs.clone();
-            let last = exprs.pop().map(|e| lower_expr(&e)).transpose()?;
-            let mut result = last.unwrap_or_else(|| Term::Var("$unit".into()));
-            // Wrap in reverse: each earlier expr is evaluated then discarded
-            // by threading the continuation.
+            // A block evaluates expressions in order. A trailing `let`
+            // scopes over the rest of the block, so fold from the end:
+            // `let x = v; rest` becomes `let x = v in rest`.
+            let mut acc: Option<Term> = None;
+            let mut seq_counter = 0;
             for e in exprs.iter().rev() {
-                let t = lower_expr(e)?;
-                result = Term::Mu(
-                    "__seq".into(),
-                    Box::new(Command::Cut(
-                        t,
-                        CoTerm::CoLam(
-                            "__discarded".into(),
-                            Box::new(Command::Cut(result.clone(), CoTerm::Covar("__seq".into()))),
-                        ),
-                    )),
-                );
+                acc = Some(match (&e.kind, acc) {
+                    // Bodyless let followed by the rest: scope the rest
+                    (Expr::Let { name, value, body: None }, Some(rest)) => {
+                        let val = lower_expr(value)?;
+                        Term::Mu(
+                            "__let".into(),
+                            Box::new(Command::Cut(
+                                val,
+                                CoTerm::CoLam(
+                                    name.clone(),
+                                    Box::new(Command::Cut(
+                                        rest.clone(),
+                                        CoTerm::Covar("__let".into()),
+                                    )),
+                                ),
+                            )),
+                        )
+                    }
+                    // Normal expression: evaluate, discard, continue
+                    (_, Some(rest)) => {
+                        let t = lower_expr(e)?;
+                        let seq_name = format!("__seq{seq_counter}");
+                        let covar = format!("__ret{seq_counter}");
+                        seq_counter += 1;
+                        Term::Mu(
+                            seq_name,
+                            Box::new(Command::Cut(
+                                t,
+                                CoTerm::CoLam(
+                                    "__discarded".into(),
+                                    Box::new(Command::Cut(rest, CoTerm::Covar(covar))),
+                                ),
+                            )),
+                        )
+                    }
+                    // Final element: lower directly
+                    (_, None) => lower_expr(e)?,
+                });
             }
-            Ok(result)
+            Ok(acc.unwrap_or_else(|| Term::Var("$unit".into())))
         }
 
         Expr::CommandDef { name: _, params: _, body: _ } => {
             Err(LowerError::Unsupported("command expressions".into()))
         }
-    }
-}
-
-trait JoinOr {
-    fn join_or(self, other: Term) -> Term;
-}
-
-impl JoinOr for Term {
-    fn join_or(self, other: Term) -> Term {
-        // This is a simplification; real lowering uses sum types
-        Term::Pair(Box::new(self), Box::new(other))
     }
 }
 

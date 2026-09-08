@@ -33,7 +33,7 @@ fn polarity_error() {
 #[test]
 fn linearity_error() {
     let dir = std::env::temp_dir().join("slc_test_lin.sl");
-    std::fs::write(&dir, "fn bad(x: +i32, y: +i32) -> i32 { x }").unwrap();
+    std::fs::write(&dir, "command bad(x: +i32, to k: -i32) { x }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("linearity"));

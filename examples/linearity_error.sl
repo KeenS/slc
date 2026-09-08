@@ -1,8 +1,15 @@
-// This program is intentionally ill-typed: `y` is never used.
-// Linear variables must be used exactly once.
+// This program is intentionally ill-typed: the continuation `k` is
+// never activated. Continuations are linear: they must be used
+// exactly once on every path.
+//
+// Run it to see the diagnostic:
+//
+//   slc run examples/linearity_error.sl
+
+command bad(x: +i32, to k: -i32) {
+    x
+}
 
 fn main() -> i32 {
-    let x = 1;
-    let y = 2;
-    x
+    42
 }
