@@ -98,3 +98,63 @@ fn division_by_zero_rejected() {
     assert!(!ok);
     assert!(stderr.contains("division by zero"));
 }
+
+#[test]
+fn parse_int_multi_continuation_success() {
+    let dir = std::env::temp_dir().join("slc_test_parse_ok.sl");
+    std::fs::write(
+        &dir,
+        r#"fn main() -> i32 {
+    mu(ret: -i32) {
+        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
+        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
+        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
+        __parse_int("42", ok, empty, overflow)
+    }
+}"#,
+    )
+    .unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stdout: {stdout}");
+    assert!(stdout.contains("42"));
+}
+
+#[test]
+fn parse_int_multi_continuation_empty() {
+    let dir = std::env::temp_dir().join("slc_test_parse_empty.sl");
+    std::fs::write(
+        &dir,
+        r#"fn main() -> i32 {
+    mu(ret: -i32) {
+        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
+        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
+        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
+        __parse_int("", ok, empty, overflow)
+    }
+}"#,
+    )
+    .unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stdout: {stdout}");
+    assert!(stdout.contains("2"));
+}
+
+#[test]
+fn parse_int_multi_continuation_overflow() {
+    let dir = std::env::temp_dir().join("slc_test_parse_overflow.sl");
+    std::fs::write(
+        &dir,
+        r#"fn main() -> i32 {
+    mu(ret: -i32) {
+        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
+        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
+        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
+        __parse_int("99999999999999999999999", ok, empty, overflow)
+    }
+}"#,
+    )
+    .unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stdout: {stdout}");
+    assert!(stdout.contains("3"));
+}

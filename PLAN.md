@@ -339,7 +339,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
   - [x] `String`
   - [x] `Command<I, O>` type former
 - [x] Multi-continuation error handling:
-  - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
+  - [x] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
   - [x] File read (success/not-found/permission)
   - [x] Arithmetic overflow
 - [x] Decision: defer channels with concurrency (see the Phase 5 note below)

@@ -239,7 +239,6 @@ fn apply_builtin_call(
         Command::Cut(t, CoTerm::Covar(_)) => eval(t, env, fuel)?,
         _ => eval_command(arg_command, env, fuel)?,
     };
-    // Single argument or a tensor of arguments
     let mut args = Vec::new();
     collect_args(&arg, &mut args);
     // Determine target arity for this builtin.
@@ -254,7 +253,7 @@ fn apply_builtin_call(
         // re-enter apply_builtin_call with the accumulated args.
         // To support accumulation, we stash them in the returned value.
         let mut collected = args.clone();
-        if let Value::PartialBuiltin(n, prev) = &arg
+        if let Some(Value::PartialBuiltin(n, prev)) = args.first()
             && n == name
         {
             collected = prev.clone();
@@ -320,19 +319,61 @@ fn apply_builtin_call(
         let v = args.into_iter().next().unwrap_or(Value::Unit);
         return Err(EvalError::Escape(id, v));
     }
-    // IO builtins go through a separate path (no stdout lock needed)
-    if matches!(name, "read_file" | "write_file" | "file_exists") {
-        return crate::builtins::apply_io_builtin(name, &args)
-            .map_err(|e| EvalError::TypeMismatch(e.to_string()));
+    dispatch_builtin(name, args, fuel)
+}
+
+fn activate_value(value: Value, arg: Value, _fuel: &mut usize) -> Result<Value, EvalError> {
+    match value {
+        Value::Closure { param, body, env } => {
+            let mut call_env = env;
+            call_env.push();
+            call_env.define(param, arg);
+            eval(&body, &mut call_env, _fuel)
+        }
+        other => Err(EvalError::TypeMismatch(format!(
+            "cannot activate continuation: {}",
+            other.display()
+        ))),
     }
-    let stdout = std::io::stdout();
-    let mut lock = stdout.lock();
-    crate::builtins::apply_builtin(name, &args, &mut lock)
-        .map_err(|e| EvalError::TypeMismatch(e.to_string()))
 }
 
 /// Dispatch a builtin with a complete argument list.
 fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<Value, EvalError> {
+    if name == "__parse_int" {
+        let mut it = args.into_iter();
+        let text = it
+            .next()
+            .ok_or_else(|| EvalError::TypeMismatch("__parse_int requires a string".into()))?;
+        let ok = it.next().ok_or_else(|| {
+            EvalError::TypeMismatch("__parse_int requires an ok continuation".into())
+        })?;
+        let empty = it.next().ok_or_else(|| {
+            EvalError::TypeMismatch("__parse_int requires an empty continuation".into())
+        })?;
+        let overflow = it.next().ok_or_else(|| {
+            EvalError::TypeMismatch("__parse_int requires an overflow continuation".into())
+        })?;
+        return match text {
+            Value::Str(s) if s.is_empty() => activate_value(empty, Value::Str(s), _fuel),
+            Value::Str(s) => match s.parse::<i64>() {
+                Ok(n) => activate_value(ok, Value::Int(n), _fuel),
+                Err(e) => {
+                    let reason = if e.to_string().contains("too large")
+                        || e.to_string().contains("too small")
+                    {
+                        overflow
+                    } else {
+                        empty
+                    };
+                    activate_value(reason, Value::Str(s), _fuel)
+                }
+            },
+            other => Err(EvalError::TypeMismatch(format!(
+                "__parse_int expects a String, got {}",
+                other.display()
+            ))),
+        };
+    }
     if name == "__service" || name == "__job" {
         return make_partial_agent(name, args);
     }
@@ -423,6 +464,7 @@ fn builtin_arity(name: &str) -> usize {
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
         "find_char" | "substring" => 3,
+        "__parse_int" => 4,
         "__service" | "__job" => 0, // variadic: agent + ports
         "format" => 0,              // variadic: apply immediately
         _ => 0,
