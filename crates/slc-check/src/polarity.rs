@@ -1,1 +1,229 @@
+//! Polarity checking for surface programs.
 
+use slc_core::types::Type;
+use slc_syntax::ast::{Decl, Expr, Node, Param, Program};
+use slc_syntax::lower::LowerError;
+use slc_syntax::lower::lower_type;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Diagnostic {
+    pub message: String,
+    pub span: slc_syntax::token::Span,
+}
+
+#[derive(Debug)]
+pub enum CheckError {
+    Lower(LowerError),
+    Diag(Vec<Diagnostic>),
+}
+
+impl From<LowerError> for CheckError {
+    fn from(e: LowerError) -> Self {
+        CheckError::Lower(e)
+    }
+}
+
+/// Check that fn parameters are positive, command value parameters positive,
+/// and continuation parameters negative.
+pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
+    let mut diags = Vec::new();
+    for d in &polarity_p.decls {
+        check_decl(d, &mut diags);
+    }
+    if diags.is_empty() { Ok(()) } else { Err(diags) }
+}
+
+fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
+    match &d.kind {
+        Decl::Fn { params, .. } => {
+            for p in params {
+                check_param_polarity(p, false, d.span, diags);
+            }
+        }
+        Decl::Command { params, .. } => {
+            for p in params {
+                check_param_polarity(p, p.is_continuation, d.span, diags);
+            }
+        }
+        Decl::Struct { fields, .. } => {
+            for (_, ty) in fields {
+                if let Ok(core_ty) = lower_type(ty)
+                    && !is_usable_as_field(&core_ty)
+                {
+                    diags.push(Diagnostic {
+                        message: format!("struct field type {core_ty} is not a valid field type"),
+                        span: d.span,
+                    });
+                }
+            }
+        }
+        Decl::Enum { variants, .. } => {
+            for (_, fields) in variants {
+                for ty in fields {
+                    if let Ok(core_ty) = lower_type(ty)
+                        && !is_usable_as_field(&core_ty)
+                    {
+                        diags.push(Diagnostic {
+                            message: format!("enum field type {core_ty} is not a valid field type"),
+                            span: d.span,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn check_param_polarity(
+    p: &Param,
+    is_cont: bool,
+    span: slc_syntax::token::Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if let Ok(ty) = lower_type(&p.ty) {
+        let ok = if is_cont {
+            // Continuations must be negative: -T
+            is_negative_type(&ty)
+        } else {
+            // Values must be positive: +T
+            is_positive_type(&ty)
+        };
+        if !ok {
+            diags.push(Diagnostic {
+                message: format!(
+                    "parameter `{}` has type {ty}; expected {} polarity",
+                    p.name,
+                    if is_cont { "negative (-)" } else { "positive (+)" }
+                ),
+                span,
+            });
+        }
+    }
+}
+
+fn is_positive_type(t: &Type) -> bool {
+    t.is_positive()
+}
+
+fn is_negative_type(t: &Type) -> bool {
+    t.is_negative()
+}
+
+fn is_usable_as_field(t: &Type) -> bool {
+    // Fields can be positive (data) or the dual of positive
+    t.is_positive() || t.is_negative()
+}
+
+/// Check expression polarity: mu binders must be negative.
+pub fn check_expr_polarity(e: &Node<Expr>) -> Result<(), Vec<Diagnostic>> {
+    let mut diags = Vec::new();
+    check_expr(e, &mut diags);
+    if diags.is_empty() { Ok(()) } else { Err(diags) }
+}
+
+fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
+    match &e.kind {
+        Expr::Mu { binder, .. } => {
+            if let Some((name, Some(ty))) = binder
+                && let Ok(core_ty) = lower_type(ty)
+                && !core_ty.is_negative()
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "mu binder `{name}` has type {core_ty}; expected negative (-) polarity"
+                    ),
+                    span: e.span,
+                });
+            }
+        }
+        Expr::Lambda { param_type: Some(ty), .. } => {
+            if let Ok(core_ty) = lower_type(ty)
+                && !core_ty.is_positive()
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "fn parameter has type {core_ty}; expected positive (+) polarity"
+                    ),
+                    span: e.span,
+                });
+            }
+        }
+        Expr::If { cond, then, otherwise } => {
+            check_expr(cond, diags);
+            check_expr(then, diags);
+            if let Some(o) = otherwise {
+                check_expr(o, diags);
+            }
+        }
+        Expr::Let { value, body, .. } => {
+            check_expr(value, diags);
+            if let Some(b) = body {
+                check_expr(b, diags);
+            }
+        }
+        Expr::Pair(items) => {
+            for i in items {
+                check_expr(i, diags);
+            }
+        }
+        Expr::Call { callee, args } => {
+            check_expr(callee, diags);
+            for a in args {
+                check_expr(a, diags);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            check_expr(lhs, diags);
+            check_expr(rhs, diags);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slc_syntax::lexer::lex;
+    use slc_syntax::parser::parse;
+
+    fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
+        let toks = lex(s).unwrap();
+        let prog = parse(toks).unwrap();
+        check_program(&prog)
+    }
+
+    #[test]
+    fn fn_positive_params_ok() {
+        assert!(check("fn add(x: +i32, y: +i32) -> i32 { x }").is_ok());
+    }
+
+    #[test]
+    fn fn_negative_param_fails() {
+        let r = check("fn bad(x: -i32) -> i32 { x }");
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn command_mixed_ok() {
+        assert!(check("command step(x: +i32, to k: -i32) { k(x) }").is_ok());
+    }
+
+    #[test]
+    fn command_wrong_polarity_fails() {
+        let r = check("command bad(x: -i32, to k: +i32) { k(x) }");
+        assert!(r.is_err());
+        let diags = r.unwrap_err();
+        assert_eq!(diags.len(), 2);
+    }
+
+    #[test]
+    fn mu_binder_negative_ok() {
+        let toks = lex("mu(k: -i32) { k(42) }").unwrap();
+        let prog = parse(toks).unwrap();
+        // top-level expression stored as fn "main"
+        let d = &prog.decls[0];
+        if let Decl::Fn { body, .. } = &d.kind {
+            assert!(check_expr_polarity(body).is_ok());
+        }
+    }
+}

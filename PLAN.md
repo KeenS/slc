@@ -201,22 +201,22 @@ detected by fuel). No parser required; tests construct ASTs directly.
 
 ### Polarity checking
 
-- [ ] `fn` parameters must be `+`
-- [ ] `mu` continuation ports must be `-`
-- [ ] `command` value ports `+`
-- [ ] `command` continuation ports `-`
-- [ ] `dual` flips polarity
+- [x] `fn` parameters must be `+`
+- [x] `mu` continuation ports must be `-`
+- [x] `command` value ports `+`
+- [x] `command` continuation ports `-`
+- [x] `dual` flips polarity
 - [ ] `->` arrow desugaring checks source/target polarity
-- [ ] Diagnostic: expected `+`, found `-` with span
+- [x] Diagnostic: expected `+`, found `-` with span
 
 ### Linearity checking
 
-- [ ] Every `+` variable used exactly once in its scope
-- [ ] Every `-` continuation activated exactly once
+- [x] Every `+` variable used exactly once in its scope
+- [x] Every `-` continuation activated exactly once
 - [ ] `Job` must be run exactly once
 - [ ] `Service` must be invoked exactly once
 - [ ] Partial application agents are linear
-- [ ] Diagnostic: used 0 times / used 2 times, with span
+- [x] Diagnostic: used 0 times / used 2 times, with span
 - [ ] Diagnostic: dangling continuation on some path
 - [ ] Exception: types annotated `Drop` may be discarded
 
