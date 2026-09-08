@@ -89,7 +89,7 @@ mod tests {
             Type::Neg(Base::Bool),
             Type::One,
             Type::Bottom,
-                        Type::Tensor(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
+            Type::Tensor(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
             Type::Par(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
             Type::With(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
             Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),

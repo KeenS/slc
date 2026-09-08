@@ -10,3 +10,4 @@ pub use coterm::CoTerm;
 pub use term::Term;
 pub use types::Type;
 pub mod reduce;
+pub mod typing;

@@ -37,28 +37,22 @@ pub fn step(c: &Command) -> Step {
         }
 
         // co-β-rule: ⟨ t ∥ λ̄x.c ⟩ → c[t/x]
-        Command::Cut(t, CoTerm::CoLam(x, c2)) => {
-            Step::Reduced(subst_command(x, t, c2))
-        }
+        Command::Cut(t, CoTerm::CoLam(x, c2)) => Step::Reduced(subst_command(x, t, c2)),
 
         // Tensor projection: ⟨ (t1, t2) ∥ fst ⟩ → t1
-        Command::Cut(Term::Pair(t1, _), CoTerm::Fst) => Step::Reduced(Command::Cut(
-            (**t1).clone(),
-            CoTerm::Covar("□".into()),
-        )),
+        Command::Cut(Term::Pair(t1, _), CoTerm::Fst) => {
+            Step::Reduced(Command::Cut((**t1).clone(), CoTerm::Covar("□".into())))
+        }
 
         // Tensor projection: ⟨ (t1, t2) ∥ snd ⟩ → t1
-        Command::Cut(Term::Pair(_, t2), CoTerm::Snd) => Step::Reduced(Command::Cut(
-            (**t2).clone(),
-            CoTerm::Covar("□".into()),
-        )),
+        Command::Cut(Term::Pair(_, t2), CoTerm::Snd) => {
+            Step::Reduced(Command::Cut((**t2).clone(), CoTerm::Covar("□".into())))
+        }
 
         // Activate: k(v) is already a command form; normalize inner terms
-        Command::Activate(k, v) => {
-            match (k, v) {
-                _ => Step::Normal,
-            }
-        }
+        Command::Activate(k, v) => match (k, v) {
+            _ => Step::Normal,
+        },
 
         _ => Step::Normal,
     }
@@ -118,10 +112,7 @@ mod tests {
 
     #[test]
     fn tensor_fst() {
-        let pair = Term::Pair(
-            Box::new(Term::Var("a".into())),
-            Box::new(Term::Var("b".into())),
-        );
+        let pair = Term::Pair(Box::new(Term::Var("a".into())), Box::new(Term::Var("b".into())));
         let cut = Command::Cut(pair, CoTerm::Fst);
         match step(&cut) {
             Step::Reduced(c) => {
@@ -136,10 +127,10 @@ mod tests {
         // Ω-like: μ α. ⟨ λx.x ∥ α ⟩ ... just check fuel stops
         let c = Command::Cut(
             identity(),
-            CoTerm::MuTilde("x".into(), Box::new(Command::Cut(
-                Term::Var("x".into()),
-                CoTerm::Covar("k".into()),
-            ))),
+            CoTerm::MuTilde(
+                "x".into(),
+                Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+            ),
         );
         assert!(normalize(&c, 100).is_some());
     }

@@ -103,16 +103,16 @@ enum Type {
 - [x] Property test: substitution is idempotent when variable not free
 
 #### 4. Type checking
-- [ ] Sequent representations:
-  - [ ] `Γ ⊢ t : A | Δ` (term judgment)
-  - [ ] `Γ | e : A ⊢ Δ` (co-term judgment)
-  - [ ] `c` (command judgment)
-- [ ] Typing rules for all core constructors
-- [ ] Bidirectional inference/check for terms
-- [ ] Bidirectional inference/check for co-terms
-- [ ] Context manipulation (add, remove, lookup)
-- [ ] Test: well-typed terms accepted
-- [ ] Test: ill-typed terms rejected
+- [x] Sequent representations:
+  - [x] `Γ ⊢ t : A | Δ` (term judgment)
+  - [x] `Γ | e : A ⊢ Δ` (co-term judgment)
+  - [x] `c` (command judgment)
+- [x] Typing rules for all core constructors
+- [x] Bidirectional inference/check for terms
+- [x] Bidirectional inference/check for co-terms
+- [x] Context manipulation (add, remove, lookup)
+- [x] Test: well-typed terms accepted
+- [x] Test: ill-typed terms rejected
 
 #### 5. Reduction
 - [x] β-rule: `⟨ λx.t ∥ μ̃x.c ⟩ → c[t/x]`
@@ -123,7 +123,7 @@ enum Type {
 - [x] Small-step semantics with reduction context
 - [x] Normal-form detection
 - [x] Fuel-based divergence detection
-- [ ] Property test: type preservation for each rule
+- [x] Property test: type preservation for each rule
 - [ ] Property test: confluence up to commuting conversions
 
 **Deliverable:** well-typed core programs reduce to normal form (or diverge

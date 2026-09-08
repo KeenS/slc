@@ -9,11 +9,7 @@ use std::collections::HashSet;
 pub fn fresh(base: &str, used: &mut HashSet<String>) -> String {
     let mut n = 0;
     loop {
-        let candidate = if n == 0 {
-            base.to_string()
-        } else {
-            format!("{base}{n}")
-        };
+        let candidate = if n == 0 { base.to_string() } else { format!("{base}{n}") };
         if !used.contains(&candidate) {
             used.insert(candidate.clone());
             return candidate;
@@ -133,7 +129,9 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
         (Term::Pair(a1, a2), Term::Pair(b1, b2)) => {
             alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
         }
-        (Term::Inl(t1), Term::Inl(t2)) | (Term::Inr(t1), Term::Inr(t2)) => alpha_term(t1, t2, xs, ys),
+        (Term::Inl(t1), Term::Inl(t2)) | (Term::Inr(t1), Term::Inr(t2)) => {
+            alpha_term(t1, t2, xs, ys)
+        }
         _ => false,
     }
 }
@@ -216,10 +214,9 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
 /// Substitute `replacement` for variable `x` in a command.
 pub fn subst_command(x: &str, replacement: &Term, command: &Command) -> Command {
     match command {
-        Command::Cut(t, e) => Command::Cut(
-            subst_term(x, replacement, t),
-            subst_coterm(x, replacement, e),
-        ),
+        Command::Cut(t, e) => {
+            Command::Cut(subst_term(x, replacement, t), subst_coterm(x, replacement, e))
+        }
         Command::Command(y, t) => {
             if y == x {
                 command.clone()
@@ -227,10 +224,9 @@ pub fn subst_command(x: &str, replacement: &Term, command: &Command) -> Command 
                 Command::Command(y.clone(), subst_term(x, replacement, t))
             }
         }
-        Command::Activate(k, v) => Command::Activate(
-            subst_term(x, replacement, k),
-            subst_term(x, replacement, v),
-        ),
+        Command::Activate(k, v) => {
+            Command::Activate(subst_term(x, replacement, k), subst_term(x, replacement, v))
+        }
     }
 }
 
