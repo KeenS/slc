@@ -190,11 +190,39 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             Err(LowerError::Unsupported("binary operators".into()))
         }
 
-        Expr::Interaction { left: _, right: _ } => {
-            Err(LowerError::Unsupported("@ interaction".into()))
+        Expr::Interaction { left, right } => {
+            // `t @ e` is the surface spelling of a cut. The producer is
+            // lowered normally. If the consumer is a name (as in `42 @ k`),
+            // it names the continuation to which the cut sends the value.
+            // For a compound consumer, lower it and apply it as a closure.
+            let t = lower_expr(left)?;
+            match &right.kind {
+                Expr::Ident(name) => Ok(Term::Mu(
+                    name.clone(),
+                    Box::new(Command::Cut(t, CoTerm::Covar(name.clone()))),
+                )),
+                _ => {
+                    let consumer = lower_expr(right)?;
+                    Ok(Term::Mu(
+                        "__interaction".into(),
+                        Box::new(Command::Cut(
+                            consumer,
+                            CoTerm::CoLam(
+                                "__f".into(),
+                                Box::new(Command::Cut(t, CoTerm::Covar("__interaction".into()))),
+                            ),
+                        )),
+                    ))
+                }
+            }
         }
         Expr::Spawn { body: _ } => Err(LowerError::Unsupported("spawn".into())),
-        Expr::Dual { body: _ } => Err(LowerError::Unsupported("dual".into())),
+        Expr::Dual { body } => {
+            // `dual(e)` is an explicit polarity flip. At the term level it
+            // denotes the same witness as `e`; the type checker is
+            // responsible for viewing it with the opposite polarity.
+            lower_expr(body)
+        }
         Expr::ErrorProp { expr } => {
             // e? → μprop. ⟨ e' ∥ λ̄__ok. ⟨ __ok ∥ prop ⟩ ⟩
             // The value flows to the success continuation; errors escape

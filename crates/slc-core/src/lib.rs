@@ -11,4 +11,5 @@ pub use term::Term;
 pub use types::Type;
 pub mod net;
 pub mod reduce;
+pub mod tracing;
 pub mod typing;

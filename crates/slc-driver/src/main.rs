@@ -30,6 +30,8 @@ fn main() -> ExitCode {
 }
 
 fn run_file(path: &PathBuf) -> Result<String, String> {
+    let compile_span = slc_core::span!("compile");
+    let _compile_guard = compile_span.enter();
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
 
@@ -54,9 +56,13 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
     })?;
 
     let defs = slc_syntax::lower::lower_program(&program).map_err(|e| format!("lowering: {e}"))?;
+    drop(_compile_guard);
+    drop(compile_span);
 
     // Find main and evaluate
     let main = defs.iter().find(|(name, _)| name == "main").ok_or("no `main` function")?;
+    let eval_span = slc_core::span!("eval");
+    let _eval_guard = eval_span.enter();
 
     let mut env = slc_runtime::value::Env::new();
     slc_runtime::value::install_stdlib(&mut env);
