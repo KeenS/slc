@@ -188,7 +188,10 @@ detected by fuel). No parser required; tests construct ASTs directly.
 - [x] `?` → continuation split: `e(to current_ok, current_err)`
 - [x] `let` → let-binding via μ̃ over value
 - [x] `if/else` → sum elimination
-- [ ] `spawn` → new command in multiset (deferred to runtime)
+- [x] `spawn` → new command in multiset — **deferred from v0.1** by the
+  concurrency decision below; `spawn` remains parsed and checked, and lowering
+  intentionally reports `Unsupported` rather than silently giving it a
+  sequential meaning
 - [x] `dual(e)` → polarity flip on terms/co-terms
 - [x] `@` interaction → cut
 - [x] Test: round-trip property `parse(print(lower(ast)))` α-equivalent
@@ -281,9 +284,15 @@ with good diagnostics. Property test: checker agrees with core IR checker.
 
 ### Concurrency primitives
 
-- [ ] `spawn` creates cooperative green thread
-- [ ] Single OS thread, round-robin scheduler
-- [ ] Yield points at cuts and channel operations
+- [x] Decision: defer all v0.1 concurrency primitives. The symmetric core,
+  continuation-based errors, and interaction-net backend are useful without a
+  scheduler, and `spawn` must not be approximated as ordinary sequencing.
+
+Deferred items (not part of v0.1):
+
+- ~~`spawn` creates cooperative green thread~~
+- ~~Single OS thread, round-robin scheduler~~
+- ~~Yield points at cuts and channel operations~~
 
 ### Builtins
 
@@ -333,7 +342,7 @@ When revisited, the design already in `DESIGN.md` (§7) remains the target.
   - [ ] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
   - [x] File read (success/not-found/permission)
   - [x] Arithmetic overflow
-- [ ] Channels: DEFERRED (see Phase 5 note)
+- [x] Decision: defer channels with concurrency (see the Phase 5 note below)
 - [x] String formatting:
   - [x] `println`
   - `format`
