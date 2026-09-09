@@ -607,6 +607,12 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
                 body: Rc::new((**body).clone()),
                 env: env.clone(),
             }),
+            // `μ̃x. c` binds the whole value: a product consumer of one part.
+            CoTerm::MuTilde(binder, body) => Ok(Value::CoTensor {
+                binders: Rc::new(vec![binder.clone()]),
+                body: Rc::new((**body).clone()),
+                env: env.clone(),
+            }),
             other => Ok(Value::Continuation(crate::value::Cont {
                 env: env.clone(),
                 command: Rc::new(Command::Cut(Term::Var("__co_arg".into()), other.clone())),
@@ -850,6 +856,7 @@ fn is_applicable(v: &Value) -> bool {
         v,
         Value::Closure { .. }
             | Value::CoCase { .. }
+            | Value::CoTensor { .. }
             | Value::CoAbs { .. }
             | Value::Continuation(_)
             | Value::Builtin(_)

@@ -414,7 +414,12 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             }
             match (branches.is_empty(), product) {
                 (true, Some((binders, command))) => {
-                    Ok(Term::Co(Box::new(CoTerm::MuTildeTensor(binders, Box::new(command)))))
+                    // One binder takes the whole value: that is `μ̃x. c`.
+                    let consumer = match <[String; 1]>::try_from(binders) {
+                        Ok([binder]) => CoTerm::MuTilde(binder, Box::new(command)),
+                        Err(binders) => CoTerm::MuTildeTensor(binders, Box::new(command)),
+                    };
+                    Ok(Term::Co(Box::new(consumer)))
                 }
                 (false, None) => Ok(Term::Co(Box::new(CoTerm::CoCase(branches)))),
                 _ => Err(LowerError::Unsupported(
@@ -630,13 +635,14 @@ fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), 
         }
     }
     match pattern {
-        // `Red`: an unqualified variant written without a payload.
+        // `Red`: an unqualified variant written without a payload. Any other
+        // name binds the whole value: a type with no structure has one shape
+        // whose single component is the value itself.
         Pattern::Ident(name) => match lookup_variant(name) {
             Some(label) => Ok((Some(label), Vec::new())),
-            None => Err(LowerError::Unsupported(format!(
-                "`{name}` is not a declared variant, so it cannot select an arm"
-            ))),
+            None => Ok((None, vec![name.clone()])),
         },
+        Pattern::Wildcard => Ok((None, vec![UNUSED_BINDER.to_string()])),
         // `Color::Red(x)` or `Red(x)`.
         Pattern::Enum { name, variant, fields } => {
             let written =

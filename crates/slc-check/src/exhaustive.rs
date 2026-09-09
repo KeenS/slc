@@ -138,8 +138,12 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
                         });
                     }
                 }
-                // A bare name that is not declared is not a type.
-                Some(name) if !enums.declared.contains(&name) => {
+                // A bare name that is neither declared nor built in is not
+                // a type.
+                Some(name)
+                    if !enums.declared.contains(&name)
+                        && slc_syntax::lower::lower_type(&ty.kind).is_err() =>
+                {
                     diags.push(Diagnostic {
                         message: format!("`select {name}` refers to an unknown type"),
                         span: e.span,

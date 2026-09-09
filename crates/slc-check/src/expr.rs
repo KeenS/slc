@@ -697,6 +697,17 @@ fn bind_select_arm(
     diags: &mut Vec<Diagnostic>,
 ) {
     use slc_syntax::ast::Pattern;
+    // A name that is not a variant binds the whole value: a type with no
+    // structure has one shape, whose single component is the value itself.
+    if let Pattern::Ident(name) = pattern
+        && declarations.variant(name).is_none()
+    {
+        env.define(name, consumed.clone());
+        return;
+    }
+    if matches!(pattern, Pattern::Wildcard) {
+        return;
+    }
     let components: Vec<Type> = match (consumed, pattern) {
         // An enum variant: its payload types.
         (Type::Named(_), Pattern::Ident(_) | Pattern::Enum { .. }) => {
@@ -1813,5 +1824,23 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_select_arm_over_an_atom_binds_the_whole_value() {
+        // An atom has one shape and one component, so its arm's pattern is a
+        // plain binder, typed by the type being consumed.
+        assert!(
+            check("fn show(out: -String) <- +i64 { select +i64 { int_to_str(n) @ out => n } }")
+                .is_ok()
+        );
+
+        let diags =
+            check("fn show(out: -String) <- +i64 { select +i64 { str_len(n) @ out => n } }")
+                .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("has type +i64")),
+            "the binder should carry the consumed type: {diags:?}"
+        );
     }
 }

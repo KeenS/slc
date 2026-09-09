@@ -38,12 +38,25 @@ fn report(value: -i64, absent: -i64) <- Reading {
     }
 }
 
+// A positive type with one shape and one component — an atom — needs only one
+// arm, whose pattern is a plain binder naming the whole value. That consumer
+// is the core's value abstraction `μ̃x. c`: the same binder `let` lowers to,
+// written directly.
+fn twice(out: -i64) <- +i64 {
+    select +i64 {
+        (n * 2) @ out => n,
+    }
+}
+
 mu main() | (exit: -i32) {
     println(mu ask() | (answer: -i32) {
         Color::Green @ code(answer)
     });
     println(mu ask() | (answer: -i64) {
         Reading::Measured(42) @ report(answer, answer)
+    });
+    println(mu ask() | (answer: -i64) {
+        50 @ twice(answer)
     });
     0 @ exit
 }

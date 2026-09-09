@@ -965,3 +965,22 @@ fn json_parser_rejects_trailing_comma() {
     assert!(!ok);
     assert!(stdout.contains("trailing comma"));
 }
+
+#[test]
+fn a_consumer_built_over_an_atom_receives_the_value() {
+    // `select` covers every positive type, atoms included, so a consumer can
+    // be bound to a name and cut against later.
+    let dir = std::env::temp_dir().join("slc_test_select_atom.sl");
+    std::fs::write(
+        &dir,
+        "mu main() | (exit: -i32) {
+             let show = select +i64 { println(n * 2) => n };
+             21 @ show;
+             0 @ exit
+         }",
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}

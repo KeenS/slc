@@ -290,8 +290,8 @@ match shape {
 
 ### Negative additive construction
 
-`select` builds the consumer of a positive type by giving, for each shape that
-type can take, a command. For an `enum` that is one arm per variant — the
+`select` builds the consumer of any positive type by giving, for each shape
+that type can take, a command. For an `enum` that is one arm per variant — the
 negative additive:
 
 ```sl
@@ -427,6 +427,23 @@ Either is consumed by the cut that supplies the whole product:
 Reading { value: 42, unit: "m" } @ show(out)
 (2, 40) @ total(out)
 ```
+
+An atom is the degenerate product: one shape, one component. `select` covers
+it too, and the arm's pattern is a plain binder that names the whole value:
+
+```sl
+fn show(out: -String) <- +i64 {
+    select +i64 {
+        int_to_str(n) @ out => n,
+    }
+}
+```
+
+That is the surface spelling of the core's value abstraction `μ̃x. c` — the
+same binder `let` lowers to, written directly. So `select` builds the consumer
+of *any* positive type, with no exceptions: one arm per variant for a sum, one
+arm binding every component for a product, one arm binding the value for an
+atom.
 
 There is deliberately **no** way to build such a consumer out of two
 independent consumers, and no way to feed one half at a time. Both are the
@@ -679,7 +696,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.mu` | `mu f() \| (k: -A) { e }` | `Λ`-free: `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the local form captures the ambient continuation |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { c => p, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃(x…). ⟦c⟧)` for a product |
+| `expr.select` | `select T { c => p, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.errorprop.named` | `e?k` | `⟦e⟧(k)` |
 | `expr.errorprop.bare` | `e?` | `⟦e⟧(k₀)`, where `k₀` is the current error continuation |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
@@ -706,7 +723,7 @@ continuation parameter becomes a Λ binder.
 | `co(e)` | `select` |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `λ̄x. c` | application, and nothing else |
-| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?` |
+| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?`; written directly as `select +A { c => x }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |
