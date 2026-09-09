@@ -1,6 +1,5 @@
-// Nested builtin calls: inner applications lower to mu-bound cuts,
-// so composition works without special-casing.
+// Nested calls compose with surface operators.
 
 fn main() -> i32 {
-    str_concat(int_to_str(add(1, 2)), int_to_str(mul(4, 5)))
+    int_to_str(1 + 2) + int_to_str(4 * 5)
 }

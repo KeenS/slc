@@ -67,7 +67,7 @@ fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
         | Expr::Mu { body, .. }
         | Expr::Spawn { body }
         | Expr::Dual { body }
-        | Expr::ErrorProp { expr: body } => find_ident_span(body, name),
+        | Expr::ErrorProp { expr: body, .. } => find_ident_span(body, name),
         Expr::Call { callee, args } => find_ident_span(callee, name)
             .or_else(|| args.iter().find_map(|a| find_ident_span(a, name))),
         Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
@@ -381,7 +381,12 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
         }
         Expr::Spawn { body } => go(body, m),
         Expr::Dual { body } => go(body, m),
-        Expr::ErrorProp { expr } => go(expr, m),
+        Expr::ErrorProp { expr, continuation } => {
+            go(expr, m);
+            if let Some(name) = continuation {
+                m.incr(name);
+            }
+        }
         Expr::CommandDef { body, .. } => go(body, m),
         Expr::Service { agent, continuations } => {
             go(agent, m);
@@ -417,8 +422,26 @@ mod tests {
     }
 
     #[test]
+    fn multi_continuation_command_unselected_continuation_is_linear() {
+        let r = check(
+            "command route(x: +i32, to even: -i32, to odd: -i32) {
+                if eq(rem(x, 2), 0) { even(x) } else { odd(x) }
+            }
+            fn main() -> i32 { route(2)?even }",
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
     fn linear_fn_ok() {
         assert!(check("fn id(x: +i32) -> i32 { x }").is_ok());
+    }
+
+    #[test]
+    fn named_error_prop_counts_as_continuation_use() {
+        let r = check("command bad(x: +i32, to err: -i32) { fail(x)?err; err(x) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("more than once"));
     }
 
     #[test]

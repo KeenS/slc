@@ -50,3 +50,25 @@ fn roundtrip_printing_stable() {
     let printed = format!("{}", defs[0].1);
     assert!(printed.contains("λ"), "should contain lambda: {printed}");
 }
+
+#[test]
+fn roundtrip_operators_and_indexing() {
+    let a = lower_str(
+        r#"fn main() -> i32 { let s = "abc"; if 1 + 2 * 3 == 7 && s[0] == 'a' { s[1..] } else { "" } }"#,
+    );
+    let b = lower_str(
+        r#"fn main() -> i32 { let s = "abc"; if 1 + 2 * 3 == 7 && s[0] == 'a' { s[1..] } else { "" } }"#,
+    );
+    assert_eq!(a, b);
+}
+
+#[test]
+fn roundtrip_patterns() {
+    let a = lower_str(
+        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, c if c < '0' => 2, _ => 3 } }"#,
+    );
+    let b = lower_str(
+        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, c if c < '0' => 2, _ => 3 } }"#,
+    );
+    assert_eq!(a, b);
+}

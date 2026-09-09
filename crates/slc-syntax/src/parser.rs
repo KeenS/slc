@@ -426,18 +426,18 @@ impl Parser {
         let mut lhs = self.parse_unary()?;
         loop {
             let (op, prec) = match self.peek_kind() {
-                Some(TokenKind::Plus) => (BinOp::Add, 1),
-                Some(TokenKind::Minus) => (BinOp::Sub, 1),
-                Some(TokenKind::Star) | Some(TokenKind::Tensor) => (BinOp::Mul, 2),
-                Some(TokenKind::Slash) => (BinOp::Div, 2),
-                Some(TokenKind::Percent) => (BinOp::Mod, 2),
-                Some(TokenKind::EqEq) => (BinOp::Eq, 0),
-                Some(TokenKind::NotEq) => (BinOp::Ne, 0),
-                Some(TokenKind::Lt) => (BinOp::Lt, 0),
-                Some(TokenKind::Gt) => (BinOp::Gt, 0),
-                Some(TokenKind::Le) => (BinOp::Le, 0),
-                Some(TokenKind::Ge) => (BinOp::Ge, 0),
-                Some(TokenKind::AmpAmp) => (BinOp::And, 0),
+                Some(TokenKind::Plus) => (BinOp::Add, 3),
+                Some(TokenKind::Minus) => (BinOp::Sub, 3),
+                Some(TokenKind::Star) | Some(TokenKind::Tensor) => (BinOp::Mul, 4),
+                Some(TokenKind::Slash) => (BinOp::Div, 4),
+                Some(TokenKind::Percent) => (BinOp::Mod, 4),
+                Some(TokenKind::EqEq) => (BinOp::Eq, 2),
+                Some(TokenKind::NotEq) => (BinOp::Ne, 2),
+                Some(TokenKind::Lt) => (BinOp::Lt, 2),
+                Some(TokenKind::Gt) => (BinOp::Gt, 2),
+                Some(TokenKind::Le) => (BinOp::Le, 2),
+                Some(TokenKind::Ge) => (BinOp::Ge, 2),
+                Some(TokenKind::AmpAmp) => (BinOp::And, 1),
                 Some(TokenKind::PipePipe) => (BinOp::Or, 0),
                 _ => break,
             };
@@ -517,10 +517,27 @@ impl Parser {
                 }
                 Some(TokenKind::Question) => {
                     self.pos += 1;
+                    let continuation =
+                        if self.peek_kind().is_some_and(|kind| matches!(kind, TokenKind::Ident(_)))
+                        {
+                            Some(
+                                self.next()
+                                    .map(|t| {
+                                        if let TokenKind::Ident(name) = t.kind {
+                                            name
+                                        } else {
+                                            String::new()
+                                        }
+                                    })
+                                    .unwrap_or_default(),
+                            )
+                        } else {
+                            None
+                        };
                     let end = self.pos;
                     e = Node {
                         span: Span { start: e.span.start, end },
-                        kind: Expr::ErrorProp { expr: Box::new(e) },
+                        kind: Expr::ErrorProp { expr: Box::new(e), continuation },
                     };
                 }
                 Some(TokenKind::Dot) => {
@@ -823,6 +840,17 @@ impl Parser {
 
     fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind().cloned() {
+            Some(TokenKind::Minus) => {
+                self.pos += 1;
+                match self.parse_single_pattern()? {
+                    Pattern::Int(n) => Ok(Pattern::Int(-n)),
+                    Pattern::Float(n) => Ok(Pattern::Float(-n)),
+                    _ => Err(ParseError {
+                        message: "negative patterns require a numeric literal".into(),
+                        span: Span { start: self.pos - 1, end: self.pos },
+                    }),
+                }
+            }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 if s == "_" {
@@ -846,6 +874,28 @@ impl Parser {
                         }
                     }
                     return Ok(Pattern::Enum { name: s, variant, fields });
+                }
+                // Struct pattern with field shorthand: Point { x, y: pat }
+                if self.peek_kind() == Some(&TokenKind::LBrace) {
+                    self.pos += 1;
+                    let mut fields = Vec::new();
+                    loop {
+                        if self.eat(&TokenKind::RBrace) {
+                            break;
+                        }
+                        let field = self.expect_ident("struct field name")?;
+                        let pattern = if self.eat(&TokenKind::Colon) {
+                            self.parse_pattern()?
+                        } else {
+                            Pattern::Ident(field.clone())
+                        };
+                        fields.push((field, pattern));
+                        if !self.eat(&TokenKind::Comma) {
+                            self.expect(TokenKind::RBrace, "`}` after struct pattern")?;
+                            break;
+                        }
+                    }
+                    return Ok(Pattern::Struct { name: s, fields });
                 }
                 // Check for enum pattern: Name(variant)
                 if self.peek_kind() == Some(&TokenKind::LParen) {
@@ -903,6 +953,28 @@ impl Parser {
                     }
                 }
                 Ok(Pattern::Tuple(items))
+            }
+            Some(TokenKind::LBracket) => {
+                self.pos += 1;
+                let mut items = Vec::new();
+                let mut rest = None;
+                loop {
+                    if self.eat(&TokenKind::RBracket) {
+                        break;
+                    }
+                    if self.peek_kind() == Some(&TokenKind::DotDot) {
+                        self.pos += 1;
+                        rest = Some(Box::new(self.parse_pattern()?));
+                        self.expect(TokenKind::RBracket, "`]` after list rest pattern")?;
+                        break;
+                    }
+                    items.push(self.parse_pattern()?);
+                    if !self.eat(&TokenKind::Comma) {
+                        self.expect(TokenKind::RBracket, "`]` after list pattern")?;
+                        break;
+                    }
+                }
+                Ok(Pattern::List { items, rest })
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -1125,6 +1197,46 @@ mod tests {
         };
         assert!(matches!((&arms[0].pattern, &arms[0].guard), (Pattern::Binding { .. }, Some(_))));
         assert!(matches!(&arms[1].pattern, Pattern::Or(_)));
+    }
+
+    #[test]
+    fn parse_struct_pattern_with_shorthand() {
+        let p = parse_str("match p { Point { x, y: rest } => 1 }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        let Expr::Match { arms, .. } = &body.kind else {
+            panic!("expected match");
+        };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Struct { name, fields }
+                if name == "Point" && fields.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parse_negative_int_pattern() {
+        let p = parse_str("match n { -3 => 1 }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        let Expr::Match { arms, .. } = &body.kind else {
+            panic!("expected match");
+        };
+        assert_eq!(arms[0].pattern, Pattern::Int(-3));
+    }
+
+    #[test]
+    fn parse_named_error_propagation() {
+        let p = parse_str("read_file(path)?missing");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::ErrorProp { continuation: Some(name), .. } if name == "missing"
+        ));
     }
 
     #[test]

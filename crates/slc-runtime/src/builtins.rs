@@ -132,6 +132,21 @@ pub fn apply_builtin(
             }
             _ => Err(BuiltinError::TypeMismatch("char_at expects (String, i64)".into())),
         },
+        "list_new" => Ok(Value::List(Vec::new())),
+        "__index" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(i))) => {
+                let idx = *i as usize;
+                s.chars()
+                    .nth(idx)
+                    .map(Value::Char)
+                    .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
+            }
+            (Some(Value::List(items)), Some(Value::Int(i))) => items
+                .get(*i as usize)
+                .cloned()
+                .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range"))),
+            _ => Err(BuiltinError::TypeMismatch("__index expects (String|List, i64)".into())),
+        },
         "char_code_at" => match (args.first(), args.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(i))) => {
                 let idx = *i as usize;
@@ -239,10 +254,13 @@ pub fn apply_builtin(
                     let chars: Vec<char> = s.chars().collect();
                     let a = (*start).max(0) as usize;
                     let b = (*end).max(0) as usize;
-                    if a <= b && a <= chars.len() {
-                        Ok(Value::Str(chars[a..b.min(chars.len())].iter().collect()))
+                    if a > b || b > chars.len() {
+                        Err(BuiltinError::TypeMismatch(format!(
+                            "slice range {start}..{end} out of bounds for length {}",
+                            chars.len()
+                        )))
                     } else {
-                        Ok(Value::Str(String::new()))
+                        Ok(Value::Str(chars[a..b].iter().collect()))
                     }
                 }
                 _ => Err(BuiltinError::TypeMismatch("substring expects (String, i64, i64)".into())),

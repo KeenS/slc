@@ -102,7 +102,7 @@ fn check_expr(
                 check_expr(end, enums, diags);
             }
         }
-        Expr::Dual { body } | Expr::Spawn { body } | Expr::ErrorProp { expr: body } => {
+        Expr::Dual { body } | Expr::Spawn { body } | Expr::ErrorProp { expr: body, .. } => {
             check_expr(body, enums, diags);
         }
         Expr::Interaction { left, right } => {
@@ -138,8 +138,8 @@ fn check_match(
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // Wildcard always covers everything.
-    if arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard)) {
+    // An unguarded wildcard always covers everything.
+    if arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard) && a.guard.is_none()) {
         return;
     }
 
@@ -148,7 +148,13 @@ fn check_match(
     let mut scrutinee_type: Option<&String> = None;
 
     for arm in arms {
-        match &arm.pattern {
+        // A binding around a pattern does not change which constructors are
+        // covered: `x @ Red` covers exactly what `Red` covers.
+        let pattern = match &arm.pattern {
+            Pattern::Binding { pattern, .. } => pattern.as_ref(),
+            pattern => pattern,
+        };
+        match pattern {
             Pattern::Ident(x) => {
                 // Bare variant name: if it matches a variant of exactly
                 // one known enum, treat it as an enum pattern.
@@ -193,7 +199,16 @@ fn check_match(
                 span,
             });
         }
+        return;
     }
+
+    // Without enum coverage information, a match is exhaustive only when it
+    // has an unguarded wildcard. This conservatively rejects guarded
+    // wildcards and literal-only matches.
+    diags.push(Diagnostic {
+        message: "non-exhaustive match: add an unguarded `_` arm".into(),
+        span,
+    });
 }
 
 #[cfg(test)]
@@ -229,6 +244,24 @@ mod tests {
         let msg = &r.unwrap_err()[0].message;
         assert!(msg.contains("non-exhaustive"));
         assert!(msg.contains("Blue"));
+    }
+
+    #[test]
+    fn guarded_wildcard_is_not_exhaustive() {
+        let r = check("fn f(c: +i64) -> i64 { match c { _ if c > 0 => 1 } }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("non-exhaustive"));
+    }
+
+    #[test]
+    fn binding_around_enum_pattern_still_counts() {
+        assert!(
+            check(
+                "enum Color { Red, Green, Blue }
+             fn f(c: Color) -> i32 { match c { x @ Red => x, Green => 2, Blue => 3 } }"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

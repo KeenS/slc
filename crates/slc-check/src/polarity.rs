@@ -206,7 +206,7 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
             check_expr(right, diags);
         }
         Expr::Spawn { body } => check_expr(body, diags),
-        Expr::ErrorProp { expr } => check_expr(expr, diags),
+        Expr::ErrorProp { expr, .. } => check_expr(expr, diags),
         Expr::CommandDef { body, .. } => check_expr(body, diags),
         Expr::Service { agent, continuations } => {
             check_expr(agent, diags);

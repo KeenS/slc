@@ -11,6 +11,11 @@ use std::collections::HashMap;
 
 thread_local! {
     static CONSTANTS: RefCell<HashMap<String, Pattern>> = RefCell::new(HashMap::new());
+    static CONTINUATIONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+fn current_continuation() -> Option<String> {
+    CONTINUATIONS.with(|cell| cell.borrow().last().cloned())
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,7 +89,14 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
 
         Expr::Lambda { param, param_type: _, return_type: _, body } => {
             // fn(x) { body } → λx. body'
+            let saved = current_continuation();
+            CONTINUATIONS.with(|cell| cell.borrow_mut().clear());
             let b = lower_expr(body)?;
+            CONTINUATIONS.with(|cell| {
+                if let Some(name) = saved {
+                    cell.borrow_mut().push(name);
+                }
+            });
             Ok(Term::Lam(param.clone(), Box::new(b)))
         }
 
@@ -102,8 +114,12 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             //   f(a) applied to (b)
             // Multi-arg functions are curried: fn f(x, y) → λx. λy. body.
             let mut result = lower_expr(callee)?;
-            for a in args {
-                let arg = lower_expr(a)?;
+            let args = if args.is_empty() {
+                vec![Term::Var("$unit".into())]
+            } else {
+                args.iter().map(lower_expr).collect::<Result<Vec<_>, _>>()?
+            };
+            for arg in args {
                 result = Term::Mu(
                     "__call".into(),
                     Box::new(Command::Cut(
@@ -255,7 +271,7 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
         }
 
         Expr::Index { value, index } => Ok(call_curried(
-            Term::Var("char_at".into()),
+            Term::Var("__index".into()),
             vec![lower_expr(value)?, lower_expr(index)?],
         )),
 
@@ -309,7 +325,13 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             // responsible for viewing it with the opposite polarity.
             lower_expr(body)
         }
-        Expr::ErrorProp { expr } => {
+        Expr::ErrorProp { expr, continuation } => {
+            let selected = continuation.clone().or_else(current_continuation);
+            if let Some(name) = selected {
+                // e?err applies e to the named error continuation.
+                let e = lower_expr(expr)?;
+                return Ok(call_curried(e, vec![Term::Var(name.clone())]));
+            }
             // e? → μprop. ⟨ e' ∥ λ̄__ok. ⟨ __ok ∥ prop ⟩ ⟩
             // The value flows to the success continuation; errors escape
             // via the mu binder (the error continuation).
@@ -345,18 +367,22 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
                     Some(guard) => lower_expr(guard)?,
                     None => Term::Var("true".into()),
                 };
-                arm_terms.push(Term::Pair(
+                arm_terms.push(Term::Inl(Box::new(Term::Pair(
                     Box::new(descriptor),
                     Box::new(Term::Pair(
                         Box::new(guard),
                         Box::new(Term::Lam("__match_arg".into(), Box::new(b))),
                     )),
-                ));
+                ))));
             }
-            let mut payload = s;
-            for a in arm_terms {
-                payload = Term::Pair(Box::new(payload), Box::new(a));
+            // Keep the arm spine right-nested: (s, (a1, (a2, ...))).
+            // `__match_dispatch` walks this spine, so left-nesting would
+            // accidentally make the first arm part of the scrutinee.
+            let mut spine = Term::Var("$unit".into());
+            for a in arm_terms.into_iter().rev() {
+                spine = Term::Pair(Box::new(a), Box::new(spine));
             }
+            let payload = Term::Pair(Box::new(s), Box::new(spine));
             Ok(Term::Mu(
                 "__match".into(),
                 Box::new(Command::Cut(
@@ -466,7 +492,17 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
         match &d.kind {
             Decl::Fn { name, params, return_type: _, body, type_params: _ } => {
                 // Multi-param fn: nest lambdas
+                let continuations: Vec<String> =
+                    params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
+                CONTINUATIONS.with(|cell| {
+                    cell.borrow_mut().extend(continuations.iter().cloned());
+                });
                 let mut term = lower_expr(body)?;
+                CONTINUATIONS.with(|cell| {
+                    for _ in &continuations {
+                        cell.borrow_mut().pop();
+                    }
+                });
                 for p in params.iter().rev() {
                     term = Term::Lam(p.name.clone(), Box::new(term));
                 }
@@ -474,7 +510,17 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             }
             Decl::Command { name, params, body } => {
                 // command f(x, to k) { E } → κx. μα. E
+                let continuations: Vec<String> =
+                    params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
+                CONTINUATIONS.with(|cell| {
+                    cell.borrow_mut().extend(continuations.iter().cloned());
+                });
                 let mut term = lower_expr(body)?;
+                CONTINUATIONS.with(|cell| {
+                    for _ in &continuations {
+                        cell.borrow_mut().pop();
+                    }
+                });
                 for p in params.iter().rev() {
                     if p.is_continuation {
                         term = Term::Mu(
@@ -552,7 +598,7 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 out.push_str(if *b { "true" } else { "false" });
             }
             Pattern::Float(n) => {
-                out.push('#');
+                out.push('%');
                 out.push_str(&n.to_string());
             }
             Pattern::Or(alternatives) => {
@@ -586,6 +632,22 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 }
                 out.push(')');
             }
+            Pattern::List { items, rest } => {
+                out.push('[');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write(item, out);
+                }
+                if let Some(rest) = rest {
+                    if !items.is_empty() {
+                        out.push(',');
+                    }
+                    write(rest, out);
+                }
+                out.push(']');
+            }
             Pattern::Struct { name, fields } => {
                 out.push_str(&escape(name));
                 out.push('{');
@@ -618,7 +680,7 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
     }
     let mut out = String::new();
     write(pattern, &mut out);
-    format!("{out:?}")
+    out
 }
 
 fn lookup_constant(name: &str) -> Option<Pattern> {
@@ -654,6 +716,21 @@ mod tests {
         let out = lower_str("mu(k: -i32) { k(42) }");
         // body is a call k(42), which lowers to just Var(k) currently
         assert!(matches!(out[0].1, Term::Mu(_, _)));
+    }
+
+    #[test]
+    fn lower_error_prop_uses_current_continuation() {
+        let out = lower_str("command f(x: +i32, to err: -i32) { fail(x)? }");
+        let term = &out[0].1;
+        let printed = format!("{term}");
+        assert!(printed.contains("err"), "should reference err: {printed}");
+    }
+
+    #[test]
+    fn lower_named_error_prop_selects_continuation() {
+        let out = lower_str("fn f() -> i32 { fail(x)?missing }");
+        let printed = format!("{}", out[0].1);
+        assert!(printed.contains("missing"), "should reference missing: {printed}");
     }
 
     #[test]

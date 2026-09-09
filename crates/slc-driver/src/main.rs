@@ -40,7 +40,14 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
         errors.iter().map(|e| format!("parse error: {}", e.message)).collect::<Vec<_>>().join("\n")
     })?;
 
-    // Polarity and linearity checking
+    // Type, polarity, linearity, and exhaustiveness checking
+    slc_check::expr::check_program(&program).map_err(|diags| {
+        diags
+            .iter()
+            .map(|d| format!("type: {} (at {})", d.message, format_span(&source, d.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
     slc_check::polarity::check_program(&program).map_err(|diags| {
         diags.iter().map(|d| format!("polarity: {}", d.message)).collect::<Vec<_>>().join("\n")
     })?;
@@ -93,4 +100,14 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
         slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;
 
     Ok(value.display())
+}
+
+fn format_span(source: &str, span: slc_syntax::token::Span) -> String {
+    let before = &source[..span.start.min(source.len())];
+    let line = before.matches('\n').count() + 1;
+    let column = before.rfind('\n').map(|i| span.start - i).unwrap_or(span.start + 1);
+    format!(
+        "{line}:{column} `{}`",
+        &source[span.start.min(source.len())..span.end.min(source.len())]
+    )
 }

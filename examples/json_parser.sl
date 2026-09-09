@@ -6,9 +6,10 @@
 //   * `ok` receives the parsed JSON text
 //   * `err` receives a diagnostic message
 //
-// The error continuation escapes through `ret`, so a failure never falls
-// through to a success continuation. The parser validates the complete
-// input, including trailing characters and trailing commas.
+// `parse_json(source, ok, err)?err` is the selected-continuation form:
+// on success it returns to `ok`; on failure it jumps directly to `err`.
+// The parser validates the complete input, including trailing characters
+// and trailing commas.
 
 const COMMA: +char = ',';
 const COLON: +char = ':';
@@ -324,6 +325,6 @@ fn main() -> i32 {
             println("error: " + message);
             ret(1)
         };
-        parse_json(source, ok, err)
+        parse_json(source, ok, err)?err
     }
 }

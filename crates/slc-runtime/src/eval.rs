@@ -63,6 +63,31 @@ enum RuntimePattern {
     Range(Box<RuntimePattern>, Box<RuntimePattern>),
     Or(Vec<RuntimePattern>),
     Tuple(Vec<RuntimePattern>),
+    List { items: Vec<RuntimePattern>, rest: Option<(Option<String>, Box<RuntimePattern>)> },
+}
+
+/// Match dispatch payloads use a top-level pair spine:
+/// `(scrutinee, arm1, arm2, ...)`. Each arm is itself a nested pair
+/// `(descriptor, (guard, thunk))`. Flattening all pairs destroys both a
+/// pair-valued scrutinee and the nested arm structure, so split only this
+/// outer spine.
+fn split_match_payload(v: &Value) -> Vec<Value> {
+    let mut out = Vec::new();
+    let mut current = v.clone();
+    while let Value::Pair(head, rest) = current {
+        out.push((*head).clone());
+        current = (*rest).clone();
+    }
+    out.push(current);
+    out
+}
+
+/// Unwrap the additive marker used by lowered match arms.
+fn unwrap_match_arm(v: &Value) -> Value {
+    match v {
+        Value::Inl(inner) | Value::Inr(inner) => (**inner).clone(),
+        other => other.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,16 +114,31 @@ fn parse_runtime_pattern_inner(
             RuntimePattern::Wildcard
         }
         Some('#') => {
-            let digits = take_while(chars, |c| c.is_ascii_digit() || *c == '-');
+            let text = take_while(chars, |c| c.is_ascii_digit() || *c == '-' || *c == '.');
             let rest = parse_runtime_pattern_tail(chars);
-            match (digits.parse::<i64>().ok(), rest) {
-                (Some(start), Some(RuntimePattern::Literal(Value::Int(end)))) => {
+            match (text.parse::<i64>().ok(), text.parse::<f64>().ok(), rest) {
+                (Some(start), _, Some(RuntimePattern::Literal(Value::Int(end)))) => {
                     RuntimePattern::Range(
                         Box::new(RuntimePattern::Literal(Value::Int(start))),
                         Box::new(RuntimePattern::Literal(Value::Int(end))),
                     )
                 }
-                (Some(n), _) => RuntimePattern::Literal(Value::Int(n)),
+                (Some(n), _, _) => RuntimePattern::Literal(Value::Int(n)),
+                (None, Some(n), _) => RuntimePattern::Literal(Value::Float(n)),
+                _ => RuntimePattern::Wildcard,
+            }
+        }
+        Some('%') => {
+            let text = take_while(chars, |c| c.is_ascii_digit() || *c == '-' || *c == '.');
+            let rest = parse_runtime_pattern_tail(chars);
+            match (text.parse::<f64>().ok(), rest) {
+                (Some(start), Some(RuntimePattern::Literal(Value::Float(end)))) => {
+                    RuntimePattern::Range(
+                        Box::new(RuntimePattern::Literal(Value::Float(start))),
+                        Box::new(RuntimePattern::Literal(Value::Float(end))),
+                    )
+                }
+                (Some(n), _) => RuntimePattern::Literal(Value::Float(n)),
                 _ => RuntimePattern::Wildcard,
             }
         }
@@ -157,6 +197,34 @@ fn parse_runtime_pattern_inner(
             take_while(chars, |c| c.is_alphanumeric() || *c == '_'),
             Box::new(RuntimePattern::Wildcard),
         ),
+        Some('[') => {
+            let mut items = Vec::new();
+            let rest = None;
+            loop {
+                match chars.peek() {
+                    Some(']') | None => {
+                        chars.next();
+                        break;
+                    }
+                    _ => {}
+                }
+                items.push(parse_runtime_pattern_inner(chars));
+                match chars.next() {
+                    Some(',') => {
+                        if chars.peek() == Some(&']') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                    Some(']') => break,
+                    _ => break,
+                }
+            }
+            if items.last() == Some(&RuntimePattern::Wildcard) {
+                // no-op; a trailing wildcard is just an ordinary item
+            }
+            RuntimePattern::List { items, rest }
+        }
         Some(c) => {
             let mut name = String::new();
             name.push(c);
@@ -242,13 +310,19 @@ fn try_match_arm(
 ) -> Result<Option<Value>, EvalError> {
     // Arm payload is (descriptor, (guard, thunk)).
     let Value::Pair(a, b) = arm else {
-        return Err(EvalError::TypeMismatch("malformed match arm".into()));
+        return Err(EvalError::TypeMismatch(format!("malformed match arm: {}", arm.display())));
     };
     let (descriptor, guard, thunk) = match (a.as_ref(), b.as_ref()) {
         (Value::Str(descriptor), Value::Pair(guard, thunk)) => {
             (descriptor.clone(), guard.clone(), thunk.clone())
         }
-        _ => return Err(EvalError::TypeMismatch("malformed match arm payload".into())),
+        _ => {
+            return Err(EvalError::TypeMismatch(format!(
+                "malformed match arm payload: {}, {}",
+                a.display(),
+                b.display()
+            )));
+        }
     };
     let descriptor = parse_runtime_pattern(&descriptor);
     if let Descriptor::Pattern(pattern) = &descriptor
@@ -328,6 +402,29 @@ fn pattern_matches(
             } else {
                 false
             }
+        }
+        RuntimePattern::List { items, rest } => {
+            let Value::List(list) = value else {
+                return false;
+            };
+            if list.len() < items.len() {
+                return false;
+            }
+            for (pattern, value) in items.iter().zip(list.iter()) {
+                if !pattern_matches(pattern, value, bindings) {
+                    return false;
+                }
+            }
+            if let Some((name, inner)) = rest {
+                let tail = Value::List(list[items.len()..].to_vec());
+                if !pattern_matches(inner, &tail, bindings) {
+                    return false;
+                }
+                if let Some(name) = name {
+                    bindings.push((name.clone(), tail));
+                }
+            }
+            true
         }
     }
 }
@@ -448,11 +545,17 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                             Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
                             other => eval_command(other, &mut env2, fuel)?,
                         };
-                        let mut single = Vec::new();
-                        collect_args(&new_arg, &mut single);
+                        let mut single = if name == "__match_dispatch" {
+                            split_match_payload(&new_arg)
+                        } else {
+                            Vec::new()
+                        };
+                        if name != "__match_dispatch" {
+                            collect_args(&new_arg, &mut single);
+                        }
                         collected.extend(single);
                         let arity = builtin_arity(&name);
-                        if collected.len() < arity {
+                        if collected.len() < arity && name != "__match_dispatch" {
                             return Ok(Value::PartialBuiltin(name, collected));
                         }
                         // Dispatch directly with the collected args
@@ -517,13 +620,17 @@ fn apply_builtin_call(
         _ => eval_command(arg_command, env, fuel)?,
     };
     let mut args = Vec::new();
-    collect_args(&arg, &mut args);
+    if name == "__match_dispatch" {
+        args.extend(split_match_payload(&arg));
+    } else {
+        collect_args(&arg, &mut args);
+    }
     // Determine target arity for this builtin.
     let arity = builtin_arity(name);
     if std::env::var("SLC_DEBUG").is_ok() {
         eprintln!("[arity] {name}: got {} args (arity {arity})", args.len());
     }
-    if args.len() < arity {
+    if args.len() < arity && name != "__match_dispatch" {
         // Not enough arguments yet: partial application.
         // Accumulate by merging into a PartialBuiltin value.
         // The caller wraps this in a Mu; the next application will
@@ -536,7 +643,7 @@ fn apply_builtin_call(
             collected = prev.clone();
             collected.extend(args);
         }
-        if collected.len() < arity {
+        if collected.len() < arity && name != "__match_dispatch" {
             return Ok(Value::PartialBuiltin(name.to_string(), collected));
         }
         return dispatch_builtin(name, collected, fuel);
@@ -570,19 +677,10 @@ fn apply_builtin_call(
     if name == "__match_dispatch" {
         let mut it = args.into_iter();
         let scrutinee = it.next().unwrap_or(Value::Unit);
-        let flat: Vec<Value> = it.collect();
-        let arms = flat
-            .chunks(3)
-            .filter(|chunk| chunk.len() == 3)
-            .map(|chunk| {
-                Value::Pair(
-                    Box::new(chunk[0].clone()),
-                    Box::new(Value::Pair(Box::new(chunk[1].clone()), Box::new(chunk[2].clone()))),
-                )
-            })
-            .collect::<Vec<_>>();
+        let arms = it.collect::<Vec<_>>();
         let mut bindings: Vec<(String, Value)> = Vec::new();
         for arm in arms {
+            let arm = unwrap_match_arm(&arm);
             if let Some(v) = try_match_arm(&arm, &scrutinee, &mut bindings, fuel)? {
                 return Ok(v);
             }
@@ -730,6 +828,7 @@ fn builtin_arity(name: &str) -> usize {
         "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "str_to_int"
         | "neg" | "read_file" | "file_exists" => 1,
         "char_at" => 2,
+        "__index" => 2,
         "list_get" => 2,
         "map_get" => 2,
         "map_len" => 1,
@@ -744,7 +843,8 @@ fn builtin_arity(name: &str) -> usize {
         "find_char" | "substring" => 3,
         "__parse_int" => 4,
         "__service" | "__job" => 0, // variadic: agent + ports
-        "format" => 0,              // variadic: apply immediately
+        "list_new" => 0,
+        "format" => 0, // variadic: apply immediately
         _ => 0,
     }
 }

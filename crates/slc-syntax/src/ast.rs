@@ -73,6 +73,7 @@ pub enum Expr {
     },
     ErrorProp {
         expr: Box<Node<Expr>>,
+        continuation: Option<String>,
     },
     /// `agent.to(k, h)` — wire continuation ports first.
     Service {
@@ -147,6 +148,7 @@ pub enum Pattern {
     Binding { name: String, pattern: Box<Pattern> },
     Rest,
     Tuple(Vec<Pattern>),
+    List { items: Vec<Pattern>, rest: Option<Box<Pattern>> },
     Struct { name: String, fields: Vec<(String, Pattern)> },
     Enum { name: String, variant: String, fields: Vec<Pattern> },
 }
