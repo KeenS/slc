@@ -64,7 +64,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             let kind = match ident.as_str() {
                 "fn" => TokenKind::Fn,
                 "mu" => TokenKind::Mu,
-                "command" => TokenKind::Command,
                 "to" => TokenKind::To,
                 "match" => TokenKind::Match,
                 "let" => TokenKind::Let,
@@ -72,7 +71,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "else" => TokenKind::Else,
                 "struct" => TokenKind::Struct,
                 "enum" => TokenKind::Enum,
-                "spawn" => TokenKind::Spawn,
                 "dual" => TokenKind::Dual,
                 "return" => TokenKind::Return,
                 "const" => TokenKind::Const,
@@ -283,13 +281,12 @@ mod tests {
 
     #[test]
     fn lex_keywords() {
-        let toks = lex("fn mu command to match let").unwrap();
+        let toks = lex("fn mu to match let").unwrap();
         assert_eq!(toks[0].kind, TokenKind::Fn);
         assert_eq!(toks[1].kind, TokenKind::Mu);
-        assert_eq!(toks[2].kind, TokenKind::Command);
-        assert_eq!(toks[3].kind, TokenKind::To);
-        assert_eq!(toks[4].kind, TokenKind::Match);
-        assert_eq!(toks[5].kind, TokenKind::Let);
+        assert_eq!(toks[2].kind, TokenKind::To);
+        assert_eq!(toks[3].kind, TokenKind::Match);
+        assert_eq!(toks[4].kind, TokenKind::Let);
     }
 
     #[test]

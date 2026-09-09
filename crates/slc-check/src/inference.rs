@@ -104,7 +104,7 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
             };
             Ok(DeclarationType { name: name.clone(), ty })
         }
-        Decl::Command { name, params, body: _ } => {
+        Decl::Mu { name, params, body: _, .. } => {
             let mut u = Unification::new();
             let mut inputs = Vec::new();
             for p in params {
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn command_infers_parametric_type() {
-        let out = infer("command step(x: +i32, to k: -i32) { k(x) }").unwrap();
+        let out = infer("mu step(x: +i32, to k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
             Type::Fun(

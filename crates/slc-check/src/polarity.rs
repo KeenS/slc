@@ -40,7 +40,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 check_param_polarity(p, false, d.span, diags);
             }
         }
-        Decl::Command { params, .. } => {
+        Decl::Mu { params, .. } => {
             for p in params {
                 check_param_polarity(p, p.is_continuation, d.span, diags);
             }
@@ -205,9 +205,7 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
             check_expr(left, diags);
             check_expr(right, diags);
         }
-        Expr::Spawn { body } => check_expr(body, diags),
         Expr::ErrorProp { expr, .. } => check_expr(expr, diags),
-        Expr::CommandDef { body, .. } => check_expr(body, diags),
         Expr::Service { agent, continuations } => {
             check_expr(agent, diags);
             for k in continuations {
@@ -254,12 +252,12 @@ mod tests {
 
     #[test]
     fn command_mixed_ok() {
-        assert!(check("command step(x: +i32, to k: -i32) { k(x) }").is_ok());
+        assert!(check("mu step(x: +i32, to k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_wrong_polarity_fails() {
-        let r = check("command bad(x: -i32, to k: +i32) { k(x) }");
+        let r = check("mu bad(x: -i32, to k: +i32) { k(x) }");
         assert!(r.is_err());
         let diags = r.unwrap_err();
         assert_eq!(diags.len(), 2);

@@ -27,11 +27,6 @@ pub enum Expr {
         return_type: Option<TypeExpr>,
         body: Box<Node<Expr>>,
     },
-    CommandDef {
-        name: String,
-        params: Vec<Param>,
-        body: Box<Node<Expr>>,
-    },
     Call {
         callee: Box<Node<Expr>>,
         args: Vec<Node<Expr>>,
@@ -64,9 +59,6 @@ pub enum Expr {
     Interaction {
         left: Box<Node<Expr>>,
         right: Box<Node<Expr>>,
-    },
-    Spawn {
-        body: Box<Node<Expr>>,
     },
     Dual {
         body: Box<Node<Expr>>,
@@ -193,9 +185,10 @@ pub enum Decl {
         return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },
-    Command {
+    Mu {
         name: String,
         params: Vec<Param>,
+        return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },
     Const {

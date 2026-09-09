@@ -318,7 +318,6 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
                 }
             }
         }
-        Expr::Spawn { body: _ } => Err(LowerError::Unsupported("spawn".into())),
         Expr::Dual { body } => {
             // `dual(e)` is an explicit polarity flip. At the term level it
             // denotes the same witness as `e`; the type checker is
@@ -458,10 +457,6 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             }
             Ok(acc.unwrap_or_else(|| Term::Var("$unit".into())))
         }
-
-        Expr::CommandDef { name: _, params: _, body: _ } => {
-            Err(LowerError::Unsupported("command expressions".into()))
-        }
     }
 }
 
@@ -508,8 +503,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 }
                 out.push((name.clone(), term));
             }
-            Decl::Command { name, params, body } => {
-                // command f(x, to k) { E } → κx. μα. E
+            Decl::Mu { name, params, body, .. } => {
+                // mu f(x, to k) { E } → κx. μα. E
                 let continuations: Vec<String> =
                     params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
                 CONTINUATIONS.with(|cell| {
@@ -720,7 +715,7 @@ mod tests {
 
     #[test]
     fn lower_error_prop_uses_current_continuation() {
-        let out = lower_str("command f(x: +i32, to err: -i32) { fail(x)? }");
+        let out = lower_str("mu f(x: +i32, to err: -i32) { fail(x)? }");
         let term = &out[0].1;
         let printed = format!("{term}");
         assert!(printed.contains("err"), "should reference err: {printed}");

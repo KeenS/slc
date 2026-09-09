@@ -7,7 +7,7 @@
 // represents the joint consumption of both positive sides, rather than two
 // independently activated continuations.
 
-command consume_pair(k: -(+i64 ⅋ +i64)) {
+mu consume_pair(k: -(+i64 ⅋ +i64)) {
     k(0)
 }
 

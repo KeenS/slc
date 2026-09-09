@@ -161,7 +161,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
             Decl::Fn { name, params, return_type, .. } => {
                 Some((name, params, return_type.as_ref().and_then(|ty| lower_type(ty).ok())))
             }
-            Decl::Command { name, params, .. } => Some((name, params, Some(Type::Bottom))),
+            Decl::Mu { name, params, .. } => Some((name, params, Some(Type::Bottom))),
             _ => None,
         };
         if let Some((name, params, result)) = signature {
@@ -179,7 +179,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
 
 fn check_decl(d: &Node<Decl>, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { params, body, .. } | Decl::Command { params, body, .. } => {
+        Decl::Fn { params, body, .. } | Decl::Mu { params, body, .. } => {
             env.push();
             for p in params {
                 if let Ok(ty) = lower_type(&p.ty) {
@@ -668,7 +668,7 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
             None
         }
-        Expr::Dual { body } | Expr::Spawn { body } => check_expr(body, env, diags),
+        Expr::Dual { body } => check_expr(body, env, diags),
         Expr::Interaction { left, right } => {
             check_expr(left, env, diags);
             check_expr(right, env, diags)
@@ -687,7 +687,6 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
             None
         }
-        Expr::CommandDef { body, .. } => check_expr(body, env, diags),
         _ => None,
     }
 }

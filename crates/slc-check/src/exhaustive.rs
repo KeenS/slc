@@ -36,7 +36,7 @@ fn check_node_decl(
 ) {
     match &d.kind {
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
-        Decl::Command { body, .. } => check_expr(body, enums, diags),
+        Decl::Mu { body, .. } => check_expr(body, enums, diags),
         Decl::Const { value, .. } => check_expr(value, enums, diags),
         Decl::Struct { .. } | Decl::Enum { .. } => {}
     }
@@ -102,14 +102,13 @@ fn check_expr(
                 check_expr(end, enums, diags);
             }
         }
-        Expr::Dual { body } | Expr::Spawn { body } | Expr::ErrorProp { expr: body, .. } => {
+        Expr::Dual { body } | Expr::ErrorProp { expr: body, .. } => {
             check_expr(body, enums, diags);
         }
         Expr::Interaction { left, right } => {
             check_expr(left, enums, diags);
             check_expr(right, enums, diags);
         }
-        Expr::CommandDef { body, .. } => check_expr(body, enums, diags),
         Expr::Service { agent, continuations } => {
             check_expr(agent, enums, diags);
             for k in continuations {

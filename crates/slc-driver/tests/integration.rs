@@ -33,7 +33,7 @@ fn polarity_error() {
 #[test]
 fn linearity_error() {
     let dir = std::env::temp_dir().join("slc_test_lin.sl");
-    std::fs::write(&dir, "command bad(x: +i32, to k: -i32) { x }").unwrap();
+    std::fs::write(&dir, "mu bad(x: +i32, to k: -i32) { x }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("linearity"));
@@ -233,7 +233,7 @@ fn named_error_propagation_success_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_ok.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String, to ok: -String, to err: -String) {
+        r#"mu parse(input: +String, to ok: -String, to err: -String) {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {
@@ -254,7 +254,7 @@ fn named_error_propagation_error_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_err.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String, to ok: -String, to err: -String) {
+        r#"mu parse(input: +String, to ok: -String, to err: -String) {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {
@@ -275,7 +275,7 @@ fn error_propagation_inside_nested_fn_is_rejected() {
     let dir = std::env::temp_dir().join("slc_test_nested_error_prop.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String, to ok: -String, to err: -String) {
+        r#"mu parse(input: +String, to ok: -String, to err: -String) {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {

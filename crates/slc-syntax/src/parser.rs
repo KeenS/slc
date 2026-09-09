@@ -115,7 +115,11 @@ impl Parser {
                     self.parse_fn()
                 }
             }
-            Some(TokenKind::Command) => self.parse_command_decl(),
+            Some(TokenKind::Mu)
+                if self.tokens.get(self.pos + 1).map(|t| &t.kind) != Some(&TokenKind::LParen) =>
+            {
+                self.parse_mu_decl()
+            }
             Some(TokenKind::Const) => self.parse_const_decl(),
             _ => {
                 // Expression as top-level (for scripting)
@@ -219,12 +223,14 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
-        let t = self.expect(TokenKind::Command, "`command`")?;
-        let name = self.expect_ident("command name")?;
+    fn parse_mu_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Mu, "`mu`")?;
+        let name = self.expect_ident("`mu` name")?;
         let params = self.parse_params()?;
+        let return_type =
+            if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         let body = self.parse_block()?;
-        Ok(Node { span: t.span, kind: Decl::Command { name, params, body } })
+        Ok(Node { span: t.span, kind: Decl::Mu { name, params, return_type, body } })
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -478,15 +484,6 @@ impl Parser {
             return Ok(Node {
                 span: Span { start, end },
                 kind: Expr::Dual { body: Box::new(body) },
-            });
-        }
-        if self.eat(&TokenKind::Spawn) {
-            let start = self.pos;
-            let body = self.parse_unary()?;
-            let end = self.pos;
-            return Ok(Node {
-                span: Span { start, end },
-                kind: Expr::Spawn { body: Box::new(body) },
             });
         }
         self.parse_postfix()
@@ -1041,11 +1038,11 @@ mod tests {
 
     #[test]
     fn parse_command_def() {
-        let p = parse_str("command step(x: +i32, to k: -i32) { k(x) }");
+        let p = parse_str("mu step(x: +i32, to k: -i32) { k(x) }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
         assert!(
-            matches!(&d.kind, Decl::Command { name, params, .. } if name == "step" && params.len() == 2)
+            matches!(&d.kind, Decl::Mu { name, params, .. } if name == "step" && params.len() == 2)
         );
     }
 

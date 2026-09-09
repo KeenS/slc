@@ -6,7 +6,7 @@
 //
 //   slc run examples/linearity_error.sl
 
-command bad(x: +i32, to k: -i32) {
+mu bad(x: +i32, to k: -i32) {
     x
 }
 
