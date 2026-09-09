@@ -100,15 +100,6 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             Ok(Term::Lam(param.clone(), Box::new(b)))
         }
 
-        Expr::Mu { binder, return_type: _, body } => {
-            // mu(k: -T) { body } → the body, with the binder noted.
-            // k(v) inside the body means "escape with v". The evaluator
-            // treats k as the mu's continuation via Activate.
-            let b = lower_expr(body)?;
-            let a = binder.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| "k".into());
-            Ok(Term::Mu(a, Box::new(Command::Cut(b, CoTerm::Covar("__answer".into())))))
-        }
-
         Expr::Call { callee, args } => {
             // f(a, b) lowers to nested single-argument applications:
             //   f(a) applied to (b)
@@ -704,13 +695,6 @@ mod tests {
     fn lower_lambda() {
         let out = lower_str("fn id(x: +i32) -> i32 { x }");
         assert_eq!(out[0].1, Term::Lam("x".into(), Box::new(Term::Var("x".into()))));
-    }
-
-    #[test]
-    fn lower_mu() {
-        let out = lower_str("mu(k: -i32) { k(42) }");
-        // body is a call k(42), which lowers to just Var(k) currently
-        assert!(matches!(out[0].1, Term::Mu(_, _)));
     }
 
     #[test]

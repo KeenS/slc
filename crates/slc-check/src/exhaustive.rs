@@ -59,7 +59,6 @@ fn check_expr(
             }
         }
         Expr::Lambda { body, .. } => check_expr(body, enums, diags),
-        Expr::Mu { body, .. } => check_expr(body, enums, diags),
         Expr::Call { callee, args } => {
             check_expr(callee, enums, diags);
             for a in args {

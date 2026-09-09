@@ -315,16 +315,14 @@ fn parse_object_body(
 }
 
 fn main() -> i32 {
-    mu(ret: -i32) {
-        let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
-        let ok = fn(value: +String) -> i32 {
-            println("parsed: " + value);
-            ret(0)
-        };
-        let err = fn(message: +String) -> i32 {
-            println("error: " + message);
-            ret(1)
-        };
-        parse_json(source, ok, err)?err
-    }
+    let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
+    let ok = fn(value: +String) -> i32 {
+        println("parsed: " + value);
+        EXIT(0)
+    };
+    let err = fn(message: +String) -> i32 {
+        println("error: " + message);
+        EXIT(1)
+    };
+    parse_json(source, ok, err)
 }

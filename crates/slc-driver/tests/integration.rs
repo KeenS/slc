@@ -105,17 +105,15 @@ fn parse_int_multi_continuation_success() {
     std::fs::write(
         &dir,
         r#"fn main() -> i32 {
-    mu(ret: -i32) {
-        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
-        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
-        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
-        __parse_int("42", ok, empty, overflow)
-    }
+    let ok = fn(n: +i64) -> i32 { println(n); EXIT(1) };
+    let empty = fn(s: +String) -> i32 { println(s); println(2); EXIT(2) };
+    let overflow = fn(s: +String) -> i32 { println(s); println(3); EXIT(3) };
+    __parse_int("42", ok, empty, overflow)
 }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stdout: {stdout}");
+    assert!(!ok, "stdout: {stdout}");
     assert!(stdout.contains("42"));
 }
 
@@ -125,17 +123,15 @@ fn parse_int_multi_continuation_empty() {
     std::fs::write(
         &dir,
         r#"fn main() -> i32 {
-    mu(ret: -i32) {
-        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
-        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
-        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
-        __parse_int("", ok, empty, overflow)
-    }
+    let ok = fn(n: +i64) -> i32 { println(n); EXIT(1) };
+    let empty = fn(s: +String) -> i32 { println(s); println(2); EXIT(2) };
+    let overflow = fn(s: +String) -> i32 { println(s); println(3); EXIT(3) };
+    __parse_int("", ok, empty, overflow)
 }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stdout: {stdout}");
+    assert!(!ok, "stdout: {stdout}");
     assert!(stdout.contains("2"));
 }
 
@@ -145,17 +141,15 @@ fn parse_int_multi_continuation_overflow() {
     std::fs::write(
         &dir,
         r#"fn main() -> i32 {
-    mu(ret: -i32) {
-        let ok = fn(n: +i64) -> i32 { println(n); ret(1) };
-        let empty = fn(s: +String) -> i32 { println(s); ret(2) };
-        let overflow = fn(s: +String) -> i32 { println(s); ret(3) };
-        __parse_int("99999999999999999999999", ok, empty, overflow)
-    }
+    let ok = fn(n: +i64) -> i32 { println(n); EXIT(1) };
+    let empty = fn(s: +String) -> i32 { println(s); println(2); EXIT(2) };
+    let overflow = fn(s: +String) -> i32 { println(s); println(3); EXIT(3) };
+    __parse_int("99999999999999999999999", ok, empty, overflow)
 }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stdout: {stdout}");
+    assert!(!ok, "stdout: {stdout}");
     assert!(stdout.contains("3"));
 }
 
@@ -237,11 +231,9 @@ fn named_error_propagation_success_path() {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {
-            mu(ret: -i32) {
-                let ok = fn(value: +String) -> i32 { ret(0) };
-                let err = fn(message: +String) -> i32 { ret(1) };
-                parse("ok", ok, err)?err
-            }
+            let ok = fn(value: +String) -> i32 { EXIT(0) };
+            let err = fn(message: +String) -> i32 { EXIT(1) };
+            parse("ok", ok, err)
         }"#,
     )
     .unwrap();
@@ -258,11 +250,9 @@ fn named_error_propagation_error_path() {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {
-            mu(ret: -i32) {
-                let ok = fn(value: +String) -> i32 { ret(0) };
-                let err = fn(message: +String) -> i32 { ret(1) };
-                parse("bad", ok, err)?err
-            }
+            let ok = fn(value: +String) -> i32 { EXIT(0) };
+            let err = fn(message: +String) -> i32 { EXIT(1) };
+            parse("bad", ok, err)
         }"#,
     )
     .unwrap();
@@ -279,10 +269,8 @@ fn error_propagation_inside_nested_fn_is_rejected() {
             if input == "ok" { ok("parsed") } else { err("failed") }
         }
         fn main() -> i32 {
-            mu(ret: -i32) {
-                let inner = fn(unit: +i32) -> i32 { parse("bad", ret, ret)? };
-                inner()
-            }
+            let inner = fn(unit: +i32) -> i32 { parse("bad", EXIT, EXIT)? };
+            inner(0)
         }"#,
     )
     .unwrap();
@@ -308,15 +296,13 @@ fn json_selected_error_continuation_reports_parse_error() {
             }
         }
         fn main() -> i32 {
-            mu(ret: -i32) {
-                let ok = fn(value: +String) -> i32 { println("parsed: " + value); ret(0) };
-                let err = fn(message: +String) -> i32 { println("error: " + message); ret(1) };
-                parse_json("x", ok, err)?err
-            }
+            let ok = fn(value: +String) -> i32 { println("parsed: " + value); EXIT(0) };
+            let err = fn(message: +String) -> i32 { println("error: " + message); EXIT(1) };
+            parse_json("x", ok, err)
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stderr: {stderr}");
+    assert!(!ok, "stderr: {stderr}");
     assert!(stdout.contains("error: expected JSON value"));
 }

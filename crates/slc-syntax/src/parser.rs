@@ -675,32 +675,6 @@ impl Parser {
                     kind: Expr::Lambda { param, param_type, return_type, body: Box::new(body) },
                 })
             }
-            Some(TokenKind::Mu) => {
-                self.pos += 1;
-                // mu(k: -T) { body }
-                // mu() -> T { body }
-                // mu(x: +T) -> R { body }
-                self.expect(TokenKind::LParen, "`(`")?;
-                let binder = if self.eat(&TokenKind::RParen) {
-                    None
-                } else {
-                    let name = self.expect_ident("binder name")?;
-                    let ty = if self.eat(&TokenKind::Colon) {
-                        Some(self.parse_type()?.kind)
-                    } else {
-                        None
-                    };
-                    self.expect(TokenKind::RParen, "`)`")?;
-                    Some((name, ty))
-                };
-                let return_type =
-                    if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
-                let body = self.parse_block()?;
-                Ok(Node {
-                    span: Span { start, end: self.pos },
-                    kind: Expr::Mu { binder, return_type, body: Box::new(body) },
-                })
-            }
             Some(TokenKind::Match) => {
                 self.pos += 1;
                 let scrutinee = self.parse_expr()?;
@@ -1016,24 +990,6 @@ mod tests {
         assert!(
             matches!(&d.kind, Decl::Fn { name, params, .. } if name == "add" && params.len() == 2)
         );
-    }
-
-    #[test]
-    fn parse_mu_simple() {
-        let p = parse_str("mu(k: -i32) { k(42) }");
-        assert_eq!(p.decls.len(), 1);
-    }
-
-    #[test]
-    fn parse_mu_return() {
-        let p = parse_str("mu() -> i32 { 42 }");
-        assert_eq!(p.decls.len(), 1);
-    }
-
-    #[test]
-    fn parse_mu_param() {
-        let p = parse_str("mu(x: +i32) -> i32 { x + 1 }");
-        assert_eq!(p.decls.len(), 1);
     }
 
     #[test]

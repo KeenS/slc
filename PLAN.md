@@ -343,7 +343,7 @@ EXIT(0)
 
 - [x] Remove `spawn`
 - [x] Rename `command` to `mu`
-- [ ] Remove the old value-returning `mu` syntax
+- [x] Remove the old value-returning `mu` syntax
 - [ ] Update examples
 - [ ] Update tests
 

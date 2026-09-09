@@ -12,7 +12,5 @@ mu consume_pair(k: -(+i64 ⅋ +i64)) {
 }
 
 fn main() -> i64 {
-    mu(ret: -i64) {
-        consume_pair(ret)
-    }
+    consume_pair(fn(value: +i64) -> i64 { value })
 }

@@ -34,7 +34,6 @@ struct Env<'a> {
     constants: &'a HashMap<String, Type>,
     functions: &'a HashMap<String, FunctionSignature>,
     locals: Vec<HashMap<String, Type>>,
-    continuation_scope_depth: usize,
 }
 
 impl<'a> Env<'a> {
@@ -42,7 +41,7 @@ impl<'a> Env<'a> {
         constants: &'a HashMap<String, Type>,
         functions: &'a HashMap<String, FunctionSignature>,
     ) -> Self {
-        Self { constants, functions, locals: Vec::new(), continuation_scope_depth: 0 }
+        Self { constants, functions, locals: Vec::new() }
     }
 
     fn push(&mut self) {
@@ -51,16 +50,6 @@ impl<'a> Env<'a> {
 
     fn pop(&mut self) {
         self.locals.pop();
-    }
-
-    fn push_continuation_scope(&mut self) {
-        self.push();
-        self.continuation_scope_depth += 1;
-    }
-
-    fn pop_continuation_scope(&mut self) {
-        self.pop();
-        self.continuation_scope_depth -= 1;
     }
 
     fn define(&mut self, name: &str, ty: Type) {
@@ -79,15 +68,16 @@ impl<'a> Env<'a> {
     }
 
     fn current_continuation_names(&self) -> Vec<(String, Type)> {
-        let depth = self.continuation_scope_depth;
-        self.locals[..depth]
-            .last()
-            .map(|frame| {
-                frame
+        self.locals
+            .iter()
+            .rev()
+            .find_map(|frame| {
+                let names: Vec<_> = frame
                     .iter()
                     .filter(|(_, ty)| matches!(ty, Type::Neg(_) | Type::Par(..) | Type::Bottom))
                     .map(|(name, ty)| (name.clone(), ty.clone()))
-                    .collect::<Vec<_>>()
+                    .collect();
+                (!names.is_empty()).then_some(names)
             })
             .unwrap_or_default()
     }
@@ -353,17 +343,6 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             let result = check_expr(body, env, diags);
             env.pop();
             result
-        }
-        Expr::Mu { binder, return_type, body } => {
-            env.push_continuation_scope();
-            if let Some((name, Some(ty))) = binder
-                && let Ok(ty) = lower_type(ty)
-            {
-                env.define(name, ty);
-            }
-            let result = check_expr(body, env, diags);
-            env.pop_continuation_scope();
-            return_type.as_ref().and_then(|ty| lower_type(ty).ok()).or(result)
         }
         Expr::Call { callee, args } => {
             check_expr(callee, env, diags);

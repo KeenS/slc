@@ -93,9 +93,10 @@ fn check_param_polarity(
 ) {
     if let Ok(ty) = lower_type(&p.ty) {
         let is_fn_decl = matches!(current_decl, Decl::Fn { .. });
-        let ok = if is_fn_decl && matches!(p.ty, TypeExpr::Negative(_)) {
-            is_negative_type(&ty)
-        } else if is_cont || p.is_continuation {
+        let ok = if is_fn_decl && matches!(p.ty, TypeExpr::Negative(_))
+            || is_cont
+            || p.is_continuation
+        {
             is_negative_type(&ty)
         } else {
             is_positive_type(&ty)
@@ -135,19 +136,6 @@ pub fn check_expr_polarity(e: &Node<Expr>) -> Result<(), Vec<Diagnostic>> {
 
 fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
     match &e.kind {
-        Expr::Mu { binder, .. } => {
-            if let Some((name, Some(ty))) = binder
-                && let Ok(core_ty) = lower_type(ty)
-                && !core_ty.is_negative()
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "mu binder `{name}` has type {core_ty}; expected negative (-) polarity"
-                    ),
-                    span: e.span,
-                });
-            }
-        }
         Expr::Lambda { param_type: Some(ty), .. } => {
             if let Ok(core_ty) = lower_type(ty)
                 && !core_ty.is_positive()
@@ -263,16 +251,5 @@ mod tests {
         assert!(r.is_err());
         let diags = r.unwrap_err();
         assert_eq!(diags.len(), 2);
-    }
-
-    #[test]
-    fn mu_binder_negative_ok() {
-        let toks = lex("mu(k: -i32) { k(42) }").unwrap();
-        let prog = parse(toks).unwrap();
-        // top-level expression stored as fn "main"
-        let d = &prog.decls[0];
-        if let Decl::Fn { body, .. } = &d.kind {
-            assert!(check_expr_polarity(body).is_ok());
-        }
     }
 }

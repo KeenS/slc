@@ -22,11 +22,6 @@ pub enum Expr {
         return_type: Option<TypeExpr>,
         body: Box<Node<Expr>>,
     },
-    Mu {
-        binder: Option<(String, Option<TypeExpr>)>,
-        return_type: Option<TypeExpr>,
-        body: Box<Node<Expr>>,
-    },
     Call {
         callee: Box<Node<Expr>>,
         args: Vec<Node<Expr>>,

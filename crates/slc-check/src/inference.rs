@@ -104,7 +104,7 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
             };
             Ok(DeclarationType { name: name.clone(), ty })
         }
-        Decl::Mu { name, params, body: _, .. } => {
+        Decl::Mu { name, params, .. } => {
             let mut u = Unification::new();
             let mut inputs = Vec::new();
             for p in params {

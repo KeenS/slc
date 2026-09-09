@@ -63,10 +63,9 @@ fn is_continuation_name(name: &str) -> bool {
 fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
     match &e.kind {
         Expr::Ident(x) if x == name => Some(e.span),
-        Expr::Lambda { body, .. }
-        | Expr::Mu { body, .. }
-        | Expr::Dual { body }
-        | Expr::ErrorProp { expr: body, .. } => find_ident_span(body, name),
+        Expr::Lambda { body, .. } | Expr::Dual { body } | Expr::ErrorProp { expr: body, .. } => {
+            find_ident_span(body, name)
+        }
         Expr::Call { callee, args } => find_ident_span(callee, name)
             .or_else(|| args.iter().find_map(|a| find_ident_span(a, name))),
         Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
@@ -203,7 +202,6 @@ fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
             }
         }
         Expr::Lambda { body, .. } => collect_let_bindings(body, out),
-        Expr::Mu { body, .. } => collect_let_bindings(body, out),
         Expr::Call { callee, args } => {
             collect_let_bindings(callee, out);
             for a in args {
@@ -315,7 +313,6 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
             // Parameters are bound; don't count their use outside
             go(body, m);
         }
-        Expr::Mu { body, .. } => go(body, m),
         Expr::Call { callee, args } => {
             go(callee, m);
             for a in args {
