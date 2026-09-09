@@ -215,7 +215,7 @@ fn infer_decl(
             };
             Ok(DeclarationType { name: name.clone(), ty })
         }
-        Decl::Mu { name, value_params, continuation_params, .. } => {
+        Decl::Command { name, value_params, continuation_params, .. } => {
             let mut u = Unification::new();
             let mut inputs = Vec::new();
             for p in value_params {
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn command_infers_parametric_type() {
-        let out = infer("mu step(x: +i32) | (k: -i32) { k(x) }").unwrap();
+        let out = infer("command step(x: +i32) | (k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
             Type::arrow(Type::Pos(Base::I32), Type::arrow(Type::Neg(Base::I32), Type::Bottom))

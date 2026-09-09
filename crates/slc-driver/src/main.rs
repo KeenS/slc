@@ -142,7 +142,7 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     }
 }
 
-/// A program is a command, so its entry point is a `mu`: it takes no values
+/// A program is a command, so its entry point is a `command`: it takes no values
 /// and exactly one continuation — the exit status — and every terminating
 /// path leaves through it.
 fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
@@ -150,14 +150,14 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
     let mut mains = program
         .decls
         .iter()
-        .filter(|decl| matches!(&decl.kind, Decl::Mu { name, .. } | Decl::Fn { name, .. } if name == "main"));
+        .filter(|decl| matches!(&decl.kind, Decl::Command { name, .. } | Decl::Fn { name, .. } if name == "main"));
     let Some(main) = mains.next() else {
         return Err("no `main`: define `mu main | (exit: -i32) { ... }`".into());
     };
     if mains.next().is_some() {
         return Err("program contains multiple `main` declarations".into());
     }
-    let Decl::Mu { value_params, continuation_params, .. } = &main.kind else {
+    let Decl::Command { value_params, continuation_params, .. } = &main.kind else {
         return Err(MAIN_ENTRY_POINT_ERROR.into());
     };
     let [exit] = continuation_params.as_slice() else {

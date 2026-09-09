@@ -198,7 +198,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
-        Decl::Mu { name, value_params, continuation_params, body, .. } => {
+        Decl::Command { name, value_params, continuation_params, body, .. } => {
             let params: Vec<_> = value_params.iter().chain(continuation_params.iter()).collect();
             let uses = count_uses(body);
             let unrestricted: HashSet<String> = params
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn multi_continuation_command_unselected_continuation_is_linear() {
         let r = check(
-            "mu route(x: +i32) | (even: -i32, odd: -i32) {
+            "command route(x: +i32) | (even: -i32, odd: -i32) {
                 if eq(rem(x, 2), 0) { even(x) } else { odd(x) }
             }
             fn main() -> i32 { route(2)?even }",
@@ -483,7 +483,7 @@ mod tests {
     fn exclusive_branches_use_a_continuation_once() {
         // Both branches activate `k`, but only one branch runs.
         let r = check(
-            "mu route(x: +i32) | (k: -i32) {
+            "command route(x: +i32) | (k: -i32) {
                 if eq(rem(x, 2), 0) { k(0) } else { k(1) }
             }",
         );
@@ -494,7 +494,7 @@ mod tests {
     fn a_consumer_may_be_mentioned_more_than_once() {
         // A cut does not return, so of these three mentions only one can run.
         let r = check(
-            "mu route(x: +i32) | (k: -i32) {
+            "command route(x: +i32) | (k: -i32) {
                 0 @ k;
                 if eq(x, 0) { 1 @ k } else { 2 @ k }
             }",
@@ -504,7 +504,7 @@ mod tests {
         // Forwarding a consumer and also cutting against it is the ordinary
         // shape of a parser that delegates and reports its own errors.
         let r = check(
-            "mu step(input: +String) | (err: -String) {
+            "command step(input: +String) | (err: -String) {
                  next(input, err);
                  \"stopped\" @ err
              }",
@@ -535,8 +535,8 @@ mod tests {
     #[test]
     fn named_error_prop_counts_as_continuation_use() {
         // `?err` consumes `err`, so the declaration does not drop it.
-        assert!(check("mu bad(x: +i32) | (err: -i32) { fail(x)?err }").is_ok());
-        let r = check("mu bad(x: +i32) | (err: -i32) { x }");
+        assert!(check("command bad(x: +i32) | (err: -i32) { fail(x)?err }").is_ok());
+        let r = check("command bad(x: +i32) | (err: -i32) { x }");
         assert!(r.unwrap_err()[0].message.contains("never used"));
     }
 
@@ -572,9 +572,9 @@ mod tests {
 
     #[test]
     fn a_mu_must_still_consume_its_continuation() {
-        // A `mu` denotes a command: control leaves only through one of its
+        // A `command` denotes one: control leaves only through one of its
         // continuations, so dropping one is an error.
-        let r = check("mu bad(x: +i32) | (k: -i32) { x }");
+        let r = check("command bad(x: +i32) | (k: -i32) { x }");
         let diags = r.unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`k` is never used")), "{diags:?}");
     }
@@ -587,12 +587,12 @@ mod tests {
 
     #[test]
     fn command_continuation_linear() {
-        assert!(check("mu step(x: +i32) | (k: -i32) { k(x) }").is_ok());
+        assert!(check("command step(x: +i32) | (k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_unused_continuation_fails() {
-        let r = check("mu bad(x: +i32) | (k: -i32) { x }");
+        let r = check("command bad(x: +i32) | (k: -i32) { x }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("continuation"));
     }
@@ -655,7 +655,7 @@ mod tests {
 
     #[test]
     fn missing_error_continuation_use_fails() {
-        let r = check("mu parse(input: +String) | (ok: -String, err: -String) { ok(input) }");
+        let r = check("command parse(input: +String) | (ok: -String, err: -String) { ok(input) }");
         assert!(r.is_err());
         assert!(r.unwrap_err().iter().any(|d| d.message.contains("never used")));
     }

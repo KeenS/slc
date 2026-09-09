@@ -349,7 +349,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
                 });
                 Some((name, params, result))
             }
-            Decl::Mu { name, value_params, continuation_params, .. } => {
+            Decl::Command { name, value_params, continuation_params, .. } => {
                 let declared: Vec<_> =
                     value_params.iter().chain(continuation_params.iter()).collect();
                 let params = declared.iter().map(|p| declared_type(p)).collect();
@@ -437,7 +437,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             env.consumed = outer;
             env.pop();
         }
-        Decl::Mu { value_params, continuation_params, body, .. } => {
+        Decl::Command { value_params, continuation_params, body, .. } => {
             env.push();
             for p in value_params.iter().chain(continuation_params.iter()) {
                 if let Some(ty) = p.ty.as_ref().and_then(|ty| enums.resolve(ty)) {
@@ -1648,13 +1648,13 @@ mod tests {
 
     #[test]
     fn a_continuation_is_cut_against_not_called() {
-        let diags = check("mu route(x: +i32) | (k: -i32) { k(x) }").unwrap_err();
+        let diags = check("command route(x: +i32) | (k: -i32) { k(x) }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("is a consumer of type -i32, not a function")
                 && d.message.contains("value @ k")),
             "{diags:?}"
         );
-        assert!(check("mu route(x: +i32) | (k: -i32) { x @ k }").is_ok());
+        assert!(check("command route(x: +i32) | (k: -i32) { x @ k }").is_ok());
     }
 
     #[test]
@@ -1691,7 +1691,7 @@ mod tests {
 
     #[test]
     fn a_cut_checks_what_the_consumer_accepts() {
-        let diags = check("mu route(x: +String) | (k: -i32) { x @ k }").unwrap_err();
+        let diags = check("command route(x: +String) | (k: -i32) { x @ k }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("-i32 accepts +i32")
                 && d.message.contains("the value has type +String")),
@@ -1724,7 +1724,7 @@ mod tests {
     fn continuation_row_accepts_the_declared_row() {
         assert!(
             check(
-                "mu route(x: +i32) | (k: -i32) { x @ k }
+                "command route(x: +i32) | (k: -i32) { x @ k }
                  fn main() -> i32 { mu run | (out: -i32) { route(1, out) } }"
             )
             .is_ok()
@@ -1734,7 +1734,7 @@ mod tests {
     #[test]
     fn continuation_row_rejects_an_incompatible_continuation_type() {
         let diags = check(
-            "mu route(x: +i32) | (k: -i32) { x @ k }
+            "command route(x: +i32) | (k: -i32) { x @ k }
              fn main() -> i32 { mu run | (out: -bool) { route(1, out) } }",
         )
         .unwrap_err();
@@ -1752,7 +1752,7 @@ mod tests {
         // The row is ordered: swapping two continuations of different types
         // is rejected even though both types appear in the declaration.
         let diags = check(
-            "mu route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
+            "command route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
              fn main() -> i32 {
                  mu run | (first: -i32, second: -bool) { route(0, true, second, first) }
              }",
@@ -1767,7 +1767,7 @@ mod tests {
     #[test]
     fn continuation_row_rejects_extra_arguments() {
         let diags = check(
-            "mu route(x: +i32) | (k: -i32) { x @ k }
+            "command route(x: +i32) | (k: -i32) { x @ k }
              fn main() -> i32 { mu run | (out: -i32) { route(1, out, out) } }",
         )
         .unwrap_err();
@@ -1947,7 +1947,7 @@ mod tests {
 
         // Outside one, with no arm naming a type, it has to be written.
         let diags = check(
-            "mu main | (exit: -i32) {
+            "command main | (exit: -i32) {
                  let show = select { n <= println(n) };
                  42 @ show;
                  0 @ exit
@@ -1962,7 +1962,7 @@ mod tests {
         // `k` is handed to a slot `read_file` declares, so it is `-String`,
         // and the `mu` therefore produces a `+String`.
         let diags = check(
-            "mu main | (exit: -i32) {
+            "command main | (exit: -i32) {
                  let text = mu | (k) { read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 @ exit
@@ -1977,7 +1977,7 @@ mod tests {
 
         // A cut says it just as well: `42 @ k` makes `k` a consumer of i64.
         let diags = check(
-            "mu main | (exit: -i32) {
+            "command main | (exit: -i32) {
                  let answer = mu | (k) { 42 @ k };
                  println(str_len(answer));
                  0 @ exit

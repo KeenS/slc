@@ -90,7 +90,7 @@ fn check_decl(
                 );
             }
         }
-        Decl::Mu { value_params, continuation_params, .. } => {
+        Decl::Command { value_params, continuation_params, .. } => {
             for p in value_params {
                 check_param_polarity(p, false, false, &Default::default(), declared, d.span, diags);
             }
@@ -337,12 +337,12 @@ mod tests {
 
     #[test]
     fn command_mixed_ok() {
-        assert!(check("mu step(x: +i32) | (k: -i32) { k(x) }").is_ok());
+        assert!(check("command step(x: +i32) | (k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_wrong_polarity_fails() {
-        let r = check("mu bad(x: -i32) | (k: +i32) { k(x) }");
+        let r = check("command bad(x: -i32) | (k: +i32) { k(x) }");
         assert!(r.is_err());
         let diags = r.unwrap_err();
         assert_eq!(diags.len(), 2);

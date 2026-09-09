@@ -64,6 +64,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             let kind = match ident.as_str() {
                 "fn" => TokenKind::Fn,
                 "mu" => TokenKind::Mu,
+                "command" => TokenKind::Command,
                 "match" => TokenKind::Match,
                 "select" => TokenKind::Select,
                 "let" => TokenKind::Let,

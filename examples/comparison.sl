@@ -1,6 +1,6 @@
 // Comparisons and boolean operators.
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     println(1 == 1);
     println(1 != 2);
     println(3 < 5);

@@ -94,7 +94,7 @@ fn done(k: -⊥) <- unit {
     () @ k
 }
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     // ⊗ : build every part, then take them apart.
     println(sum(Pair { left: 2, right: 40 }));
 

@@ -276,7 +276,10 @@ pub enum Decl {
         return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },
-    Mu {
+    /// A declaration whose body is a command: it takes values and
+    /// continuations and never returns. `mu` is the expression that captures
+    /// the current continuation; this abstracts over one instead.
+    Command {
         name: String,
         value_params: Vec<Param>,
         continuation_params: Vec<Param>,

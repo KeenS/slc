@@ -67,7 +67,7 @@ fn label_of(out: -String) <- +i64 {
     }
 }
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     // Value-first: the shape goes in at the innermost call, and the answer
     // comes back out through `area` and then `label` to `println`.
     println(label(area(Shape::Circle(5))));

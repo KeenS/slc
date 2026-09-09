@@ -22,7 +22,7 @@ returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
 
 ## 1. Design goals
 
-1. **Rust-like surface** — familiar `fn`, `mu`, `let`, `match`, braces, type
+1. **Rust-like surface** — familiar `fn`, `command`, `let`, `match`, braces, type
    annotations, and paths.
 2. **λ̄μμ̃ core** — terms, co-terms, and cuts are the underlying semantic
    categories.
@@ -67,7 +67,7 @@ that happens to return: control does not come back, so nothing after it in a
 block runs, and its type is `⊥`.
 
 ```sl
-mu route(x: +i32) | (k: -i32) {
+command route(x: +i32) | (k: -i32) {
     x @ k
 }
 ```
@@ -135,14 +135,14 @@ expected. There are four places to write one, and all four occur:
 | | argument position | continuation position |
 |---|---|---|
 | **positive type** | data arrives: `fn f(x: +i64)` | the type after `<-`: `fn config() <- Request` |
-| **negative type** | a consumer arrives: `fn f(note: -String)` | the row of a `mu`: `mu f \| (k: -i64)` |
+| **negative type** | a consumer arrives: `fn f(note: -String)` | the row of a `command`: `command f \| (k: -i64)` |
 
 The diagonal is the ordinary reading — data in, control out. The other two are
 what polarity buys:
 
 - A **negative type in argument position** is a consumer received as data. A
   positive `fn` may take one, because it returns rather than ending in a cut,
-  so it promises nothing about consuming it; a `mu` splits its parameters by
+  so it promises nothing about consuming it; a `command` splits its parameters by
   polarity, so a consumer there belongs in the continuation group instead.
 - A **positive type in continuation position** is the type after `<-`. A
   continuation is named by the type it consumes, so `fn config() <- Request`
@@ -154,12 +154,12 @@ consumes it is its dual — the positive request. In
 request is the value.
 
 `examples/polarity.sl` writes all four; `examples/polarity_error.sl` writes
-the two a `mu` rejects.
+the two a `command` rejects.
 
 ### Continuation rows
 
 The continuation parameters of a negative function, and the second parameter
-group of a `mu`, form that declaration's **continuation row**. A row is
+group of a `command`, form that declaration's **continuation row**. A row is
 compared **positionally and invariantly**:
 
 - Two rows are equal when they have the same width and their positions are
@@ -207,17 +207,17 @@ positive value parameter. Generic function declarations are type-erased at
 lowering: their ordinary parameters lower to λ binders and their continuation
 parameters lower to Λ co-abstraction binders.
 
-## 5. `mu`: consumer abstraction
+## 5. `command`: consumer abstraction
 
-`mu` is the cut-oriented control declaration, and it is the form that takes
-**both** values and continuations: value parameters and continuation
-parameters appear in separate parenthesized groups, and the body is a command.
-A program that consumes values and consumes a continuation is a `mu`; a
+A `command` declaration is the form that takes **both** values and
+continuations: value parameters and continuation parameters appear in separate
+parenthesized groups, and the body is a command — hence the name. A
+declaration that consumes values and consumes a continuation is a `command`; a
 positive `fn` may still receive a consumer as ordinary data it forwards, but
 it returns a value rather than ending in a cut.
 
 ```sl
-mu route(x: +i32) | (k: -i32) {
+command route(x: +i32) | (k: -i32) {
     x @ k
 }
 ```
@@ -225,20 +225,30 @@ mu route(x: +i32) | (k: -i32) {
 The declaration denotes a command. Its return type is bottom; an optional
 `-> ⊥` annotation may be used as documentation and does not change lowering.
 
-A group with nothing in it is left out rather than written empty: `mu main |
-(exit: -i32)` takes no values, and `mu log(message: +String)` takes no
-continuations. An empty `()` is a parse error saying so.
+A group with nothing in it is left out rather than written empty: `command
+main | (exit: -i32)` takes no values, and `command log(message: +String)` takes
+no continuations. An empty `()` is a parse error saying so.
 
-Conceptually, `mu f(x: +A) | (k: -B) { E }` lowers to `λx. Λk. E`: the value
-parameters bind first, so a call supplies arguments in the order the
+Conceptually, `command f(x: +A) | (k: -B) { E }` lowers to `λx. Λk. E`: the
+value parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
-continuations.
+continuations. `k` is a *parameter*: the caller passes it.
 
-As an *expression*, a `mu` with no value parameters captures the continuation
-of the expression it stands in — this is the language's `call/cc`. Its value
-is whatever that continuation receives, so `mu f | (k: -A) { … }` has type
-`A`, and a call whose result comes back through a continuation can be written
-without nesting the rest of the program inside it:
+## 6. `mu`: capturing the current continuation
+
+The expression `mu | (k: -A) { … }` is the other half, and it is the real μ of
+the calculus: it captures the continuation of the expression it stands in —
+the language's `call/cc`. Nothing supplies `k`; an expression has no caller,
+only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a cut:
+
+```text
+⟨ μk. c ∥ e ⟩  →  c[e/k]
+```
+
+So `k` is bound to whatever consumer the expression meets. Its type is what
+that continuation receives, which makes `mu | (k: -A) { … }` an `A`, and a
+call whose result comes back through a continuation can be written without
+nesting the rest of the program inside it:
 
 ```sl
 let source = mu here | (k: -String) {
@@ -255,7 +265,7 @@ This is how a fallible operation is written. Rather than returning a result
 that a caller inspects, it takes the continuations its outcomes belong to:
 
 ```sl
-mu parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     match at(input, pos) {
         QUOTE => parse_string(input, pos, ok, report),
         _ => ParseResult::Failed("expected JSON value") @ report,
@@ -267,7 +277,7 @@ Each path ends in a cut: either forwarding both continuations to another
 command, or sending an outcome to one of them. A helper that only computes
 with values — `at` above — stays an ordinary positive `fn`.
 
-## 6. Additive data
+## 7. Additive data
 
 ### Positive additive construction
 
@@ -353,7 +363,7 @@ activated.
 continuation parameter name. It may then be used as an expression callee, as an
 expression argument, and as a struct-name marker in ordinary call syntax.
 
-## 7. Multiplicative data
+## 8. Multiplicative data
 
 ### Positive multiplicative construction
 
@@ -390,7 +400,7 @@ are always parenthesized:
 
 ```sl
 fn sum_pair(p: (+i64 ⊗ +i64)) -> i64 { … }
-mu consume_pair | (k: (-i64 ⅋ -i64)) { … }
+command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 ```
 
 | Type syntax | Meaning |
@@ -468,8 +478,8 @@ inside one may leave a type out when something else already says it:
 | written | may be omitted when |
 |---|---|
 | a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used |
-| a local `mu`'s name: `mu() \| (k) { … }` | always — nothing refers to it |
-| a local `mu`'s parameter type: `mu() \| (k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
+| a local `mu`'s name: `mu \| (k) { … }` | always — nothing refers to it |
+| a local `mu`'s parameter type: `mu \| (k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
 | a `select`'s type: `select { … }` | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
 
 ```sl
@@ -505,7 +515,7 @@ same thing — halves that progress independently — and both need either a sen
 that returns or concurrency. A cut does not return, and the language has no
 concurrency, so a `⅋` is supplied whole.
 
-## 8. Top-level exit
+## 9. Top-level exit
 
 `EXIT` is the top-level continuation. Its type is `-i32`, so it is activated
 by a cut like any other consumer:
@@ -517,15 +527,15 @@ by a cut like any other consumer:
 The cut terminates the program with the supplied exit code. It is the same
 continuation the runtime hands to `main`, so `0 @ exit` inside `main` and
 `0 @ EXIT` anywhere else end the program the same way. Inside `main`, use the
-parameter: a `mu` must consume the continuation it was given.
+parameter: a `command` must consume the continuation it was given.
 
 ## Entry point
 
-A program is a command, so its entry point is a `mu`. It takes no values and
+A program is a command, so its entry point is a `command`. It takes no values and
 exactly one continuation — the exit status:
 
 ```sl
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     println("Hello, Slant!");
     0 @ exit
 }
@@ -536,7 +546,7 @@ the same thing, so a helper that ends the program can cut against `EXIT`
 directly while `main` uses the name it was given. The cut that reaches it is
 what ends the program, and the integer it carries is the process exit status.
 
-Because a `mu` must consume its continuation, **every terminating path of a
+Because a `command` must consume its continuation, **every terminating path of a
 program leaves through `exit`** — a `main` that falls off the end is rejected
 by the linearity check, not by a runtime convention.
 
@@ -589,7 +599,7 @@ Two failures stay fatal rather than becoming outcomes: an out-of-range index
 `s[i]` and a division by zero. They are reached through operator syntax, which
 has nowhere to put a continuation, and — as in Rust, where `v[i]` panics while
 `v.get(i)` does not — they report a bug in the program rather than a case it
-was meant to handle. The checked forms are the `mu`-shaped builtins above.
+was meant to handle. The checked forms are the `command`-shaped builtins above.
 
 A helper of your own that always ends in a cut is annotated `-> ⊥`: it never
 returns, so it may stand where a consumer is expected.
@@ -655,7 +665,7 @@ include `line:column` positions and source excerpts.
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
 
-## 9. Core calculus
+## 10. Core calculus
 
 ### Grammar
 
@@ -691,9 +701,9 @@ Type      A ::= +B | -B               positive / negative atom
 
 `Λα. t` and `μα. c` both bind a continuation variable, and they are not
 interchangeable. `Λα. t` is a *declared* continuation parameter: the caller
-supplies the continuation. `μα. c` captures the *ambient* continuation: that is
-what a local `mu` expression does. The surface keeps them apart by where they
-are written, so lowering never has to guess.
+supplies the continuation, and that is a `command`'s row. `μα. c` captures the
+*ambient* continuation, and that is the `mu` expression. Two keywords for two
+constructs, so lowering never has to guess.
 
 ### Printed form
 
@@ -773,7 +783,7 @@ continuation parameter becomes a Λ binder.
 |---|---|
 | `x`, `λx. t` | identifiers, positive functions, lambdas |
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
-| `Λα. t` | a declared continuation parameter of `fn … <- …` or of a `mu` |
+| `Λα. t` | a declared continuation parameter of `fn … <- …` or of a `command` |
 | `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `struct` values — a labelled product |
 | `inl` / `inr` | not surface-visible; used internally to tag lowered `match` arms |
@@ -788,7 +798,7 @@ continuation parameter becomes a Λ binder.
 | `κx. t` | not surface-visible; the internal command abstraction |
 | `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |
 
-## 10. Error continuations
+## 11. Error continuations
 
 Fallible operations receive their result continuations directly. For example,
 a parse operation receives both a success continuation and an error
@@ -827,7 +837,7 @@ selected continuation. Any name the language accepts as a continuation
 parameter is accepted there, including the reserved word `return`. With a
 space — `e? name` — the `?` is bare and `name` is a separate expression.
 
-## 11. Migration summary
+## 12. Migration summary
 
 - `k(v)` (activating a continuation) → `v @ k`
 - `EXIT(0)` → `0 @ EXIT`
@@ -836,7 +846,8 @@ space — `e? name` — the `?` is bare and `name` is a separate expression.
 - `select T { V <= k(v) }` → `select T { V <= v @ k }`
 - `t @ k` previously lowered to a μ binder that shadowed `k`, so it sent the
   value nowhere; it is now the cut it always claimed to be
-- `command name(...)` → `mu name(...) | (...)`
+- `mu name(...) | (...)` → `command name(...) | (...)` — a declaration is a
+  `command`; `mu` is the expression that captures the current continuation
 - `spawn` → removed; no replacement exists
 - `mu(x, to k)` → `mu(x) | (k)`
 - `agent.to(k, h)` and `agent.consume(k, h)` → removed; no partial-agent replacement exists

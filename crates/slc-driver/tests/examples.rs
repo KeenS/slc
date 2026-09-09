@@ -52,6 +52,7 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
+        ("command.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         ("hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
         (
             "json_parser.sl",
@@ -78,7 +79,6 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
-        ("mu.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
             "mu_tilde.sl",

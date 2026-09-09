@@ -79,17 +79,17 @@ const ROWS: &[Row] = &[
     },
     Row {
         id: "expr.errorprop.named",
-        source: "mu f(x: +i32) | (err: -i32) { g(x)?err }",
+        source: "command f(x: +i32) | (err: -i32) { g(x)?err }",
         core: "⟨err ∥ __call⟩",
     },
     Row {
         id: "expr.errorprop.bare",
-        source: "mu f(x: +i32) | (err: -i32) { g(x)? }",
+        source: "command f(x: +i32) | (err: -i32) { g(x)? }",
         core: "⟨err ∥ __call⟩",
     },
     Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
     Row { id: "decl.fn.negative", source: "fn f(k: -i32) <- i32 { k(1) }", core: "Λk." },
-    Row { id: "decl.mu", source: "mu f(x: +i32) | (k: -i32) { k(x) }", core: "λx. Λk." },
+    Row { id: "decl.mu", source: "command f(x: +i32) | (k: -i32) { k(x) }", core: "λx. Λk." },
     Row { id: "decl.const", source: "const C: +i32 = 1;", core: "$int_1" },
     Row {
         id: "decl.enum",

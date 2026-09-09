@@ -1,6 +1,6 @@
 // mu captures the current continuation; activating it escapes with a value.
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     println(mu escape | (k: -i32) {
         42 @ k
     });

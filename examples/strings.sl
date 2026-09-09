@@ -1,6 +1,6 @@
 // String concatenation, indexing, and slicing.
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     let text: +String = "Hello, " + "world!";
     println(text);
     println(text[0]);

@@ -7,7 +7,7 @@
 // an atom, whose single arm binds the value that arrives, and over an `enum`,
 // whose arms are one per outcome.
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     // `select` over an atom is a consumer literal: the arm names what arrives
     // and runs a command with it.
     let complain = select +String {
@@ -50,7 +50,7 @@ enum Read {
 
 // Two continuations become one send by tagging: each atom consumer labels what
 // it receives and forwards it to `out`. Exactly one of them ever runs.
-mu read(path: +String) | (out: -Read) {
+command read(path: +String) | (out: -Read) {
     read_file(
         path,
         select +String { text <= Read::Contents(text) @ out },

@@ -48,7 +48,7 @@ fn twice(out: -i64) <- +i64 {
     }
 }
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     println(mu ask | (answer: -i32) {
         Color::Green @ code(answer)
     });

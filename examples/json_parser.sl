@@ -65,7 +65,7 @@ fn is_hex(c: +char) -> bool {
     }
 }
 
-mu parse_json(input: +String) | (report: -ParseResult) {
+command parse_json(input: +String) | (report: -ParseResult) {
     let start = skip_ws(input, 0);
     if start < str_len(input) {
         let end = mu value | (k) {
@@ -81,7 +81,7 @@ mu parse_json(input: +String) | (report: -ParseResult) {
     }
 }
 
-mu parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     match at(input, pos) {
         '0'..='9' | '-' => parse_number(input, pos, ok, report),
         QUOTE => parse_string(input, pos, ok, report),
@@ -94,7 +94,7 @@ mu parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_number(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_number(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let after_sign = if at(input, pos) == '-' {
         pos + 1
     } else {
@@ -108,7 +108,7 @@ mu parse_number(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_number_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_number_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if at(input, pos) == '.' {
         let after_fraction = mu fraction | (k) {
             parse_fraction(input, pos + 1, k, report)
@@ -119,7 +119,7 @@ mu parse_number_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResul
     }
 }
 
-mu parse_fraction(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_fraction(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if is_digit(at(input, pos)) {
         parse_digits(input, pos) @ ok
     } else {
@@ -127,7 +127,7 @@ mu parse_fraction(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) 
     }
 }
 
-mu parse_exponent(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_exponent(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let ch = at(input, pos);
     if ch == 'e' || ch == 'E' {
         parse_exponent_tail(input, pos + 1, ok, report)
@@ -136,7 +136,7 @@ mu parse_exponent(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) 
     }
 }
 
-mu parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let after_sign = if at(input, pos) == '-' || at(input, pos) == '+' {
         pos + 1
     } else {
@@ -149,11 +149,11 @@ mu parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseRes
     }
 }
 
-mu parse_string(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_string(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     parse_string_tail(input, pos + 1, ok, report)
 }
 
-mu parse_string_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_string_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if pos >= str_len(input) {
         ParseResult::Failed("unterminated JSON string") @ report
     } else {
@@ -170,7 +170,7 @@ mu parse_string_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResul
     }
 }
 
-mu parse_escape(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_escape(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     match at(input, pos) {
         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => {
             parse_string_tail(input, pos + 1, ok, report)
@@ -180,7 +180,7 @@ mu parse_escape(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_hex4(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_hex4(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if is_hex(at(input, pos))
         && is_hex(at(input, pos + 1))
         && is_hex(at(input, pos + 2))
@@ -192,7 +192,7 @@ mu parse_hex4(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64, report: -ParseResult) {
+command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64, report: -ParseResult) {
     let end = pos + str_len(text);
     if end <= str_len(input) && input[pos..end] == text {
         end @ ok
@@ -201,7 +201,7 @@ mu parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64, report: 
     }
 }
 
-mu parse_array(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_array(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACKET {
         first + 1 @ ok
@@ -210,7 +210,7 @@ mu parse_array(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_array_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_array_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let value_end = mu value | (k) {
         parse_value(input, pos, k, report)
     };
@@ -230,7 +230,7 @@ mu parse_array_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult
     }
 }
 
-mu parse_object(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_object(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACE {
         first + 1 @ ok
@@ -239,7 +239,7 @@ mu parse_object(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     }
 }
 
-mu parse_object_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_object_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if at(input, pos) == QUOTE {
         let key_end = mu key | (k) {
             parse_string(input, pos, k, report)
@@ -271,7 +271,7 @@ mu parse_object_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResul
     }
 }
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
 
     // One consumer for the whole outcome: an arm per variant, each binding

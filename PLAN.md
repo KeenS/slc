@@ -44,8 +44,12 @@ and where the two disagree, `DESIGN.md` is right.
 
 ### Surface
 
-- `spawn` is gone, the declaration formerly called `command` is `mu`, and
-  `from`/`to` parameter markers are removed.
+- `spawn` is gone and the `from`/`to` parameter markers are removed. A
+  declaration that takes values and continuations is a `command`, whose
+  parameter groups are written only when they have parameters; `mu` names the
+  expression that captures the current continuation, and nothing else. One
+  keyword for both hid that they are different core constructs — `Λα. t`, a
+  parameter the caller supplies, against `μα. c`, the ambient continuation.
 - Every `fn` declares its direction with an arrow: `->` for a positive
   function, `<-` for a negative one. Either may take continuation parameters.
 - Application and cut are distinct: `f(a)` applies at either polarity, and
@@ -75,7 +79,7 @@ and where the two disagree, `DESIGN.md` is right.
   status is the value it cuts against `exit`, and linearity makes every
   terminating path leave through it. There is no final-result value; output is
   what the program prints.
-- A declaration that takes both values and continuations is a `mu`, and the
+- A declaration that takes both values and continuations is a `command`, and the
   standard library follows the same rule: `parse_int`, `read_file`,
   `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
   continuation per outcome and activate exactly one. Operator failures (`s[i]`,
@@ -121,7 +125,8 @@ Every phase is complete; each was validated with `cargo fmt --check`,
 example suite.
 
 - **Phase 0** — settled the working tree: removed `spawn`, renamed `command`
-  to `mu`, removed the old value-returning expression `mu`, allowed
+  to `mu` (and later back, once `mu` was needed for the capturing expression
+  alone), removed the old value-returning expression `mu`, allowed
   continuation parameters in `fn`, and added `EXIT: -i32`.
 - **Phase 1** — parameter syntax: removed `from`/`to`, introduced
   `mu(values) | (continuations)` with the optional `-> ⊥` annotation, and added

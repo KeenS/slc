@@ -60,9 +60,10 @@ The type after `<-` is the continuation produced by the function.
 
 ## Consumer abstraction
 
-The declaration formerly named `command` is now `mu`.
+A declaration that takes values and continuations is a `command`, and its two
+kinds of parameter occupy separate parenthesized groups.
 
-### Rename `command` to `mu`
+### Separate parameter groups
 
 Unsupported:
 
@@ -73,11 +74,25 @@ command route(x: +i32, k: -i32) { k(x) }
 Write:
 
 ```sl
-mu route(x: +i32) | (k: -i32) { k(x) }
+command route(x: +i32) | (k: -i32) { k(x) }
 ```
 
-Value parameters and continuation parameters now occupy separate
-parenthesized groups.
+### `mu` is the expression, `command` is the declaration
+
+For part of the redesign the declaration was spelled `mu`. It is `command`
+again, and `mu` now names only the expression that captures the current
+continuation — the two are different core constructs (`Λα. t`, a parameter the
+caller supplies, against `μα. c`, the ambient continuation), and one keyword
+for both hid that.
+
+```sl
+mu route(x: +i32) | (k: -i32) { x @ k }        // old: the declaration
+command route(x: +i32) | (k: -i32) { x @ k }   // new
+
+let source = mu | (k) { read_file(path, k, err) };   // unchanged: the capture
+```
+
+A declaration written with `mu` is a parse error naming the difference.
 
 ### Remove `to`
 
@@ -86,25 +101,25 @@ The directional `to` marker is removed.
 Unsupported:
 
 ```sl
-mu route(x: +i32, to k: -i32) { k(x) }
+command route(x: +i32, to k: -i32) { k(x) }
 ```
 
 Write:
 
 ```sl
-mu route(x: +i32) | (k: -i32) { k(x) }
+command route(x: +i32) | (k: -i32) { k(x) }
 ```
 
 ### An empty parameter group is left out
 
-A `mu` writes only the groups it has.
+A `command` writes only the groups it has.
 
 ```sl
-mu main() | (exit: -i32) { … }   // old
-mu main | (exit: -i32) { … }     // new
+command main() | (exit: -i32) { … }   // old
+command main | (exit: -i32) { … }     // new
 
-mu log(message: +String) | () { … }   // old
-mu log(message: +String) { … }        // new
+command log(message: +String) | () { … }   // old
+command log(message: +String) { … }        // new
 ```
 
 The same applies to a local `mu`, which is usually the one with no values:
@@ -116,7 +131,7 @@ The declaration denotes a command, so its result is bottom. The annotation is
 optional and does not change lowering:
 
 ```sl
-mu route(x: +i32) | (k: -i32) -> ⊥ { k(x) }
+command route(x: +i32) | (k: -i32) -> ⊥ { k(x) }
 ```
 
 ## Partial agents
@@ -188,9 +203,9 @@ consumers. `deliver(ok, err)` still reads as it did.
 A cut has type `⊥`, so a branch that ends in one leaves the type of an `if` to
 the other branch, and code after a cut in a block is unreachable.
 
-## The entry point is a `mu`
+## The entry point is a `command`
 
-A program is a command, so `main` is a `mu` that takes no values and one
+A program is a command, so `main` is a `command` that takes no values and one
 continuation — its exit status:
 
 ```sl
@@ -199,7 +214,7 @@ fn main() -> i32 {          // old
     42
 }
 
-mu main | (exit: -i32) {  // new
+command main | (exit: -i32) {  // new
     println("hi");
     0 @ exit
 }
@@ -208,7 +223,7 @@ mu main | (exit: -i32) {  // new
 The final value is no longer printed: a program's output is exactly what it
 prints, and its status is what it sends to `exit`. A `main` that used to end
 with a value must print it. Inside `main`, cut against the `exit` parameter
-rather than the global `EXIT` — a `mu` must consume the continuation it was
+rather than the global `EXIT` — a `command` must consume the continuation it was
 given, so a `main` that never reaches `exit` is a linearity error.
 
 ## `select` covers any positive type
@@ -281,17 +296,17 @@ case to handle.
 
 ## Values and continuations together
 
-A declaration that takes both values and continuations is a `mu`, not a `fn`:
+A declaration that takes both values and continuations is a `command`, not a `fn`:
 
 ```sl
 // old: a positive function carrying a consumer and returning a position
 fn parse_value(input: +String, pos: +i64, report: -ParseResult) -> i64 { ... }
 
 // new: a command with a value group and a continuation group
-mu parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) { ... }
+command parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) { ... }
 ```
 
-The body of a `mu` ends in a cut rather than returning: what was a returned
+The body of a `command` ends in a cut rather than returning: what was a returned
 position is sent to `ok`. Where the old code sequenced two fallible steps with
 `let`, the new code passes the rest of the work as a continuation:
 

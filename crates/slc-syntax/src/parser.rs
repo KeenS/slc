@@ -153,13 +153,24 @@ impl Parser {
                     self.parse_fn()
                 }
             }
+            Some(TokenKind::Command) => self.parse_command_decl(),
+            // `mu name(…)` used to be the declaration. It is now the
+            // expression that captures the current continuation, and a
+            // declaration that abstracts over one is a `command`.
             Some(TokenKind::Mu)
                 if matches!(
                     self.tokens.get(self.pos + 1).map(|t| &t.kind),
                     Some(TokenKind::Ident(_))
+                ) && matches!(
+                    self.tokens.get(self.pos + 2).map(|t| &t.kind),
+                    Some(TokenKind::LParen) | Some(TokenKind::Pipe)
                 ) =>
             {
-                self.parse_mu_decl()
+                Err(ParseError {
+                    message: "a declaration is a `command`; `mu` captures the current continuation"
+                        .into(),
+                    span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                })
             }
             Some(TokenKind::Const) => self.parse_const_decl(),
             _ => {
@@ -297,9 +308,9 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_mu_decl(&mut self) -> Result<Node<Decl>, ParseError> {
-        let t = self.expect(TokenKind::Mu, "`mu`")?;
-        let name = self.expect_ident("`mu` name")?;
+    fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Command, "`command`")?;
+        let name = self.expect_ident("`command` name")?;
         let (value_params, continuation_params) =
             self.parse_mu_params(TypeAnnotations::Required)?;
         let return_type =
@@ -308,18 +319,19 @@ impl Parser {
             && !matches!(ty, TypeExpr::Bottom)
         {
             return Err(ParseError {
-                message: "`mu` return type must be `⊥`; remove the arrow or annotate `-> ⊥`".into(),
+                message: "a `command` returns `⊥`; remove the arrow or annotate `-> ⊥`".into(),
                 span: t.span,
             });
         }
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
-            kind: Decl::Mu { name, value_params, continuation_params, return_type, body },
+            kind: Decl::Command { name, value_params, continuation_params, return_type, body },
         })
     }
 
-    /// The parameter groups of a `mu`: `(values) | (continuations)`, with
+    /// The parameter groups of a `command` or a local `mu`:
+    /// `(values) | (continuations)`, with
     /// either side left out when it has none. `mu f | (k)` takes no values,
     /// `mu f(x)` takes no continuations, and an empty group is not written.
     fn parse_mu_params(
@@ -358,7 +370,7 @@ impl Parser {
         if params.is_empty() {
             return Err(ParseError {
                 message: format!(
-                    "a `mu` with no {which} parameters leaves the group out, as `mu f | (k)`"
+                    "no {which} parameters means the group is left out, as `command f | (k)`"
                 ),
                 span: Span { start, end: self.span_end() },
             });
@@ -1399,31 +1411,34 @@ mod tests {
 
     #[test]
     fn parse_rejects_old_to_parameter_marker() {
-        let source = "mu step(x: +i32, to k: -i32) { k(x) }";
+        let source = "command step(x: +i32, to k: -i32) { k(x) }";
         let errors = parse(lex(source).unwrap()).unwrap_err();
         assert!(errors[0].message.contains("expected `:`"), "source: {source}; errors: {errors:?}");
     }
 
     #[test]
     fn parse_mu_def() {
-        let p = parse_str("mu step(x: +i32) | (k: -i32) { k(x) }");
+        let p = parse_str("command step(x: +i32) | (k: -i32) { k(x) }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
-        assert!(matches!(&d.kind, Decl::Mu { name, value_params, continuation_params, .. }
+        assert!(matches!(&d.kind, Decl::Command { name, value_params, continuation_params, .. }
                 if name == "step" && value_params.len() == 1 && continuation_params.len() == 1));
     }
 
     #[test]
-    fn parse_mu_bottom_annotation() {
-        let p = parse_str("mu step(x: +i32) | (k: -i32) -> ⊥ { k(x) }");
-        assert!(matches!(&p.decls[0].kind, Decl::Mu { return_type: Some(TypeExpr::Bottom), .. }));
+    fn parse_command_bottom_annotation() {
+        let p = parse_str("command step(x: +i32) | (k: -i32) -> ⊥ { k(x) }");
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Command { return_type: Some(TypeExpr::Bottom), .. }
+        ));
     }
 
     #[test]
-    fn parse_mu_rejects_non_bottom_return() {
+    fn parse_command_rejects_non_bottom_return() {
         let errors =
-            parse(lex("mu step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
-        assert!(errors[0].message.contains("`mu` return type must be `⊥`"), "got: {errors:?}");
+            parse(lex("command step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("a `command` returns `⊥`"), "got: {errors:?}");
     }
 
     #[test]
@@ -1477,10 +1492,32 @@ mod tests {
     }
 
     #[test]
+    fn a_declaration_is_a_command_and_mu_is_the_expression() {
+        // `mu name(…)` was the declaration before the two forms were told
+        // apart; the diagnostic says which is which.
+        for source in ["mu main | (exit: -i32) { 0 @ exit }", "mu f(x: +i32) | (k: -i32) { x @ k }"]
+        {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(
+                errors.iter().any(|e| e.message.contains("a declaration is a `command`")),
+                "{source}: {errors:?}"
+            );
+        }
+
+        // A named `mu` inside a declaration is still the capturing form.
+        let p = parse_str("command f | (k: -i32) { 1 @ k }");
+        assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
+        let p = parse_str("fn g() -> i32 { mu here | (k: -i32) { 1 @ k } }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
+        assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
+    }
+
+    #[test]
     fn a_mu_writes_only_the_parameter_groups_it_has() {
         // No values: the group is left out, not written empty.
-        let p = parse_str("mu main | (exit: -i32) { 0 @ exit }");
-        let Decl::Mu { value_params, continuation_params, .. } = &p.decls[0].kind else {
+        let p = parse_str("command main | (exit: -i32) { 0 @ exit }");
+        let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
         assert!(value_params.is_empty());
@@ -1488,17 +1525,19 @@ mod tests {
         assert!(continuation_params[0].is_continuation);
 
         // No continuations: the `|` goes with the group it introduces.
-        let p = parse_str("mu log(message: +String) { println(message) }");
-        let Decl::Mu { value_params, continuation_params, .. } = &p.decls[0].kind else {
+        let p = parse_str("command log(message: +String) { println(message) }");
+        let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
         assert_eq!(value_params[0].name, "message");
         assert!(continuation_params.is_empty());
 
-        for source in ["mu main() | (exit: -i32) { 0 @ exit }", "mu log(m: +String) | () { m }"] {
+        for source in
+            ["command main() | (exit: -i32) { 0 @ exit }", "command log(m: +String) | () { m }"]
+        {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
-                errors.iter().any(|e| e.message.contains("leaves the group out")),
+                errors.iter().any(|e| e.message.contains("the group is left out")),
                 "{source}: {errors:?}"
             );
         }
@@ -1615,8 +1654,8 @@ mod tests {
     fn parse_error_prop_without_an_adjacent_name_is_bare() {
         // A space separates the propagation from the next expression, so the
         // name is not consumed as the selected continuation.
-        let p = parse_str("mu f(x: +i32) | (err: -i32) { fail(x)? err(0) }");
-        let Decl::Mu { body, .. } = &p.decls[0].kind else { panic!("expected mu") };
+        let p = parse_str("command f(x: +i32) | (err: -i32) { fail(x)? err(0) }");
+        let Decl::Command { body, .. } = &p.decls[0].kind else { panic!("expected mu") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block: {:?}", body.kind) };
         assert!(
             matches!(&exprs[0].kind, Expr::ErrorProp { continuation: None, .. }),

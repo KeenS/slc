@@ -75,7 +75,7 @@ pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
 fn check_node_decl(d: &Node<Decl>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
-        Decl::Mu { body, .. } => check_expr(body, enums, diags),
+        Decl::Command { body, .. } => check_expr(body, enums, diags),
         Decl::Const { value, .. } => check_expr(value, enums, diags),
         Decl::Struct { .. } | Decl::Enum { .. } => {}
     }

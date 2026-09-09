@@ -11,7 +11,7 @@ fn absurd(k: -⊥) <- i64 {
     () @ k
 }
 
-mu main | (exit: -i32) {
+command main | (exit: -i32) {
     println(mu halt | (out: -⊥) {
         absurd(out)
     });

@@ -554,7 +554,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 }
                 out.push((name.clone(), term));
             }
-            Decl::Mu { name, value_params, continuation_params, body, .. } => {
+            Decl::Command { name, value_params, continuation_params, body, .. } => {
                 // mu f(x: +A) | (k: -B) { E } → λx. μk. E
                 let continuations: Vec<String> =
                     continuation_params.iter().map(|p| p.name.clone()).collect();
@@ -1134,7 +1134,7 @@ mod tests {
     fn lower_mu_binds_values_before_continuations() {
         // `mu f(values) | (continuations)` is called as
         // `f(values..., continuations...)`, so the λ binders come first.
-        let out = lower_str("mu route(x: +i32) | (k: -i32) { k(x) }");
+        let out = lower_str("command route(x: +i32) | (k: -i32) { k(x) }");
         let term = &out[0].1;
         let Term::Lam(value, rest) = term else {
             panic!("value parameter must be a λ binder: {term}");
@@ -1194,7 +1194,7 @@ mod tests {
     #[test]
     fn lower_named_error_prop_applies_the_named_continuation() {
         // `e?err` supplies `err` to `e` as its error continuation.
-        let out = lower_str("mu f(x: +i32) | (ok: -i32, err: -i32) { fail(x)?err }");
+        let out = lower_str("command f(x: +i32) | (ok: -i32, err: -i32) { fail(x)?err }");
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a value binder") };
         let Term::CoAbs(_, body) = body.as_ref() else { panic!("expected `ok` binder") };
         let Term::CoAbs(_, body) = body.as_ref() else { panic!("expected `err` binder") };
@@ -1205,13 +1205,13 @@ mod tests {
     fn lower_bare_error_prop_applies_the_innermost_continuation() {
         // A bare `?` supplies the current error continuation: the last
         // continuation declared by the innermost enclosing row.
-        let out = lower_str("mu f(x: +i32) | (ok: -i32, err: -i32) { fail(x)? }");
+        let out = lower_str("command f(x: +i32) | (ok: -i32, err: -i32) { fail(x)? }");
         let printed = format!("{}", out[0].1);
         assert!(printed.contains("err"), "bare `?` should select `err`: {printed}");
 
         // A nested local `mu` extends the row, so its binder wins inside it.
         let out = lower_str(
-            "mu f(x: +i32) | (err: -i32) {
+            "command f(x: +i32) | (err: -i32) {
                 mu inner | (nested: -i32) { fail(x)? }
             }",
         );
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn lower_error_prop_uses_current_continuation() {
-        let out = lower_str("mu f(x: +i32) | (err: -i32) { fail(x)? }");
+        let out = lower_str("command f(x: +i32) | (err: -i32) { fail(x)? }");
         let term = &out[0].1;
         let printed = format!("{term}");
         assert!(printed.contains("err"), "should reference err: {printed}");
@@ -1234,7 +1234,8 @@ mod tests {
     fn lower_uses_explicit_lexical_continuation_scopes() {
         // A lambda must not inherit the surrounding declaration's
         // continuation row: bare `?` cannot accidentally select `err`.
-        let out = lower_str("mu f(x: +i32) | (err: -i32) { g(fn(y: +i32) -> i32 { fail(y)? }) }");
+        let out =
+            lower_str("command f(x: +i32) | (err: -i32) { g(fn(y: +i32) -> i32 { fail(y)? }) }");
         let printed = format!("{}", out[0].1);
         assert!(!printed.contains("err(y)"), "lambda leaked `err`: {printed}");
 
@@ -1249,7 +1250,7 @@ mod tests {
 
         // Named selected propagation resolves through nested mu scopes.
         let out = lower_str(
-            "mu outer(x: +i32) | (err: -i32) {
+            "command outer(x: +i32) | (err: -i32) {
                 mu inner(y: +i32) | (inner_err: -i32) { fail(x)?err }
             }",
         );
