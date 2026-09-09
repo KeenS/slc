@@ -11,10 +11,10 @@ mu main() | (exit: -i32) {
     // `select` over an atom is a consumer literal: the arm names what arrives
     // and runs a command with it.
     let complain = select +String {
-        {
+        message <= {
             println("cannot read: " + message);
             1 @ exit
-        } => message,
+        },
     };
 
     // `k` is the continuation of this `let`: whatever `read_file` sends it
@@ -29,14 +29,14 @@ mu main() | (exit: -i32) {
     // The same two outcomes, named rather than passed side by side: `read`
     // sends one `Read`, and one `select` over the enum answers both.
     read("examples/missing.sl", select Read {
-        {
+        Contents(text) <= {
             println("unexpectedly read " + text);
             1 @ exit
-        } => Contents(text),
-        {
+        },
+        Failed(message) <= {
             println("cannot read: " + message);
             0 @ exit
-        } => Failed(message),
+        },
     })
 }
 
@@ -50,7 +50,7 @@ enum Read {
 mu read(path: +String) | (out: -Read) {
     read_file(
         path,
-        select +String { Read::Contents(text) @ out => text },
-        select +String { Read::Failed(message) @ out => message },
+        select +String { text <= Read::Contents(text) @ out },
+        select +String { message <= Read::Failed(message) @ out },
     )
 }

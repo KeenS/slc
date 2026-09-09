@@ -198,27 +198,40 @@ given, so a `main` that never reaches `exit` is a linearity error.
 
 ## `select` covers any positive type
 
-`select` is no longer restricted to enums, and its arms are now
-`command => pattern`, using the same patterns `match` uses:
+`select` is no longer restricted to enums, its arms use the same patterns
+`match` uses, and an arm is written `pattern <= command`:
 
 ```sl
 select Color {                     // one arm per variant — the negative additive
-    0 @ return => Red,
-    1 @ return => Green,
+    Red <= 0 @ return,
+    Green <= 1 @ return,
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    (int_to_str(value) + unit) @ out => Reading { value, unit },
+    Reading { value, unit } <= (int_to_str(value) + unit) @ out,
 }
 
 select (+i64 ⊗ +i64) {             // a bare product names its type
-    (left + right) @ out => (left, right),
+    (left, right) <= (left + right) @ out,
 }
 ```
 
-An arm's right-hand side used to be a variant name with an optional payload
-binder; it is now a pattern, so a struct or tuple shape is written the way
-`match` writes it. An arm's left-hand side is a command, as before.
+Two things changed. An arm's shape used to be a variant name with an optional
+payload binder; it is now a pattern, so a struct or tuple shape is written the
+way `match` writes it. And an arm used to be written the other way round, as
+`command => pattern`:
+
+```sl
+select Color {
+    0 @ return => Red,     // old
+    Red <= 0 @ return,     // new
+}
+```
+
+The shape now comes first, where a `match` puts it, and `<=` points back at the
+command — a `match` arm produces a value from a shape, and a `select` arm runs
+a command when a shape arrives. Writing the old order is a parse error that
+says so.
 
 ## Struct literals and patterns
 
@@ -292,9 +305,9 @@ enum Color { Red, Green, Blue }
 
 fn k(return: -i32) <- Color {
     select Color {
-        0 @ return => Red,
-        1 @ return => Green,
-        2 @ return => Blue,
+        Red <= 0 @ return,
+        Green <= 1 @ return,
+        Blue <= 2 @ return,
     }
 }
 ```
@@ -308,8 +321,8 @@ enum ParseResult { Parsed(String), Failed(String) }
 
 fn deliver(ok: -String, err: -String) <- ParseResult {
     select ParseResult {
-        text @ ok => Parsed(text),
-        message @ err => Failed(message),
+        Parsed(text) <= text @ ok,
+        Failed(message) <= message @ err,
     }
 }
 ```

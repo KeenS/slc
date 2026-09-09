@@ -36,7 +36,7 @@ pub enum Expr {
         name: String,
         fields: Vec<(String, Node<Expr>)>,
     },
-    /// `select T { command => pattern, … }` — the consumer of a positive
+    /// `select T { pattern <= command, … }` — the consumer of a positive
     /// type, given by cases on it. An `enum` has one arm per variant; a
     /// product has exactly one, binding its components.
     Select {
@@ -126,12 +126,13 @@ pub struct Param {
     pub is_continuation: bool,
 }
 
-/// One arm of a `select`: the shape that selects it, and the command that
-/// runs when it arrives. The pattern's binders scope over the command.
+/// One arm of a `select`, written `pattern <= command`: the shape that
+/// selects it, and the command that runs when it arrives. The pattern's
+/// binders scope over the command.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectArm {
-    pub command: Node<Expr>,
     pub pattern: Pattern,
+    pub command: Node<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

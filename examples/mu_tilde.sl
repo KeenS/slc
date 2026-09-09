@@ -27,7 +27,7 @@ mu main() | (exit: -i32) {
     //    a positive type, and an atom is the degenerate product — one shape,
     //    one component — so its one arm binds the whole value with a plain
     //    name. This is `μ̃n. ⟨println(n) ∥ … ⟩`, spelled in the surface.
-    let show = select +i64 { println(n) => n };
+    let show = select +i64 { n <= println(n) };
 
     // Cutting a value against it substitutes: `n` is `42` inside the arm.
     doubled @ show;
@@ -36,18 +36,18 @@ mu main() | (exit: -i32) {
     //    name — and it is what sequencing lowers to. `e₁; e₂` runs `e₁`, binds
     //    its value to a name nobody mentions, and runs `e₂`; the two lines
     //    below are that, taken apart.
-    let discard = select +String { println("the value was consumed") => _ };
+    let discard = select +String { _ <= println("the value was consumed") };
     "thrown away" @ discard;
 
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `⅋` means.
-    let report = select (+i64 ⊗ +i64) { println(left + right) => (left, right) };
+    let report = select (+i64 ⊗ +i64) { (left, right) <= println(left + right) };
     (10, 7) @ report;
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
-    twice(50, select +i64 { println(n) => n });
+    twice(50, select +i64 { n <= println(n) });
 
     0 @ exit
 }

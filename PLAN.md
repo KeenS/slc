@@ -53,7 +53,7 @@ and where the two disagree, `DESIGN.md` is right.
   continuation is rejected, `EXIT` is a consumer (`0 @ EXIT`), and `select`
   arms are cuts.
 - `match` takes any positive value apart, and `select` builds the consumer of
-  any positive type, with arms `command => pattern`: one arm per variant of an
+  any positive type, with arms `pattern <= command`: one arm per variant of an
   `enum` (the negative additive), exactly one for a `struct` or tuple, binding
   every component (the negative multiplicative), and one for an atom — the
   degenerate product — whose plain binder takes the whole value, which is the

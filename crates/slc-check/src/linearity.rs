@@ -631,9 +631,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
             fn k(return: -i32) <- Color {
                 select Color {
-                    return(0) => Red,
-                    return(1) => Green,
-                    return(2) => Blue,
+                    Red <= return(0),
+                    Green <= return(1),
+                    Blue <= return(2),
                 }
             }",
         );

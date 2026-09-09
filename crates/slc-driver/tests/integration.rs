@@ -508,9 +508,9 @@ fn select_dispatches_to_matching_enum_variant() {
                 r#"enum Color {{ Red, Green, Blue }}
         fn k(return: -i32) <- Color {{
             select Color {{
-                0 @ return => Red,
-                1 @ return => Green,
-                2 @ return => Blue,
+                Red <= 0 @ return,
+                Green <= 1 @ return,
+                Blue <= 2 @ return,
             }}
         }}
         mu main() | (exit: -i32) {{
@@ -542,9 +542,9 @@ fn activating_one_select_arm_does_not_activate_other_arms() {
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                shout("red", 0) @ k => Red,
-                shout("green", 1) @ k => Green,
-                shout("blue", 2) @ k => Blue,
+                Red <= shout("red", 0) @ k,
+                Green <= shout("green", 1) @ k,
+                Blue <= shout("blue", 2) @ k,
             }
         }
 
@@ -581,9 +581,9 @@ fn constructing_select_does_not_activate_any_arm() {
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                boom(3) @ k => Red,
-                boom(4) @ k => Green,
-                boom(5) @ k => Blue,
+                Red <= boom(3) @ k,
+                Green <= boom(4) @ k,
+                Blue <= boom(5) @ k,
             }
         }
 
@@ -700,13 +700,13 @@ fn select_builds_the_consumer_of_a_product() {
 
         fn show(out: -String) <- Reading {
             select Reading {
-                (int_to_str(value) + unit) @ out => Reading { value, unit },
+                Reading { value, unit } <= (int_to_str(value) + unit) @ out,
             }
         }
 
         fn total(out: -i64) <- (+i64 ⊗ +i64) {
             select (+i64 ⊗ +i64) {
-                (left + right) @ out => (left, right),
+                (left, right) <= (left + right) @ out,
             }
         }
 
@@ -788,9 +788,9 @@ fn a_computed_consumer_receives_the_value() {
 
         fn code(return: -i64) <- Color {
             select Color {
-                0 @ return => Red,
-                1 @ return => Green,
-                2 @ return => Blue,
+                Red <= 0 @ return,
+                Green <= 1 @ return,
+                Blue <= 2 @ return,
             }
         }
 
@@ -974,7 +974,7 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
     std::fs::write(
         &dir,
         "mu main() | (exit: -i32) {
-             let show = select +i64 { println(n * 2) => n };
+             let show = select +i64 { n <= println(n * 2) };
              21 @ show;
              0 @ exit
          }",

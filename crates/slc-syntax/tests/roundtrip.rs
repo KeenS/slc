@@ -83,9 +83,9 @@ fn lowered_declarations_round_trip_through_the_printed_core() {
          fn positive(x: +i32) -> i32 { x }
          fn negative(return: -i32) <- Color {
              select Color {
-                 0 @ return => Red,
-                 1 @ return => Green,
-                 2 @ return => Blue,
+                 Red <= 0 @ return,
+                 Green <= 1 @ return,
+                 Blue <= 2 @ return,
              }
          }
          mu route(x: +i32) | (k: -i32) { x @ k }

@@ -416,9 +416,9 @@ mod tests {
             lex("enum Color { Red, Green, Blue }
             fn k(return: -i32) <- Color {
                 select Color {
-                    return(0) => Red,
-                    return(1) => Green,
-                    return(2) => Blue,
+                    Red <= return(0),
+                    Green <= return(1),
+                    Blue <= return(2),
                 }
             }")
             .unwrap(),
@@ -437,7 +437,7 @@ mod tests {
         let p = parse(
             lex("fn k(return: -i32) <- i32 {
                 select Color {
-                    return(0) => Red,
+                    Red <= return(0),
                 }
             }")
             .unwrap(),

@@ -1199,7 +1199,7 @@ fn check_expr(
             Some(Type::Named(name.clone()))
         }
         Expr::Select { ty, arms } => {
-            // `select T { c => p, … }` builds the consumer of T. Each arm
+            // `select T { p <= c, … }` builds the consumer of T. Each arm
             // covers one shape of T, binds that shape's components, and runs
             // a command; the whole expression is dual to T.
             let Some(resolved) = enums.resolve(&ty.kind) else {
@@ -1511,8 +1511,8 @@ mod tests {
                 "enum R { Some(i64), None }
                  fn k(ok: -i64, absent: -i64) <- R {
                      select R {
-                         value @ ok => Some(value),
-                         0 @ absent => None,
+                         Some(value) <= value @ ok,
+                         None <= 0 @ absent,
                      }
                  }"
             )
@@ -1526,8 +1526,8 @@ mod tests {
             "enum R { Some(i64), None }
              fn k(ok: -i64, absent: -i64) <- R {
                  select R {
-                     0 @ ok => Some,
-                     0 @ absent => None,
+                     Some <= 0 @ ok,
+                     None <= 0 @ absent,
                  }
              }",
         )
@@ -1544,7 +1544,7 @@ mod tests {
             "enum R { None }
              fn k(absent: -i32) <- R {
                  select R {
-                     0 @ absent => None(value),
+                     None(value) <= 0 @ absent,
                  }
              }",
         )
@@ -1617,8 +1617,8 @@ mod tests {
                 "enum Color { Red, Green }
                  fn code(return: -i64) <- Color {
                      select Color {
-                         0 @ return => Red,
-                         1 @ return => Green,
+                         Red <= 0 @ return,
+                         Green <= 1 @ return,
                      }
                  }
                  fn main() -> i64 {
@@ -1787,9 +1787,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
             fn k(return: -i32) <- Color {
                 select Color {
-                    0 @ return => Red,
-                    1 @ return => Green,
-                    2 @ return => Blue,
+                    Red <= 0 @ return,
+                    Green <= 1 @ return,
+                    Blue <= 2 @ return,
                 }
             }",
         );
@@ -1802,8 +1802,8 @@ mod tests {
             "enum Color { Red, Green }
             fn k(return: -i32) <- Color {
                 select Color {
-                    0 => Red,
-                    1 @ return => Green,
+                    Red <= 0,
+                    Green <= 1 @ return,
                 }
             }",
         )
@@ -1817,8 +1817,8 @@ mod tests {
             "enum Color { Red, Green }
             fn k(return: -i32) <- Color {
                 select Color {
-                    0 @ return => (a, b),
-                    1 @ return => Green,
+                    (a, b) <= 0 @ return,
+                    Green <= 1 @ return,
                 }
             }",
         )
@@ -1831,12 +1831,12 @@ mod tests {
         // An atom has one shape and one component, so its arm's pattern is a
         // plain binder, typed by the type being consumed.
         assert!(
-            check("fn show(out: -String) <- +i64 { select +i64 { int_to_str(n) @ out => n } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n <= int_to_str(n) @ out } }")
                 .is_ok()
         );
 
         let diags =
-            check("fn show(out: -String) <- +i64 { select +i64 { str_len(n) @ out => n } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n <= str_len(n) @ out } }")
                 .unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),

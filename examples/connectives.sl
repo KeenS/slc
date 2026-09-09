@@ -31,7 +31,7 @@ fn sum(p: Pair) -> i64 {
 
 fn report_sum(out: -i64) <- Pair {
     select Pair {
-        (left + right) @ out => Pair { left, right },
+        Pair { left, right } <= (left + right) @ out,
     }
 }
 
@@ -39,7 +39,7 @@ fn report_sum(out: -i64) <- Pair {
 
 fn report_first(out: -i64) <- (+i64 ⊗ +String) {
     select (+i64 ⊗ +String) {
-        count @ out => (count, label),
+        (count, label) <= count @ out,
     }
 }
 
@@ -64,9 +64,9 @@ fn name(c: Colour) -> String {
 
 fn code(out: -i64) <- Colour {
     select Colour {
-        0 @ out => Red,
-        1 @ out => Green,
-        2 @ out => Blue,
+        Red <= 0 @ out,
+        Green <= 1 @ out,
+        Blue <= 2 @ out,
     }
 }
 
@@ -81,8 +81,8 @@ enum Request {
 
 fn config() <- Request {
     select Request {
-        3 @ k => Retries(k),
-        "slant" @ k => Name(k),
+        Retries(k) <= 3 @ k,
+        Name(k) <= "slant" @ k,
     }
 }
 

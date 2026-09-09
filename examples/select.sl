@@ -19,9 +19,9 @@ enum Color {
 // continuation that a `Color` is cut against.
 fn code(return: -i32) <- Color {
     select Color {
-        0 @ return => Red,
-        1 @ return => Green,
-        2 @ return => Blue,
+        Red <= 0 @ return,
+        Green <= 1 @ return,
+        Blue <= 2 @ return,
     }
 }
 
@@ -33,8 +33,8 @@ enum Reading {
 
 fn report(value: -i64, absent: -i64) <- Reading {
     select Reading {
-        measurement @ value => Measured(measurement),
-        -1 @ absent => Missing,
+        Measured(measurement) <= measurement @ value,
+        Missing <= -1 @ absent,
     }
 }
 
@@ -44,7 +44,7 @@ fn report(value: -i64, absent: -i64) <- Reading {
 // written directly.
 fn twice(out: -i64) <- +i64 {
     select +i64 {
-        (n * 2) @ out => n,
+        n <= (n * 2) @ out,
     }
 }
 

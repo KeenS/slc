@@ -277,13 +277,13 @@ mu main() | (exit: -i32) {
     // One consumer for the whole outcome: an arm per variant, each binding
     // that variant's payload and ending in a cut against `exit`.
     parse_json(source, select ParseResult {
-        {
+        Parsed(value) <= {
             println("parsed: " + value);
             0 @ exit
-        } => Parsed(value),
-        {
+        },
+        Failed(message) <= {
             println("error: " + message);
             1 @ exit
-        } => Failed(message),
+        },
     })
 }

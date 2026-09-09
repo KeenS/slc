@@ -99,8 +99,8 @@ enum Status { Ok(i64), Failed(i64) }
 
 fn report(success: -i64, failure: -i64) <- Status {
     select Status {
-        code @ success => Ok(code),
-        code @ failure => Failed(code),
+        Ok(code) <= code @ success,
+        Failed(code) <= code @ failure,
     }
 }
 ```
@@ -297,9 +297,9 @@ negative additive:
 ```sl
 fn k(return: -i32) <- Color {
     select Color {
-        0 @ return => Red,
-        1 @ return => Green,
-        2 @ return => Blue,
+        Red <= 0 @ return,
+        Green <= 1 @ return,
+        Blue <= 2 @ return,
     }
 }
 ```
@@ -317,8 +317,8 @@ enum ParseResult { Parsed(String), Failed(String) }
 
 fn deliver(ok: -String, err: -String) <- ParseResult {
     select ParseResult {
-        text @ ok => Parsed(text),
-        message @ err => Failed(message),
+        Parsed(text) <= text @ ok,
+        Failed(message) <= message @ err,
     }
 }
 ```
@@ -327,10 +327,12 @@ fn deliver(ok: -String, err: -String) <- ParseResult {
 variant that carries a payload must bind it; a variant that carries none must
 not.
 
-An arm's left-hand side must be a cut `v @ k` whose consumer is a visible
-negative binding. The arm lowers to that command, so a `select` expression is
-a genuine negative additive
-consumer — one branch per variant — and not an opaque builtin. Activation
+An arm reads against the flow of a `match` arm. The shape that selects it is
+written first, as `match` writes it, and `<=` points back at the command that
+runs when it arrives — because a consumer receives where a `match` produces.
+That command must be a cut `v @ k` whose consumer is a visible negative
+binding. The arm lowers to it, so a `select` expression is a genuine negative
+additive consumer — one branch per variant — and not an opaque builtin. Activation
 chooses exactly one branch: the branches of the arms that were not selected
 are never evaluated, neither when the consumer is constructed nor when it is
 activated.
@@ -406,7 +408,7 @@ struct Reading { value: i64, unit: String }
 // dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        (int_to_str(value) + unit) @ out => Reading { value, unit },
+        Reading { value, unit } <= (int_to_str(value) + unit) @ out,
     }
 }
 ```
@@ -416,7 +418,7 @@ A bare product needs no declaration; its shape is written as the type:
 ```sl
 fn total(out: -i64) <- (+i64 ⊗ +i64) {
     select (+i64 ⊗ +i64) {
-        (left + right) @ out => (left, right),
+        (left, right) <= (left + right) @ out,
     }
 }
 ```
@@ -434,7 +436,7 @@ it too, and the arm's pattern is a plain binder that names the whole value:
 ```sl
 fn show(out: -String) <- +i64 {
     select +i64 {
-        int_to_str(n) @ out => n,
+        n <= int_to_str(n) @ out,
     }
 }
 ```
@@ -519,7 +521,7 @@ it composes with an error consumer a program already has.
 ```sl
 read_file(
     "input.json",
-    select +String { parse_json(source, report) => source },
+    select +String { source <= parse_json(source, report) },
     complain,
 )
 ```
@@ -700,7 +702,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.mu` | `mu f() \| (k: -A) { e }` | `Λ`-free: `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the local form captures the ambient continuation |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { c => p, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.errorprop.named` | `e?k` | `⟦e⟧(k)` |
 | `expr.errorprop.bare` | `e?` | `⟦e⟧(k₀)`, where `k₀` is the current error continuation |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
@@ -727,7 +729,7 @@ continuation parameter becomes a Λ binder.
 | `co(e)` | `select` |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `λ̄x. c` | application, and nothing else |
-| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?`; written directly as `select +A { c => x }` |
+| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?`; written directly as `select +A { x <= c }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |
@@ -743,8 +745,8 @@ continuation:
 
 ```sl
 parse_json(source, select ParseResult {
-    { println("parsed: " + value); 0 @ exit } => Parsed(value),
-    { println("error: " + message); 1 @ exit } => Failed(message),
+    Parsed(value) <= { println("parsed: " + value); 0 @ exit },
+    Failed(message) <= { println("error: " + message); 1 @ exit },
 })
 ```
 
@@ -778,7 +780,9 @@ space — `e? name` — the `?` is bare and `name` is a separate expression.
 
 - `k(v)` (activating a continuation) → `v @ k`
 - `EXIT(0)` → `0 @ EXIT`
-- `select T { k(v) => V }` → `select T { v @ k => V }`
+- `select T { c => p }` → `select T { p <= c }` — the shape comes first, as
+  in a `match`, and `<=` points back at the command
+- `select T { V <= k(v) }` → `select T { V <= v @ k }`
 - `t @ k` previously lowered to a μ binder that shadowed `k`, so it sent the
   value nowhere; it is now the cut it always claimed to be
 - `command name(...)` → `mu name(...) | (...)`

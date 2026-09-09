@@ -860,10 +860,21 @@ impl Parser {
                     if self.eat(&TokenKind::RBrace) {
                         break;
                     }
+                    // An arm reads against the flow of a `match` arm: the
+                    // shape that arrives is on the left, and `<=` points back
+                    // at the command it runs.
+                    let arm = self.pos;
+                    let pattern = match self.parse_pattern() {
+                        Ok(pattern) => pattern,
+                        Err(e) => return Err(self.reversed_arm_error(arm, e)),
+                    };
+                    if !self.eat(&TokenKind::Le) {
+                        let expected =
+                            self.expect(TokenKind::Le, "`<=` in `select` arm").unwrap_err();
+                        return Err(self.reversed_arm_error(arm, expected));
+                    }
                     let command = self.parse_expr()?;
-                    self.expect(TokenKind::FatArrow, "`=>` in `select` arm")?;
-                    let pattern = self.parse_pattern()?;
-                    arms.push(SelectArm { command, pattern });
+                    arms.push(SelectArm { pattern, command });
                     if !self.eat(&TokenKind::Comma) {
                         self.expect(TokenKind::RBrace, "`}` after `select` arm")?;
                         break;
@@ -956,6 +967,53 @@ impl Parser {
                 })
             }
         }
+    }
+
+    /// Explain the old arm order rather than reporting where its command
+    /// failed to parse as a pattern. An arm holding a `=>` before it ends was
+    /// written the other way round; the rest of the `select` is then skipped,
+    /// so one arm in the old order reports one error.
+    fn reversed_arm_error(&mut self, arm: usize, fallback: ParseError) -> ParseError {
+        let mut depth = 0i32;
+        for token in &self.tokens[arm..] {
+            match token.kind {
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket if depth > 0 => {
+                    depth -= 1;
+                }
+                // The `}` that closes the arm list, or the `,` that ends this
+                // arm: either way the arm is over.
+                TokenKind::RBrace | TokenKind::Comma => break,
+                TokenKind::FatArrow if depth == 0 => {
+                    let span = token.span;
+                    self.skip_past_arm_list(arm);
+                    return ParseError {
+                        message: "a `select` arm is written `pattern <= command`: the shape comes first, as in a `match`".into(),
+                        span,
+                    };
+                }
+                _ => {}
+            }
+        }
+        fallback
+    }
+
+    /// Move past the `}` that closes the arm list an arm belongs to, so a
+    /// diagnostic about one arm does not cascade into the arms after it.
+    fn skip_past_arm_list(&mut self, arm: usize) {
+        let mut depth = 0i32;
+        for (offset, token) in self.tokens[arm..].iter().enumerate() {
+            match token.kind {
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace if depth == 0 => {
+                    self.pos = arm + offset + 1;
+                    return;
+                }
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => depth -= 1,
+                _ => {}
+            }
+        }
+        self.pos = self.tokens.len();
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
@@ -1316,7 +1374,7 @@ mod tests {
     #[test]
     fn parse_select() {
         // One arm per variant of an enum.
-        let p = parse_str("select Color { 0 @ return => Red, 1 @ return => Green }");
+        let p = parse_str("select Color { Red <= 0 @ return, Green <= 1 @ return }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -1327,9 +1385,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_the_old_select_arm_order() {
+        // `command => pattern` was the order before the arrow was turned
+        // around; saying so beats reporting that `0` is not a pattern.
+        let errors = parse(
+            lex("enum Color { Red, Green }
+                 fn k(return: -i32) <- Color {
+                     select Color {
+                         0 @ return => Red,
+                         1 @ return => Green,
+                     }
+                 }")
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("`pattern <= command`")),
+            "errors: {errors:?}"
+        );
+        // One arm in the old order is one error, not one per arm after it.
+        assert_eq!(errors.len(), 1, "errors: {errors:?}");
+    }
+
+    #[test]
     fn parse_select_over_a_product() {
         // A product has one shape, so one arm, binding its components.
-        let p = parse_str("select (+i64 ⊗ +String) { end @ done => (end, text) }");
+        let p = parse_str("select (+i64 ⊗ +String) { (end, text) <= end @ done }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -1341,7 +1422,7 @@ mod tests {
 
     #[test]
     fn parse_select_over_a_struct() {
-        let p = parse_str("select Reading { 0 @ out => Reading { value: v, unit: u } }");
+        let p = parse_str("select Reading { Reading { value: v, unit: u } <= 0 @ out }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { arms, .. } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
