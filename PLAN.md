@@ -146,179 +146,178 @@ Remove `spawn` entirely. There will be no replacement keyword in v0.2. Any futur
 
 ---
 
-## 5. Continuation `if` and `match`
+## 5. Dual Control: Negative Multiplicatives and Additives
 
 ### Problem
 
-The current `if` and `match` are producer-oriented: they choose a value and return it to the current continuation. There is no symmetric consumer-oriented construct that chooses which continuation to activate.
+The current `if` and `match` are producer-oriented:
+
+- `if` chooses one of two value branches
+- `match` chooses one of several value branches
+
+That is only the positive half of control. We also need their exact duals:
+
+- the dual of `if` is negative additive choice
+- the dual of `match` is negative multiplicative decomposition
+
+Keeping this symmetry is required. `if`, `match`, `struct`, and `enum` must form a polarity square.
 
 ### Symmetry requirement
 
-For every producer construct, there should be a corresponding consumer construct.
+For every producer construct, there should be a corresponding consumer construct:
 
-### Proposed continuation `if`
+| Positive construct | Polarity | Kind | Negative dual | Polarity | Kind |
+|---|---|---|---|---|---|
+| `if` | positive additive | selects one value branch | `if not` | negative additive | offers one value to one of two continuations |
+| `match` | positive additive | selects one value arm | `match not` | negative additive | offers one value to one of several continuations |
+| `struct` | positive multiplicative | bundles values with `⊗` | `struct not` | negative multiplicative | splits a value into multiple continuations with `⅋` |
+| `enum` | positive additive | chooses one variant with `⊕` | `enum not` | negative additive | accepts one of several variants with `&` |
 
-Use `if` with continuation arms:
+The key point is that `if` and `match` are additive control, while `struct` and `enum` are data. We need the negative forms of both.
+
+### Negative multiplicative `if`
+
+`if` is the simplest additive control form. Its negative dual should offer a value to one of two continuations. Proposed syntax:
 
 ```sl
-if value {
-    ok => ...,
-    err => ...,
-}
-```
-
-A more explicit, polarity-safe syntax is:
-
-```sl
-if value to {
-    ok => ...,
-    err => ...,
+if not value {
+    zero => EXIT(0),
+    nonzero => EXIT(1),
 }
 ```
 
 Meaning:
 
 - `value` is evaluated to a boolean
-- one of the continuation arms is selected
-- the selected continuation is activated with the supplied argument
+- one of the two named continuations is selected
+- the value is passed to the selected continuation
 
-A dual form is:
+This is the negative additive dual of positive `if`.
+
+### Negative multiplicative `match`
+
+`match` should offer a value to one of several continuations. Proposed syntax:
 
 ```sl
-if value from {
-    ok => ...,
-    err => ...,
+match not value {
+    Red => EXIT(0),
+    Green => EXIT(1),
+    Blue => EXIT(2),
 }
 ```
 
-The dual selects the continuation to which control should return.
+Meaning:
 
-### Proposed continuation `match`
+- `value` is evaluated
+- one of the patterns matches
+- the corresponding continuation is activated with the bound values
+
+This is the negative additive dual of positive `match`.
+
+### Negative multiplicative struct
+
+A positive `struct` bundles values together using `⊗`. Its dual should split a value into multiple continuations using `⅋`. Proposed syntax:
 
 ```sl
-match value to {
-    Pattern => continuation,
-    Pattern => continuation,
+struct not Handler {
+    ok: -String,
+    err: -String,
 }
 ```
 
-The dual form is:
+Meaning:
+
+- a value of type `Handler` is a continuation
+- the continuation jointly consumes both fields
+- the fields are not independently activated; they are consumed together as a `⅋`
+
+This is the negative multiplicative dual of positive `struct`.
+
+### Negative additive enum
+
+A positive `enum` chooses one variant using `⊕`. Its dual should accept one of several variants using `&`. Proposed syntax:
 
 ```sl
-match value from {
-    Pattern => continuation,
-    Pattern => continuation,
+enum not Result {
+    ok: -String,
+    err: -String,
 }
 ```
 
-### Naming decision
+Meaning:
 
-Use `to` for producer-to-consumer selection and `from` for consumer-to-producer selection.
+- a value of type `Result` is a continuation
+- the continuation accepts exactly one of the listed variants
+- each variant is a distinct continuation branch
+
+This is the negative additive dual of positive `enum`.
+
+### Why `not`
+
+`not` is already the natural polarity-flip operation in the language. Using it before a type or control keyword keeps the surface syntax readable while remaining unambiguous:
+
+```sl
+struct not T   // negative multiplicative
+enum not T     // negative additive
+if not e       // negative additive control
+match not e    // negative additive control
+```
+
+This is clearer than reusing `+`/`-` on the declaration itself, because those are type polarities, not data declarations.
+
+### Construction and destruction
+
+For positive `struct` and `enum`, construction produces a value:
+
+```sl
+let p = Pair { first: 1, second: 2 };
+let c = Shape::Circle(3);
+```
+
+For negative `struct` and `enum`, construction produces a continuation:
+
+```sl
+let h: Handler = Handler {
+    ok: fn(value: +String) -> i32 { EXIT(0) },
+    err: fn(message: +String) -> i32 { EXIT(1) },
+};
+
+let r: Result = Result::ok(
+    fn(value: +String) -> i32 { EXIT(0) }
+);
+```
+
+Destruction is by activation, not by destructuring:
+
+```sl
+h(value);         // negative struct: jointly consumes fields
+r(value);         // negative enum: selects one variant
+```
 
 ### Checklist
 
-- [ ] Choose final syntax for continuation `if`
-- [ ] Choose final syntax for continuation `match`
-- [ ] Add AST nodes for continuation conditionals
-- [ ] Add AST nodes for continuation matches
-- [ ] Update the parser with `to` and `from` forms
-- [ ] Define lowering for continuation `if`
-- [ ] Define lowering for continuation `match`
-- [ ] Update the surface type checker
-- [ ] Update polarity checking
-- [ ] Update linearity checking
-- [ ] Update exhaustiveness checking for continuation `match`
-- [ ] Add parser tests
-- [ ] Add lowering tests
-- [ ] Add type-checker tests
-- [ ] Add runtime tests
-- [ ] Rewrite error-handling examples to use continuation `match`
-
----
-
-## 6. Dual of `enum` and `struct`
-
-### Problem
-
-The language currently has positive `struct` and positive `enum`:
-
-- `struct` is a tensor-like positive product
-- `enum` is a positive additive sum
-
-To preserve symmetry, the language needs:
-
-- a negative product, dual to `struct`
-- a negative sum, dual to `enum`
-
-### Positive constructs
-
-```sl
-struct Pair {
-    first: +i32,
-    second: +i32,
-}
-
-enum Shape {
-    Circle(+i32),
-    Square(+i32),
-}
-```
-
-### Negative product
-
-A negative struct represents a continuation that consumes fields together. Proposed syntax:
-
-```sl
-struct NegPair {
-    from first: -i32,
-    from second: -i32,
-}
-```
-
-This is the par-like dual of the positive struct.
-
-### Negative sum
-
-A negative enum represents a choice between continuations. Proposed syntax:
-
-```sl
-enum Result {
-    from ok: -String,
-    from err: -String,
-}
-```
-
-This is the additive dual of the positive enum.
-
-### Alternative syntax
-
-Instead of `from`, use explicit polarity on fields:
-
-```sl
-struct -Pair {
-    first: -i32,
-    second: -i32,
-}
-```
-
-The `from` marker is preferred because it is consistent with the continuation selection syntax in `if` and `match`.
-
-### Checklist
-
-- [ ] Choose final syntax for negative struct
-- [ ] Choose final syntax for negative enum
+- [ ] Choose final syntax for negative `if`
+- [ ] Choose final syntax for negative `match`
+- [ ] Choose final syntax for negative `struct`
+- [ ] Choose final syntax for negative `enum`
+- [ ] Add AST nodes for negative conditionals
+- [ ] Add AST nodes for negative matches
 - [ ] Add AST nodes for negative struct declarations
 - [ ] Add AST nodes for negative enum declarations
+- [ ] Update parser for negative `if`
+- [ ] Update parser for negative `match`
 - [ ] Update parser for negative struct declarations
 - [ ] Update parser for negative enum declarations
-- [ ] Update lowering for negative struct
-- [ ] Update lowering for negative enum
+- [ ] Define lowering for negative `if`
+- [ ] Define lowering for negative `match`
+- [ ] Define lowering for negative struct
+- [ ] Define lowering for negative enum
 - [ ] Update type lowering
 - [ ] Update type pretty-printing
 - [ ] Update inference
 - [ ] Update polarity checking
 - [ ] Update linearity checking
-- [ ] Update exhaustiveness checking
+- [ ] Update exhaustiveness checking for negative `match`
 - [ ] Define construction syntax for negative structs
 - [ ] Define construction syntax for negative enums
 - [ ] Define destruction syntax for positive structs and enums
@@ -326,11 +325,14 @@ The `from` marker is preferred because it is consistent with the continuation se
 - [ ] Add lowering tests
 - [ ] Add type-checker tests
 - [ ] Add runtime tests
+- [ ] Rewrite error-handling examples to use negative `struct`
+- [ ] Rewrite error-handling examples to use negative `enum`
 - [ ] Rewrite the JSON parser example using negative enums for success and failure continuations
+
 
 ---
 
-## 7. Builtin Continuation `EXIT: -i32`
+## 6. Builtin Continuation `EXIT: -i32`
 
 ### Purpose
 
@@ -364,7 +366,7 @@ Activating `EXIT` terminates the current program with the supplied status code.
 
 ---
 
-## 8. Surface Syntax After Redesign
+## 7. Surface Syntax After Redesign
 
 ### Producer
 
@@ -398,39 +400,39 @@ mu parse(
 }
 ```
 
-### Continuation conditional
+### Negative conditional
 
 ```sl
-if value to {
-    ok => ...,
-    err => ...,
+if not value {
+    zero => ...,
+    nonzero => ...,
 }
 ```
 
-### Continuation match
+### Negative match
 
 ```sl
-match value to {
-    Number(n) => ...,
-    Text(s) => ...,
+match not value {
+    Red => ...,
+    Green => ...,
 }
 ```
 
 ### Negative struct
 
 ```sl
-struct Handler {
-    from ok: -String,
-    from err: -String,
+struct not Handler {
+    ok: -String,
+    err: -String,
 }
 ```
 
 ### Negative enum
 
 ```sl
-enum Result {
-    from ok: -String,
-    from err: -String,
+enum not Result {
+    ok: -String,
+    err: -String,
 }
 ```
 
@@ -442,7 +444,7 @@ EXIT(0)
 
 ---
 
-## 9. Implementation Phases
+## 8. Implementation Phases
 
 ### Phase 1: Cleanup
 
@@ -466,21 +468,31 @@ EXIT(0)
 - [ ] Add tests
 - [ ] Update examples
 
-### Phase 4: Symmetric Control
+### Phase 4: Negative Multiplicative and Additive Control
 
-- [ ] Implement continuation `if`
-- [ ] Implement continuation `match`
-- [ ] Add exhaustive checking for continuation `match`
+#### Negative additive control
+
+- [ ] Implement `if not`
+- [ ] Implement `match not`
+- [ ] Add exhaustive checking for `match not`
+
+#### Negative multiplicative data
+
+- [ ] Implement `struct not`
+- [ ] Implement `enum not`
+- [ ] Implement construction forms for negative data
+- [ ] Implement destruction forms for negative data
+
+#### Shared
+
 - [ ] Add tests
 - [ ] Rewrite error-handling examples
 
-### Phase 5: Dual Data
+### Phase 5: Integrated Dual Data and Control
 
-- [ ] Implement negative struct
-- [ ] Implement negative enum
-- [ ] Implement construction and destruction forms
-- [ ] Add tests
-- [ ] Rewrite JSON parser using dual data
+- [ ] Combine negative structs and enums with `if not` and `match not`
+- [ ] Add exhaustiveness and linearity tests for the combined forms
+- [ ] Rewrite JSON parser using negative data and negative control
 
 ### Phase 6: Documentation
 
@@ -492,14 +504,14 @@ EXIT(0)
 
 ---
 
-## 10. Acceptance Criteria
+## 9. Acceptance Criteria
 
 - [ ] No `spawn` remains in the language
 - [ ] `command` no longer exists as a keyword
 - [ ] `mu` is the only keyword for consumer abstraction
 - [ ] Ordinary `fn` can take continuation parameters
-- [ ] Continuation `if` and `match` exist
-- [ ] Negative `struct` and `enum` exist
+- [ ] Negative multiplicative control exists (`if not`, `match not`)
+- [ ] Negative additive data exists (`struct not`, `enum not`)
 - [ ] `EXIT: -i32` works as a top-level continuation
 - [ ] Every core λ̄μμ̃ construct has a surface representation
 - [ ] Every surface construct has a documented lowering to λ̄μμ̃
