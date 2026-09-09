@@ -364,6 +364,21 @@ fn compile_term_into(t: &crate::term::Term, net: &mut Net) -> Port {
             net.connect(Port::aux(a, 1), p);
             Port::principal(a)
         }
+        Term::Tag(_, payload) => {
+            // A labelled injection is an injection; the net keeps the payload
+            // wire and forgets the label, which only selects a branch.
+            let a = net.add_agent(AgentKind::Inl, 1);
+            let p = compile_term_into(payload, net);
+            net.connect(Port::aux(a, 1), p);
+            Port::principal(a)
+        }
+        Term::CoAbs(_, body) => {
+            let a = net.add_agent(AgentKind::Lam, 1);
+            let p = compile_term_into(body, net);
+            net.connect(Port::aux(a, 1), p);
+            Port::principal(a)
+        }
+        Term::Co(e) => compile_coterm_into(e, net),
     }
 }
 
@@ -411,6 +426,22 @@ fn compile_coterm_into(e: &crate::coterm::CoTerm, net: &mut Net) -> Port {
             net.connect(Port::aux(a, 1), p1);
             let p2 = compile_coterm_into(e2, net);
             net.connect(Port::aux(a, 2), p2);
+            Port::principal(a)
+        }
+        CoTerm::MuTildeTensor(binders, body) => {
+            let a = net.add_agent(AgentKind::MuTilde, binders.len().max(1));
+            let cp = compile_command_into(body, net);
+            net.connect(Port::aux(a, 1), cp);
+            Port::principal(a)
+        }
+        CoTerm::CoCase(branches) => {
+            // A negative additive consumer is a consumer with one auxiliary
+            // wire per branch.
+            let a = net.add_agent(AgentKind::MuTilde, branches.len().max(1));
+            for (i, branch) in branches.iter().enumerate() {
+                let cp = compile_command_into(&branch.body, net);
+                net.connect(Port::aux(a, i + 1), cp);
+            }
             Port::principal(a)
         }
         CoTerm::Fst | CoTerm::Snd => Port::principal(net.add_agent(AgentKind::Erase, 1)),

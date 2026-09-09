@@ -1,7 +1,7 @@
 //! α-equivalence, fresh variable generation, and capture-avoiding substitution.
 
 use crate::command::Command;
-use crate::coterm::CoTerm;
+use crate::coterm::{CoCaseBranch, CoTerm};
 use crate::term::Term;
 use std::collections::HashSet;
 
@@ -47,6 +47,14 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             go_term(t2, out);
         }
         Term::Inl(t) | Term::Inr(t) => go_term(t, out),
+        Term::Tag(_, t) => go_term(t, out),
+        Term::CoAbs(a, t) => {
+            let mut inner = HashSet::new();
+            go_term(t, &mut inner);
+            inner.remove(a);
+            out.extend(inner);
+        }
+        Term::Co(e) => go_coterm(e, out),
     }
 }
 
@@ -72,6 +80,24 @@ fn go_coterm(e: &CoTerm, out: &mut HashSet<String>) {
             go_coterm(e2, out);
         }
         CoTerm::Fst | CoTerm::Snd => {}
+        CoTerm::CoCase(branches) => {
+            for branch in branches {
+                let mut inner = HashSet::new();
+                go_command(&branch.body, &mut inner);
+                for binder in &branch.binders {
+                    inner.remove(binder);
+                }
+                out.extend(inner);
+            }
+        }
+        CoTerm::MuTildeTensor(binders, c) => {
+            let mut inner = HashSet::new();
+            go_command(c, &mut inner);
+            for binder in binders {
+                inner.remove(binder);
+            }
+            out.extend(inner);
+        }
     }
 }
 
@@ -132,6 +158,16 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
         (Term::Inl(t1), Term::Inl(t2)) | (Term::Inr(t1), Term::Inr(t2)) => {
             alpha_term(t1, t2, xs, ys)
         }
+        (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
+        (Term::CoAbs(a, t1), Term::CoAbs(b, t2)) => {
+            xs.push(a.clone());
+            ys.push(b.clone());
+            let r = alpha_term(t1, t2, xs, ys);
+            xs.pop();
+            ys.pop();
+            r
+        }
+        (Term::Co(e1), Term::Co(e2)) => alpha_coterm(e1, e2, xs, ys),
         _ => false,
     }
 }
@@ -158,7 +194,32 @@ fn alpha_coterm(a: &CoTerm, b: &CoTerm, xs: &mut Vec<String>, ys: &mut Vec<Strin
         (CoTerm::Par(a1, a2), CoTerm::Par(b1, b2)) => {
             alpha_coterm(a1, b1, xs, ys) && alpha_coterm(a2, b2, xs, ys)
         }
+        (CoTerm::MuTildeTensor(b1, c1), CoTerm::MuTildeTensor(b2, c2)) => {
+            if b1.len() != b2.len() {
+                return false;
+            }
+            xs.extend(b1.iter().cloned());
+            ys.extend(b2.iter().cloned());
+            let eq = alpha_command(c1, c2, xs, ys);
+            xs.truncate(xs.len() - b1.len());
+            ys.truncate(ys.len() - b2.len());
+            eq
+        }
         (CoTerm::Fst, CoTerm::Fst) | (CoTerm::Snd, CoTerm::Snd) => true,
+        (CoTerm::CoCase(b1), CoTerm::CoCase(b2)) => {
+            b1.len() == b2.len()
+                && b1.iter().zip(b2).all(|(l, r)| {
+                    if l.label != r.label || l.binders.len() != r.binders.len() {
+                        return false;
+                    }
+                    xs.extend(l.binders.iter().cloned());
+                    ys.extend(r.binders.iter().cloned());
+                    let eq = alpha_command(&l.body, &r.body, xs, ys);
+                    xs.truncate(xs.len() - l.binders.len());
+                    ys.truncate(ys.len() - r.binders.len());
+                    eq
+                })
+        }
         _ => false,
     }
 }
@@ -208,6 +269,15 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
         ),
         Term::Inl(t) => Term::Inl(Box::new(subst_term(x, replacement, t))),
         Term::Inr(t) => Term::Inr(Box::new(subst_term(x, replacement, t))),
+        Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
+        Term::CoAbs(a, t) => {
+            if a == x {
+                term.clone()
+            } else {
+                Term::CoAbs(a.clone(), Box::new(subst_term(x, replacement, t)))
+            }
+        }
+        Term::Co(e) => Term::Co(Box::new(subst_coterm(x, replacement, e))),
     }
 }
 
@@ -259,6 +329,29 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
             Box::new(subst_coterm(x, replacement, e2)),
         ),
         CoTerm::Fst | CoTerm::Snd => e.clone(),
+        CoTerm::CoCase(branches) => CoTerm::CoCase(
+            branches
+                .iter()
+                .map(|branch| {
+                    if branch.binders.iter().any(|binder| binder == x) {
+                        branch.clone()
+                    } else {
+                        CoCaseBranch {
+                            label: branch.label.clone(),
+                            binders: branch.binders.clone(),
+                            body: Box::new(subst_command(x, replacement, &branch.body)),
+                        }
+                    }
+                })
+                .collect(),
+        ),
+        CoTerm::MuTildeTensor(binders, c) => {
+            if binders.iter().any(|binder| binder == x) {
+                e.clone()
+            } else {
+                CoTerm::MuTildeTensor(binders.clone(), Box::new(subst_command(x, replacement, c)))
+            }
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 pub mod command;
 pub mod coterm;
+pub mod parse;
 pub mod pretty;
 pub mod substitution;
 pub mod term;

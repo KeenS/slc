@@ -32,6 +32,27 @@ pub fn step(c: &Command) -> Step {
         // evaluation; here we return the command body.
         Command::Cut(Term::Mu(_, c1), _) => Step::Reduced((**c1).clone()),
 
+        // Labelled rule: ⟨ L(v₁ ⊗ … ⊗ vₙ) ∥ μ̃[… L(x₁,…,xₙ). c …] ⟩ → c[vᵢ/xᵢ]
+        // The label selects exactly one branch; the others are discarded
+        // unreduced. An `enum` has a branch per variant, a `struct` one.
+        Command::Cut(Term::Tag(label, payload), CoTerm::CoCase(branches)) => {
+            match branches.iter().find(|b| &b.label == label) {
+                Some(branch) => match bind_components(&branch.binders, payload, &branch.body) {
+                    Some(command) => Step::Reduced(command),
+                    None => Step::Normal,
+                },
+                None => Step::Normal,
+            }
+        }
+
+        // Multiplicative rule: ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩ → c[v₁/x, v₂/y]
+        Command::Cut(value, CoTerm::MuTildeTensor(binders, body)) => {
+            match bind_components(binders, value, body) {
+                Some(command) => Step::Reduced(command),
+                None => Step::Normal,
+            }
+        }
+
         // co-β-rule: ⟨ t ∥ λ̄x.c ⟩ → c[t/x]
         Command::Cut(t, CoTerm::CoLam(x, c2)) => Step::Reduced(subst_command(x, t, c2)),
 
@@ -50,6 +71,25 @@ pub fn step(c: &Command) -> Step {
 
         _ => Step::Normal,
     }
+}
+
+/// Substitute the components of a right-nested tensor for a list of binders.
+/// The last binder takes whatever remains, so `n` binders split `v₁ ⊗ (v₂ ⊗ v₃)`
+/// into exactly `n` parts.
+fn bind_components(binders: &[String], value: &Term, body: &Command) -> Option<Command> {
+    let mut command = body.clone();
+    let mut rest = value.clone();
+    for (index, binder) in binders.iter().enumerate() {
+        if index + 1 == binders.len() {
+            return Some(subst_command(binder, &rest, &command));
+        }
+        let Term::Pair(head, tail) = rest else {
+            return None;
+        };
+        command = subst_command(binder, &head, &command);
+        rest = *tail;
+    }
+    Some(command)
 }
 
 /// Reduce a command to normal form with fuel. Returns `None` on fuel exhaustion.
@@ -114,6 +154,38 @@ mod tests {
             }
             Step::Normal => panic!("expected reduction"),
         }
+    }
+
+    fn branch(label: &str, target: &str) -> crate::coterm::CoCaseBranch {
+        crate::coterm::CoCaseBranch {
+            label: label.into(),
+            binders: vec!["x".into()],
+            body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar(target.into()))),
+        }
+    }
+
+    #[test]
+    fn labelled_value_selects_its_branch() {
+        // ⟨ Color::Green(v) ∥ μ̃[Red x.⟨x ∥ r⟩ | Green x.⟨x ∥ g⟩] ⟩ → ⟨ v ∥ g ⟩
+        let consumer = CoTerm::CoCase(vec![
+            branch("Color::Red", "r"),
+            branch("Color::Green", "g"),
+            branch("Color::Blue", "b"),
+        ]);
+        let value = Term::Tag("Color::Green".into(), Box::new(Term::Var("v".into())));
+        match step(&Command::Cut(value, consumer)) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("v".into()), CoTerm::Covar("g".into())));
+            }
+            Step::Normal => panic!("expected the Green branch to fire"),
+        }
+    }
+
+    #[test]
+    fn a_label_with_no_branch_does_not_reduce() {
+        let consumer = CoTerm::CoCase(vec![branch("Color::Red", "r")]);
+        let value = Term::Tag("Color::Blue".into(), Box::new(Term::Var("v".into())));
+        assert!(matches!(step(&Command::Cut(value, consumer)), Step::Normal));
     }
 
     #[test]

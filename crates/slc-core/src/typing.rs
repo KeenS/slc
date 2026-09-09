@@ -260,7 +260,34 @@ pub fn infer_term(
             let a = infer_term(t, gamma, delta)?;
             Ok(Type::Sum(Box::new(Type::Bottom), Box::new(a)))
         }
+
+        Term::Tag(label, payload) => {
+            // A labelled injection belongs to the declaration that owns the
+            // label: `Color::Red` inhabits the named positive type `Color`.
+            let _ = infer_term(payload, gamma, delta)?;
+            Ok(Type::Named(owner_of_label(label)?))
+        }
+
+        Term::CoAbs(a, body) => {
+            // Λα.t consumes the continuation α and produces t.
+            let at = delta.lookup(a).cloned().ok_or(TypeError::Unbound(format!("(covar) {a}")))?;
+            let bt = infer_term(body, gamma, delta)?;
+            Ok(Type::Fun(Box::new(at), Box::new(bt)))
+        }
+
+        Term::Co(e) => {
+            // A reified co-term is a value of the dual of what it refutes.
+            Ok(infer_coterm(e, gamma, delta)?.dual())
+        }
     }
+}
+
+/// The declaration a fully qualified variant label belongs to.
+fn owner_of_label(label: &str) -> Result<String, TypeError> {
+    label
+        .split_once("::")
+        .map(|(owner, _)| owner.to_string())
+        .ok_or_else(|| TypeError::Arity(format!("label `{label}` is not `Type::Variant`")))
 }
 
 /// Infer the type of a co-term: `Γ | e : A ⊢ Δ`
@@ -292,6 +319,65 @@ pub fn infer_coterm(
             let a = infer_coterm(e1, gamma, delta)?;
             let b = infer_coterm(e2, gamma, delta)?;
             Ok(Type::Par(Box::new(a), Box::new(b)))
+        }
+
+        CoTerm::CoCase(branches) => {
+            // A negative additive consumer refutes the named type its labels
+            // belong to. Every branch must belong to the same declaration.
+            let Some(first) = branches.first() else {
+                return Err(TypeError::Arity("empty negative additive consumer".into()));
+            };
+            let owner = owner_of_label(&first.label)?;
+            for branch in branches {
+                if owner_of_label(&branch.label)? != owner {
+                    return Err(TypeError::Arity(format!(
+                        "negative additive consumer mixes `{owner}` with `{}`",
+                        branch.label
+                    )));
+                }
+                // The payload binders scope over the branch body only.
+                let shadowed: Vec<_> = branch
+                    .binders
+                    .iter()
+                    .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
+                    .collect();
+                for binder in &branch.binders {
+                    gamma.insert(binder.clone(), Type::One);
+                }
+                let result = infer_command(&branch.body, gamma, delta);
+                for (binder, previous) in shadowed {
+                    match previous {
+                        Some(ty) => gamma.insert(binder, ty),
+                        None => gamma.remove(&binder),
+                    }
+                }
+                result?;
+            }
+            Ok(Type::Named(owner))
+        }
+
+        CoTerm::MuTildeTensor(binders, body) => {
+            // A consumer of a product refutes the tensor of its components.
+            let shadowed: Vec<_> = binders
+                .iter()
+                .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
+                .collect();
+            for binder in binders {
+                gamma.insert(binder.clone(), Type::One);
+            }
+            let result = infer_command(body, gamma, delta);
+            for (binder, previous) in shadowed {
+                match previous {
+                    Some(ty) => gamma.insert(binder, ty),
+                    None => gamma.remove(&binder),
+                }
+            }
+            result?;
+            Ok(binders
+                .iter()
+                .map(|_| Type::One)
+                .reduce(|acc, ty| Type::Tensor(Box::new(acc), Box::new(ty)))
+                .unwrap_or(Type::One))
         }
 
         CoTerm::Fst => Ok(Type::Fun(Box::new(Type::One), Box::new(Type::One))),
@@ -335,7 +421,72 @@ pub fn infer_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coterm::CoCaseBranch;
     use crate::types::Base;
+
+    #[test]
+    fn labelled_injection_has_its_declaration_type() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("v".into(), Type::One);
+        let value = Term::Tag("Color::Red".into(), Box::new(Term::Var("v".into())));
+        assert_eq!(infer_term(&value, &mut g, &mut d), Ok(Type::Named("Color".into())));
+    }
+
+    #[test]
+    fn negative_additive_consumer_refutes_its_declaration_type() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        d.insert("k".into(), Type::Neg(Base::I32));
+        g.insert("n".into(), Type::Pos(Base::I32));
+        let consumer = CoTerm::CoCase(vec![CoCaseBranch {
+            label: "Color::Red".into(),
+            binders: vec!["x".into()],
+            body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()))),
+        }]);
+        assert_eq!(infer_coterm(&consumer, &mut g, &mut d), Ok(Type::Named("Color".into())));
+        // Reified as a value, it is dual to what it refutes — the type the
+        // surface checker gives a `select` expression.
+        let reified = Term::Co(Box::new(consumer));
+        assert_eq!(
+            infer_term(&reified, &mut g, &mut d),
+            Ok(Type::Dual(Box::new(Type::Named("Color".into()))))
+        );
+    }
+
+    #[test]
+    fn negative_additive_consumer_rejects_mixed_declarations() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("x".into(), Type::One);
+        let mixed = CoTerm::CoCase(vec![
+            CoCaseBranch {
+                label: "Color::Red".into(),
+                binders: vec!["x".into()],
+                body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+            },
+            CoCaseBranch {
+                label: "Shape::Circle".into(),
+                binders: vec!["x".into()],
+                body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+            },
+        ]);
+        d.insert("k".into(), Type::Bottom);
+        assert!(matches!(infer_coterm(&mixed, &mut g, &mut d), Err(TypeError::Arity(_))));
+    }
+
+    #[test]
+    fn continuation_abstraction_is_a_negative_function() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        d.insert("k".into(), Type::Neg(Base::I32));
+        g.insert("v".into(), Type::Pos(Base::Bool));
+        let f = Term::CoAbs("k".into(), Box::new(Term::Var("v".into())));
+        assert_eq!(
+            infer_term(&f, &mut g, &mut d),
+            Ok(Type::Fun(Box::new(Type::Neg(Base::I32)), Box::new(Type::Pos(Base::Bool))))
+        );
+    }
 
     fn pos_i32() -> Type {
         Type::Pos(Base::I32)
@@ -348,6 +499,24 @@ mod tests {
         g.insert("x".into(), pos_i32());
         let t = infer_term(&Term::Var("x".into()), &mut g, &mut d).unwrap();
         assert_eq!(t, pos_i32());
+    }
+
+    #[test]
+    fn named_types_unify_by_name_and_reject_mismatches() {
+        let mut u = Unification::new();
+        let expected = Type::Named("Point".into());
+        let actual = Type::Named("Point".into());
+        assert_eq!(u.unify(&expected, &actual).unwrap(), Type::Named("Point".into()));
+
+        let actual = Type::Named("Color".into());
+        assert!(matches!(
+            u.unify(&Type::Named("Point".into()), &actual),
+            Err(TypeError::Mismatch { .. })
+        ));
+        assert!(matches!(
+            u.unify(&Type::Named("Point".into()), &Type::One),
+            Err(TypeError::Mismatch { .. })
+        ));
     }
 
     #[test]

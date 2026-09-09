@@ -36,6 +36,7 @@ impl std::fmt::Display for Type {
             Type::Bang(t) => write!(f, "!{t}"),
             Type::List(t) => write!(f, "[{t}]"),
             Type::Fun(a, b) => write!(f, "({a} -> {b})"),
+            Type::Named(name) => write!(f, "{name}"),
         }
     }
 }
@@ -49,6 +50,9 @@ impl std::fmt::Display for Term {
             Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
             Term::Inl(t) => write!(f, "inl({t})"),
             Term::Inr(t) => write!(f, "inr({t})"),
+            Term::Tag(label, t) => write!(f, "{label}({t})"),
+            Term::CoAbs(a, t) => write!(f, "Λ{a}. {t}"),
+            Term::Co(e) => write!(f, "co({e})"),
         }
     }
 }
@@ -62,6 +66,17 @@ impl std::fmt::Display for CoTerm {
             CoTerm::Par(e1, e2) => write!(f, "({e1} ⅋ {e2})"),
             CoTerm::Fst => write!(f, "fst"),
             CoTerm::Snd => write!(f, "snd"),
+            CoTerm::MuTildeTensor(binders, c) => write!(f, "μ̃({}). {c}", binders.join(", ")),
+            CoTerm::CoCase(branches) => {
+                write!(f, "μ̃[")?;
+                for (i, branch) in branches.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, "{}({}). {}", branch.label, branch.binders.join(", "), branch.body)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }

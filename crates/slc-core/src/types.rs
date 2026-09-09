@@ -42,6 +42,10 @@ pub enum Type {
     List(Box<Type>),
     /// Function sugar: `A -> B`.
     Fun(Box<Type>, Box<Type>),
+    /// A named positive declaration, such as `struct` or `enum`. Named types
+    /// are opaque to core unification; declaration-specific fields and
+    /// variants are checked by the surface checker.
+    Named(String),
 }
 
 impl Type {
@@ -61,26 +65,39 @@ impl Type {
             Type::Bang(t) => Type::Bang(Box::new(t.dual())),
             Type::List(t) => Type::List(Box::new(t.dual())),
             Type::Fun(a, b) => Type::Fun(Box::new(a.dual()), Box::new(b.dual())),
+            Type::Named(name) => Type::Dual(Box::new(Type::Named(name.clone()))),
         }
     }
 
     /// Is this a positive type?
     pub fn is_positive(&self) -> bool {
-        matches!(
-            self,
-            Type::Var(_)
-                | Type::Pos(_)
-                | Type::Tensor(..)
-                | Type::One
-                | Type::Sum(..)
-                | Type::Bang(_)
-                | Type::List(_)
-        )
+        match self {
+            // The dual of a negative type is positive.
+            Type::Dual(inner) => inner.is_negative(),
+            other => matches!(
+                other,
+                Type::Var(_)
+                    | Type::Pos(_)
+                    | Type::Tensor(..)
+                    | Type::One
+                    | Type::Sum(..)
+                    | Type::Bang(_)
+                    | Type::List(_)
+                    | Type::Named(_)
+            ),
+        }
     }
 
     /// Is this a negative type?
     pub fn is_negative(&self) -> bool {
-        matches!(self, Type::Var(_) | Type::Neg(_) | Type::Par(..) | Type::Bottom | Type::With(..))
+        match self {
+            // The dual of a positive type is negative.
+            Type::Dual(inner) => inner.is_positive(),
+            other => matches!(
+                other,
+                Type::Var(_) | Type::Neg(_) | Type::Par(..) | Type::Bottom | Type::With(..)
+            ),
+        }
     }
 }
 
@@ -105,6 +122,7 @@ mod tests {
             Type::Bang(Box::new(Type::Pos(Base::I32))),
             Type::List(Box::new(Type::Pos(Base::I32))),
             Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
+            Type::Named("Color".into()),
         ]
     }
 
