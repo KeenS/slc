@@ -1,436 +1,812 @@
-# Slant Implementation Plan
+# Slant Surface Syntax Ergonomics Plan
 
-This document turns `DESIGN.md` into a concrete, phased implementation plan.
-Each phase ends in a working, testable system — no speculative infrastructure.
+This plan addresses the gap between Slant’s symmetric core and its current
+surface syntax. The language already has `fn`, `mu`, `command`, `match`, and
+polarity types, but the examples—especially the JSON parser—still expose too
+much implementation detail. Numeric character codes, nested `else` chains,
+and builtin calls like `add(...)` and `eq(...)` make programs unnecessarily
+ugly.
 
-## Phase 0: Bootstrap (0.5 week)
+The goal is to make common Slant code look like Rust while preserving the
+λ̄μμ̃-style core. Everything in this plan is either sugar over existing
+constructs or a missing basic type that is already representable at runtime.
 
-**Goal:** project hygiene, CI, and a locked-down design baseline.
+## Non-goals
 
-- [x] Create Cargo workspace with 5 crates:
-  - [x] `crates/slc-core` — λ̄μμ̃ calculus: types, terms, reduction
-  - [x] `crates/slc-syntax` — lexer, parser, surface AST
-  - [x] `crates/slc-check` — type checker, polarity, linearity
-  - [x] `crates/slc-runtime` — interpreter, scheduler
-  - [x] `crates/slc-driver` — CLI entry point
-- [x] Add `rustfmt.toml` (team style)
-- [x] Add `clippy.toml` if needed
-- [x] Create `README.md` with build instructions
-- [x] Create `LICENSE` (decide: MIT / Apache-2.0 / MPL-2.0)
-- [x] Set up `.github/workflows/ci.yml`:
-  - [x] `cargo fmt --check`
-  - [x] `cargo clippy -- -D warnings`
-  - [x] `cargo test`
-  - [x] Matrix: stable Rust, Linux/macOS
-- [x] Freeze `DESIGN.md` as v0.1
-- [x] Add `docs/design-notes/` for future changes
-- [x] Write `CONTRIBUTING.md`
+- Do not add a `Result`-first error model.
+- Do not add concurrency primitives.
+- Do not replace the symmetric core.
+- Do not introduce unrestricted copying of linear continuations.
+- Do not make syntax sugar semantically ambiguous with continuation use.
 
-**Deliverable:** `cargo test` passes; `slc --version` runs.
+---
 
-## Phase 1: Core calculus (1–2 weeks)
+## Phase 1: Control-flow sugar
 
-**Goal:** implement the λ̄μμ̃ calculus as an in-memory IR with syntax,
-typing, and reduction — no surface language yet.
+### 1.1 `else if`
 
-### IR
+**Goal:** allow flat branching instead of deeply nested `else` blocks.
 
-```rust
-enum Term {
-    Var(String),
-    Lam(String, Box<Term>),
-    Mu(String, Box<Command>),   // μα.c
-    Pair(Box<Term>, Box<Term>), // tensor
-    Inl(Box<Term>),
-    Inr(Box<Term>),
-}
+Syntax:
 
-enum CoTerm {
-    Covar(String),
-    CoLam(String, Box<Command>),  // λ̄x.c
-    MuTilde(String, Box<Command>), // μ̃x.c
-    Par(Box<CoTerm>, Box<CoTerm>),
-    Fst,
-    Snd,
-}
-
-enum Command {
-    Cut(Term, CoTerm),     // ⟨ t ∥ e ⟩
-    Command(String, Term), // κx.t
-    Activate(Term, Term),  // k(v)
+```sl
+if is_digit(c) {
+    parse_number(input, pos, ok, err)
+} else if c == '-' {
+    parse_number(input, pos, ok, err)
+} else if c == '"' {
+    parse_string(input, pos, ok, err)
+} else {
+    err("expected JSON value")
 }
 ```
 
-### Types
+Semantics:
 
-```rust
-enum Type {
-    Pos(Base),                  // +i32, +bool, ...
-    Neg(Base),                  // -i32, ...
-    Tensor(Box<Type>, Box<Type>),
-    Par(Box<Type>, Box<Type>),
-    One,
-    Bottom,
-    Dual(Box<Type>),
-    With(Box<Type>, Box<Type>),
-    Bang(Box<Type>),
-    List(Box<Type>),
-    Fun(Box<Type>, Box<Type>), // sugar
+```text
+if a { A } else if b { B } else { C }
+```
+
+desugars to:
+
+```text
+if a { A } else { if b { B } else { C } }
+```
+
+Implementation checklist:
+
+- [ ] Update parser to accept `else if`
+- [ ] Represent it as nested `Expr::If`; no new AST node is required
+- [ ] Add parser unit test for a three-branch chain
+- [ ] Add parser unit test for a chain without a final `else`
+- [ ] Add integration test that evaluates an `else if` chain
+- [ ] Add checker test confirming each branch is still checked
+- [ ] Add lowering test confirming it lowers to the same term as nested `if`
+- [ ] Rewrite JSON parser’s `parse_value` to use `else if`
+- [ ] Run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and
+      `cargo test --workspace`
+
+### 1.2 Boolean operators
+
+**Goal:** support ordinary boolean expressions.
+
+Syntax:
+
+```sl
+if is_digit(c) && c != '0' { ... }
+if !is_digit(c) || at_end { ... }
+```
+
+Semantics:
+
+- `&&` and `||` must be short-circuiting.
+- `!` negates a boolean.
+- These should desugar to `if`, not eager builtin calls.
+
+Examples:
+
+```sl
+a && b
+```
+
+desugars conceptually to:
+
+```sl
+if a { b } else { false }
+```
+
+```sl
+a || b
+```
+
+desugars conceptually to:
+
+```sl
+if a { true } else { b }
+```
+
+Implementation checklist:
+
+- [ ] Add `&&`, `||`, and `!` to the lexer
+- [ ] Add AST operators:
+  - [ ] `BinOp::And`
+  - [ ] `BinOp::Or`
+  - [ ] `UnOp::Not`
+- [ ] Add an `UnOp` field to the surface AST if unary operators are not
+      already represented
+- [ ] Parse `&&` and `||` with lower precedence than comparisons
+- [ ] Parse `!` as a unary operator
+- [ ] Type-check that both sides are `+bool`
+- [ ] Lower short-circuiting using existing `if`
+- [ ] Add tests for short-circuit evaluation
+- [ ] Add tests for boolean type mismatches
+- [ ] Rewrite parser code using chained comparisons and boolean operators
+
+---
+
+## Phase 2: Real character type
+
+The runtime already has `Value::Char`, but the type system does not. The JSON
+parser currently uses `i64` character codes such as `34`, `45`, `91`, `123`,
+and `125`. This is the largest readability problem in the examples.
+
+### 2.1 Core `char` type
+
+Add `Base::Char` and make `+char` a first-class positive atom.
+
+Syntax:
+
+```sl
+let c: +char = '"';
+```
+
+Implementation checklist:
+
+- [ ] Add `Base::Char` to `slc-core::types::Base`
+- [ ] Update the type pretty-printer
+- [ ] Update dual/polarity behavior if needed
+- [ ] Add property tests for `dual(+char) == -char`
+- [ ] Change `Value::Char::type_of()` to return `Type::Pos(Base::Char)`
+- [ ] Add `char` to surface type lowering
+- [ ] Add `char` to inference support
+- [ ] Add type tests for positive and negative char types
+- [ ] Add runtime tests for char values
+
+### 2.2 Character literals
+
+The lexer already recognizes simple char literals, but they need escape
+support and correct lowering.
+
+Required syntax:
+
+```sl
+'"'
+'\\'
+'\''
+'\n'
+'\r'
+'\t'
+'\0'
+'x'
+```
+
+Implementation checklist:
+
+- [ ] Rewrite the char lexer to use a shared escape-decoding routine
+- [ ] Support escapes in both strings and chars
+- [ ] Reject unterminated character literals with a useful span
+- [ ] Reject empty and multi-character char literals
+- [ ] Lower `Expr::Char(c)` to a char value rather than a pseudo-variable
+- [ ] Add parser tests for every escape form
+- [ ] Add runtime test for `'\n'` and `'\\'`
+
+### 2.3 Character operations
+
+Current operations:
+
+```sl
+let code = char_at(input, pos); // +i64
+```
+
+Desired operations:
+
+```sl
+let c = input[pos]; // +char
+```
+
+Implementation checklist:
+
+- [ ] Add `Base::Char` support to equality and comparison builtins
+- [ ] Add `char_eq`, `char_lt`, `char_le`, `char_gt`, and `char_ge`, or make
+      `eq`, `lt`, `le`, `gt`, and `ge` accept chars
+- [ ] Add `char_to_code(c) -> i64`
+- [ ] Add `code_to_char(i64) -> +char`
+- [ ] Add `is_digit(c: +char) -> +bool`
+- [ ] Add `is_ws(c: +char) -> +bool`
+- [ ] Add `string_push(s: +String, c: +char) -> +String`
+- [ ] Decide whether `char_at` remains code-based for compatibility
+- [ ] Add builtin tests for all new operations
+- [ ] Rewrite JSON parser to use `+char` instead of integer codes
+
+---
+
+## Phase 3: Binary operators
+
+The parser already parses ordinary binary operators, but lowering currently
+rejects them. This makes arithmetic examples use builtin calls.
+
+Current ugly code:
+
+```sl
+add(pos, 1)
+eq(c, 45)
+lt(start, end)
+```
+
+Desired code:
+
+```sl
+pos + 1
+c == '-'
+start < end
+```
+
+### 3.1 Numeric operators
+
+Syntax:
+
+```sl
+a + b
+a - b
+a * b
+a / b
+a % b
+-a
+```
+
+Implementation checklist:
+
+- [ ] Lower `+` to `add`
+- [ ] Lower `-` to `sub`
+- [ ] Lower `*` to `mul`
+- [ ] Lower `/` to `div`
+- [ ] Lower `%` to `rem`
+- [ ] Lower unary `-` to `neg`
+- [ ] Type-check operands as matching numeric types
+- [ ] Preserve arithmetic overflow and division-by-zero diagnostics
+- [ ] Add precedence tests
+- [ ] Add associativity tests
+- [ ] Add integration tests for each operator
+- [ ] Rewrite arithmetic and nested-call examples with operators
+
+### 3.2 Comparison operators
+
+Syntax:
+
+```sl
+a == b
+a != b
+a < b
+a > b
+a <= b
+a >= b
+```
+
+Implementation checklist:
+
+- [ ] Lower `==` to `eq`
+- [ ] Lower `!=` to `ne`
+- [ ] Lower `<` to `lt`
+- [ ] Lower `>` to `gt`
+- [ ] Lower `<=` to `le`
+- [ ] Lower `>=` to `ge`
+- [ ] Type-check comparison operands as compatible numeric or char values
+- [ ] Add tests for numeric comparisons
+- [ ] Add tests for char comparisons
+- [ ] Add tests for type mismatch diagnostics
+- [ ] Rewrite comparison and JSON examples with operators
+
+### 3.3 String operators
+
+Syntax:
+
+```sl
+"Hello, " + "world"
+```
+
+Implementation checklist:
+
+- [ ] Lower `+` on strings to `str_concat`
+- [ ] Add inference or bidirectional checking to distinguish numeric and
+      string `+`
+- [ ] Add a type diagnostic when operands do not agree
+- [ ] Add integration test for string concatenation
+- [ ] Rewrite string examples with `+`
+
+---
+
+## Phase 4: Indexing and slicing
+
+Desired syntax:
+
+```sl
+let c = input[pos];
+let text = input[start..end];
+```
+
+Equivalent primitive calls:
+
+```sl
+char_at(input, pos)
+substring(input, start, end)
+```
+
+### 4.1 Indexing
+
+Implementation checklist:
+
+- [ ] Add postfix `[...]` parsing
+- [ ] Define `a[i]` as sugar for an indexing operation
+- [ ] Add `String` indexing returning `+char`
+- [ ] Add `List` indexing returning the element type
+- [ ] Add out-of-range diagnostics with source spans
+- [ ] Add checker tests for index types
+- [ ] Add runtime tests for valid and invalid indexes
+
+### 4.2 Slicing
+
+Syntax:
+
+```sl
+input[start..end]
+input[start..]
+input[..end]
+```
+
+Implementation checklist:
+
+- [ ] Add range expression AST:
+  - [ ] `Range`
+  - [ ] `RangeFrom`
+  - [ ] `RangeTo`
+- [ ] Parse `..` in postfix slicing position
+- [ ] Optionally parse `..=` for inclusive ranges
+- [ ] Lower string slicing to `substring`
+- [ ] Define behavior for empty slices
+- [ ] Add bounds checking
+- [ ] Add checker tests for range endpoints
+- [ ] Add runtime tests for every range form
+
+---
+
+## Phase 5: Pattern-matching improvements
+
+`match` is intended to be the main control structure, but the current pattern
+language is too weak for parsers and ordinary data manipulation.
+
+### 5.1 Char patterns
+
+Syntax:
+
+```sl
+match c {
+    '"' => ...,
+    '-' => ...,
+    _ => ...,
 }
 ```
 
-### Work items
-
-#### 1. Types
-- [x] Define `Type` enum
-- [x] Implement `Type::dual()` involution
-- [x] Property test: `dual(dual(t)) == t`
-- [x] Property test: `dual` is involutive on all type constructors
-- [x] Pretty-printer for `Type`
-- [x] Parser-independent construction helpers
-
-#### 2. Terms and co-terms
-- [x] Define `Term`, `CoTerm`, `Command` enums
-- [x] Implement `Display` for each
-- [x] α-equivalence check
-- [x] Fresh variable generation (avoid capture)
-
-#### 3. Substitution
-- [x] Capture-avoiding substitution: terms
-- [x] Capture-avoiding substitution: co-terms
-- [x] Capture-avoiding substitution: commands
-- [x] Property test: substitution preserves α-equivalence
-- [x] Property test: substitution is idempotent when variable not free
-
-#### 4. Type checking
-- [x] Sequent representations:
-  - [x] `Γ ⊢ t : A | Δ` (term judgment)
-  - [x] `Γ | e : A ⊢ Δ` (co-term judgment)
-  - [x] `c` (command judgment)
-- [x] Typing rules for all core constructors
-- [x] Bidirectional inference/check for terms
-- [x] Bidirectional inference/check for co-terms
-- [x] Context manipulation (add, remove, lookup)
-- [x] Test: well-typed terms accepted
-- [x] Test: ill-typed terms rejected
-
-#### 5. Reduction
-- [x] β-rule: `⟨ λx.t ∥ μ̃x.c ⟩ → c[t/x]`
-- [x] μ-rule: `⟨ μα.c ∥ e ⟩ → c[e/α]`
-- [x] co-β-rule: `⟨ t ∥ λ̄x.c ⟩ → c[t/x]`
-- [x] Tensor projection: `⟨ (t1, t2) ∥ fst ⟩ → t1`, similarly `snd`
-- [x] Par elimination rules
-- [x] Small-step semantics with reduction context
-- [x] Normal-form detection
-- [x] Fuel-based divergence detection
-- [x] Property test: type preservation for each rule
-- [x] Property test: confluence up to commuting conversions
-
-**Deliverable:** well-typed core programs reduce to normal form (or diverge
-detected by fuel). No parser required; tests construct ASTs directly.
-
-## Phase 2: Surface syntax (2–3 weeks)
-
-**Goal:** parse Rust-flavored Slant into the core IR.
-
-### Lexer
-
-- [x] Token enum with spans
-- [x] Rust-like token set:
-  - [x] identifiers, keywords
-  - [x] integer literals (`i32`, `i64`, `u32`, `u64`)
-  - [x] float literals (`f32`, `f64`)
-  - [x] string literals (escape sequences)
-  - [x] char literals
-  - [x] boolean literals (`true`, `false`)
-  - [x] punctuation: `(`, `)`, `{`, `}`, `[`, `]`, `,`, `;`, `:`, `::`, `.`
-  - [x] operators: `+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<`, `>`, `<=`, `>=`
-  - [x] interaction: `@`
-  - [x] arrow: `->`
-  - [x] polarity: `+Type`, `-Type`
-  - [x] Unicode operators: `⅋` (par), `⊗` (tensor)
-- [x] Comments: `//` line, `/* */` block (nested)
-- [x] Lexer error recovery: continue after invalid character
-
-### Parser
-
-- [x] Hand-written recursive descent
-- [x] Precedence climbing for binary operators
-- [x] Pratt parsing for postfix/prefix operators
-- [x] Parse `fn` definitions and expressions
-- [x] Parse `mu` in three forms:
-  - [x] `mu(k: -A) { E }`
-  - [x] `mu() -> A { E }`
-  - [x] `mu(x: +A) -> B { E }`
-- [x] Parse `command` with `to` clauses
-- [x] Parse `match` expressions
-- [x] Parse `let` bindings
-- [x] Parse `if` / `else`
-- [x] Parse `struct` / `enum` declarations
-- [x] Parse `spawn` expressions
-- [x] Parse `dual` expressions
-- [x] Parse `@` interaction
-- [x] Parse partial application: `.to(k, h)` and `.partial(v)`
-- [x] Parse `?` operator
-- [x] Error recovery: synchronize on `;` and `}` after expression errors
-- [x] AST pretty-printer (used for round-trip testing)
-
-### AST → core lowering
-
-- [x] Lowering context: variables, continuations, types
-- [x] `fn(x: +A) -> B { E }` → `λx. μα. E`
-- [x] `mu(k: -A) { E }` → `μα. E`
-- [x] `mu(x: +A) -> B { E }` → `λ̄x. ⟨ E ∥ α ⟩`
-- [x] `command f(x: +A, to k: -B) { E }` → `κx. μα. E`
-- [x] `f(a)` → `⟨ λ-bound f ∥ μ̃x. ... ⟩`
-- [x] `k(v)` → `Activate(k, v)`
-- [x] `match` → sum elimination via μ̃
-- [x] `?` → continuation split: `e(to current_ok, current_err)`
-- [x] `let` → let-binding via μ̃ over value
-- [x] `if/else` → sum elimination
-- [x] `spawn` → new command in multiset — **deferred from v0.1** by the
-  concurrency decision below; `spawn` remains parsed and checked, and lowering
-  intentionally reports `Unsupported` rather than silently giving it a
-  sequential meaning
-- [x] `dual(e)` → polarity flip on terms/co-terms
-- [x] `@` interaction → cut
-- [x] Test: round-trip property `parse(print(lower(ast)))` α-equivalent
-
-**Deliverable:** a `.sl` file can be parsed and lowered to well-typed core IR.
-
-## Phase 3: Type checker (2 weeks)
-
-**Goal:** full bidirectional checking with polarity and linearity.
-
-### Polarity checking
-
-- [x] `fn` parameters must be `+`
-- [x] `mu` continuation ports must be `-`
-- [x] `command` value ports `+`
-- [x] `command` continuation ports `-`
-- [x] `dual` flips polarity
-- [x] `->` arrow desugaring checks source/target polarity
-- [x] Diagnostic: expected `+`, found `-` with span
-
-### Linearity checking
-
-- [x] Every `+` variable used exactly once in its scope
-- [x] Every `-` continuation activated exactly once
-- [x] `Job` must be run exactly once
-- [x] `Service` must be invoked exactly once
-- [x] Partial application agents are linear
-- [x] Diagnostic: used 0 times / used 2 times, with span
-- [x] Diagnostic: dangling continuation on some path
-- [x] Exception: types annotated `Drop` may be discarded
-
-### Match exhaustiveness
-
-- [x] Constructor extraction from `enum` declarations
-- [x] Coverage check: all constructors covered
-- [x] Wildcard `_` always allowed as fallback
-- [x] Guard clauses do not affect exhaustiveness
-- [x] Diagnostic: missing constructor in match
-
-### Inference
-
-- [x] Bidirectional inference for `fn`, `mu`, `command`
-- [x] Type variables for generic functions
-- [x] Occurs check for recursive types
-- [x] Unification with polarity constraints
-- [x] Diagnostic: cannot infer type
-
-**Deliverable:** well-typed programs accepted; ill-typed programs rejected
-with good diagnostics. Property test: checker agrees with core IR checker.
-
-## Phase 4: Interpreter (2 weeks)
-
-**Goal:** tree-walking evaluator over the IR; correctness before performance.
-
-### Values
-
-- [x] Value enum: closures, continuations, primitives, pairs, sums, thunks
-- [x] Environment as persistent map (chain of frames)
-- [x] Continuation values as closures over environment
-
-### Evaluation
-
-- [x] Cut dispatch:
-  - [x] `⟨ λ ∥ μ̃ ⟩` β-rule
-  - [x] `⟨ μ ∥ e ⟩` μ-rule
-  - [x] `⟨ t ∥ λ̄ ⟩` co-β-rule
-- [x] `command` bodies evaluate to `Never`
-- [x] Activation transfers control
-- [x] `let` bindings
-- [x] `if/else` via sum elimination
-- [x] `match` via sum elimination
-- [x] Binary operators on primitives
-- [x] Comparison operators
-- [x] String operations
-- [x] Fuel counter for divergence detection (debug)
-
-### Partial application
-
-- [x] `step.to(k, h)` returns a `Service` closure
-- [x] `f.partial(a)` returns a `Job` thunk
-- [x] `Service` invocation: wire ports, evaluate
-- [x] `Job.run()`: connect current continuation, evaluate
-- [x] Linear use enforcement at runtime (debug assertion)
-
-### Error handling
-
-- [x] `?` lowers to continuation wiring
-- [x] No `Result` allocation in the happy path
-- [x] Multi-continuation operations dispatch directly
-
-### Concurrency primitives
-
-- [x] Decision: defer all v0.1 concurrency primitives. The symmetric core,
-  continuation-based errors, and interaction-net backend are useful without a
-  scheduler, and `spawn` must not be approximated as ordinary sequencing.
-
-Deferred items (not part of v0.1):
-
-- ~~`spawn` creates cooperative green thread~~
-- ~~Single OS thread, round-robin scheduler~~
-- ~~Yield points at cuts and channel operations~~
-
-### Builtins
-
-- [x] `i32`/`i64`/`u32`/`u64` arithmetic
-- [x] Overflow checking (debug)
-- [x] `bool` operations
-- [x] `String` construction and formatting
-- [x] `println`
-- [x] Basic comparison
-
-**Deliverable:** nontrivial programs run correctly, including `mu`-based
-early exit and multi-continuation error handling.
-
-## Note: Concurrency deferred
-
-**Decision:** Concurrency is not necessary for v0.1. The symmetric core
-does not require a multiset scheduler to be useful, and the interaction-net
-backend (Phase 7) provides the right substrate for concurrent evaluation
-later. Skip this phase; revisit after the stdlib and net compiler are
-working.
-
-Removed scope for v0.1:
-
-- ~~Channel endpoints as dual co-variables~~
-- ~~`send` / `receive` as cuts~~
-- ~~Bounded / unbounded channels~~
-- ~~`select`~~
-- ~~`Multiset<Command>` scheduler~~
-- ~~Deadlock detection~~
-- ~~Producer/consumer and pipeline programs~~
-
-When revisited, the design already in `DESIGN.md` (§7) remains the target.
-
-## Phase 5: Standard library (2 weeks)
-
-**Goal:** enough surface area to write realistic programs.
-
-- [x] Prelude:
-  - [x] `Option<T>`
-  - [x] `Result<T, E>` (boundary type only)
-  - [x] `List<T>`
-  - [x] `Map<K, V>`
-  - [x] `Set<T>`
-  - [x] `String`
-  - [x] `Command<I, O>` type former
-- [x] Multi-continuation error handling:
-  - [x] Integer parse (`to ok: -i64, empty: -String, overflow: -String`)
-  - [x] File read (success/not-found/permission)
-  - [x] Arithmetic overflow
-- [x] Decision: defer channels with concurrency (see the Phase 5 note below)
-- [x] String formatting:
-  - [x] `println`
-  - `format`
-- [x] File I/O:
-  - [x] Read file
-  - [x] Write file
-  - [x] Path manipulation
-- [x] FFI story decision (deferred; likely no FFI in v0.1)
-
-**Deliverable:** a CLI program that reads files, parses them, and reports
-errors via continuations.
-
-## Phase 6: Compiler to interaction nets (3–4 weeks)
-
-**Goal:** compile IR to Lafont-style interaction nets and execute them.
-
-### Net representation
-
-- [x] Agent type (principal port + auxiliary ports)
-- [x] Net as multiset of agents + wiring
-- [x] Edge/port identity
-- [x] Net pretty-printer (graphviz)
-
-### Compilation
-
-- [x] λ̄μμ̃ → interaction net compilation
-- [x] Tensor/par nodes
-- [x] Sum/product nodes
-- [x] Fan nodes for sharing
-
-### Rewriting engine
-
-- [x] Deterministic rule priority
-- [x] Rewrite loop: find active pair, apply rule, repeat
-- [x] Normal form detection
-- [x] Fuel / step budget
-
-### Optimization
-
-- [x] Lamping-style sharing with fan nodes
-- [x] Bracket / oracle correctness for optimal reduction
-- [x] Net simplification passes
-
-### Materialization
-
-- [x] Net → runtime value conversion
-- [x] Builtin operations as net agents
-
-### Benchmarking
-
-- [x] Benchmark suite: arithmetic, list operations
-- [x] Compare against tree-walking interpreter
-- [x] Track regressions in CI
-
-**Deliverable:** programs compiled via nets run correctly; measurable
-speedup on arithmetic-heavy programs.
-
-## Milestones and exit criteria
-
-| Milestone | Exit criterion |
-|---|---|
-| M0 Bootstrap | CI green, workspace compiles |
-| M1 Core | well-typed IR programs reduce correctly |
-| M2 Syntax | `.sl` files parse and lower |
-| M3 Types | polarity + linearity checking |
-| M4 Interpreter | realistic programs execute |
-| M5 Concurrency | DEFERRED |
-| M5 Stdlib | file-parsing CLI runs |
-| M6 Nets | interaction-net backend works |
-
-## Risks and mitigations
-
-| Risk | Mitigation |
-|---|---|
-| Confluence breaks with classical control | Restrict linearity; canonical rule priority; test corpus |
-| Interaction nets too slow for v0.1 | Ship tree-walking interpreter first; nets are a later phase |
-| Surface syntax drift before semantics is fixed | Freeze design per phase; changes via design notes |
-| Error messages become unmanageable | Every phase ships diagnostics, not just acceptance |
-
-## Tooling
-
-- [x] `cargo fmt` in CI
-- [x] `cargo clippy -- -D warnings` in CI
-- [x] `cargo test` in CI
-- [x] `proptest` for duality and substitution laws
-- [x] `insta` for diagnostics and pretty-printed IR snapshots
-- [x] `tracing` spans around lowering, checking, reduction
-
-## Immediate next step
-
-Complete. Phases 0–5 are done; Phase 6 (interaction nets) is next.
+Implementation checklist:
+
+- [ ] Add `Pattern::Char(char)`
+- [ ] Parse char literals in patterns
+- [ ] Check char patterns against `+char`
+- [ ] Add runtime matching support
+- [ ] Add tests for char literal patterns and wildcards
+
+### 5.2 Or-patterns
+
+Syntax:
+
+```sl
+match c {
+    'e' | 'E' => ...,
+    '0'..='9' | '-' => ...,
+    _ => ...,
+}
+```
+
+Implementation checklist:
+
+- [ ] Add `Pattern::Or(Vec<Pattern>)`
+- [ ] Parse `|` between patterns
+- [ ] Check all alternatives have compatible types
+- [ ] Add runtime matching support
+- [ ] Add tests for multiple alternatives
+- [ ] Ensure or-patterns interact correctly with exhaustiveness checking
+
+### 5.3 Range patterns
+
+Syntax:
+
+```sl
+match c {
+    '0'..='9' => ...,
+    'a'..='f' => ...,
+    'A'..='F' => ...,
+    _ => ...,
+}
+```
+
+Implementation checklist:
+
+- [ ] Add `Pattern::Range(Box<Pattern>, Box<Pattern>)`
+- [ ] Parse `..=` ranges in patterns
+- [ ] Support char ranges first
+- [ ] Add integer ranges after chars are supported
+- [ ] Check endpoint types
+- [ ] Add runtime inclusive-range matching
+- [ ] Add tests for boundaries and invalid ranges
+- [ ] Update exhaustiveness checking to understand ranges
+
+### 5.4 Guards
+
+Syntax:
+
+```sl
+match c {
+    c if c < ' ' => err("raw control character"),
+    _ => parse_string_tail(...),
+}
+```
+
+Implementation checklist:
+
+- [ ] Extend `MatchArm` with an optional guard expression
+- [ ] Parse `if` after a pattern and before `=>`
+- [ ] Type-check guards as `+bool`
+- [ ] Implement runtime guard evaluation
+- [ ] Define exhaustiveness rules:
+  - [ ] wildcard plus guard is not considered unconditionally exhaustive
+  - [ ] wildcard without a guard remains exhaustive
+- [ ] Add tests for matching with and without guards
+- [ ] Add diagnostic tests for non-bool guards
+
+### 5.5 Other useful pattern forms
+
+Implementation checklist:
+
+- [ ] Add `Pattern::Char`
+- [ ] Add `Pattern::Or`
+- [ ] Add `Pattern::Range`
+- [ ] Add optional binding with `@`:
+  - [ ] `c @ '0'..='9'`
+  - [ ] `x @ Some(_)`
+- [ ] Add rest patterns for lists:
+  - [ ] `[first, ..rest]`
+- [ ] Add struct field shorthand:
+  - [ ] `Point { x, y }`
+- [ ] Add tuple patterns with nested destructuring
+- [ ] Add negative integer patterns
+- [ ] Add float patterns only if floats become first-class
+
+---
+
+## Phase 6: Constants and declarations
+
+### 6.1 `const`
+
+Syntax:
+
+```sl
+const COMMA: +char = ',';
+const OPEN_BRACKET: +char = '[';
+const CLOSE_BRACKET: +char = ']';
+```
+
+This removes magic numbers and character-code aliases from parsers.
+
+Implementation checklist:
+
+- [ ] Add `TokenKind::Const`
+- [ ] Add `Decl::Const` to the surface AST
+- [ ] Parse `const NAME: Type = expression;`
+- [ ] Reject non-constant initializers in v0.1
+- [ ] Lower constants to global bindings
+- [ ] Check constant types
+- [ ] Add tests for char, integer, bool, and string constants
+- [ ] Add diagnostics for mutable or non-constant initializers
+- [ ] Rewrite JSON parser using named character constants
+
+### 6.2 Local constants
+
+Syntax:
+
+```sl
+let OPEN_BRACKET: +char = '[';
+```
+
+Implementation checklist:
+
+- [ ] Add optional type annotation to `let`
+- [ ] Check the initializer against the annotation
+- [ ] Add parser tests
+- [ ] Add checker tests
+- [ ] Add examples using annotated local bindings
+
+---
+
+## Phase 7: Continuation error-handling sugar
+
+This phase builds on the design in `DESIGN.md` rather than replacing it.
+
+### 7.1 Single-error `?`
+
+Syntax:
+
+```sl
+let bytes = read_file(path)?;
+```
+
+Conceptual desugaring:
+
+```sl
+read_file(path, to current_success, current_error)
+```
+
+Implementation checklist:
+
+- [ ] Define the elaborated form of `e?`
+- [ ] Infer current success and error continuations in `fn` and `command`
+      bodies
+- [ ] Lower `?` to continuation application
+- [ ] Reject `?` where there is no current error continuation
+- [ ] Add checker diagnostics:
+  - [ ] missing error continuation
+  - [ ] incompatible error type
+- [ ] Add tests for successful propagation
+- [ ] Add tests for error propagation
+- [ ] Add tests for using `?` in nested `fn` without inherited errors
+
+### 7.2 Multiple error continuations
+
+Potential syntax:
+
+```sl
+read_file(path)?missing;
+parse(bytes)?invalid;
+```
+
+Alternative syntax to investigate:
+
+```sl
+read_file(path)?[ok, missing];
+```
+
+Implementation checklist:
+
+- [ ] Decide between suffix-name and bracket syntax
+- [ ] Add a surface form for selecting an error continuation
+- [ ] Elaborate to the selected continuation
+- [ ] Ensure unselected continuations remain linear
+- [ ] Add checker tests for dangling continuations
+- [ ] Add runtime tests for each error path
+- [ ] Rewrite JSON parser error handling using selected continuations
+
+### 7.3 Command-call continuation sugar
+
+Desired symmetry:
+
+```sl
+read_file(path, to ok, error)
+```
+
+or:
+
+```sl
+read_file(path, ok, error)
+```
+
+Implementation checklist:
+
+- [ ] Decide whether `to` is required
+- [ ] Support explicit continuation arguments without helper builtins
+- [ ] Add partial-continuation application syntax consistently
+- [ ] Preserve linearity checking for each continuation
+- [ ] Add tests for commands with multiple continuations
+- [ ] Add tests for partially applied commands
+
+---
+
+## Phase 8: Example cleanup
+
+Once the preceding features exist, rewrite the examples to demonstrate the
+intended language rather than runtime limitations.
+
+### 8.1 Rewrite arithmetic example
+
+Before:
+
+```sl
+println(add(2, 3));
+```
+
+After:
+
+```sl
+println(2 + 3);
+```
+
+Checklist:
+
+- [ ] Use arithmetic operators
+- [ ] Use unary minus where appropriate
+- [ ] Show overflow and division diagnostics
+- [ ] Keep the example concise
+
+### 8.2 Rewrite comparison example
+
+Before:
+
+```sl
+println(eq(1, 1));
+```
+
+After:
+
+```sl
+println(1 == 1);
+```
+
+Checklist:
+
+- [ ] Use comparison operators
+- [ ] Add char comparison
+- [ ] Add boolean operators
+
+### 8.3 Rewrite string example
+
+Before:
+
+```sl
+str_concat("Hello, ", "world!")
+```
+
+After:
+
+```sl
+"Hello, " + "world!"
+```
+
+Checklist:
+
+- [ ] Use string concatenation
+- [ ] Use indexing and slicing where useful
+- [ ] Show char values
+
+### 8.4 Rewrite JSON parser
+
+Desired shape:
+
+```sl
+const COMMA: +char = ',';
+const COLON: +char = ':';
+const OPEN_BRACKET: +char = '[';
+const CLOSE_BRACKET: +char = ']';
+const OPEN_BRACE: +char = '{';
+const CLOSE_BRACE: +char = '}';
+
+fn parse_value(
+    input: +String,
+    pos: +i64,
+    ok: +String,
+    err: +String,
+) -> i64 {
+    match input[pos] {
+        '0'..='9' | '-' => parse_number(input, pos, ok, err),
+        '"' => parse_string(input, pos, ok, err),
+        OPEN_BRACKET => parse_array(input, pos, ok, err),
+        OPEN_BRACE => parse_object(input, pos, ok, err),
+        't' => parse_literal(input, pos, "true", ok, err),
+        'f' => parse_literal(input, pos, "false", ok, err),
+        'n' => parse_literal(input, pos, "null", ok, err),
+        _ => err("expected JSON value"),
+    }
+}
+```
+
+Checklist:
+
+- [ ] Replace all character codes with `+char`
+- [ ] Replace `else` nesting with `else if` or `match`
+- [ ] Replace `add`, `sub`, `eq`, `lt`, and `ge` with operators
+- [ ] Replace `char_at` with indexing
+- [ ] Replace `substring` with slicing where appropriate
+- [ ] Define constants for punctuation
+- [ ] Keep continuation-based error handling rather than `Result`
+- [ ] Preserve all current JSON validation behavior
+- [ ] Add invalid-input examples or tests
+- [ ] Verify that success and error continuations each run exactly once
+
+### 8.5 Example audit
+
+Checklist:
+
+- [ ] `hello.sl`
+- [ ] `arithmetic.sl`
+- [ ] `comparison.sl`
+- [ ] `strings.sl`
+- [ ] `lambda.sl`
+- [ ] `pair.sl`
+- [ ] `nested_calls.sl`
+- [ ] `command.sl`
+- [ ] `match_exhaustive.sl`
+- [ ] `mu_escape.sl`
+- [ ] `file_io.sl`
+- [ ] `json_parser.sl`
+- [ ] intentional diagnostic examples:
+  - [ ] `linearity_error.sl`
+  - [ ] `polarity_error.sl`
+
+For each example, ensure:
+
+- [ ] it runs with `slc run`
+- [ ] it uses the intended surface syntax rather than builtin spellings
+- [ ] it demonstrates one clear concept
+- [ ] it has no unexplained magic numbers
+- [ ] it remains compatible with continuation linearity
+
+---
+
+## Phase 9: Testing and quality gates
+
+Every phase must end with the full quality gate.
+
+Checklist:
+
+- [ ] `cargo fmt`
+- [ ] `cargo fmt --check`
+- [ ] `cargo clippy --all-targets -- -D warnings`
+- [ ] `cargo test --workspace`
+- [ ] Run every non-diagnostic example with `slc run`
+- [ ] Confirm diagnostic examples still fail with intended errors
+- [ ] Check that no compiler change reduces existing test coverage
+- [ ] Add regression tests for every syntax feature
+- [ ] Add pretty-printer or round-trip tests where applicable
+- [ ] Add type-checker diagnostics with spans
+- [ ] Add linearity diagnostics for continuation-sensitive sugar
+
+---
+
+## Suggested implementation order
+
+The phases are ordered by impact and dependency:
+
+1. `else if`
+2. Real `+char`
+3. Binary operators
+4. `&&`, `||`, and `!`
+5. Indexing and slicing
+6. Char, or-, and range patterns
+7. Match guards
+8. `const`
+9. `?` and continuation-call sugar
+10. Example cleanup
+
+The highest immediate impact comes from the first three phases. They turn:
+
+```sl
+if eq(ch, 45) {
+    parse_number(input, pos, ok, err)
+} else {
+    if eq(ch, 34) {
+        parse_string(input, pos, ok, err)
+    } else {
+        err("expected JSON value")
+    }
+}
+```
+
+into:
+
+```sl
+if ch == '-' {
+    parse_number(input, pos, ok, err)
+} else if ch == '"' {
+    parse_string(input, pos, ok, err)
+} else {
+    err("expected JSON value")
+}
+```
+
+and eventually into:
+
+```sl
+match input[pos] {
+    '-' => parse_number(input, pos, ok, err),
+    '"' => parse_string(input, pos, ok, err),
+    _ => err("expected JSON value"),
+}
+```
+
+without changing the underlying symmetric calculus.
