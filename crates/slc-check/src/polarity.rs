@@ -1,7 +1,7 @@
 //! Polarity checking for surface programs.
 
 use slc_core::types::Type;
-use slc_syntax::ast::{Decl, Expr, Node, Param, Program, TypeExpr};
+use slc_syntax::ast::{Decl, Expr, FunctionPolarity, Node, Param, Program, TypeExpr};
 use slc_syntax::lower::LowerError;
 use slc_syntax::lower::lower_type;
 
@@ -23,26 +23,83 @@ impl From<LowerError> for CheckError {
     }
 }
 
+/// Lower a written type, resolving declaration names. `lower_type` knows only
+/// the built-in types, so without this a parameter typed by a `struct` or an
+/// `enum` would skip its polarity check entirely.
+fn resolve(ty: &TypeExpr, declared: &std::collections::HashSet<String>) -> Option<Type> {
+    let resolved = match ty {
+        TypeExpr::Base(name) if declared.contains(name) => Type::Named(name.clone()),
+        TypeExpr::Positive(inner) => resolve(&inner.kind, declared)?,
+        TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
+            resolve(&inner.kind, declared)?.dual()
+        }
+        TypeExpr::Dual(inner) => resolve(&inner.kind, declared)?.dual(),
+        TypeExpr::Tensor(a, b) => Type::Tensor(
+            Box::new(resolve(&a.kind, declared)?),
+            Box::new(resolve(&b.kind, declared)?),
+        ),
+        TypeExpr::Par(a, b) => {
+            Type::Par(Box::new(resolve(&a.kind, declared)?), Box::new(resolve(&b.kind, declared)?))
+        }
+        TypeExpr::Fun(a, b) => {
+            let result = resolve(&b.kind, declared)?;
+            // `A → ⊥` is `-A`.
+            if result == Type::Bottom {
+                return Some(resolve(&a.kind, declared)?.dual());
+            }
+            Type::Fun(Box::new(resolve(&a.kind, declared)?), Box::new(result))
+        }
+        TypeExpr::List(inner) => Type::List(Box::new(resolve(&inner.kind, declared)?)),
+        other => return lower_type(other).ok(),
+    };
+    Some(resolved)
+}
+
 /// Check that fn parameters are positive, command value parameters positive,
 /// and continuation parameters negative.
 pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
+    let declared: std::collections::HashSet<String> = polarity_p
+        .decls
+        .iter()
+        .filter_map(|d| match &d.kind {
+            Decl::Struct { name, .. } | Decl::Enum { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
     let mut diags = Vec::new();
     for d in &polarity_p.decls {
-        check_decl(d, &mut diags);
+        check_decl(d, &declared, &mut diags);
     }
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
+fn check_decl(
+    d: &Node<Decl>,
+    declared: &std::collections::HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &d.kind {
-        Decl::Fn { params, .. } => {
+        Decl::Fn { params, polarity, type_params, .. } => {
+            let generics: std::collections::HashSet<&str> =
+                type_params.iter().map(String::as_str).collect();
             for p in params {
-                check_param_polarity(p, p.is_continuation, &d.kind, d.span, diags);
+                check_param_polarity(
+                    p,
+                    *polarity == FunctionPolarity::Negative,
+                    matches!(p.ty, TypeExpr::Negative(_)),
+                    &generics,
+                    declared,
+                    d.span,
+                    diags,
+                );
             }
         }
-        Decl::Mu { params, .. } => {
-            for p in params {
-                check_param_polarity(p, p.is_continuation, &d.kind, d.span, diags);
+        Decl::Mu { value_params, continuation_params, .. } => {
+            for p in value_params {
+                check_param_polarity(p, false, false, &Default::default(), declared, d.span, diags);
+            }
+            for p in continuation_params {
+                check_param_polarity(p, true, false, &Default::default(), declared, d.span, diags);
             }
         }
         Decl::Struct { fields, .. } => {
@@ -87,20 +144,44 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
 fn check_param_polarity(
     p: &Param,
     is_cont: bool,
-    current_decl: &Decl,
+    allow_negative_value_parameter: bool,
+    generics: &std::collections::HashSet<&str>,
+    declared: &std::collections::HashSet<String>,
     span: slc_syntax::token::Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if let Ok(ty) = lower_type(&p.ty) {
-        let is_fn_decl = matches!(current_decl, Decl::Fn { .. });
-        let ok = if is_fn_decl && matches!(p.ty, TypeExpr::Negative(_))
-            || is_cont
-            || p.is_continuation
-        {
-            is_negative_type(&ty)
-        } else {
-            is_positive_type(&ty)
-        };
+    // A bare generic is polarity-polymorphic: it instantiates at each use.
+    // An explicitly signed generic keeps its constraint even though its
+    // lowered core representation is an unconstrained variable.
+    if let Some(name) = bare_type_name(&p.ty)
+        && generics.contains(name)
+    {
+        return;
+    }
+    let requires_negative = allow_negative_value_parameter || is_cont || p.is_continuation;
+    if requires_negative {
+        if let TypeExpr::Positive(_) = &p.ty {
+            diags.push(Diagnostic {
+                message: format!(
+                    "parameter `{}` has explicitly positive type; expected negative (-) polarity",
+                    p.name
+                ),
+                span,
+            });
+            return;
+        }
+    } else if let TypeExpr::Negative(_) = &p.ty {
+        diags.push(Diagnostic {
+            message: format!(
+                "parameter `{}` has explicitly negative type; expected positive (+) polarity",
+                p.name
+            ),
+            span,
+        });
+        return;
+    }
+    if let Some(ty) = resolve(&p.ty, declared) {
+        let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };
         if !ok {
             diags.push(Diagnostic {
                 message: format!(
@@ -111,6 +192,13 @@ fn check_param_polarity(
                 span,
             });
         }
+    }
+}
+
+fn bare_type_name(ty: &TypeExpr) -> Option<&str> {
+    match ty {
+        TypeExpr::Base(name) => Some(name.as_str()),
+        _ => None,
     }
 }
 
@@ -127,14 +215,19 @@ fn is_usable_as_field(t: &Type) -> bool {
     t.is_positive() || t.is_negative()
 }
 
-/// Check expression polarity: mu binders must be negative.
+/// Check expression polarity: mu binders must be negative. Used on an
+/// expression in isolation, so it knows no declarations.
 pub fn check_expr_polarity(e: &Node<Expr>) -> Result<(), Vec<Diagnostic>> {
     let mut diags = Vec::new();
-    check_expr(e, &mut diags);
+    check_expr(e, &Default::default(), &mut diags);
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
+fn check_expr(
+    e: &Node<Expr>,
+    declared: &std::collections::HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &e.kind {
         Expr::Lambda { param_type: Some(ty), .. } => {
             if let Ok(core_ty) = lower_type(ty)
@@ -149,69 +242,70 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
                 });
             }
         }
+        Expr::Mu { value_params, continuation_params, body, .. } => {
+            for p in value_params {
+                check_param_polarity(p, false, false, &Default::default(), declared, e.span, diags);
+            }
+            for p in continuation_params {
+                check_param_polarity(p, true, false, &Default::default(), declared, e.span, diags);
+            }
+            check_expr(body, declared, diags);
+        }
         Expr::If { cond, then, otherwise } => {
-            check_expr(cond, diags);
-            check_expr(then, diags);
+            check_expr(cond, declared, diags);
+            check_expr(then, declared, diags);
             if let Some(o) = otherwise {
-                check_expr(o, diags);
+                check_expr(o, declared, diags);
             }
         }
         Expr::Let { value, body, .. } => {
-            check_expr(value, diags);
+            check_expr(value, declared, diags);
             if let Some(b) = body {
-                check_expr(b, diags);
+                check_expr(b, declared, diags);
             }
         }
         Expr::Pair(items) => {
             for i in items {
-                check_expr(i, diags);
+                check_expr(i, declared, diags);
             }
         }
         Expr::Call { callee, args } => {
-            check_expr(callee, diags);
+            check_expr(callee, declared, diags);
             for a in args {
-                check_expr(a, diags);
+                check_expr(a, declared, diags);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            check_expr(lhs, diags);
-            check_expr(rhs, diags);
+            check_expr(lhs, declared, diags);
+            check_expr(rhs, declared, diags);
         }
-        Expr::UnOp { body, .. } => check_expr(body, diags),
+        Expr::UnOp { body, .. } => check_expr(body, declared, diags),
         Expr::Index { value, index } => {
-            check_expr(value, diags);
-            check_expr(index, diags);
+            check_expr(value, declared, diags);
+            check_expr(index, declared, diags);
         }
         Expr::Slice { value, start, end } => {
-            check_expr(value, diags);
+            check_expr(value, declared, diags);
             if let Some(start) = start {
-                check_expr(start, diags);
+                check_expr(start, declared, diags);
             }
             if let Some(end) = end {
-                check_expr(end, diags);
+                check_expr(end, declared, diags);
             }
         }
-        Expr::Dual { body } => check_expr(body, diags),
-        Expr::Interaction { left, right } => {
-            check_expr(left, diags);
-            check_expr(right, diags);
+        Expr::Cut { value, consumer } => {
+            check_expr(value, declared, diags);
+            check_expr(consumer, declared, diags);
         }
-        Expr::ErrorProp { expr, .. } => check_expr(expr, diags),
-        Expr::Service { agent, continuations } => {
-            check_expr(agent, diags);
-            for k in continuations {
-                check_expr(k, diags);
-            }
-        }
-        Expr::Job { agent, values } => {
-            check_expr(agent, diags);
-            for v in values {
-                check_expr(v, diags);
+        Expr::ErrorProp { expr, .. } => check_expr(expr, declared, diags),
+        Expr::Select { arms, .. } => {
+            for arm in arms {
+                check_expr(&arm.command, declared, diags);
             }
         }
         Expr::Block(exprs) => {
             for e in exprs {
-                check_expr(e, diags);
+                check_expr(e, declared, diags);
             }
         }
         _ => {}
@@ -237,19 +331,42 @@ mod tests {
 
     #[test]
     fn fn_continuation_params_ok() {
-        assert!(check("fn run(k: -i32) -> i32 { k(1) }").is_ok());
+        assert!(check("fn run(k: -i32) <- i32 { k(1) }").is_ok());
     }
 
     #[test]
     fn command_mixed_ok() {
-        assert!(check("mu step(x: +i32, to k: -i32) { k(x) }").is_ok());
+        assert!(check("mu step(x: +i32) | (k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_wrong_polarity_fails() {
-        let r = check("mu bad(x: -i32, to k: +i32) { k(x) }");
+        let r = check("mu bad(x: -i32) | (k: +i32) { k(x) }");
         assert!(r.is_err());
         let diags = r.unwrap_err();
         assert_eq!(diags.len(), 2);
+    }
+
+    #[test]
+    fn generic_parameters_are_polarity_polymorphic() {
+        let r = check("fn k<T>(ok: -T) <- T { ok(0) }");
+        assert!(r.is_ok());
+
+        let r = check("fn k<T>(value: T) -> T { value }");
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn signed_generic_parameters_still_have_polarity() {
+        let r = check("fn bad<T>(ok: +T) <- T { ok(0) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("expected negative (-) polarity"));
+    }
+
+    #[test]
+    fn positive_parameter_in_negative_fn_fails() {
+        let r = check("fn bad(k: +i32) <- i32 { k(1) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("negative"));
     }
 }

@@ -7,7 +7,7 @@
 //! mistakes that used to appear only at runtime.
 
 use slc_core::types::{Base, Type};
-use slc_syntax::ast::{Decl, Expr, Node, Program};
+use slc_syntax::ast::{Decl, Expr, Node, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
 use std::collections::HashMap;
@@ -21,12 +21,114 @@ pub struct Diagnostic {
 pub fn check_program(p: &Program) -> Result<(), Vec<Diagnostic>> {
     let constants = constant_types(p);
     let functions = function_types(p);
+    let enums = enum_types(p);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions);
     for d in &p.decls {
-        check_decl(d, &mut env, &mut diags);
+        check_decl(d, &enums, &mut env, &mut diags);
     }
     if diags.is_empty() { Ok(()) } else { Err(diags) }
+}
+
+/// What the checker knows about the program's type declarations: the variants
+/// of each `enum`, the payload each variant carries, and the fields of each
+/// `struct`.
+#[derive(Debug, Default)]
+pub struct Declarations {
+    /// Every declaration name in the program: `struct` and `enum` alike.
+    declarations: std::collections::HashSet<String>,
+    /// Declaration name → variant names, in declaration order.
+    variants: HashMap<String, Vec<String>>,
+    /// Fully qualified label → declaration name and payload types.
+    signatures: HashMap<String, (String, Vec<Type>)>,
+    /// Unqualified variant name → its label, when only one enum declares it.
+    unqualified: HashMap<String, Option<String>>,
+    /// Declaration name → fields, in declaration order.
+    structs: HashMap<String, Vec<(String, Type)>>,
+}
+
+impl Declarations {
+    /// Lower a written type, resolving a declaration name to its named type.
+    /// `lower_type` only knows the built-in types, so `struct` and `enum`
+    /// names have to be resolved here — including under a sign or a
+    /// connective, so `-ParseResult` is a consumer of a declared type.
+    fn resolve(&self, ty: &TypeExpr) -> Option<Type> {
+        let resolved = match ty {
+            TypeExpr::Base(name) if self.declarations.contains(name) => Type::Named(name.clone()),
+            TypeExpr::Positive(inner) => self.resolve(&inner.kind)?,
+            TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
+                self.resolve(&inner.kind)?.dual()
+            }
+            TypeExpr::Tensor(a, b) => {
+                Type::Tensor(Box::new(self.resolve(&a.kind)?), Box::new(self.resolve(&b.kind)?))
+            }
+            TypeExpr::Par(a, b) => {
+                Type::Par(Box::new(self.resolve(&a.kind)?), Box::new(self.resolve(&b.kind)?))
+            }
+            TypeExpr::Fun(a, b) => {
+                let result = self.resolve(&b.kind)?;
+                // `A → ⊥` is `-A`.
+                if result == Type::Bottom {
+                    return Some(self.resolve(&a.kind)?.dual());
+                }
+                Type::Fun(Box::new(self.resolve(&a.kind)?), Box::new(result))
+            }
+            TypeExpr::List(inner) => Type::List(Box::new(self.resolve(&inner.kind)?)),
+            // `dual(A)` applies the involution; only a declaration's name
+            // stays wrapped, because it is opaque to the core.
+            TypeExpr::Dual(inner) => self.resolve(&inner.kind)?.dual(),
+            other => return lower_type(other).ok(),
+        };
+        Some(resolved)
+    }
+
+    /// The field types of a declared struct, in declaration order.
+    fn fields(&self, name: &str) -> Option<Vec<Type>> {
+        Some(self.structs.get(name)?.iter().map(|(_, ty)| ty.clone()).collect())
+    }
+
+    /// Resolve a variant path or an unambiguous unqualified variant name.
+    fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
+        if let Some(signature) = self.signatures.get(name) {
+            return Some(signature);
+        }
+        let label = self.unqualified.get(name)?.as_ref()?;
+        self.signatures.get(label)
+    }
+}
+
+fn enum_types(p: &Program) -> Declarations {
+    let mut enums = Declarations::default();
+    for d in &p.decls {
+        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } = &d.kind {
+            enums.declarations.insert(name.clone());
+        }
+        if let Decl::Struct { name, fields } = &d.kind {
+            enums.structs.insert(
+                name.clone(),
+                fields
+                    .iter()
+                    .map(|(field, ty)| (field.clone(), lower_type(ty).unwrap_or(Type::One)))
+                    .collect(),
+            );
+        }
+    }
+    for d in &p.decls {
+        let Decl::Enum { name, variants } = &d.kind else { continue };
+        enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
+        for (variant, payload) in variants {
+            let label = format!("{name}::{variant}");
+            let payload =
+                payload.iter().map(|ty| enums.resolve(ty).unwrap_or(Type::One)).collect::<Vec<_>>();
+            enums.signatures.insert(label.clone(), (name.clone(), payload));
+            enums
+                .unqualified
+                .entry(variant.clone())
+                .and_modify(|existing| *existing = None)
+                .or_insert(Some(label));
+        }
+    }
+    enums
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +186,15 @@ impl<'a> Env<'a> {
 }
 
 fn constant_types(p: &Program) -> HashMap<String, Type> {
+    // `EXIT` is the top-level continuation, so it is a binding of negative
+    // type rather than a function: it is activated with a cut.
+    let mut out: HashMap<String, Type> = HashMap::new();
+    out.insert("EXIT".into(), Type::Neg(Base::I32));
+    out.extend(constant_declarations(p));
+    out
+}
+
+fn constant_declarations(p: &Program) -> HashMap<String, Type> {
     p.decls
         .iter()
         .filter_map(|d| {
@@ -98,60 +209,149 @@ fn constant_types(p: &Program) -> HashMap<String, Type> {
 #[derive(Debug)]
 pub struct FunctionSignature {
     pub params: Vec<Type>,
+    /// Which declared parameters are continuations, positionally. This is the
+    /// declaration's continuation row.
+    pub continuations: Vec<bool>,
     pub result: Option<Type>,
 }
 
 fn is_builtin(name: &str) -> bool {
-    builtin_functions().iter().any(|(builtin, _, _)| *builtin == name)
+    builtin_functions().iter().any(|builtin| builtin.name == name)
 }
 
-fn builtin_functions() -> Vec<(&'static str, Vec<Type>, Option<Type>)> {
+/// The standard library.
+///
+/// A builtin whose outcome is a single value is an ordinary function. A
+/// builtin whose outcome is not — it can fail, or find nothing — takes
+/// continuations instead and denotes a command: the value arguments come
+/// first, then one continuation per outcome, and exactly one is activated.
+/// `continuations` marks which parameters are the continuation row.
+struct Builtin {
+    name: &'static str,
+    params: Vec<Type>,
+    continuations: Vec<bool>,
+    result: Option<Type>,
+}
+
+fn builtin_functions() -> Vec<Builtin> {
     use Base::*;
     let i64 = Type::Pos(I64);
     let string = Type::Pos(Str);
     let bool_ = Type::Pos(Bool);
+    let char_ = Type::Pos(Char);
+    let unknown = Type::One;
+
+    // An ordinary function: every parameter is a value.
+    let function = |name, params: Vec<Type>, result| Builtin {
+        name,
+        continuations: vec![false; params.len()],
+        params,
+        result,
+    };
+    // A command: `values` first, then a continuation per outcome.
+    let offers = |name, values: Vec<Type>, outcomes: Vec<Type>| {
+        let mut continuations = vec![false; values.len()];
+        continuations.extend(std::iter::repeat_n(true, outcomes.len()));
+        let mut params = values;
+        params.extend(outcomes);
+        Builtin { name, params, continuations, result: Some(Type::Bottom) }
+    };
+
     vec![
-        ("println", vec![], Some(Type::One)),
-        ("print", vec![], Some(Type::One)),
-        ("add", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        ("sub", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        ("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        ("div", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        ("rem", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        ("eq", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("ne", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("lt", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("gt", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("le", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("ge", vec![Type::One, Type::One], Some(bool_.clone())),
-        ("str_len", vec![string.clone()], Some(i64.clone())),
-        ("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
-        ("is_digit", vec![Type::Pos(Char)], Some(bool_.clone())),
-        ("is_ws", vec![Type::Pos(Char)], Some(bool_.clone())),
-        ("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
-        ("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
-        ("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
-        ("list_new", vec![], Some(Type::List(Box::new(Type::Pos(Base::I64))))),
-        (
+        function("println", vec![], Some(Type::One)),
+        function("print", vec![], Some(Type::One)),
+        function("add", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("sub", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("div", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("rem", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("eq", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("ne", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("lt", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("gt", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("le", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("ge", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("str_len", vec![string.clone()], Some(i64.clone())),
+        function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
+        function("int_to_str", vec![i64.clone()], Some(string.clone())),
+        function("str_eq", vec![string.clone(), string.clone()], Some(bool_.clone())),
+        function("is_digit", vec![char_.clone()], Some(bool_.clone())),
+        function("is_ws", vec![char_.clone()], Some(bool_.clone())),
+        function("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
+        function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
+        function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
+        function("file_exists", vec![string.clone()], Some(bool_.clone())),
+        function("list_new", vec![], Some(Type::List(Box::new(i64.clone())))),
+        function("list_len", vec![unknown.clone()], Some(i64.clone())),
+        function(
             "list_push",
-            vec![Type::List(Box::new(Type::Pos(Base::I64))), Type::Pos(Base::I64)],
-            Some(Type::List(Box::new(Type::Pos(Base::I64)))),
+            vec![Type::List(Box::new(i64.clone())), i64.clone()],
+            Some(Type::List(Box::new(i64.clone()))),
         ),
-        ("char_at", vec![string.clone(), i64.clone()], Some(Type::Pos(Char))),
+        // Parsing, input/output, and lookup can fail or find nothing, so they
+        // offer their outcomes to continuations.
+        offers(
+            "parse_int",
+            vec![string.clone()],
+            vec![Type::Neg(I64), Type::Neg(Str), Type::Neg(Str)],
+        ),
+        offers("read_file", vec![string.clone()], vec![Type::Neg(Str), Type::Neg(Str)]),
+        offers(
+            "write_file",
+            vec![string.clone(), string.clone()],
+            vec![Type::Neg(Unit), Type::Neg(Str)],
+        ),
+        offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
+        offers(
+            "list_get",
+            vec![unknown.clone(), i64.clone()],
+            vec![unknown.clone(), Type::Neg(Str)],
+        ),
+        offers("map_get", vec![unknown.clone(), unknown.clone()], vec![unknown, Type::Neg(Str)]),
+        offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
     ]
 }
 
 fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
     let mut out = builtin_functions()
         .into_iter()
-        .map(|(name, params, result)| (name.to_string(), FunctionSignature { params, result }))
+        .map(|builtin| {
+            (
+                builtin.name.to_string(),
+                FunctionSignature {
+                    params: builtin.params,
+                    continuations: builtin.continuations,
+                    result: builtin.result,
+                },
+            )
+        })
         .collect::<HashMap<_, _>>();
     for d in &p.decls {
         let signature = match &d.kind {
-            Decl::Fn { name, params, return_type, .. } => {
-                Some((name, params, return_type.as_ref().and_then(|ty| lower_type(ty).ok())))
+            Decl::Fn { name, params, return_type, polarity, .. } => {
+                // A negative function produces the *consumer* of the type
+                // written after `<-`.
+                let result = return_type.as_ref().and_then(|ty| lower_type(ty).ok()).map(|ty| {
+                    if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
+                        ty.dual()
+                    } else {
+                        ty
+                    }
+                });
+                Some((name, params, result))
             }
-            Decl::Mu { name, params, .. } => Some((name, params, Some(Type::Bottom))),
+            Decl::Mu { name, value_params, continuation_params, .. } => {
+                let declared: Vec<_> =
+                    value_params.iter().chain(continuation_params.iter()).collect();
+                let params =
+                    declared.iter().map(|p| lower_type(&p.ty).unwrap_or(Type::One)).collect();
+                let continuations = declared.iter().map(|p| p.is_continuation).collect();
+                out.insert(
+                    name.clone(),
+                    FunctionSignature { params, continuations, result: Some(Type::Bottom) },
+                );
+                continue;
+            }
             _ => None,
         };
         if let Some((name, params, result)) = signature {
@@ -159,6 +359,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
                 name.clone(),
                 FunctionSignature {
                     params: params.iter().map(|p| lower_type(&p.ty).unwrap_or(Type::One)).collect(),
+                    continuations: params.iter().map(|p| p.is_continuation).collect(),
                     result,
                 },
             );
@@ -167,16 +368,26 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
     out
 }
 
-fn check_decl(d: &Node<Decl>, env: &mut Env, diags: &mut Vec<Diagnostic>) {
+fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { params, body, .. } | Decl::Mu { params, body, .. } => {
+        Decl::Fn { params, body, .. } => {
             env.push();
             for p in params {
-                if let Ok(ty) = lower_type(&p.ty) {
+                if let Some(ty) = enums.resolve(&p.ty) {
                     env.define(&p.name, ty);
                 }
             }
-            check_expr(body, env, diags);
+            check_expr(body, enums, env, diags);
+            env.pop();
+        }
+        Decl::Mu { value_params, continuation_params, body, .. } => {
+            env.push();
+            for p in value_params.iter().chain(continuation_params.iter()) {
+                if let Some(ty) = enums.resolve(&p.ty) {
+                    env.define(&p.name, ty);
+                }
+            }
+            check_expr(body, enums, env, diags);
             env.pop();
         }
         Decl::Const { name, ty, value } => {
@@ -189,7 +400,7 @@ fn check_decl(d: &Node<Decl>, env: &mut Env, diags: &mut Vec<Diagnostic>) {
                 });
             }
             let expected = lower_type(ty);
-            let actual = infer_expr(value, env, diags);
+            let actual = infer_expr(value, enums, env, diags);
             if let (Ok(expected), Some(actual)) = (&expected, actual)
                 && &actual != expected
             {
@@ -248,6 +459,7 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
 fn check_pattern(
     pattern: &slc_syntax::ast::Pattern,
     expected: &Type,
+    declarations: &Declarations,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -264,17 +476,64 @@ fn check_pattern(
     match pattern {
         Pattern::Or(alternatives) => {
             for alternative in alternatives {
-                check_pattern(alternative, expected, span, diags);
+                check_pattern(alternative, expected, declarations, span, diags);
             }
         }
         Pattern::Range { start, end } => {
-            check_pattern(start, expected, span, diags);
-            check_pattern(end, expected, span, diags);
+            check_pattern(start, expected, declarations, span, diags);
+            check_pattern(end, expected, declarations, span, diags);
         }
-        Pattern::Binding { pattern, .. } => check_pattern(pattern, expected, span, diags),
+        Pattern::Binding { pattern, .. } => {
+            check_pattern(pattern, expected, declarations, span, diags)
+        }
         Pattern::Tuple(items) => {
             for item in items {
-                check_pattern(item, expected, span, diags);
+                check_pattern(item, expected, declarations, span, diags);
+            }
+        }
+        // A struct pattern decomposes the product: the same fields, in the
+        // same order, with the same types as the declaration.
+        Pattern::Struct { name, fields } => {
+            let Some(declared) = declarations.structs.get(name) else {
+                diags.push(Diagnostic {
+                    message: format!("`{name}` is not a declared struct"),
+                    span,
+                });
+                return;
+            };
+            if expected != &Type::Named(name.clone()) {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "struct pattern `{name}` cannot match a scrutinee of type {expected}"
+                    ),
+                    span,
+                });
+            }
+            let written: Vec<&String> = fields.iter().map(|(field, _)| field).collect();
+            let expected_fields: Vec<&String> = declared.iter().map(|(field, _)| field).collect();
+            if written != expected_fields {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{name}` has fields {}; the pattern writes {}",
+                        expected_fields
+                            .iter()
+                            .map(|f| format!("`{f}`"))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if written.is_empty() {
+                            "none".to_string()
+                        } else {
+                            written.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+                        }
+                    ),
+                    span,
+                });
+            }
+            for (field, pattern) in fields {
+                if let Some((_, field_ty)) = declared.iter().find(|(declared, _)| declared == field)
+                {
+                    check_pattern(pattern, field_ty, declarations, span, diags);
+                }
             }
         }
         Pattern::List { items, rest } => {
@@ -289,10 +548,16 @@ fn check_pattern(
                 }
             };
             for item in items {
-                check_pattern(item, &expected, span, diags);
+                check_pattern(item, &expected, declarations, span, diags);
             }
             if let Some(rest) = rest {
-                check_pattern(rest, &Type::List(Box::new(expected.clone())), span, diags);
+                check_pattern(
+                    rest,
+                    &Type::List(Box::new(expected.clone())),
+                    declarations,
+                    span,
+                    diags,
+                );
             }
         }
         _ => {}
@@ -314,6 +579,31 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
     }
 }
 
+/// Does a value written as `expr`, inferred as `actual`, fit a port that
+/// requires `expected`?
+///
+/// An integer literal takes the integer type its port requires — `0 @ EXIT`
+/// sends an `i32` — and is `+i64` only when nothing constrains it. Every
+/// other value must match its port exactly.
+fn fits(expected: &Type, actual: &Type, expr: &Expr) -> bool {
+    if expected == actual || expected == &Type::One || actual == &Type::One {
+        return true;
+    }
+    // A value that never arrives constrains nothing.
+    if actual == &Type::Bottom {
+        return true;
+    }
+    is_integer_literal(expr) && is_numeric(expected) && is_numeric(actual)
+}
+
+fn is_integer_literal(expr: &Expr) -> bool {
+    match expr {
+        Expr::Int(_) => true,
+        Expr::UnOp { op: slc_syntax::ast::UnOp::Neg, body } => is_integer_literal(&body.kind),
+        _ => false,
+    }
+}
+
 fn is_numeric(ty: &Type) -> bool {
     matches!(ty, Type::Pos(Base::I32 | Base::I64 | Base::U32 | Base::U64))
 }
@@ -323,41 +613,311 @@ fn is_comparable(ty: &Type) -> bool {
         || matches!(ty, Type::Pos(Base::Char) | Type::Pos(Base::Str) | Type::Pos(Base::Bool))
 }
 
-fn infer_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Option<Type> {
-    check_expr(e, env, diags)
+/// A declaration's continuation row is positional and invariant: the
+/// continuation supplied for a row position must have exactly the declared
+/// type, and no position may be added, dropped, or reordered. Each
+/// continuation is consumed exactly once, so a row that differs in width or
+/// order is a different linear behavior, not a compatible one.
+fn check_continuation_row(
+    name: &str,
+    signature: &FunctionSignature,
+    args: &[Node<Expr>],
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let row_width = signature.continuations.iter().filter(|is_cont| **is_cont).count();
+    if row_width == 0 {
+        return;
+    }
+    if args.len() > signature.params.len() {
+        diags.push(Diagnostic {
+            message: format!(
+                "`{name}` declares {} parameters including a continuation row of {row_width}; \
+                 the call supplies {} arguments",
+                signature.params.len(),
+                args.len()
+            ),
+            span: args[signature.params.len()].span,
+        });
+        return;
+    }
+    for (index, arg) in args.iter().enumerate() {
+        if signature.continuations.get(index) != Some(&true) {
+            continue;
+        }
+        let expected = &signature.params[index];
+        let Some(actual) = check_expr(arg, enums, env, diags) else {
+            continue;
+        };
+        // `Type::One` is this checker's "not determined" placeholder — an
+        // unannotated `let` binding, for instance. A row mismatch is only
+        // reported for an argument whose type is actually known.
+        if !fits(expected, &actual, &arg.kind) {
+            diags.push(Diagnostic {
+                message: format!(
+                    "continuation row mismatch: argument {} of `{name}` has type {actual}; \
+                     the row declares {expected} at that position",
+                    index + 1
+                ),
+                span: arg.span,
+            });
+        }
+    }
 }
 
-fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Option<Type> {
+/// Check a `let` initializer against its optional annotation and return the
+/// type to bind. Both surface `let` forms — the expression form and the
+/// bodyless form that scopes over the rest of a block — check identically.
+fn check_let_binding(
+    name: &str,
+    ty: &Option<TypeExpr>,
+    value: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Type {
+    let actual = check_expr(value, enums, env, diags);
+    let annotation = ty.as_ref().and_then(|ty| lower_type(ty).ok());
+    if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
+        && !fits(annotation, &actual, &value.kind)
+    {
+        diags.push(Diagnostic {
+            message: format!(
+                "`let {name}` is annotated as {annotation}; initializer has type {actual}"
+            ),
+            span: value.span,
+        });
+    }
+    annotation.or(actual).unwrap_or(Type::One)
+}
+
+/// Bind an arm's components and check that its pattern is a shape of the type
+/// the `select` consumes.
+fn bind_select_arm(
+    consumed: &Type,
+    pattern: &slc_syntax::ast::Pattern,
+    declarations: &Declarations,
+    env: &mut Env,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use slc_syntax::ast::Pattern;
+    let components: Vec<Type> = match (consumed, pattern) {
+        // An enum variant: its payload types.
+        (Type::Named(_), Pattern::Ident(_) | Pattern::Enum { .. }) => {
+            let written = match pattern {
+                Pattern::Ident(name) => name.clone(),
+                Pattern::Enum { name, variant, .. } => {
+                    if variant.is_empty() {
+                        name.clone()
+                    } else {
+                        format!("{name}::{variant}")
+                    }
+                }
+                _ => unreachable!("matched above"),
+            };
+            match declarations.variant(&written) {
+                Some((_, payload)) => payload.clone(),
+                None => {
+                    diags.push(Diagnostic {
+                        message: format!("`{written}` is not a variant of {consumed}"),
+                        span,
+                    });
+                    return;
+                }
+            }
+        }
+        // A struct: its field types.
+        (Type::Named(name), Pattern::Struct { name: written, .. }) => {
+            if written != name {
+                diags.push(Diagnostic {
+                    message: format!("`select {consumed}` arm cannot bind a `{written}`"),
+                    span,
+                });
+                return;
+            }
+            declarations.fields(name).unwrap_or_default()
+        }
+        // A tensor: its components, flattened right-nested.
+        (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
+        _ => {
+            diags.push(Diagnostic {
+                message: format!("a `select {consumed}` arm must cover a shape of {consumed}"),
+                span,
+            });
+            return;
+        }
+    };
+
+    let binders: Vec<&slc_syntax::ast::Pattern> = match pattern {
+        Pattern::Enum { fields, .. } => fields.iter().collect(),
+        Pattern::Struct { fields, .. } => fields.iter().map(|(_, p)| p).collect(),
+        Pattern::Tuple(items) => items.iter().collect(),
+        _ => Vec::new(),
+    };
+    if binders.len() != components.len() {
+        diags.push(Diagnostic {
+            message: format!(
+                "this shape has {} component(s); the arm binds {}",
+                components.len(),
+                binders.len()
+            ),
+            span,
+        });
+    }
+    for (binder, ty) in binders.iter().zip(components) {
+        if let Pattern::Ident(name) = binder {
+            env.define(name, ty);
+        }
+    }
+}
+
+/// The components of a right-nested tensor.
+fn flatten_tensor(ty: &Type) -> Vec<Type> {
+    match ty {
+        Type::Tensor(head, rest) => {
+            let mut out = vec![(**head).clone()];
+            out.extend(flatten_tensor(rest));
+            out
+        }
+        other => vec![other.clone()],
+    }
+}
+
+fn infer_expr(
+    e: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    check_expr(e, enums, env, diags)
+}
+
+fn check_expr(
+    e: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
     if let Some(ty) = literal_type(&e.kind) {
         return Some(ty);
     }
     match &e.kind {
-        Expr::Ident(name) => env.lookup(name),
+        Expr::Ident(name) => {
+            if let Some(ty) = env.lookup(name) {
+                return Some(ty);
+            }
+            if enums.declarations.contains(name) {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{name}` is a declaration name, not a value; write a variant or a \
+                         literal of it"
+                    ),
+                    span: e.span,
+                });
+                return None;
+            }
+            let (declaration, payload) = enums.variant(name)?;
+            if !payload.is_empty() {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "variant `{name}` carries {} payload value(s); it is a value only when \
+                         applied to them",
+                        payload.len()
+                    ),
+                    span: e.span,
+                });
+                return None;
+            }
+            Some(Type::Named(declaration.clone()))
+        }
         Expr::Lambda { param, param_type, body, .. } => {
             env.push();
-            if let Some(ty) = param_type
-                && let Ok(ty) = lower_type(ty)
-            {
+            let param_ty = param_type.as_ref().and_then(|ty| enums.resolve(ty));
+            if let Some(ty) = param_ty.clone() {
                 env.define(param, ty);
             }
-            let result = check_expr(body, env, diags);
+            let result = check_expr(body, enums, env, diags);
             env.pop();
-            result
+            // A lambda is a function value, and its result is what the body
+            // produces. A body that ends in a cut produces nothing, and
+            // `A → ⊥` is `-A`, so such a lambda simply *is* a consumer.
+            let param_ty = param_ty.unwrap_or(Type::One);
+            let result = result.unwrap_or(Type::One);
+            Some(if result == Type::Bottom {
+                param_ty.dual()
+            } else {
+                Type::Fun(Box::new(param_ty), Box::new(result))
+            })
         }
         Expr::Call { callee, args } => {
-            check_expr(callee, env, diags);
+            // A variant applied to its payload is a value, not a call.
+            if let Expr::Ident(name) = &callee.kind
+                && env.lookup(name).is_none()
+                && let Some((declaration, payload)) = enums.variant(name)
+            {
+                let declaration = declaration.clone();
+                let payload = payload.clone();
+                if args.len() != payload.len() {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "variant `{name}` carries {} payload value(s); the expression \
+                             supplies {}",
+                            payload.len(),
+                            args.len()
+                        ),
+                        span: e.span,
+                    });
+                }
+                for (arg, expected) in args.iter().zip(payload.iter()) {
+                    if let Some(actual) = check_expr(arg, enums, env, diags)
+                        && !fits(expected, &actual, &arg.kind)
+                    {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "payload of `{name}` has type {actual}; the variant declares \
+                                 {expected}"
+                            ),
+                            span: arg.span,
+                        });
+                    }
+                }
+                return Some(Type::Named(declaration));
+            }
+            // A continuation is not applied: it is cut against a value.
+            if let Expr::Ident(name) = &callee.kind
+                && let Some(ty) = env.lookup(name)
+                && (ty.is_negative() || matches!(ty, Type::Dual(_)))
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{name}` is a consumer of type {ty}, not a function; send it a value \
+                         with a cut: `value @ {name}`"
+                    ),
+                    span: e.span,
+                });
+                for arg in args {
+                    check_expr(arg, enums, env, diags);
+                }
+                return Some(Type::Bottom);
+            }
+            check_expr(callee, enums, env, diags);
             for arg in args {
-                check_expr(arg, env, diags);
+                check_expr(arg, enums, env, diags);
             }
             if let Expr::Ident(name) = &callee.kind
                 && let Some(signature) = env.functions.get(name)
             {
                 if is_builtin(name) {
-                    let params = &signature.params;
-                    for (arg, param) in args.iter().zip(params.iter()) {
-                        if let Some(actual) = check_expr(arg, env, diags)
-                            && &actual != param
-                            && !matches!(param, Type::One)
+                    for ((arg, param), is_continuation) in
+                        args.iter().zip(signature.params.iter()).zip(&signature.continuations)
+                    {
+                        if *is_continuation {
+                            continue;
+                        }
+                        if let Some(actual) = check_expr(arg, enums, env, diags)
+                            && !fits(param, &actual, &arg.kind)
                         {
                             diags.push(Diagnostic {
                                 message: format!(
@@ -368,12 +928,13 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
                         }
                     }
                 }
+                check_continuation_row(name, signature, args, enums, env, diags);
                 return signature.result.clone();
             }
             None
         }
         Expr::If { cond, then, otherwise } => {
-            let cond_ty = check_expr(cond, env, diags);
+            let cond_ty = check_expr(cond, enums, env, diags);
             if cond_ty != Some(Type::Pos(Base::Bool)) {
                 diags.push(Diagnostic {
                     message: format!(
@@ -383,45 +944,40 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
                     span: cond.span,
                 });
             }
-            let then_ty = check_expr(then, env, diags);
-            if let Some(otherwise) = otherwise {
-                let else_ty = check_expr(otherwise, env, diags);
-                if let (Some(then_ty), Some(else_ty)) = (then_ty.clone(), else_ty)
-                    && then_ty != else_ty
-                {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "`if` branches have incompatible types {then_ty} and {else_ty}"
-                        ),
-                        span: otherwise.span,
-                    });
+            let then_ty = check_expr(then, enums, env, diags);
+            let Some(otherwise) = otherwise else {
+                return then_ty;
+            };
+            let else_ty = check_expr(otherwise, enums, env, diags);
+            // A branch that ends in a cut never returns, so it constrains
+            // nothing: the `if` has the type of the branch that does return.
+            match (then_ty, else_ty) {
+                (Some(Type::Bottom), other) | (other, Some(Type::Bottom)) => other,
+                (Some(then_ty), Some(else_ty)) => {
+                    if then_ty != else_ty {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "`if` branches have incompatible types {then_ty} and {else_ty}"
+                            ),
+                            span: otherwise.span,
+                        });
+                    }
+                    Some(then_ty)
                 }
+                (then_ty, _) => then_ty,
             }
-            then_ty
         }
         Expr::Let { name, ty, value, body } => {
-            let actual = check_expr(value, env, diags);
-            let annotation = ty.as_ref().and_then(|ty| lower_type(ty).ok());
-            if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
-                && &actual != annotation
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "`let {name}` is annotated as {annotation}; initializer has type {actual}"
-                    ),
-                    span: value.span,
-                });
-            }
-            let binding_ty = annotation.or(actual).unwrap_or(Type::One);
+            let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
             env.push();
             env.define(name, binding_ty);
-            let result = body.as_ref().and_then(|body| check_expr(body, env, diags));
+            let result = body.as_ref().and_then(|body| check_expr(body, enums, env, diags));
             env.pop();
             result
         }
         Expr::BinOp { op, lhs, rhs } => {
-            let lhs_ty = check_expr(lhs, env, diags);
-            let rhs_ty = check_expr(rhs, env, diags);
+            let lhs_ty = check_expr(lhs, enums, env, diags);
+            let rhs_ty = check_expr(rhs, enums, env, diags);
             match op {
                 slc_syntax::ast::BinOp::And | slc_syntax::ast::BinOp::Or => {
                     for (operand, ty) in [(lhs, lhs_ty.clone()), (rhs, rhs_ty.clone())] {
@@ -486,7 +1042,7 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
         }
         Expr::UnOp { op, body } => {
-            let body_ty = check_expr(body, env, diags);
+            let body_ty = check_expr(body, enums, env, diags);
             match op {
                 slc_syntax::ast::UnOp::Not => {
                     if body_ty != Some(Type::Pos(Base::Bool)) {
@@ -516,8 +1072,8 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
         }
         Expr::Index { value, index } => {
-            let value_ty = check_expr(value, env, diags);
-            let index_ty = check_expr(index, env, diags);
+            let value_ty = check_expr(value, enums, env, diags);
+            let index_ty = check_expr(index, enums, env, diags);
             if let Some(value_ty) = value_ty.clone() {
                 match expected_index_type(&value_ty) {
                     Some(expected_index) => {
@@ -546,9 +1102,9 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
         }
         Expr::Slice { value, start, end } => {
-            let value_ty = check_expr(value, env, diags);
+            let value_ty = check_expr(value, enums, env, diags);
             for endpoint in [start, end].into_iter().flatten() {
-                let endpoint_ty = check_expr(endpoint, env, diags);
+                let endpoint_ty = check_expr(endpoint, enums, env, diags);
                 if endpoint_ty != Some(Type::Pos(Base::I64)) {
                     diags.push(Diagnostic {
                         message: format!(
@@ -568,15 +1124,15 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
         }
         Expr::Match { scrutinee, arms } => {
-            let scrutinee_ty = check_expr(scrutinee, env, diags);
+            let scrutinee_ty = check_expr(scrutinee, enums, env, diags);
             if let Some(scrutinee_ty) = &scrutinee_ty {
                 for arm in arms {
-                    check_pattern(&arm.pattern, scrutinee_ty, arm.body.span, diags);
+                    check_pattern(&arm.pattern, scrutinee_ty, enums, arm.body.span, diags);
                 }
             }
             for arm in arms {
                 if let Some(guard) = &arm.guard {
-                    let guard_ty = check_expr(guard, env, diags);
+                    let guard_ty = check_expr(guard, enums, env, diags);
                     if guard_ty != Some(Type::Pos(Base::Bool)) {
                         diags.push(Diagnostic {
                             message: format!(
@@ -589,13 +1145,91 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
                         });
                     }
                 }
-                check_expr(&arm.body, env, diags);
+                check_expr(&arm.body, enums, env, diags);
             }
             None
         }
+        Expr::Struct { name, fields } => {
+            let Some(declared) = enums.structs.get(name).cloned() else {
+                diags.push(Diagnostic {
+                    message: format!("`{name}` is not a declared struct"),
+                    span: e.span,
+                });
+                for (_, value) in fields {
+                    check_expr(value, enums, env, diags);
+                }
+                return None;
+            };
+            // A struct literal is the product of its declared fields: every
+            // field is present exactly once, in declaration order, with the
+            // declared type.
+            let written: Vec<&String> = fields.iter().map(|(field, _)| field).collect();
+            let expected: Vec<&String> = declared.iter().map(|(field, _)| field).collect();
+            if written != expected {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{name}` has fields {}; the literal writes {}",
+                        expected.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", "),
+                        if written.is_empty() {
+                            "none".to_string()
+                        } else {
+                            written.iter().map(|f| format!("`{f}`")).collect::<Vec<_>>().join(", ")
+                        }
+                    ),
+                    span: e.span,
+                });
+            }
+            for (field, value) in fields {
+                let actual = check_expr(value, enums, env, diags);
+                if let (Some(actual), Some((_, expected))) =
+                    (actual, declared.iter().find(|(declared, _)| declared == field))
+                    && !fits(expected, &actual, &value.kind)
+                {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "field `{field}` of `{name}` has type {actual}; the declaration \
+                             says {expected}"
+                        ),
+                        span: value.span,
+                    });
+                }
+            }
+            Some(Type::Named(name.clone()))
+        }
+        Expr::Select { ty, arms } => {
+            // `select T { c => p, … }` builds the consumer of T. Each arm
+            // covers one shape of T, binds that shape's components, and runs
+            // a command; the whole expression is dual to T.
+            let Some(resolved) = enums.resolve(&ty.kind) else {
+                diags.push(Diagnostic {
+                    message: "`select` needs a declared type or an explicit connective".into(),
+                    span: ty.span,
+                });
+                return None;
+            };
+            for arm in arms {
+                env.push();
+                bind_select_arm(&resolved, &arm.pattern, enums, env, e.span, diags);
+                let command = check_expr(&arm.command, enums, env, diags);
+                if let Some(command) = command
+                    && command != Type::Bottom
+                    && command != Type::One
+                {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "a `select` arm is a command; this one has type {command}"
+                        ),
+                        span: arm.command.span,
+                    });
+                }
+                env.pop();
+            }
+            Some(resolved.dual())
+        }
+        Expr::Pair(items) if items.is_empty() => Some(Type::One),
         Expr::Pair(items) => items
             .iter()
-            .map(|item| check_expr(item, env, diags))
+            .map(|item| check_expr(item, enums, env, diags))
             .collect::<Option<Vec<_>>>()
             .map(|types| {
                 types.into_iter().rev().reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
@@ -605,28 +1239,19 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             env.push();
             for expr in exprs {
                 if let Expr::Let { name, ty, value, body: None } = &expr.kind {
-                    let actual = check_expr(value, env, diags);
-                    let annotation = ty.as_ref().and_then(|ty| lower_type(ty).ok());
-                    if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
-                        && &actual != annotation
-                    {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "`let {name}` is annotated as {annotation}; initializer has type {actual}"
-                            ),
-                            span: value.span,
-                        });
-                    }
-                    env.define(name, annotation.or(actual).unwrap_or(Type::One));
+                    // A bodyless `let` scopes over the rest of the block; the
+                    // binding itself is checked exactly as the expression form.
+                    let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
+                    env.define(name, binding_ty);
                 } else {
-                    result = check_expr(expr, env, diags);
+                    result = check_expr(expr, enums, env, diags);
                 }
             }
             env.pop();
             result
         }
         Expr::ErrorProp { expr, continuation } => {
-            check_expr(expr, env, diags);
+            check_expr(expr, enums, env, diags);
             match continuation {
                 Some(name) => {
                     if env.lookup(name).is_none() {
@@ -647,24 +1272,61 @@ fn check_expr(e: &Node<Expr>, env: &mut Env, diags: &mut Vec<Diagnostic>) -> Opt
             }
             None
         }
-        Expr::Dual { body } => check_expr(body, env, diags),
-        Expr::Interaction { left, right } => {
-            check_expr(left, env, diags);
-            check_expr(right, env, diags)
-        }
-        Expr::Service { agent, continuations } => {
-            check_expr(agent, env, diags);
-            for continuation in continuations {
-                check_expr(continuation, env, diags);
+        Expr::Cut { value, consumer } => {
+            // `v @ k` is a command: it sends `v` to the consumer `k` and does
+            // not return, so its type is bottom. The consumer must be a
+            // consumer of exactly what the value produces.
+            let value_ty = check_expr(value, enums, env, diags);
+            let consumer_ty = check_expr(consumer, enums, env, diags);
+            if let Some(consumer_ty) = &consumer_ty
+                && consumer_ty != &Type::One
+            {
+                if !consumer_ty.is_negative() && !matches!(consumer_ty, Type::Dual(_)) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`@` sends a value to a consumer; the right-hand side has type \
+                             {consumer_ty}, which is not one"
+                        ),
+                        span: consumer.span,
+                    });
+                } else if let Some(value_ty) = &value_ty
+                    && !fits(&consumer_ty.dual(), value_ty, &value.kind)
+                {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "consumer accepts {}; the value has type {value_ty}",
+                            consumer_ty.dual()
+                        ),
+                        span: value.span,
+                    });
+                }
             }
-            None
+            Some(Type::Bottom)
         }
-        Expr::Job { agent, values } => {
-            check_expr(agent, env, diags);
-            for value in values {
-                check_expr(value, env, diags);
+        Expr::Mu { value_params, continuation_params, body, .. } => {
+            env.push();
+            for p in value_params.iter().chain(continuation_params.iter()) {
+                if let Some(ty) = enums.resolve(&p.ty) {
+                    env.define(&p.name, ty);
+                }
             }
-            None
+            let result = check_expr(body, enums, env, diags);
+            env.pop();
+            // A local `mu` captures the ambient continuation, so its value is
+            // whatever that continuation receives: `mu f() | (k: -A) { … }`
+            // has type `A`. With value parameters, or with a row whose
+            // positions disagree, there is no single such type.
+            let captured = continuation_params
+                .iter()
+                .map(|p| enums.resolve(&p.ty).map(|ty| ty.dual()))
+                .collect::<Option<Vec<_>>>()
+                .filter(|types| {
+                    value_params.is_empty()
+                        && !types.is_empty()
+                        && types.windows(2).all(|pair| pair[0] == pair[1])
+                })
+                .map(|mut types| types.remove(0));
+            captured.or(result)
         }
         _ => None,
     }
@@ -680,6 +1342,349 @@ mod tests {
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         check_program(&prog)
+    }
+
+    #[test]
+    fn struct_literal_must_write_every_declared_field_in_order() {
+        assert!(
+            check(
+                "struct Direction { left: i64, right: i64 }
+                 fn f() -> i64 { use_it(Direction { left: 1, right: 2 }) }"
+            )
+            .is_ok()
+        );
+
+        let missing = check(
+            "struct Direction { left: i64, right: i64 }
+             fn f() -> i64 { use_it(Direction { left: 1 }) }",
+        )
+        .unwrap_err();
+        assert!(
+            missing.iter().any(|d| d.message.contains("the literal writes `left`")),
+            "{missing:?}"
+        );
+
+        let reordered = check(
+            "struct Direction { left: i64, right: i64 }
+             fn f() -> i64 { use_it(Direction { right: 2, left: 1 }) }",
+        )
+        .unwrap_err();
+        assert!(
+            reordered.iter().any(|d| d.message.contains("the literal writes `right`, `left`")),
+            "{reordered:?}"
+        );
+    }
+
+    #[test]
+    fn struct_pattern_must_write_every_declared_field_in_order() {
+        assert!(
+            check(
+                "struct D { left: i64, right: i64 }
+                 fn f(d: D) -> i64 {
+                     match d {
+                         D { left: a, right: b } => a,
+                         _ => 0,
+                     }
+                 }"
+            )
+            .is_ok()
+        );
+
+        let diags = check(
+            "struct D { left: i64, right: i64 }
+             fn f(d: D) -> i64 {
+                 match d {
+                     D { right: b, left: a } => a,
+                     _ => 0,
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("the pattern writes `right`, `left`")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn struct_pattern_field_types_are_checked() {
+        let diags = check(
+            "struct D { left: i64, right: i64 }
+             fn f(d: D) -> i64 {
+                 match d {
+                     D { left: 1, right: 'c' } => 0,
+                     _ => 0,
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("pattern has type +char")), "{diags:?}");
+    }
+
+    #[test]
+    fn struct_pattern_cannot_match_another_type() {
+        let diags = check(
+            "struct D { left: i64 }
+             fn f(x: +i64) -> i64 {
+                 match x {
+                     D { left: a } => a,
+                     _ => 0,
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("cannot match a scrutinee of type +i64")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn struct_literal_field_types_are_checked() {
+        let diags = check(
+            "struct Direction { left: i64, right: i64 }
+             fn f() -> i64 { use_it(Direction { left: 1, right: \"two\" }) }",
+        )
+        .unwrap_err();
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("field `right` of `Direction` has type +String")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn undeclared_struct_literal_is_rejected() {
+        let diags = check("fn f() -> i64 { use_it(Nope { a: 1 }) }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`Nope` is not a declared struct")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn enum_variant_without_payload_is_a_value() {
+        assert!(check("enum Color { Red } fn f() -> Color { Color::Red }").is_ok());
+        assert!(check("enum Color { Red } fn f() -> Color { Red }").is_ok());
+    }
+
+    #[test]
+    fn enum_variant_with_payload_is_a_value_only_when_applied() {
+        // An integer literal has type `+i64`.
+        assert!(check("enum R { Some(i64) } fn f() -> R { R::Some(1) }").is_ok());
+        let diags = check("enum R { Some(i64) } fn f() -> R { R::Some }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("carries 1 payload value(s)")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn enum_variant_payload_arity_is_checked() {
+        let diags = check("enum R { Both(i64, i64) } fn f() -> R { R::Both(1) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the expression supplies 1")), "{diags:?}");
+    }
+
+    #[test]
+    fn enum_variant_payload_type_is_checked() {
+        let diags = check("enum R { Some(i64) } fn f() -> R { R::Some(\"text\") }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("payload of `R::Some` has type +String")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn declaration_name_is_not_a_value() {
+        for source in [
+            "enum Color { Red } fn f() -> Color { Color }",
+            "struct S { a: i32 } fn f() -> i32 { S }",
+        ] {
+            let diags = check(source).unwrap_err();
+            assert!(
+                diags.iter().any(|d| d.message.contains("is a declaration name, not a value")),
+                "{source}: {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn select_arm_binds_the_variant_payload() {
+        assert!(
+            check(
+                "enum R { Some(i64), None }
+                 fn k(ok: -i64, absent: -i64) <- R {
+                     select R {
+                         value @ ok => Some(value),
+                         0 @ absent => None,
+                     }
+                 }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn select_arm_must_bind_a_declared_payload() {
+        let diags = check(
+            "enum R { Some(i64), None }
+             fn k(ok: -i64, absent: -i64) <- R {
+                 select R {
+                     0 @ ok => Some,
+                     0 @ absent => None,
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("this shape has 1 component(s)")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn select_arm_cannot_bind_a_payload_a_variant_does_not_have() {
+        let diags = check(
+            "enum R { None }
+             fn k(absent: -i32) <- R {
+                 select R {
+                     0 @ absent => None(value),
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("this shape has 0 component(s)")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_continuation_is_cut_against_not_called() {
+        let diags = check("mu route(x: +i32) | (k: -i32) { k(x) }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("is a consumer of type -i32, not a function")
+                && d.message.contains("value @ k")),
+            "{diags:?}"
+        );
+        assert!(check("mu route(x: +i32) | (k: -i32) { x @ k }").is_ok());
+    }
+
+    #[test]
+    fn exit_is_a_continuation() {
+        let diags = check("fn main() -> i32 { EXIT(0) }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`EXIT` is a consumer of type -i32")),
+            "{diags:?}"
+        );
+        assert!(check("fn main() -> i32 { 0 @ EXIT }").is_ok());
+    }
+
+    #[test]
+    fn a_cut_is_a_command() {
+        // A cut has type ⊥: it produces nothing and control does not return,
+        // so a branch that ends in one leaves the `if` type to the other.
+        let ok = check(
+            "fn parse(input: +String, err: -String) -> i64 {
+                 if str_len(input) > 0 { 1 } else { \"empty\" @ err }
+             }",
+        );
+        assert!(ok.is_ok(), "{ok:?}");
+    }
+
+    #[test]
+    fn a_cut_needs_a_consumer_on_the_right() {
+        let diags = check("fn f(x: +i32, y: +i32) -> i32 { x @ y }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("which is not one")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_cut_checks_what_the_consumer_accepts() {
+        let diags = check("mu route(x: +String) | (k: -i32) { x @ k }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("consumer accepts +i32")
+                && d.message.contains("the value has type +String")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn applying_a_negative_function_to_a_continuation_is_application() {
+        // Supplying a continuation to a negative function is an ordinary
+        // call: the declared row says the argument is a consumer.
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 fn code(return: -i64) <- Color {
+                     select Color {
+                         0 @ return => Red,
+                         1 @ return => Green,
+                     }
+                 }
+                 fn main() -> i64 {
+                     mu ask() | (answer: -i64) { Color::Green @ code(answer) }
+                 }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn continuation_row_accepts_the_declared_row() {
+        assert!(
+            check(
+                "mu route(x: +i32) | (k: -i32) { x @ k }
+                 fn main() -> i32 { mu run() | (out: -i32) { route(1, out) } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn continuation_row_rejects_an_incompatible_continuation_type() {
+        let diags = check(
+            "mu route(x: +i32) | (k: -i32) { x @ k }
+             fn main() -> i32 { mu run() | (out: -bool) { route(1, out) } }",
+        )
+        .unwrap_err();
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("continuation row mismatch")
+                    && d.message.contains("-bool")),
+            "diags: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn continuation_row_is_positional() {
+        // The row is ordered: swapping two continuations of different types
+        // is rejected even though both types appear in the declaration.
+        let diags = check(
+            "mu route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
+             fn main() -> i32 {
+                 mu run() | (first: -i32, second: -bool) { route(0, true, second, first) }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().filter(|d| d.message.contains("continuation row mismatch")).count() == 2,
+            "both swapped positions should be rejected: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn continuation_row_rejects_extra_arguments() {
+        let diags = check(
+            "mu route(x: +i32) | (k: -i32) { x @ k }
+             fn main() -> i32 { mu run() | (out: -i32) { route(1, out, out) } }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("continuation row of 1")),
+            "diags: {diags:?}"
+        );
     }
 
     #[test]
@@ -775,5 +1780,50 @@ mod tests {
     fn range_endpoints_checked() {
         let diags = check("fn f(c: +char) -> i64 { match c { 'a'..=3 => 1 } }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("pattern has type")));
+    }
+
+    #[test]
+    fn select_expression_has_dual_named_type() {
+        let r = check(
+            "enum Color { Red, Green, Blue }
+            fn k(return: -i32) <- Color {
+                select Color {
+                    0 @ return => Red,
+                    1 @ return => Green,
+                    2 @ return => Blue,
+                }
+            }",
+        );
+        assert!(r.is_ok(), "unexpected diagnostics: {r:?}");
+    }
+
+    #[test]
+    fn select_arm_must_be_a_command() {
+        let diags = check(
+            "enum Color { Red, Green }
+            fn k(return: -i32) <- Color {
+                select Color {
+                    0 => Red,
+                    1 @ return => Green,
+                }
+            }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`select` arm is a command")), "{diags:?}");
+    }
+
+    #[test]
+    fn select_arm_must_cover_a_shape_of_the_type() {
+        let diags = check(
+            "enum Color { Red, Green }
+            fn k(return: -i32) <- Color {
+                select Color {
+                    0 @ return => (a, b),
+                    1 @ return => Green,
+                }
+            }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
     }
 }

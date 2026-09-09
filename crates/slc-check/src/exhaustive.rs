@@ -11,14 +11,57 @@ pub struct Diagnostic {
     pub span: Span,
 }
 
+/// The `enum` declarations of a program: their variants, and how many payload
+/// values each variant carries.
+#[derive(Debug, Default)]
+pub struct EnumInfo {
+    /// Every declared type name, so a `select` over an undeclared one is
+    /// distinguishable from one over a product.
+    declared: std::collections::HashSet<String>,
+    variants: std::collections::HashMap<String, Vec<String>>,
+    /// Fully qualified label → payload arity.
+    arity: std::collections::HashMap<String, usize>,
+    /// Unqualified variant name → its label, when only one enum declares it.
+    unqualified: std::collections::HashMap<String, Option<String>>,
+}
+
+impl EnumInfo {
+    fn get(&self, name: &str) -> Option<&Vec<String>> {
+        self.variants.get(name)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.variants.iter()
+    }
+
+    /// The payload arity of a variant path or unambiguous variant name.
+    fn payload_arity(&self, name: &str) -> Option<usize> {
+        if let Some(arity) = self.arity.get(name) {
+            return Some(*arity);
+        }
+        let label = self.unqualified.get(name)?.as_ref()?;
+        self.arity.get(label).copied()
+    }
+}
+
 /// Check all match expressions in a program for exhaustiveness.
 pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
-    // Collect enum declarations: name -> set of variant names.
-    let mut enums: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
+    let mut enums = EnumInfo::default();
     for d in &p.decls {
+        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } = &d.kind {
+            enums.declared.insert(name.clone());
+        }
         if let Decl::Enum { name, variants } = &d.kind {
-            enums.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
+            enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
+            for (variant, payload) in variants {
+                let label = format!("{name}::{variant}");
+                enums.arity.insert(label.clone(), payload.len());
+                enums
+                    .unqualified
+                    .entry(variant.clone())
+                    .and_modify(|existing| *existing = None)
+                    .or_insert(Some(label));
+            }
         }
     }
 
@@ -29,11 +72,7 @@ pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_node_decl(
-    d: &Node<Decl>,
-    enums: &std::collections::HashMap<String, Vec<String>>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_node_decl(d: &Node<Decl>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Mu { body, .. } => check_expr(body, enums, diags),
@@ -42,11 +81,7 @@ fn check_node_decl(
     }
 }
 
-fn check_expr(
-    e: &Node<Expr>,
-    enums: &std::collections::HashMap<String, Vec<String>>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
     match &e.kind {
         Expr::Match { scrutinee, arms } => {
             check_match(scrutinee, arms, enums, e.span, diags);
@@ -58,7 +93,76 @@ fn check_expr(
                 check_expr(&arm.body, enums, diags);
             }
         }
+        Expr::Select { ty, arms } => {
+            // A `select` covers each shape of its type exactly once: one arm
+            // per variant of an `enum`, and exactly one for a product.
+            match written_type_name(&ty.kind) {
+                Some(name) if enums.get(&name).is_some() => {
+                    let variants = enums.get(&name).cloned().unwrap_or_default();
+                    let mut seen: HashSet<String> = HashSet::new();
+                    for arm in arms {
+                        let Some(variant) = arm_variant(&arm.pattern) else {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`select {name}` arm must name a variant of `{name}`"
+                                ),
+                                span: e.span,
+                            });
+                            continue;
+                        };
+                        if !variants.contains(&variant) {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`select {name}` refers to unknown variant `{variant}`"
+                                ),
+                                span: e.span,
+                            });
+                        } else if !seen.insert(variant.clone()) {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`select {name}` has duplicate arm for `{variant}`"
+                                ),
+                                span: e.span,
+                            });
+                        }
+                    }
+                    let missing: Vec<String> =
+                        variants.iter().filter(|v| !seen.contains(*v)).cloned().collect();
+                    if !missing.is_empty() {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "non-exhaustive `select {name}`: missing variants {}",
+                                missing.join(", ")
+                            ),
+                            span: e.span,
+                        });
+                    }
+                }
+                // A bare name that is not declared is not a type.
+                Some(name) if !enums.declared.contains(&name) => {
+                    diags.push(Diagnostic {
+                        message: format!("`select {name}` refers to an unknown type"),
+                        span: e.span,
+                    });
+                }
+                // A product has one shape, so it has exactly one arm.
+                _ if arms.len() != 1 => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "a `select` over a product has exactly one arm; this one has {}",
+                            arms.len()
+                        ),
+                        span: e.span,
+                    });
+                }
+                _ => {}
+            }
+            for arm in arms {
+                check_expr(&arm.command, enums, diags);
+            }
+        }
         Expr::Lambda { body, .. } => check_expr(body, enums, diags),
+        Expr::Mu { body, .. } => check_expr(body, enums, diags),
         Expr::Call { callee, args } => {
             check_expr(callee, enums, diags);
             for a in args {
@@ -101,24 +205,12 @@ fn check_expr(
                 check_expr(end, enums, diags);
             }
         }
-        Expr::Dual { body } | Expr::ErrorProp { expr: body, .. } => {
+        Expr::ErrorProp { expr: body, .. } => {
             check_expr(body, enums, diags);
         }
-        Expr::Interaction { left, right } => {
-            check_expr(left, enums, diags);
-            check_expr(right, enums, diags);
-        }
-        Expr::Service { agent, continuations } => {
-            check_expr(agent, enums, diags);
-            for k in continuations {
-                check_expr(k, enums, diags);
-            }
-        }
-        Expr::Job { agent, values } => {
-            check_expr(agent, enums, diags);
-            for v in values {
-                check_expr(v, enums, diags);
-            }
+        Expr::Cut { value, consumer } => {
+            check_expr(value, enums, diags);
+            check_expr(consumer, enums, diags);
         }
         Expr::Block(exprs) => {
             for ex in exprs {
@@ -129,16 +221,109 @@ fn check_expr(
     }
 }
 
-fn check_match(
-    _scrutinee: &Node<Expr>,
-    arms: &[MatchArm],
-    enums: &std::collections::HashMap<String, Vec<String>>,
+/// Does this pattern match every value of its type? A sum needs one arm per
+/// variant, but a product has a single shape, so one arm covers it.
+fn is_irrefutable(pattern: &Pattern, enums: &EnumInfo) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+        // A name that is not a variant is a binding, so it matches anything.
+        Pattern::Ident(name) => enums.payload_arity(name).is_none(),
+        Pattern::Binding { pattern, .. } => is_irrefutable(pattern, enums),
+        Pattern::Tuple(items) => items.iter().all(|item| is_irrefutable(item, enums)),
+        Pattern::Struct { name, fields } => {
+            enums.declared.contains(name)
+                && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
+        }
+        _ => false,
+    }
+}
+
+/// The name written as a type, if it is a bare declaration name.
+fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
+    match ty {
+        slc_syntax::ast::TypeExpr::Base(name) => Some(name.clone()),
+        slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
+        _ => None,
+    }
+}
+
+/// The variant a `select` arm's pattern selects, if it names one.
+fn arm_variant(pattern: &Pattern) -> Option<String> {
+    match pattern {
+        Pattern::Ident(name) => Some(name.clone()),
+        Pattern::Enum { name, variant, .. } => {
+            Some(if variant.is_empty() { name.clone() } else { variant.clone() })
+        }
+        _ => None,
+    }
+}
+
+/// A variant pattern must bind exactly the payload its variant declares.
+fn check_pattern_arity(
+    pattern: &Pattern,
+    enums: &EnumInfo,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // An unguarded wildcard always covers everything.
-    if arms.iter().any(|a| matches!(a.pattern, Pattern::Wildcard) && a.guard.is_none()) {
+    match pattern {
+        Pattern::Enum { name, variant, fields } => {
+            let written =
+                if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
+            if let Some(arity) = enums.payload_arity(&written)
+                && fields.len() != arity
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "variant `{written}` carries {arity} payload value(s); the pattern binds {}",
+                        fields.len()
+                    ),
+                    span,
+                });
+            }
+            for field in fields {
+                check_pattern_arity(field, enums, span, diags);
+            }
+        }
+        Pattern::Binding { pattern, .. } => check_pattern_arity(pattern, enums, span, diags),
+        Pattern::Or(alternatives) => {
+            for alternative in alternatives {
+                check_pattern_arity(alternative, enums, span, diags);
+            }
+        }
+        Pattern::Tuple(items) => {
+            for item in items {
+                check_pattern_arity(item, enums, span, diags);
+            }
+        }
+        Pattern::List { items, rest } => {
+            for item in items.iter().chain(rest.iter().map(|r| r.as_ref())) {
+                check_pattern_arity(item, enums, span, diags);
+            }
+        }
+        Pattern::Struct { fields, .. } => {
+            for (_, field) in fields {
+                check_pattern_arity(field, enums, span, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn check_match(
+    _scrutinee: &Node<Expr>,
+    arms: &[MatchArm],
+    enums: &EnumInfo,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // An unguarded irrefutable arm covers everything: a wildcard, a plain
+    // binding, or the single shape of a product.
+    if arms.iter().any(|a| a.guard.is_none() && is_irrefutable(&a.pattern, enums)) {
         return;
+    }
+
+    for arm in arms {
+        check_pattern_arity(&arm.pattern, enums, span, diags);
     }
 
     // Collect enum patterns used: Name(variant, _).
@@ -271,5 +456,123 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn variant_pattern_must_bind_the_declared_payload() {
+        let diags = check(
+            "enum Shape { Point, Circle(i64) }
+             fn f(s: Shape) -> i64 {
+                 match s {
+                     Point => 0,
+                     Circle(r, extra) => r,
+                 }
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d
+                .message
+                .contains("variant `Circle` carries 1 payload value(s); the pattern binds 2")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn variant_pattern_with_the_declared_payload_is_accepted() {
+        let r = check(
+            "enum Shape { Point, Circle(i64) }
+             fn f(s: Shape) -> i64 {
+                 match s {
+                     Point => 0,
+                     Circle(r) => r,
+                 }
+             }",
+        );
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn select_exhaustive_all_variants() {
+        assert!(
+            check(
+                "enum Color { Red, Green, Blue }
+             fn main() -> i32 {
+                 let cont = select Color {
+                     EXIT(0) => Red,
+                     EXIT(1) => Green,
+                     EXIT(2) => Blue,
+                 };
+                 cont(Color::Red)
+             }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn select_missing_variant_rejected() {
+        let r = check(
+            "enum Color { Red, Green, Blue }
+             fn main() -> i32 {
+                 let cont = select Color {
+                     EXIT(0) => Red,
+                     EXIT(1) => Green,
+                 };
+                 cont(Color::Red)
+             }",
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("Blue"));
+    }
+
+    #[test]
+    fn select_duplicate_variant_rejected() {
+        let r = check(
+            "enum Color { Red, Green, Blue }
+             fn main() -> i32 {
+                 let cont = select Color {
+                     EXIT(0) => Red,
+                     EXIT(1) => Red,
+                     EXIT(2) => Blue,
+                 };
+                 cont(Color::Red)
+             }",
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().iter().any(|d| d.message.contains("duplicate arm")));
+    }
+
+    #[test]
+    fn select_unknown_variant_rejected() {
+        let r = check(
+            "enum Color { Red, Green, Blue }
+             fn main() -> i32 {
+                 let cont = select Color {
+                     EXIT(0) => Red,
+                     EXIT(1) => Green,
+                     EXIT(2) => Purple,
+                 };
+                 cont(Color::Red)
+             }",
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().iter().any(|d| d.message.contains("unknown variant")));
+    }
+
+    #[test]
+    fn select_unknown_enum_rejected() {
+        let r = check(
+            "fn main() -> i32 {
+                 let cont = select Color {
+                     EXIT(0) => Red,
+                     EXIT(1) => Green,
+                     EXIT(2) => Blue,
+                 };
+                 cont(Color::Red)
+             }",
+        );
+        assert!(r.is_err());
+        assert!(r.unwrap_err().iter().any(|d| d.message.contains("unknown type")));
     }
 }

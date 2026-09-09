@@ -8,7 +8,7 @@
 
 use slc_core::types::Type;
 use slc_core::typing::{TypeError, Unification};
-use slc_syntax::ast::{Decl, Node, Program};
+use slc_syntax::ast::{Decl, Expr, Node, Program};
 use slc_syntax::lower::{LowerError, lower_type};
 use slc_syntax::token::Span;
 use std::collections::HashMap;
@@ -41,10 +41,30 @@ impl From<TypeError> for InferenceError {
 pub fn infer_program(p: &Program) -> Result<Vec<DeclarationType>, Vec<Diagnostic>> {
     let mut out = Vec::new();
     let mut diags = Vec::new();
+    let declared_types: Vec<String> = p
+        .decls
+        .iter()
+        .filter_map(|d| match &d.kind {
+            Decl::Struct { name, .. } | Decl::Enum { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
     for d in &p.decls {
-        match infer_decl(d) {
+        match infer_decl(d, &declared_types) {
             Ok(ty) => out.push(ty),
             Err(e) => diags.push(Diagnostic { message: format!("inference: {e}"), span: d.span }),
+        }
+        // Each variant is a declaration of its own: a value of the enum, or a
+        // constructor from its payload to the enum.
+        if let Decl::Enum { name, variants } = &d.kind {
+            for (variant, payload) in variants {
+                match variant_type(name, payload) {
+                    Ok(ty) => out.push(DeclarationType { name: format!("{name}::{variant}"), ty }),
+                    Err(e) => {
+                        diags.push(Diagnostic { message: format!("inference: {e}"), span: d.span })
+                    }
+                }
+            }
         }
     }
     if diags.is_empty() { Ok(out) } else { Err(diags) }
@@ -56,9 +76,87 @@ pub struct DeclarationType {
     pub ty: Type,
 }
 
-fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
+/// Infer the type of a surface expression using the declaration
+/// environment. Expression inference is currently structural and
+/// annotation-directed; it handles the final `select` form explicitly.
+pub fn infer_expr(
+    e: &Node<Expr>,
+    declarations: &HashMap<String, Type>,
+) -> Result<Type, InferenceError> {
+    match &e.kind {
+        Expr::Select { ty, .. } => {
+            // The consumer of a type is dual to it.
+            let consumed = match &ty.kind {
+                slc_syntax::ast::TypeExpr::Base(name) => {
+                    declarations.get(name).cloned().ok_or_else(|| {
+                        InferenceError::Diag(vec![Diagnostic {
+                            message: format!("`select {name}` refers to an unknown type"),
+                            span: e.span,
+                        }])
+                    })?
+                }
+                other => lower_type(other)?,
+            };
+            Ok(consumed.dual())
+        }
+        Expr::Int(_) => Ok(Type::Pos(slc_core::types::Base::I32)),
+        Expr::Bool(_) => Ok(Type::Pos(slc_core::types::Base::Bool)),
+        Expr::Str(_) => Ok(Type::Pos(slc_core::types::Base::Str)),
+        Expr::Char(_) => Ok(Type::Pos(slc_core::types::Base::Char)),
+        Expr::Ident(name) => declarations.get(name).cloned().ok_or_else(|| {
+            InferenceError::Diag(vec![Diagnostic {
+                message: format!("inference: unknown declaration `{name}`"),
+                span: e.span,
+            }])
+        }),
+        _ => Ok(Type::Var(usize::MAX)),
+    }
+}
+
+/// The type of an enum variant. A variant with no payload is a value of the
+/// declaration; a variant with a payload is a constructor from the packed
+/// payload — a right-nested tensor when there is more than one — to it.
+pub fn variant_type(
+    declaration: &str,
+    payload: &[slc_syntax::ast::TypeExpr],
+) -> Result<Type, InferenceError> {
+    let declared = Type::Named(declaration.to_string());
+    let packed = pack(payload)?;
+    Ok(match packed {
+        None => declared,
+        Some(payload) => Type::Fun(Box::new(payload), Box::new(declared)),
+    })
+}
+
+/// The tensor representation of a struct declaration: the right-nested
+/// product of its field types. A struct with no fields is the tensor unit.
+pub fn struct_representation(
+    fields: &[(String, slc_syntax::ast::TypeExpr)],
+) -> Result<Type, InferenceError> {
+    let types: Vec<slc_syntax::ast::TypeExpr> = fields.iter().map(|(_, ty)| ty.clone()).collect();
+    Ok(pack(&types)?.unwrap_or(Type::One))
+}
+
+/// Pack a list of declared types into one type: nothing, the single type, or
+/// a right-nested tensor.
+fn pack(types: &[slc_syntax::ast::TypeExpr]) -> Result<Option<Type>, InferenceError> {
+    let mut packed: Option<Type> = None;
+    for ty in types.iter().rev() {
+        let ty = lower_type(ty)?;
+        packed = Some(match packed {
+            None => ty,
+            Some(rest) => Type::Tensor(Box::new(ty), Box::new(rest)),
+        });
+    }
+    Ok(packed)
+}
+
+fn infer_decl(
+    d: &Node<Decl>,
+    declared_types: &[String],
+) -> Result<DeclarationType, InferenceError> {
     match &d.kind {
-        Decl::Fn { name, type_params, params, return_type, body: _ } => {
+        Decl::Fn { name, type_params, params, return_type, polarity, .. } => {
             let mut u = Unification::new();
             let mut vars: HashMap<&str, Type> = HashMap::new();
             for tp in type_params {
@@ -67,29 +165,19 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
 
             let mut inputs = Vec::new();
             for p in params {
-                let ty = if let slc_syntax::ast::TypeExpr::Positive(inner) = &p.ty
-                    && let slc_syntax::ast::TypeExpr::Base(name) = &inner.kind
-                    && let Some(ty) = vars.get(name.as_str())
-                {
-                    ty.clone()
-                } else {
-                    lower_type(&p.ty)?
-                };
+                let ty = generic_or_lower(&p.ty, &vars)?;
+                let ty =
+                    if vars.is_empty() { declaration_or_lower(&p.ty, declared_types)? } else { ty };
                 let ty = u.apply(&ty);
                 inputs.push(u.unify_with_polarity(&ty, &ty, !p.is_continuation)?);
             }
 
             let output = match return_type {
-                Some(ty) => {
-                    let ty = if let slc_syntax::ast::TypeExpr::Base(name) = ty
-                        && let Some(ty) = vars.get(name.as_str())
-                    {
-                        ty.clone()
-                    } else {
-                        lower_type(ty)?
-                    };
-                    u.apply(&ty)
-                }
+                Some(ty) => u.apply(&if vars.is_empty() {
+                    declaration_or_lower(ty, declared_types)?
+                } else {
+                    generic_or_lower(ty, &vars)?
+                }),
                 None => u.fresh_var(),
             };
 
@@ -97,6 +185,11 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
                 .into_iter()
                 .rev()
                 .fold(output, |acc, input| Type::Fun(Box::new(input), Box::new(acc)));
+            let ty = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
+                ty.dual()
+            } else {
+                ty
+            };
             let ty = if type_params.is_empty() {
                 u.resolve_or_cannot_infer(&ty, &format!("fn {name}"))?
             } else {
@@ -104,12 +197,16 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
             };
             Ok(DeclarationType { name: name.clone(), ty })
         }
-        Decl::Mu { name, params, .. } => {
+        Decl::Mu { name, value_params, continuation_params, .. } => {
             let mut u = Unification::new();
             let mut inputs = Vec::new();
-            for p in params {
+            for p in value_params {
                 let ty = lower_type(&p.ty)?;
-                inputs.push(u.unify_with_polarity(&ty, &ty, !p.is_continuation)?);
+                inputs.push(u.unify_with_polarity(&ty, &ty, true)?);
+            }
+            for p in continuation_params {
+                let ty = lower_type(&p.ty)?;
+                inputs.push(u.unify_with_polarity(&ty, &ty, false)?);
             }
             let output = Type::Bottom;
             let ty = inputs
@@ -120,12 +217,48 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
             Ok(DeclarationType { name: name.clone(), ty })
         }
         Decl::Struct { name, .. } | Decl::Enum { name, .. } => {
-            Ok(DeclarationType { name: name.clone(), ty: Type::One })
+            Ok(DeclarationType { name: name.clone(), ty: Type::Named(name.clone()) })
         }
         Decl::Const { name, ty, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
         }
     }
+}
+
+fn generic_or_lower(
+    ty: &slc_syntax::ast::TypeExpr,
+    vars: &HashMap<&str, Type>,
+) -> Result<Type, InferenceError> {
+    if let slc_syntax::ast::TypeExpr::Base(name) = ty
+        && let Some(ty) = vars.get(name.as_str())
+    {
+        return Ok(ty.clone());
+    }
+    if let slc_syntax::ast::TypeExpr::Positive(inner) = ty
+        && let slc_syntax::ast::TypeExpr::Base(name) = &inner.kind
+        && let Some(ty) = vars.get(name.as_str())
+    {
+        return Ok(ty.clone());
+    }
+    if let slc_syntax::ast::TypeExpr::Negative(inner) = ty
+        && let slc_syntax::ast::TypeExpr::Base(name) = &inner.kind
+        && let Some(ty) = vars.get(name.as_str())
+    {
+        return Ok(ty.dual());
+    }
+    Ok(lower_type(ty)?)
+}
+
+fn declaration_or_lower(
+    ty: &slc_syntax::ast::TypeExpr,
+    declared_types: &[String],
+) -> Result<Type, InferenceError> {
+    if let slc_syntax::ast::TypeExpr::Base(name) = ty
+        && declared_types.iter().any(|declared| declared == name)
+    {
+        return Ok(Type::Named(name.clone()));
+    }
+    Ok(lower_type(ty)?)
 }
 
 impl std::fmt::Display for InferenceError {
@@ -157,6 +290,57 @@ mod tests {
     }
 
     #[test]
+    fn enum_declaration_and_variant_types_are_precise() {
+        let out = infer("enum Shape { Point, Circle(i64), Rect(i64, i64) }").unwrap();
+        let ty = |name: &str| {
+            out.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("{name}")).ty.clone()
+        };
+        assert_eq!(ty("Shape"), Type::Named("Shape".into()));
+        // A payload-free variant is a value of its declaration.
+        assert_eq!(ty("Shape::Point"), Type::Named("Shape".into()));
+        // A variant with a payload is a constructor from that payload.
+        assert_eq!(
+            ty("Shape::Circle"),
+            Type::Fun(Box::new(Type::Pos(Base::I64)), Box::new(Type::Named("Shape".into())))
+        );
+        // Several payload values are packed into one tensor.
+        assert_eq!(
+            ty("Shape::Rect"),
+            Type::Fun(
+                Box::new(Type::Tensor(
+                    Box::new(Type::Pos(Base::I64)),
+                    Box::new(Type::Pos(Base::I64))
+                )),
+                Box::new(Type::Named("Shape".into()))
+            )
+        );
+    }
+
+    #[test]
+    fn struct_declaration_lowers_to_a_tensor_of_its_fields() {
+        let fields = |source: &str| {
+            let p = parse(lex(source).unwrap()).unwrap();
+            match &p.decls[0].kind {
+                Decl::Struct { fields, .. } => fields.clone(),
+                other => panic!("expected a struct: {other:?}"),
+            }
+        };
+        assert_eq!(
+            struct_representation(&fields("struct D { left: i64, right: bool }")).unwrap(),
+            Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::Bool)))
+        );
+        assert_eq!(
+            struct_representation(&fields("struct One { only: i64 }")).unwrap(),
+            Type::Pos(Base::I64)
+        );
+        // The empty product is the tensor unit.
+        assert_eq!(struct_representation(&fields("struct Empty { }")).unwrap(), Type::One);
+        // The declaration itself keeps its opaque named type.
+        let out = infer("struct D { left: i64, right: bool }").unwrap();
+        assert_eq!(out[0].ty, Type::Named("D".into()));
+    }
+
+    #[test]
     fn fn_annotation_infers_function_type() {
         let out = infer("fn id(x: +i32) -> i32 { x }").unwrap();
         assert_eq!(
@@ -166,8 +350,61 @@ mod tests {
     }
 
     #[test]
+    fn negative_fn_infers_dual_function_type() {
+        let out = infer("fn k(x: -i32) <- i32 { x }").unwrap();
+        assert_eq!(
+            out[0].ty,
+            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
+        );
+    }
+
+    #[test]
+    fn negative_fn_inference_covers_row_arities() {
+        let empty = infer("fn k() <- i32 { 0 }").unwrap()[0].ty.clone();
+        assert_eq!(empty, Type::Neg(Base::I32));
+
+        let singleton = infer("fn k(ok: -i32) <- i32 { ok(0) }").unwrap()[0].ty.clone();
+        assert_eq!(
+            singleton,
+            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
+        );
+
+        let multi =
+            infer("fn k(ok: -i32, err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
+        assert_eq!(
+            multi,
+            Type::Fun(
+                Box::new(Type::Pos(Base::I32)),
+                Box::new(Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32))))
+            )
+        );
+    }
+
+    #[test]
+    fn negative_fn_output_is_dual_not_collapsed_by_polarity_unification() {
+        let out = infer("fn k(return: -i32) <- i32 { return(0) }").unwrap();
+        assert_eq!(
+            out[0].ty,
+            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
+        );
+
+        let out = infer("fn k(return: -i32) <- bool { return(true) }").unwrap();
+        assert_eq!(
+            out[0].ty,
+            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::Bool)))
+        );
+    }
+
+    #[test]
+    fn struct_and_enum_declarations_use_named_types() {
+        let out = infer("struct Point { x: i32, y: i32 } enum Color { Red, Green }").unwrap();
+        assert_eq!(out[0].ty, Type::Named("Point".into()));
+        assert_eq!(out[1].ty, Type::Named("Color".into()));
+    }
+
+    #[test]
     fn command_infers_parametric_type() {
-        let out = infer("mu step(x: +i32, to k: -i32) { k(x) }").unwrap();
+        let out = infer("mu step(x: +i32) | (k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
             Type::Fun(
@@ -184,16 +421,98 @@ mod tests {
     }
 
     #[test]
+    fn generic_negative_functions_preserve_declared_polarity() {
+        let out = infer("fn k<T>(ok: -T) <- T { ok(0) }").unwrap();
+        assert_eq!(out[0].ty, Type::Fun(Box::new(Type::Var(0).dual()), Box::new(Type::Var(0))));
+    }
+
+    #[test]
+    fn generic_function_bare_type_positions_instantiate_to_variables() {
+        let out = infer("fn k<T>(value: T) -> T { value }").unwrap();
+        assert_eq!(out[0].ty, Type::Fun(Box::new(Type::Var(0)), Box::new(Type::Var(0))));
+    }
+
+    #[test]
+    fn select_expression_infers_dual_of_enum() {
+        let p = parse(
+            lex("enum Color { Red, Green, Blue }
+            fn k(return: -i32) <- Color {
+                select Color {
+                    return(0) => Red,
+                    return(1) => Green,
+                    return(2) => Blue,
+                }
+            }")
+            .unwrap(),
+        )
+        .unwrap();
+        let decls = infer_program(&p).unwrap();
+        let declarations: HashMap<String, Type> =
+            decls.into_iter().map(|d| (d.name, d.ty)).collect();
+        let e = find_select(&p);
+        let ty = infer_expr(&e, &declarations).unwrap();
+        assert_eq!(ty, Type::Dual(Box::new(Type::Named("Color".into()))));
+    }
+
+    #[test]
+    fn select_expression_rejects_unknown_enum() {
+        let p = parse(
+            lex("fn k(return: -i32) <- i32 {
+                select Color {
+                    return(0) => Red,
+                }
+            }")
+            .unwrap(),
+        )
+        .unwrap();
+        let declarations = HashMap::new();
+        let e = find_select(&p);
+        let err = infer_expr(&e, &declarations).unwrap_err();
+        assert!(format!("{err}").contains("unknown type"), "{err}");
+    }
+
+    fn find_select(p: &Program) -> slc_syntax::ast::Node<slc_syntax::ast::Expr> {
+        fn walk(
+            e: &slc_syntax::ast::Node<slc_syntax::ast::Expr>,
+        ) -> Option<slc_syntax::ast::Node<slc_syntax::ast::Expr>> {
+            if matches!(e.kind, Expr::Select { .. }) {
+                return Some(slc_syntax::ast::Node { span: e.span, kind: e.kind.clone() });
+            }
+            match &e.kind {
+                Expr::Call { callee, args } => walk(callee).or_else(|| args.iter().find_map(walk)),
+                Expr::If { cond, then, otherwise } => walk(cond)
+                    .or_else(|| walk(then))
+                    .or_else(|| otherwise.as_deref().and_then(walk)),
+                Expr::Let { value, body, .. } => {
+                    walk(value).or_else(|| body.as_deref().and_then(walk))
+                }
+                Expr::Block(exprs) => exprs.iter().find_map(walk),
+                Expr::Select { .. } => unreachable!(),
+                _ => None,
+            }
+        }
+        p.decls
+            .iter()
+            .find_map(|d| {
+                let Decl::Fn { body, .. } = &d.kind else { return None };
+                walk(body)
+            })
+            .expect("select expression")
+    }
+
+    #[test]
     fn missing_return_cannot_infer() {
-        let out = infer("fn f(x: +i32) { x }");
-        assert!(out.is_err());
-        assert!(out.unwrap_err()[0].message.contains("cannot infer"));
+        let p = parse(lex("fn f(x: +i32) { x }").unwrap());
+        assert!(p.is_err(), "bare fn unexpectedly parsed: {p:?}");
     }
 
     #[test]
     fn polarity_constraint_rejects_wrong_polarity() {
-        let out = infer("fn f(x: -i32) { x }");
+        let tokens = lex("fn f(x: -i32) -> i32 { x }").unwrap();
+        let p = parse(tokens).unwrap();
+        let out = infer_program(&p);
         assert!(out.is_err());
-        assert!(out.unwrap_err()[0].message.contains("positive"));
+        let message = out.unwrap_err()[0].message.clone();
+        assert!(message.contains("positive"), "got: {message}");
     }
 }

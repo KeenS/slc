@@ -47,6 +47,11 @@ fn check_dangling_continuations(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
                 check_dangling_continuations(&arm.body, diags);
             }
         }
+        Expr::Select { arms, .. } => {
+            for arm in arms {
+                check_dangling_continuations(&arm.command, diags);
+            }
+        }
         Expr::Block(exprs) => {
             for e in exprs {
                 check_dangling_continuations(e, diags);
@@ -63,7 +68,7 @@ fn is_continuation_name(name: &str) -> bool {
 fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
     match &e.kind {
         Expr::Ident(x) if x == name => Some(e.span),
-        Expr::Lambda { body, .. } | Expr::Dual { body } | Expr::ErrorProp { expr: body, .. } => {
+        Expr::Lambda { body, .. } | Expr::ErrorProp { expr: body, .. } => {
             find_ident_span(body, name)
         }
         Expr::Call { callee, args } => find_ident_span(callee, name)
@@ -71,6 +76,9 @@ fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
         Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
         Expr::Match { scrutinee, arms } => find_ident_span(scrutinee, name)
             .or_else(|| arms.iter().find_map(|arm| find_ident_span(&arm.body, name))),
+        Expr::Select { arms, .. } => {
+            arms.iter().find_map(|arm| find_ident_span(&arm.command, name))
+        }
         Expr::Let { value, body, .. } => find_ident_span(value, name)
             .or_else(|| body.as_ref().and_then(|body| find_ident_span(body, name))),
         Expr::If { cond, then, otherwise } => find_ident_span(cond, name)
@@ -79,13 +87,9 @@ fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
         Expr::BinOp { lhs, rhs, .. } => {
             find_ident_span(lhs, name).or_else(|| find_ident_span(rhs, name))
         }
-        Expr::Interaction { left, right } => {
-            find_ident_span(left, name).or_else(|| find_ident_span(right, name))
+        Expr::Cut { value, consumer } => {
+            find_ident_span(value, name).or_else(|| find_ident_span(consumer, name))
         }
-        Expr::Service { agent, continuations } => find_ident_span(agent, name)
-            .or_else(|| continuations.iter().find_map(|c| find_ident_span(c, name))),
-        Expr::Job { agent, values } => find_ident_span(agent, name)
-            .or_else(|| values.iter().find_map(|v| find_ident_span(v, name))),
         Expr::Block(exprs) => exprs.iter().find_map(|e| find_ident_span(e, name)),
         Expr::UnOp { body, .. } => find_ident_span(body, name),
         Expr::Index { value, index } => {
@@ -123,12 +127,29 @@ impl UseMap {
         self.uses.get(name).copied().unwrap_or(Use::Zero)
     }
 
+    /// Sequential composition: uses on both sides happen, so they add up.
     fn merge(&mut self, other: &UseMap) {
         for (k, v) in &other.uses {
             let cur = self.get(k);
             let combined = match (cur, v) {
                 (Use::Zero, x) => *x,
                 (x, Use::Zero) => x,
+                _ => Use::Many,
+            };
+            self.uses.insert(k.clone(), combined);
+        }
+    }
+
+    /// Alternative composition: the branches of an `if`, `match`, or `select`
+    /// are mutually exclusive, so exactly one of them runs. A name used once
+    /// in each branch is used once, not once per branch.
+    fn merge_alternative(&mut self, other: &UseMap) {
+        for (k, v) in &other.uses {
+            let cur = self.get(k);
+            let combined = match (cur, v) {
+                (Use::Zero, x) => *x,
+                (x, Use::Zero) => x,
+                (Use::One, Use::One) => Use::One,
                 _ => Use::Many,
             };
             self.uses.insert(k.clone(), combined);
@@ -160,7 +181,8 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                     continue;
                 }
                 let u = uses.get(&p.name);
-                report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
+                let consumer = p.is_continuation || is_consumer(&p.ty);
+                report_linearity(name, &p.name, u, consumer, body.span, diags);
             }
             check_dangling_continuations(body, diags);
             for lb in let_bound {
@@ -173,16 +195,19 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
-        Decl::Mu { name, params, body, .. } => {
+        Decl::Mu { name, value_params, continuation_params, body, .. } => {
+            let params: Vec<_> = value_params.iter().chain(continuation_params.iter()).collect();
             let uses = count_uses(body);
             let unrestricted: HashSet<String> =
                 params.iter().filter(|p| is_unrestricted(&p.ty)).map(|p| p.name.clone()).collect();
-            for p in params {
+            for p in params.into_iter() {
                 if unrestricted.contains(&p.name) {
                     continue;
                 }
                 let u = uses.get(&p.name);
-                report_linearity(name, &p.name, u, p.is_continuation, body.span, diags);
+                let consumer =
+                    continuation_params.iter().any(|x| x.name == p.name) || is_consumer(&p.ty);
+                report_linearity(name, &p.name, u, consumer, body.span, diags);
             }
             check_dangling_continuations(body, diags);
         }
@@ -219,6 +244,11 @@ fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
                 collect_let_bindings(&arm.body, out);
             }
         }
+        Expr::Select { arms, .. } => {
+            for arm in arms {
+                collect_let_bindings(&arm.command, out);
+            }
+        }
         Expr::If { cond, then, otherwise } => {
             collect_let_bindings(cond, out);
             collect_let_bindings(then, out);
@@ -253,6 +283,14 @@ fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
     }
 }
 
+/// Report what a binder's use count is not allowed to be.
+///
+/// A value is linear in both directions: dropping it loses it, and using it
+/// twice copies it. A consumer is different. A cut does not return, so at most
+/// one mention of a consumer can actually run — the others are unreachable —
+/// and a consumer that is forwarded to a callee and also cut against here is
+/// still activated once. What must be checked for a consumer is therefore only
+/// that it is not dropped.
 fn report_linearity(
     decl_name: &str,
     var: &str,
@@ -264,25 +302,35 @@ fn report_linearity(
     match uses {
         Use::Zero => diags.push(Diagnostic {
             message: format!(
-                "in `{decl_name}`: {kind} `{var}` is never used (linear variables must be used exactly once)",
-                kind = if is_cont { "continuation" } else { "variable" }
+                "in `{decl_name}`: {kind} `{var}` is never used ({rule})",
+                kind = if is_cont { "continuation" } else { "variable" },
+                rule = if is_cont {
+                    "a continuation must be consumed"
+                } else {
+                    "linear variables must be used exactly once"
+                }
             ),
             span,
         }),
-        Use::Many => diags.push(Diagnostic {
+        Use::Many if !is_cont => diags.push(Diagnostic {
             message: format!(
-                "in `{decl_name}`: {kind} `{var}` is used more than once (linear variables must be used exactly once)",
-                kind = if is_cont { "continuation" } else { "variable" }
+                "in `{decl_name}`: variable `{var}` is used more than once (linear variables must be used exactly once)"
             ),
             span,
         }),
-        Use::One => {}
+        Use::Many | Use::One => {}
     }
 }
 
 /// Base types (i32, i64, bool, String, char) are unrestricted: they may be
 /// used any number of times. Only structural types (pairs, sums) and
 /// continuations are linear.
+/// Is this written type a consumer — something a cut can send a value to?
+fn is_consumer(ty: &slc_syntax::ast::TypeExpr) -> bool {
+    use slc_syntax::ast::TypeExpr;
+    matches!(ty, TypeExpr::Negative(_) | TypeExpr::Par(..) | TypeExpr::Bottom | TypeExpr::Dual(_))
+}
+
 fn is_unrestricted(ty: &slc_syntax::ast::TypeExpr) -> bool {
     use slc_syntax::ast::TypeExpr;
     match ty {
@@ -298,8 +346,9 @@ fn is_unrestricted(ty: &slc_syntax::ast::TypeExpr) -> bool {
     }
 }
 
-/// Count variable uses in an expression. For branches, merges with max
-/// semantics (use in either branch counts as one use).
+/// Count variable uses in an expression. Sequential expressions add their
+/// uses; the branches of an `if`, `match`, or `select` are alternatives, so a
+/// name used once in each branch is used once overall.
 fn count_uses(e: &Node<Expr>) -> UseMap {
     let mut m = UseMap::default();
     go(e, &mut m);
@@ -309,6 +358,7 @@ fn count_uses(e: &Node<Expr>) -> UseMap {
 fn go(e: &Node<Expr>, m: &mut UseMap) {
     match &e.kind {
         Expr::Ident(x) => m.incr(x),
+        Expr::Mu { body, .. } => go(body, m),
         Expr::Lambda { body, .. } => {
             // Parameters are bound; don't count their use outside
             go(body, m);
@@ -331,7 +381,18 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
             for arm in arms {
                 let mut branch = UseMap::default();
                 go(&arm.body, &mut branch);
-                combined.merge(&branch);
+                combined.merge_alternative(&branch);
+            }
+            m.merge(&combined);
+        }
+        Expr::Select { arms, .. } => {
+            // `select` is a single negative construction: exactly one arm is
+            // activated, so a consumer used in every arm is used once.
+            let mut combined = UseMap::default();
+            for arm in arms {
+                let mut branch = UseMap::default();
+                go(&arm.command, &mut branch);
+                combined.merge_alternative(&branch);
             }
             m.merge(&combined);
         }
@@ -349,7 +410,7 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
             if let Some(o) = otherwise {
                 go(o, &mut f);
             }
-            t.merge(&f);
+            t.merge_alternative(&f);
             m.merge(&t);
         }
         Expr::BinOp { lhs, rhs, .. } => {
@@ -370,27 +431,14 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
                 go(end, m);
             }
         }
-        Expr::Interaction { left, right } => {
-            go(left, m);
-            go(right, m);
+        Expr::Cut { value, consumer } => {
+            go(value, m);
+            go(consumer, m);
         }
-        Expr::Dual { body } => go(body, m),
         Expr::ErrorProp { expr, continuation } => {
             go(expr, m);
             if let Some(name) = continuation {
                 m.incr(name);
-            }
-        }
-        Expr::Service { agent, continuations } => {
-            go(agent, m);
-            for k in continuations {
-                go(k, m);
-            }
-        }
-        Expr::Job { agent, values } => {
-            go(agent, m);
-            for v in values {
-                go(v, m);
             }
         }
         Expr::Block(exprs) => {
@@ -417,12 +465,60 @@ mod tests {
     #[test]
     fn multi_continuation_command_unselected_continuation_is_linear() {
         let r = check(
-            "mu route(x: +i32, to even: -i32, to odd: -i32) {
+            "mu route(x: +i32) | (even: -i32, odd: -i32) {
                 if eq(rem(x, 2), 0) { even(x) } else { odd(x) }
             }
             fn main() -> i32 { route(2)?even }",
         );
         assert!(r.is_ok());
+    }
+
+    #[test]
+    fn exclusive_branches_use_a_continuation_once() {
+        // Both branches activate `k`, but only one branch runs.
+        let r = check(
+            "mu route(x: +i32) | (k: -i32) {
+                if eq(rem(x, 2), 0) { k(0) } else { k(1) }
+            }",
+        );
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn a_consumer_may_be_mentioned_more_than_once() {
+        // A cut does not return, so of these three mentions only one can run.
+        let r = check(
+            "mu route(x: +i32) | (k: -i32) {
+                0 @ k;
+                if eq(x, 0) { 1 @ k } else { 2 @ k }
+            }",
+        );
+        assert!(r.is_ok(), "{r:?}");
+
+        // Forwarding a consumer and also cutting against it is the ordinary
+        // shape of a parser that delegates and reports its own errors.
+        let r = check(
+            "mu step(input: +String) | (err: -String) {
+                 next(input, err);
+                 \"stopped\" @ err
+             }",
+        );
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn a_value_used_twice_in_sequence_is_rejected() {
+        let r = check(
+            "fn bad(p: (+i32 ⊗ +i32)) -> i32 {
+                use_it(p);
+                use_it(p)
+            }",
+        );
+        let diags = r.unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`p` is used more than once")),
+            "{diags:?}"
+        );
     }
 
     #[test]
@@ -432,25 +528,49 @@ mod tests {
 
     #[test]
     fn named_error_prop_counts_as_continuation_use() {
-        let r = check("mu bad(x: +i32, to err: -i32) { fail(x)?err; err(x) }");
-        assert!(r.is_err());
-        assert!(r.unwrap_err()[0].message.contains("more than once"));
+        // `?err` consumes `err`, so the declaration does not drop it.
+        assert!(check("mu bad(x: +i32) | (err: -i32) { fail(x)?err }").is_ok());
+        let r = check("mu bad(x: +i32) | (err: -i32) { x }");
+        assert!(r.unwrap_err()[0].message.contains("never used"));
     }
 
     #[test]
     fn unused_var_fails() {
-        // Pairs are structural (linear): an unused pair binding is an error.
-        let r = check("fn bad(x: (-i32), y: (-i32)) -> i32 { 1 }");
+        // Structural values are linear: an unused one is an error.
+        let r = check("fn bad(p: (+i32 ⊗ +i32)) -> i32 { 1 }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("never used"));
     }
 
     #[test]
     fn double_use_fails() {
-        // Pairs are structural (linear): double use is an error.
-        let r = check("fn bad(x: (-i32), y: (-i32)) -> i32 { k(x); k(x) }");
+        // Structural values are linear: using one twice is an error.
+        let r = check("fn bad(p: (+i32 ⊗ +i32)) -> i32 { use_it(p); use_it(p) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("more than once"));
+    }
+
+    #[test]
+    fn a_positive_function_may_share_a_consumer_it_receives() {
+        let r = check(
+            "fn parse(input: +String, err: -String) -> i64 {
+                 if str_len(input) > 0 {
+                     step(input, err)
+                 } else {
+                     \"empty\" @ err
+                 }
+             }",
+        );
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn a_mu_must_still_consume_its_continuation() {
+        // A `mu` denotes a command: control leaves only through one of its
+        // continuations, so dropping one is an error.
+        let r = check("mu bad(x: +i32) | (k: -i32) { x }");
+        let diags = r.unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`k` is never used")), "{diags:?}");
     }
 
     #[test]
@@ -461,38 +581,14 @@ mod tests {
 
     #[test]
     fn command_continuation_linear() {
-        assert!(check("mu step(x: +i32, to k: -i32) { k(x) }").is_ok());
+        assert!(check("mu step(x: +i32) | (k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_unused_continuation_fails() {
-        let r = check("mu bad(x: +i32, to k: -i32) { x }");
+        let r = check("mu bad(x: +i32) | (k: -i32) { x }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("continuation"));
-    }
-
-    #[test]
-    fn service_agent_linear() {
-        assert!(check("fn f(svc: -i32) -> i32 { step.to(svc) }").is_ok());
-    }
-
-    #[test]
-    fn service_agent_double_use_fails() {
-        let r = check("fn f(svc: -i32) -> i32 { step.to(svc); step.to(svc) }");
-        assert!(r.is_err());
-        assert!(r.unwrap_err()[0].message.contains("more than once"));
-    }
-
-    #[test]
-    fn job_agent_linear() {
-        assert!(check("fn f(job: -i32) -> i32 { g.partial(job) }").is_ok());
-    }
-
-    #[test]
-    fn job_agent_double_use_fails() {
-        let r = check("fn f(job: -i32) -> i32 { g.partial(job); g.partial(job) }");
-        assert!(r.is_err());
-        assert!(r.unwrap_err()[0].message.contains("more than once"));
     }
 
     #[test]
@@ -510,5 +606,51 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn negative_fn_continuation_linear() {
+        assert!(check("fn f(k: -i32) <- i32 { k(1) }").is_ok());
+    }
+
+    #[test]
+    fn negative_fn_and_local_mu_capture_do_not_conflict() {
+        let r = check(
+            "fn f(k: -i32) <- i32 {
+                mu escape() | (outer: -i32) {
+                    k(escape(42, outer))
+                }
+            }",
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn select_uses_one_consumer_continuation_across_arms() {
+        let r = check(
+            "enum Color { Red, Green, Blue }
+            fn k(return: -i32) <- Color {
+                select Color {
+                    return(0) => Red,
+                    return(1) => Green,
+                    return(2) => Blue,
+                }
+            }",
+        );
+        assert!(r.is_ok());
+    }
+
+    #[test]
+    fn negative_fn_unused_continuation_fails() {
+        let r = check("fn f(k: -i32) <- i32 { 1 }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err()[0].message.contains("continuation"));
+    }
+
+    #[test]
+    fn missing_error_continuation_use_fails() {
+        let r = check("mu parse(input: +String) | (ok: -String, err: -String) { ok(input) }");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().iter().any(|d| d.message.contains("never used")));
     }
 }
