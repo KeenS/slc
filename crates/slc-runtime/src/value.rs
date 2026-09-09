@@ -218,6 +218,7 @@ pub fn install_stdlib(env: &mut Env) {
     let builtins = [
         "__service",
         "__job",
+        "EXIT",
         "__index",
         "__parse_int",
         "println",

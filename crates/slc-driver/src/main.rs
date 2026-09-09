@@ -23,6 +23,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
+            if let Some(code) = e.strip_prefix("exit(").and_then(|c| c.strip_suffix(")")) {
+                let code: i32 = code.parse().unwrap_or(1);
+                return if code == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE };
+            }
             eprintln!("error: {e}");
             ExitCode::FAILURE
         }
@@ -91,13 +95,11 @@ fn run_file(path: &PathBuf) -> Result<String, String> {
             continue;
         }
         let mut fuel = 1_000_000;
-        let v =
-            slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;
+        let v = slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| e.to_string())?;
         env.define_global(name, v);
     }
     let mut fuel = 1_000_000;
-    let value =
-        slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| format!("eval: {e}"))?;
+    let value = slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| e.to_string())?;
 
     Ok(value.display())
 }

@@ -39,6 +39,8 @@ pub enum EvalError {
     NoReduction,
     /// A continuation escape: unwinds to the mu whose binder has this id.
     Escape(usize, Value),
+    /// The top-level EXIT continuation was activated.
+    Exit(i32),
 }
 
 impl std::fmt::Display for EvalError {
@@ -49,6 +51,7 @@ impl std::fmt::Display for EvalError {
             EvalError::Diverged => write!(f, "evaluation diverged (fuel exhausted)"),
             EvalError::NoReduction => write!(f, "no applicable reduction"),
             EvalError::Escape(_, _) => write!(f, "escaped to a continuation"),
+            EvalError::Exit(code) => write!(f, "exit({code})"),
         }
     }
 }
@@ -715,6 +718,18 @@ fn activate_value(value: Value, arg: Value, _fuel: &mut usize) -> Result<Value, 
 
 /// Dispatch a builtin with a complete argument list.
 fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<Value, EvalError> {
+    if name == "EXIT" {
+        return match args.into_iter().next() {
+            Some(Value::Int(code)) => Err(EvalError::Exit(
+                code.try_into()
+                    .map_err(|_| EvalError::TypeMismatch("EXIT status must fit in i32".into()))?,
+            )),
+            other => Err(EvalError::TypeMismatch(format!(
+                "EXIT expects an integer status, got {}",
+                other.map(|v| v.display()).unwrap_or_else(|| "no argument".into())
+            ))),
+        };
+    }
     if name == "__parse_int" {
         let mut it = args.into_iter();
         let text = it
