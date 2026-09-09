@@ -5,6 +5,9 @@ use crate::value::Value;
 #[derive(Debug, Clone, PartialEq)]
 pub enum BuiltinError {
     TypeMismatch(String),
+    /// An outcome, not a fault: the operation could not be carried out. It is
+    /// reported to a failure continuation, so it carries only the message.
+    Failed(String),
     DivisionByZero,
     ArithmeticOverflow(String),
     UnknownBuiltin(String),
@@ -14,6 +17,7 @@ impl std::fmt::Display for BuiltinError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuiltinError::TypeMismatch(m) => write!(f, "builtin type mismatch: {m}"),
+            BuiltinError::Failed(m) => write!(f, "{m}"),
             BuiltinError::DivisionByZero => write!(f, "division by zero"),
             BuiltinError::ArithmeticOverflow(m) => write!(f, "arithmetic overflow: {m}"),
             BuiltinError::UnknownBuiltin(n) => write!(f, "unknown builtin: {n}"),
@@ -531,7 +535,7 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
             };
             match std::fs::read_to_string(path) {
                 Ok(s) => Ok(Value::Str(s)),
-                Err(e) => Err(BuiltinError::TypeMismatch(format!("cannot read {path}: {e}"))),
+                Err(e) => Err(BuiltinError::Failed(format!("cannot read {path}: {e}"))),
             }
         }
         "write_file" => {
@@ -542,7 +546,7 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
                 ));
             };
             std::fs::write(path, content)
-                .map_err(|e| BuiltinError::TypeMismatch(format!("cannot write {path}: {e}")))?;
+                .map_err(|e| BuiltinError::Failed(format!("cannot write {path}: {e}")))?;
             Ok(Value::Unit)
         }
         "file_exists" => {
@@ -580,6 +584,8 @@ mod io_tests {
     #[test]
     fn read_missing_file_fails() {
         let r = apply_io_builtin("read_file", &[Value::Str("/nonexistent/nope".into())]);
-        assert!(matches!(r, Err(BuiltinError::TypeMismatch(_))));
+        // Reading a missing file is an outcome the caller handles, not a
+        // fault in the program.
+        assert!(matches!(r, Err(BuiltinError::Failed(_))), "{r:?}");
     }
 }

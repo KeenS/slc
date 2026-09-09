@@ -4,7 +4,21 @@ use crate::value::{Env, Value};
 use slc_core::command::Command;
 use slc_core::coterm::CoTerm;
 use slc_core::term::Term;
+use std::cell::Cell;
 use std::rc::Rc;
+
+thread_local! {
+    static NEXT_MU_ID: Cell<u64> = const { Cell::new(1) };
+}
+
+fn fresh_mu_id() -> Result<u64, EvalError> {
+    NEXT_MU_ID.with(|id| {
+        let next = id.get().checked_add(1).ok_or(EvalError::Diverged)?;
+        let current = id.get();
+        id.set(next);
+        Ok(current)
+    })
+}
 
 /// Convert a reduced net back into a runtime value.
 /// Only normal-form nets (no active pairs) can be materialized.
@@ -38,7 +52,7 @@ pub enum EvalError {
     Diverged,
     NoReduction,
     /// A continuation escape: unwinds to the mu whose binder has this id.
-    Escape(usize, Value),
+    Escape(u64, Value),
     /// The top-level EXIT continuation was activated.
     Exit(i32),
 }
@@ -63,10 +77,15 @@ enum RuntimePattern {
     Wildcard,
     Binding(String, Box<RuntimePattern>),
     Literal(Value),
+    /// An enum variant pattern: a label and the payload patterns it binds.
+    Tagged(String, Vec<RuntimePattern>),
     Range(Box<RuntimePattern>, Box<RuntimePattern>),
     Or(Vec<RuntimePattern>),
     Tuple(Vec<RuntimePattern>),
-    List { items: Vec<RuntimePattern>, rest: Option<(Option<String>, Box<RuntimePattern>)> },
+    List {
+        items: Vec<RuntimePattern>,
+        rest: Option<(Option<String>, Box<RuntimePattern>)>,
+    },
 }
 
 /// Match dispatch payloads use a top-level pair spine:
@@ -145,7 +164,30 @@ fn parse_runtime_pattern_inner(
                 _ => RuntimePattern::Wildcard,
             }
         }
-        Some('"') => RuntimePattern::Literal(Value::Str(take_quoted(chars, '"'))),
+        Some('"') => {
+            let text = take_quoted(chars, '"');
+            // A quoted name followed by `(` is a variant pattern; the
+            // parenthesized patterns match the variant payload.
+            if chars.peek() == Some(&'(') {
+                chars.next();
+                let mut fields = Vec::new();
+                loop {
+                    match chars.peek() {
+                        Some(')') | None => {
+                            chars.next();
+                            break;
+                        }
+                        _ => {}
+                    }
+                    fields.push(parse_runtime_pattern_inner(chars));
+                    if chars.next() != Some(',') {
+                        break;
+                    }
+                }
+                return RuntimePattern::Tagged(text, fields);
+            }
+            RuntimePattern::Literal(Value::Str(text))
+        }
         Some('\'') => {
             let c = match chars.next() {
                 Some('\\') => chars.next().unwrap_or('\\'),
@@ -375,7 +417,42 @@ fn pattern_matches(
             bindings.push((name.clone(), value.clone()));
             true
         }
-        RuntimePattern::Literal(expected) => expected == value,
+        RuntimePattern::Literal(expected) => match (expected, value) {
+            // An enum value carries its label; a bare name pattern still
+            // matches it by label.
+            (Value::Str(name), Value::Tagged(label, _)) => name == label,
+            (expected, value) => expected == value,
+        },
+        RuntimePattern::Tagged(label, fields) => {
+            let Value::Tagged(actual, payload) = value else {
+                return false;
+            };
+            if actual != label {
+                return false;
+            }
+            match fields.len() {
+                0 => true,
+                1 => pattern_matches(&fields[0], payload, bindings),
+                _ => {
+                    // Several payload values are packed right-nested, so walk
+                    // the spine one field at a time.
+                    let mut current = payload.as_ref();
+                    for (index, field) in fields.iter().enumerate() {
+                        if index + 1 == fields.len() {
+                            return pattern_matches(field, current, bindings);
+                        }
+                        let Value::Pair(head, rest) = current else {
+                            return false;
+                        };
+                        if !pattern_matches(field, head, bindings) {
+                            return false;
+                        }
+                        current = rest;
+                    }
+                    true
+                }
+            }
+        }
         RuntimePattern::Range(start, end) => match (start.as_ref(), end.as_ref(), value) {
             (
                 RuntimePattern::Literal(Value::Int(s)),
@@ -467,7 +544,10 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
                 }
                 "true" => return Ok(Value::Bool(true)),
                 "false" => return Ok(Value::Bool(false)),
-                "$unit" | "unit" => return Ok(Value::Unit),
+                // Only the `$`-prefixed encodings are reserved: they cannot
+                // be written in the surface, so they never shadow a binding.
+                "$unit" => return Ok(Value::Unit),
+                "$no_args" => return Ok(Value::NoArguments),
                 _ => {}
             }
             env.lookup(x).ok_or(EvalError::Unbound(x.clone()))
@@ -481,10 +561,9 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
 
         Term::Mu(a, command) => {
             // μ abstraction: bind the co-variable to an escape marker.
-            // The marker encodes this mu's identity (the current fuel
-            // reading, which is unique and monotonically decreasing).
+            // The marker uses a unique id, independent of evaluation fuel.
             // Activating the binder unwinds to exactly this mu.
-            let my_id = *fuel;
+            let my_id = fresh_mu_id()?;
             let mut env2 = env.clone();
             env2.push();
             env2.define(a, Value::Builtin(format!("__mu_escape@{my_id}")));
@@ -506,6 +585,33 @@ pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalErro
 
         Term::Inl(t) => Ok(Value::Inl(Box::new(eval(t, env, fuel)?))),
         Term::Inr(t) => Ok(Value::Inr(Box::new(eval(t, env, fuel)?))),
+
+        Term::Tag(label, payload) => {
+            Ok(Value::Tagged(label.clone(), Box::new(eval(payload, env, fuel)?)))
+        }
+
+        Term::CoAbs(covar, body) => Ok(Value::CoAbs {
+            covar: covar.clone(),
+            body: Rc::new((**body).clone()),
+            env: env.clone(),
+        }),
+
+        Term::Co(coterm) => match coterm.as_ref() {
+            // A negative additive consumer closes over its environment. Its
+            // branch bodies stay unevaluated: activation runs exactly one.
+            CoTerm::CoCase(branches) => {
+                Ok(Value::CoCase { branches: Rc::new(branches.clone()), env: env.clone() })
+            }
+            CoTerm::MuTildeTensor(binders, body) => Ok(Value::CoTensor {
+                binders: Rc::new(binders.clone()),
+                body: Rc::new((**body).clone()),
+                env: env.clone(),
+            }),
+            other => Ok(Value::Continuation(crate::value::Cont {
+                env: env.clone(),
+                command: Rc::new(Command::Cut(Term::Var("__co_arg".into()), other.clone())),
+            })),
+        },
     }
 }
 
@@ -521,61 +627,66 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
             let v = eval(t, env, fuel)?;
             match e {
                 CoTerm::Covar(a) => {
-                    // Result goes to the co-variable; for top-level, return it
-                    let _ = a;
-                    Ok(v)
+                    // ⟨v ∥ α⟩ sends v to α. When α is bound to a continuation
+                    // — a consumer parameter, a `select` consumer, or a μ
+                    // escape — the cut activates it. A co-variable that only
+                    // names the ambient continuation, as the lowering of
+                    // `let`, blocks, and applications does, returns the value.
+                    match env.lookup(a) {
+                        Some(continuation) if is_applicable(&continuation) => {
+                            apply_value(continuation, v, fuel)
+                        }
+                        _ => Ok(v),
+                    }
                 }
                 CoTerm::CoLam(x, c2) => {
+                    // Lowering marks an application's co-abstraction binder
+                    // `__f`. Any other binder is a `let`, a discarded block
+                    // expression, or another binding form: it binds the value
+                    // and continues with `c2` rather than applying anything.
+                    let is_application = x == "__f";
                     let mut env2 = env.clone();
                     env2.push();
                     env2.define(x.clone(), v.clone());
-                    // Builtin application: if the value is a Builtin, apply it
-                    // to the argument produced by the inner command.
-                    if let Value::Builtin(name) = &v {
-                        if std::env::var("SLC_DEBUG").is_ok() {
-                            eprintln!("[builtin] applying {name}");
+                    if is_application {
+                        // A builtin decides how many arguments it still needs,
+                        // so it collects them itself.
+                        if let Value::Builtin(name) = &v {
+                            if let Some(id_str) = name.strip_prefix("__mu_escape@")
+                                && let Ok(id) = id_str.parse::<u64>()
+                            {
+                                let arg = eval_argument(c2, &mut env2, fuel)?;
+                                return Err(EvalError::Escape(id, arg));
+                            }
+                            if std::env::var("SLC_DEBUG").is_ok() {
+                                eprintln!("[builtin] applying {name}");
+                            }
+                            return apply_builtin_call(name, c2, &mut env2, fuel);
                         }
-                        return apply_builtin_call(name, c2, &mut env2, fuel);
-                    }
-                    // Partial builtin application: continue accumulating
-                    // args: the new argument joins the stored ones, then
-                    // dispatch if arity is satisfied.
-                    if let Value::PartialBuiltin(name, mut collected) = v.clone() {
-                        if std::env::var("SLC_DEBUG").is_ok() {
-                            eprintln!("[partial] {name} has {} args", collected.len());
+                        if let Value::PartialBuiltin(name, mut collected) = v.clone() {
+                            if std::env::var("SLC_DEBUG").is_ok() {
+                                eprintln!("[partial] {name} has {} args", collected.len());
+                            }
+                            let new_arg = eval_argument(c2, &mut env2, fuel)?;
+                            let mut single = if name == "__match_dispatch" {
+                                split_match_payload(&new_arg)
+                            } else {
+                                Vec::new()
+                            };
+                            if name != "__match_dispatch" {
+                                collect_args(&new_arg, &mut single);
+                            }
+                            collected.extend(single);
+                            let arity = builtin_arity(&name);
+                            if collected.len() < arity && name != "__match_dispatch" {
+                                return Ok(Value::PartialBuiltin(name, collected));
+                            }
+                            return dispatch_builtin(&name, collected, fuel);
                         }
-                        let new_arg = match c2.as_ref() {
-                            Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
-                            other => eval_command(other, &mut env2, fuel)?,
-                        };
-                        let mut single = if name == "__match_dispatch" {
-                            split_match_payload(&new_arg)
-                        } else {
-                            Vec::new()
-                        };
-                        if name != "__match_dispatch" {
-                            collect_args(&new_arg, &mut single);
+                        if is_applicable(&v) {
+                            let arg = eval_argument(c2, &mut env2, fuel)?;
+                            return apply_value(v, arg, fuel);
                         }
-                        collected.extend(single);
-                        let arity = builtin_arity(&name);
-                        if collected.len() < arity && name != "__match_dispatch" {
-                            return Ok(Value::PartialBuiltin(name, collected));
-                        }
-                        // Dispatch directly with the collected args
-                        return dispatch_builtin(&name, collected, fuel);
-                    }
-                    // Closure application: bind param to arg, eval body
-                    if let Value::Closure { param, body, env: closure_env } = v.clone() {
-                        // Closure application: bind the parameter to the
-                        // argument, then evaluate the body with the closed env.
-                        let arg = match c2.as_ref() {
-                            Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
-                            other => eval_command(other, &mut env2, fuel)?,
-                        };
-                        let mut call_env = closure_env.clone();
-                        call_env.push();
-                        call_env.define(param, arg);
-                        return eval(&body, &mut call_env, fuel);
                     }
                     let r = eval_command(c2, &mut env2, fuel)?;
                     Ok(r)
@@ -593,20 +704,25 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
             Ok(v)
         }
         Command::Activate(k, v) => {
-            // k(v): activate the continuation k with value v
-            let kv = eval(k, env, fuel)?;
-            let _vv = eval(v, env, fuel)?;
-            match kv {
-                Value::Continuation(cont) => {
-                    let mut env2 = cont.env;
-                    eval_command(&cont.command, &mut env2, fuel)
-                }
-                other => Err(EvalError::TypeMismatch(format!(
-                    "cannot activate non-continuation: {}",
-                    other.display()
-                ))),
-            }
+            // k(v): the continuation `k` is an expression, so evaluate it and
+            // send it the value. This is the same operation as ⟨v ∥ α⟩ with a
+            // bound co-variable, written for a consumer that has no name.
+            let continuation = eval(k, env, fuel)?;
+            let value = eval(v, env, fuel)?;
+            apply_value(continuation, value, fuel)
         }
+    }
+}
+
+/// The argument of an application: lowering wraps it as ⟨ arg ∥ __call ⟩.
+fn eval_argument(
+    arg_command: &Command,
+    env: &mut Env,
+    fuel: &mut usize,
+) -> Result<Value, EvalError> {
+    match arg_command {
+        Command::Cut(t, CoTerm::Covar(_)) => eval(t, env, fuel),
+        other => eval_command(other, env, fuel),
     }
 }
 
@@ -680,7 +796,11 @@ fn apply_builtin_call(
     if name == "__match_dispatch" {
         let mut it = args.into_iter();
         let scrutinee = it.next().unwrap_or(Value::Unit);
-        let arms = it.collect::<Vec<_>>();
+        let mut arms = it.collect::<Vec<_>>();
+        // The lowered arm spine ends in unit; that terminator is not an arm.
+        if arms.last() == Some(&Value::Unit) {
+            arms.pop();
+        }
         let mut bindings: Vec<(String, Value)> = Vec::new();
         for arm in arms {
             let arm = unwrap_match_arm(&arm);
@@ -692,7 +812,7 @@ fn apply_builtin_call(
     }
     // mu escape: k(v) unwinds to the mu whose binder has this id.
     if let Some(id_str) = name.strip_prefix("__mu_escape@") {
-        let id: usize = id_str
+        let id: u64 = id_str
             .parse()
             .map_err(|_| EvalError::TypeMismatch(format!("bad escape marker: {name}")))?;
         let v = args.into_iter().next().unwrap_or(Value::Unit);
@@ -701,18 +821,221 @@ fn apply_builtin_call(
     dispatch_builtin(name, args, fuel)
 }
 
-fn activate_value(value: Value, arg: Value, _fuel: &mut usize) -> Result<Value, EvalError> {
+/// Bind the components of a right-nested product to a list of binders. The
+/// last binder takes whatever remains, so `n` binders split a product into
+/// exactly `n` parts.
+fn bind_components(binders: &[String], value: Value, env: &mut Env) -> Result<(), EvalError> {
+    let mut rest = value;
+    for (index, binder) in binders.iter().enumerate() {
+        if index + 1 == binders.len() {
+            env.define(binder.clone(), rest);
+            return Ok(());
+        }
+        let Value::Pair(head, tail) = rest else {
+            return Err(EvalError::TypeMismatch(format!(
+                "a consumer of {} components received {}",
+                binders.len(),
+                rest.display()
+            )));
+        };
+        env.define(binder.clone(), *head);
+        rest = *tail;
+    }
+    Ok(())
+}
+
+/// Can this value receive an argument — as a function or as a continuation?
+fn is_applicable(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Closure { .. }
+            | Value::CoCase { .. }
+            | Value::CoAbs { .. }
+            | Value::Continuation(_)
+            | Value::Builtin(_)
+    )
+}
+
+/// Apply a value to one argument. Ordinary application and continuation
+/// activation are the same operation: a cut against something that consumes.
+pub fn apply_value(value: Value, arg: Value, fuel: &mut usize) -> Result<Value, EvalError> {
     match value {
         Value::Closure { param, body, env } => {
             let mut call_env = env;
             call_env.push();
             call_env.define(param, arg);
-            eval(&body, &mut call_env, _fuel)
+            eval(&body, &mut call_env, fuel)
+        }
+        // Activating a labelled consumer runs exactly one branch.
+        Value::CoCase { branches, env } => {
+            let Value::Tagged(label, payload) = arg else {
+                return Err(EvalError::TypeMismatch(format!(
+                    "activating a `select` consumer requires a labelled value, got {}",
+                    arg.display()
+                )));
+            };
+            let Some(branch) = branches.iter().find(|b| b.label == label) else {
+                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in select")));
+            };
+            let mut branch_env = env;
+            branch_env.push();
+            bind_components(&branch.binders, *payload, &mut branch_env)?;
+            eval_command(&branch.body, &mut branch_env, fuel)
+        }
+        // Activating a product consumer binds every component.
+        Value::CoTensor { binders, body, env } => {
+            let mut branch_env = env;
+            branch_env.push();
+            bind_components(&binders, arg, &mut branch_env)?;
+            eval_command(&body, &mut branch_env, fuel)
+        }
+        // Applying a co-abstraction binds its continuation parameter.
+        Value::CoAbs { covar, body, env } => {
+            let mut call_env = env;
+            call_env.push();
+            call_env.define(covar, arg);
+            eval(&body, &mut call_env, fuel)
+        }
+        Value::Continuation(cont) => {
+            let mut env = cont.env.clone();
+            eval_command(&cont.command, &mut env, fuel)
+        }
+        Value::Builtin(name) => {
+            if let Some(id_str) = name.strip_prefix("__mu_escape@")
+                && let Ok(id) = id_str.parse::<u64>()
+            {
+                return Err(EvalError::Escape(id, arg));
+            }
+            dispatch_builtin(&name, vec![arg], fuel)
         }
         other => Err(EvalError::TypeMismatch(format!(
             "cannot activate continuation: {}",
             other.display()
         ))),
+    }
+}
+
+/// A builtin whose outcome is not a single value offers it to continuations
+/// instead of returning: the value arguments come first, then one continuation
+/// per outcome, and exactly one of them is activated. Returns `None` for a
+/// builtin that is an ordinary function.
+fn dispatch_offering_builtin(
+    name: &str,
+    args: &[Value],
+    fuel: &mut usize,
+) -> Option<Result<Value, EvalError>> {
+    let value = |index: usize| args.get(index).cloned().unwrap_or(Value::Unit);
+    let message = |text: String| Value::Str(text);
+    match name {
+        "parse_int" => {
+            let (ok, invalid, overflow) = (value(1), value(2), value(3));
+            Some(match value(0) {
+                Value::Str(text) => match text.parse::<i64>() {
+                    Ok(n) => apply_value(ok, Value::Int(n), fuel),
+                    Err(e) => {
+                        let out_of_range = e.to_string().contains("too large")
+                            || e.to_string().contains("too small");
+                        let (continuation, reason) = if out_of_range {
+                            (overflow, format!("integer out of range: {text:?}"))
+                        } else {
+                            (invalid, format!("not an integer: {text:?}"))
+                        };
+                        apply_value(continuation, message(reason), fuel)
+                    }
+                },
+                other => Err(EvalError::TypeMismatch(format!(
+                    "parse_int expects a String, got {}",
+                    other.display()
+                ))),
+            })
+        }
+        "read_file" => {
+            let (ok, failed) = (value(1), value(2));
+            Some(match crate::builtins::apply_io_builtin("read_file", &args[..1.min(args.len())]) {
+                Ok(contents) => apply_value(ok, contents, fuel),
+                Err(e) => apply_value(failed, message(e.to_string()), fuel),
+            })
+        }
+        "write_file" => {
+            let (ok, failed) = (value(2), value(3));
+            Some(
+                match crate::builtins::apply_io_builtin("write_file", &args[..2.min(args.len())]) {
+                    Ok(_) => apply_value(ok, Value::Unit, fuel),
+                    Err(e) => apply_value(failed, message(e.to_string()), fuel),
+                },
+            )
+        }
+        "char_at" => {
+            let (ok, out_of_range) = (value(2), value(3));
+            let (Value::Str(text), Value::Int(index)) = (value(0), value(1)) else {
+                return Some(Err(EvalError::TypeMismatch("char_at expects (String, i64)".into())));
+            };
+            Some(match usize::try_from(index).ok().and_then(|i| text.chars().nth(i)) {
+                Some(c) => apply_value(ok, Value::Char(c), fuel),
+                None => apply_value(
+                    out_of_range,
+                    message(format!(
+                        "index {index} is out of range for a string of length {}",
+                        text.chars().count()
+                    )),
+                    fuel,
+                ),
+            })
+        }
+        "list_get" => {
+            let (ok, out_of_range) = (value(2), value(3));
+            let (Value::List(items), Value::Int(index)) = (value(0), value(1)) else {
+                return Some(Err(EvalError::TypeMismatch("list_get expects (list, i64)".into())));
+            };
+            Some(match usize::try_from(index).ok().and_then(|i| items.get(i).cloned()) {
+                Some(item) => apply_value(ok, item, fuel),
+                None => apply_value(
+                    out_of_range,
+                    message(format!(
+                        "index {index} is out of range for a list of length {}",
+                        items.len()
+                    )),
+                    fuel,
+                ),
+            })
+        }
+        "map_get" => {
+            let (found, missing) = (value(2), value(3));
+            let (Value::Map(entries), key) = (value(0), value(1)) else {
+                return Some(Err(EvalError::TypeMismatch("map_get expects (map, key)".into())));
+            };
+            Some(match entries.iter().find(|(k, _)| k == &key) {
+                Some((_, v)) => apply_value(found, v.clone(), fuel),
+                None => {
+                    apply_value(missing, message(format!("no entry for {}", key.display())), fuel)
+                }
+            })
+        }
+        "find_char" => {
+            let (found, absent) = (value(3), value(4));
+            let (Value::Str(text), Value::Int(from), Value::Int(target)) =
+                (value(0), value(1), value(2))
+            else {
+                return Some(Err(EvalError::TypeMismatch(
+                    "find_char expects (String, i64, i64)".into(),
+                )));
+            };
+            let Some(needle) = u32::try_from(target).ok().and_then(char::from_u32) else {
+                return Some(Err(EvalError::TypeMismatch(format!(
+                    "find_char expects a character code, got {target}"
+                ))));
+            };
+            let start = usize::try_from(from).unwrap_or(0);
+            Some(match text.chars().enumerate().skip(start).find(|(_, c)| *c == needle) {
+                Some((index, _)) => apply_value(found, Value::Int(index as i64), fuel),
+                None => apply_value(
+                    absent,
+                    message(format!("{needle:?} does not occur from index {from}")),
+                    fuel,
+                ),
+            })
+        }
+        _ => None,
     }
 }
 
@@ -730,43 +1053,8 @@ fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<V
             ))),
         };
     }
-    if name == "__parse_int" {
-        let mut it = args.into_iter();
-        let text = it
-            .next()
-            .ok_or_else(|| EvalError::TypeMismatch("__parse_int requires a string".into()))?;
-        let ok = it.next().ok_or_else(|| {
-            EvalError::TypeMismatch("__parse_int requires an ok continuation".into())
-        })?;
-        let empty = it.next().ok_or_else(|| {
-            EvalError::TypeMismatch("__parse_int requires an empty continuation".into())
-        })?;
-        let overflow = it.next().ok_or_else(|| {
-            EvalError::TypeMismatch("__parse_int requires an overflow continuation".into())
-        })?;
-        return match text {
-            Value::Str(s) if s.is_empty() => activate_value(empty, Value::Str(s), _fuel),
-            Value::Str(s) => match s.parse::<i64>() {
-                Ok(n) => activate_value(ok, Value::Int(n), _fuel),
-                Err(e) => {
-                    let reason = if e.to_string().contains("too large")
-                        || e.to_string().contains("too small")
-                    {
-                        overflow
-                    } else {
-                        empty
-                    };
-                    activate_value(reason, Value::Str(s), _fuel)
-                }
-            },
-            other => Err(EvalError::TypeMismatch(format!(
-                "__parse_int expects a String, got {}",
-                other.display()
-            ))),
-        };
-    }
-    if name == "__service" || name == "__job" {
-        return make_partial_agent(name, args);
+    if let Some(outcome) = dispatch_offering_builtin(name, &args, _fuel) {
+        return outcome;
     }
     if name == "__if_dispatch" {
         let mut it = args.into_iter();
@@ -783,13 +1071,13 @@ fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<V
         };
     }
     if let Some(id_str) = name.strip_prefix("__mu_escape@") {
-        let id: usize = id_str
+        let id: u64 = id_str
             .parse()
             .map_err(|_| EvalError::TypeMismatch(format!("bad escape marker: {name}")))?;
         let v = args.into_iter().next().unwrap_or(Value::Unit);
         return Err(EvalError::Escape(id, v));
     }
-    if matches!(name, "read_file" | "write_file" | "file_exists") {
+    if matches!(name, "file_exists") {
         return crate::builtins::apply_io_builtin(name, &args)
             .map_err(|e| EvalError::TypeMismatch(e.to_string()));
     }
@@ -799,40 +1087,15 @@ fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<V
         .map_err(|e| EvalError::TypeMismatch(e.to_string()))
 }
 
-fn make_partial_agent(name: &str, args: Vec<Value>) -> Result<Value, EvalError> {
-    let mut it = args.into_iter();
-    let agent = it
-        .next()
-        .ok_or_else(|| EvalError::TypeMismatch(format!("{name} requires an agent argument")))?;
-    let rest = it.collect::<Vec<_>>();
-    let env = Env::new();
-    if name == "__service" {
-        Ok(Value::Service {
-            command: Rc::new(match agent {
-                Value::Closure { body, .. } => (*body).clone(),
-                other => Term::Var(format!("__partial_agent_{}", other.display())),
-            }),
-            continuations: rest,
-            env,
-            used: std::cell::Cell::new(false),
-        })
-    } else {
-        Ok(Value::Job {
-            closure: Rc::new(agent),
-            values: rest,
-            env,
-            used: std::cell::Cell::new(false),
-        })
-    }
-}
-
 fn collect_args(v: &Value, out: &mut Vec<Value>) {
     match v {
         Value::Pair(a, b) => {
             collect_args(a, out);
             collect_args(b, out);
         }
-        Value::Unit => {}
+        // A call with no arguments contributes none; unit is a value like
+        // any other and contributes one.
+        Value::NoArguments => {}
         other => out.push(other.clone()),
     }
 }
@@ -840,12 +1103,9 @@ fn collect_args(v: &Value, out: &mut Vec<Value>) {
 /// The number of arguments each builtin expects.
 fn builtin_arity(name: &str) -> usize {
     match name {
-        "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "str_to_int"
-        | "neg" | "read_file" | "file_exists" => 1,
-        "char_at" => 2,
+        "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "neg"
+        | "file_exists" => 1,
         "__index" => 2,
-        "list_get" => 2,
-        "map_get" => 2,
         "map_len" => 1,
         "map_insert" => 3,
         "set_contains" => 2,
@@ -854,10 +1114,14 @@ fn builtin_arity(name: &str) -> usize {
         "path_join" => 2,
         "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
-        | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" | "write_file" => 2,
-        "find_char" | "substring" => 3,
-        "__parse_int" => 4,
-        "__service" | "__job" => 0, // variadic: agent + ports
+        | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
+        "substring" => 3,
+        // Builtins that offer their outcome to continuations: the value
+        // arguments come first, then one continuation per outcome.
+        "read_file" => 3,
+        "char_at" | "list_get" | "map_get" | "write_file" | "parse_int" => 4,
+        "find_char" => 5,
+        "__if_dispatch" => 3,
         "list_new" => 0,
         "format" => 0, // variadic: apply immediately
         _ => 0,
@@ -948,6 +1212,26 @@ mod tests {
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval_command(&c, &mut env, &mut fuel).unwrap(), Value::Int(5));
+    }
+
+    #[test]
+    fn nested_mu_escapes_unwind_to_their_own_binders() {
+        // ⟨ 1 ∥ μouter. ⟨ μinner. ⟨ 2 ∥ inner ⟩ ∥ outer ⟩ ⟩
+        let inner_escape = Command::Cut(Term::Var("$int_2".into()), CoTerm::Covar("inner".into()));
+        let inner = Term::Mu("inner".into(), Box::new(inner_escape));
+        let outer_body = Command::Cut(inner, CoTerm::Covar("outer".into()));
+        let term = Term::Mu("outer".into(), Box::new(outer_body));
+        let mut env = Env::new();
+        let mut fuel = 100;
+        assert_eq!(eval(&term, &mut env, &mut fuel).unwrap(), Value::Int(2));
+
+        // If the outer binder is activated inside the inner μ, the inner
+        // μ does not catch it: ⟨ 3 ∥ μouter. ⟨ μinner. ⟨ 4 ∥ outer ⟩ ∥ k ⟩ ⟩.
+        let outer_escape = Command::Cut(Term::Var("$int_4".into()), CoTerm::Covar("outer".into()));
+        let inner = Term::Mu("inner".into(), Box::new(outer_escape));
+        let outer_body = Command::Cut(inner, CoTerm::Covar("k".into()));
+        let term = Term::Mu("outer".into(), Box::new(outer_body));
+        assert_eq!(eval(&term, &mut env, &mut fuel).unwrap(), Value::Int(4));
     }
 
     #[test]

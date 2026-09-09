@@ -83,25 +83,42 @@ pub enum Value {
         body: Rc<slc_core::term::Term>,
         env: Env,
     },
-    /// A command whose output ports have been connected first.
-    Service {
-        command: Rc<slc_core::term::Term>,
-        continuations: Vec<Value>,
-        env: Env,
-        used: std::cell::Cell<bool>,
-    },
-    /// A function whose input ports have been connected first.
-    Job {
-        closure: Rc<Value>,
-        values: Vec<Value>,
-        env: Env,
-        used: std::cell::Cell<bool>,
-    },
     Continuation(Cont),
+    /// A closure returned from a μ command; activating it may escape.
+    EscapedClosure {
+        escape_id: usize,
+        closure: Box<Value>,
+    },
     Pair(Box<Value>, Box<Value>),
     Inl(Box<Value>),
     Inr(Box<Value>),
     Builtin(String),
+    /// The marker a call with no arguments applies its callee to. It is not
+    /// unit: `f()` passes nothing, while `f(())` passes the unit value.
+    NoArguments,
+    /// An `enum` value: a variant label and its payload.
+    Tagged(String, Box<Value>),
+    /// A negative additive consumer (`select`): the branches of a core
+    /// `μ̃[…]` co-term together with the environment they closed over.
+    /// Branch bodies are held unevaluated; activation runs exactly one.
+    CoCase {
+        branches: Rc<Vec<slc_core::coterm::CoCaseBranch>>,
+        env: Env,
+    },
+    /// A consumer of a product (`μ̃(x, y). c`): it binds every component of
+    /// the value it is given.
+    CoTensor {
+        binders: Rc<Vec<String>>,
+        body: Rc<slc_core::command::Command>,
+        env: Env,
+    },
+    /// A μ abstraction waiting for the continuation to bind its co-variable.
+    /// Applying it binds the co-variable to the supplied continuation.
+    CoAbs {
+        covar: String,
+        body: Rc<slc_core::term::Term>,
+        env: Env,
+    },
     /// A builtin that has already received some arguments.
     PartialBuiltin(String, Vec<Value>),
     /// A list value (v0.1: built via list builtins).
@@ -121,24 +138,19 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Char(a), Value::Char(b)) => a == b,
-            (Value::Unit, Value::Unit) | (Value::Never, Value::Never) => true,
+            (Value::Unit, Value::Unit)
+            | (Value::Never, Value::Never)
+            | (Value::NoArguments, Value::NoArguments) => true,
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
-            (
-                Value::Service { command: a, continuations: x, .. },
-                Value::Service { command: b, continuations: y, .. },
-            ) => a == b && x == y,
-            (
-                Value::Job { closure: a, values: x, .. },
-                Value::Job { closure: b, values: y, .. },
-            ) => a == b && x == y,
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
             }
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Set(a), Value::Set(b)) => a == b,
+            (Value::Tagged(a, pa), Value::Tagged(b, pb)) => a == b && pa == pb,
             _ => false,
         }
     }
@@ -152,7 +164,7 @@ impl Value {
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
-            Value::Unit | Value::Never => Type::One,
+            Value::Unit | Value::Never | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
             Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
@@ -166,11 +178,14 @@ impl Value {
                 Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
             Value::Closure { .. }
-            | Value::Service { .. }
-            | Value::Job { .. }
             | Value::Continuation(_)
             | Value::Builtin(_)
             | Value::PartialBuiltin(..) => Type::Bottom,
+            Value::Tagged(label, _) => Type::Named(
+                label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
+            ),
+            Value::CoCase { .. } | Value::CoTensor { .. } | Value::CoAbs { .. } => Type::Bottom,
+            Value::EscapedClosure { .. } => Type::Bottom,
         }
     }
 
@@ -182,12 +197,12 @@ impl Value {
             Value::Bool(b) => format!("{b}"),
             Value::Char(c) => format!("{c:?}"),
             Value::Unit => "()".to_string(),
+            Value::NoArguments => "<no arguments>".to_string(),
             Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
             Value::Inl(a) => format!("inl({})", a.display()),
             Value::Inr(a) => format!("inr({})", a.display()),
             Value::Closure { .. } => "<closure>".to_string(),
-            Value::Service { .. } => "<service>".to_string(),
-            Value::Job { .. } => "<job>".to_string(),
+            Value::EscapedClosure { .. } => "<continuation>".to_string(),
             Value::Continuation(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
@@ -209,6 +224,17 @@ impl Value {
                 format!("{{{}}}", inner.join(", "))
             }
             Value::Never => "<never>".to_string(),
+            Value::Tagged(label, payload) => match payload.as_ref() {
+                Value::Unit => label.clone(),
+                payload => format!("{label}({})", payload.display()),
+            },
+            Value::CoCase { branches, .. } => {
+                let inner: Vec<String> =
+                    branches.iter().map(|branch| branch.label.clone()).collect();
+                format!("select {{{}}}", inner.join(" | "))
+            }
+            Value::CoTensor { binders, .. } => format!("consumer({})", binders.join(", ")),
+            Value::CoAbs { covar, .. } => format!("<continuation μ{covar}>"),
         }
     }
 }
@@ -216,11 +242,9 @@ impl Value {
 /// Install the standard library builtins into an environment.
 pub fn install_stdlib(env: &mut Env) {
     let builtins = [
-        "__service",
-        "__job",
         "EXIT",
         "__index",
-        "__parse_int",
+        "parse_int",
         "println",
         "print",
         "format",
@@ -267,7 +291,6 @@ pub fn install_stdlib(env: &mut Env) {
         "find_char",
         "skip_ws",
         "substring",
-        "str_to_int",
         "str_eq",
     ];
     env.push();
