@@ -517,12 +517,15 @@ Every failure continuation receives a `+String` describing what happened, so
 it composes with an error consumer a program already has.
 
 ```sl
-read_file("input.json", fn(source: +String) -> ⊥ {
-    parse_json(source, deliver(ok, err))
-}, fn(message: +String) -> ⊥ {
-    message @ err
-})
+read_file(
+    "input.json",
+    select +String { parse_json(source, report) => source },
+    complain,
+)
 ```
+
+A consumer per outcome is what `select` builds, so an outcome's handler can be
+written where it is passed rather than declared elsewhere.
 
 Everything else is a function: `println`, `print`, and `format`; arithmetic and
 comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
@@ -739,12 +742,17 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-parse_json(source, deliver(ok, err))
+parse_json(source, select ParseResult {
+    { println("parsed: " + value); 0 @ exit } => Parsed(value),
+    { println("error: " + message); 1 @ exit } => Failed(message),
+})
 ```
 
-Success flows to `ok`; failure flows to `err`. No result wrapper is needed:
-`deliver` builds one consumer from the two with `select`, and each parser
-sends its outcome to it with a cut.
+Both outcomes meet in one consumer, built by `select` over the enum that names
+them, and each parser sends its outcome to it with a cut. No result wrapper is
+needed, and nothing carries a success value alongside an error value: the
+variant that arrives *is* the outcome. `examples/json_parser.sl` is written
+this way throughout.
 
 ### Error propagation `?`
 

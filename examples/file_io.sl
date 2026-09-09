@@ -3,37 +3,54 @@
 // Reading a file has two outcomes, so `read_file` does not return one: it
 // takes the continuation each outcome belongs to and activates exactly one.
 //
-// Writing the success continuation inline nests the rest of the program
-// inside the call. A local `mu` avoids that: it captures the continuation of
-// the expression it stands in — the language's `call/cc` — so the call can
-// hand that continuation to `read_file` and the program continues flat.
+// Both consumers here are built by `select`, in the two shapes it takes: over
+// an atom, whose single arm binds the value that arrives, and over an `enum`,
+// whose arms are one per outcome.
 
 mu main() | (exit: -i32) {
-    // A lambda whose body ends in a cut is a consumer: `+String -> ⊥` is
-    // `-String`, which is why this may be passed where one is expected.
-    let complain = fn(message: +String) -> ⊥ {
-        println("cannot read: " + message);
-        1 @ exit
+    // `select` over an atom is a consumer literal: the arm names what arrives
+    // and runs a command with it.
+    let complain = select +String {
+        {
+            println("cannot read: " + message);
+            1 @ exit
+        } => message,
     };
 
     // `k` is the continuation of this `let`: whatever `read_file` sends it
-    // becomes `source`, and the rest of the block runs.
+    // becomes `source`, and the rest of the block runs. The local `mu` — the
+    // language's `call/cc` — is what keeps the program flat; without it, every
+    // line below would nest inside the success consumer.
     let source = mu here() | (k: -String) {
         read_file("examples/hello.sl", k, complain)
     };
     print(source);
 
-    // On the failure path the captured continuation is never activated, so
-    // nothing below this line runs.
-    let missing = mu here() | (k: -String) {
-        read_file("examples/missing.sl", k, done)
-    };
-    println("unexpectedly read " + missing);
-    1 @ exit
+    // The same two outcomes, named rather than passed side by side: `read`
+    // sends one `Read`, and one `select` over the enum answers both.
+    read("examples/missing.sl", select Read {
+        {
+            println("unexpectedly read " + text);
+            1 @ exit
+        } => Contents(text),
+        {
+            println("cannot read: " + message);
+            0 @ exit
+        } => Failed(message),
+    })
 }
 
-// The failure this example expects: report it and finish successfully.
-fn done(message: +String) -> ⊥ {
-    println("cannot read: " + message);
-    0 @ EXIT
+enum Read {
+    Contents(String),
+    Failed(String),
+}
+
+// Two continuations become one send by tagging: each atom consumer labels what
+// it receives and forwards it to `out`. Exactly one of them ever runs.
+mu read(path: +String) | (out: -Read) {
+    read_file(
+        path,
+        select +String { Read::Contents(text) @ out => text },
+        select +String { Read::Failed(message) @ out => message },
+    )
 }

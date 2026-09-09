@@ -7,10 +7,11 @@
 //   * `ok` receives the position just past what was parsed
 //   * `report` receives a `ParseResult` describing the whole outcome
 //
-// `deliver` builds the `report` consumer with `select`, the negative additive
-// dual of the enum: activating it with a variant dispatches to that variant's
-// arm and hands the payload to that arm's consumer. Success and failure meet
-// in one place instead of being carried side by side through the parser.
+// `report` is built by `select`, the negative additive dual of the enum:
+// activating it with a variant dispatches to that variant's arm and binds the
+// payload for it. Success and failure meet in one place — at the bottom of
+// this file, where the parser is called — instead of being carried side by
+// side through every parser as two continuations.
 //
 // A helper that only computes with values, like `at` or `is_hex`, stays an
 // ordinary positive `fn`: it takes no continuation and returns a value.
@@ -27,13 +28,6 @@
 enum ParseResult {
     Parsed(String),
     Failed(String),
-}
-
-fn deliver(ok: -String, err: -String) <- ParseResult {
-    select ParseResult {
-        text @ ok => Parsed(text),
-        message @ err => Failed(message),
-    }
 }
 
 const COMMA: +char = ',';
@@ -279,13 +273,17 @@ mu parse_object_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResul
 
 mu main() | (exit: -i32) {
     let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
-    let ok = fn(value: +String) -> ⊥ {
-        println("parsed: " + value);
-        0 @ exit
-    };
-    let err = fn(message: +String) -> ⊥ {
-        println("error: " + message);
-        1 @ exit
-    };
-    parse_json(source, deliver(ok, err))
+
+    // One consumer for the whole outcome: an arm per variant, each binding
+    // that variant's payload and ending in a cut against `exit`.
+    parse_json(source, select ParseResult {
+        {
+            println("parsed: " + value);
+            0 @ exit
+        } => Parsed(value),
+        {
+            println("error: " + message);
+            1 @ exit
+        } => Failed(message),
+    })
 }
