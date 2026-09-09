@@ -341,33 +341,36 @@ fn check_match(
             Pattern::Binding { pattern, .. } => pattern.as_ref(),
             pattern => pattern,
         };
-        match pattern {
-            Pattern::Ident(x) => {
-                // Bare variant name: if it matches a variant of exactly
-                // one known enum, treat it as an enum pattern.
-                let matching_enums: Vec<&String> =
-                    enums.iter().filter(|(_, vs)| vs.contains(x)).map(|(n, _)| n).collect();
-                if let Some(enum_name) = matching_enums.first() {
+        // Three spellings reach here, and a bare variant name — with or
+        // without a payload — names its enum only indirectly:
+        //   Color::Red  → name=Color, variant=Red
+        //   Red         → name=Red, variant=""
+        //   Red         → Pattern::Ident, when it binds no payload
+        let (written, payload) = match pattern {
+            Pattern::Ident(x) => (x, None),
+            Pattern::Enum { name, variant, .. } if variant.is_empty() => (name, None),
+            Pattern::Enum { name, variant, .. } => (variant, Some(name)),
+            _ => continue,
+        };
+        match payload {
+            Some(enum_name) => {
+                if scrutinee_type.is_none() {
+                    scrutinee_type = Some(enum_name);
+                }
+                covered.insert(written.clone());
+            }
+            // Unqualified: if this name is a variant of exactly one known
+            // enum, that enum is what the match is over.
+            None => {
+                let declaring: Option<&String> =
+                    enums.iter().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
+                if let Some(enum_name) = declaring {
                     if scrutinee_type.is_none() {
                         scrutinee_type = Some(enum_name);
                     }
-                    covered.insert(x.clone());
+                    covered.insert(written.clone());
                 }
             }
-            Pattern::Enum { name, variant, .. } => {
-                // Two spellings:
-                //   Color::Red  → name=Color, variant=Red
-                //   Red         → name=Red, variant=""
-                if variant.is_empty() {
-                    covered.insert(name.clone());
-                } else {
-                    if scrutinee_type.is_none() {
-                        scrutinee_type = Some(name);
-                    }
-                    covered.insert(variant.clone());
-                }
-            }
-            _ => {}
         }
     }
 
@@ -448,6 +451,29 @@ mod tests {
              fn f(c: Color) -> i32 { match c { x @ Red => x, Green => 2, Blue => 3 } }"
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn an_unqualified_variant_pattern_names_its_enum_even_with_a_payload() {
+        // `Circle(r)` identifies `Shape` exactly as bare `Red` identifies
+        // `Color`; a payload does not make the spelling ambiguous.
+        assert!(
+            check(
+                "enum Shape { Circle(i64), Square(i64) }
+             fn area(s: Shape) -> i64 { match s { Circle(r) => r, Square(w) => w } }"
+            )
+            .is_ok()
+        );
+
+        let diags = check(
+            "enum Shape { Circle(i64), Square(i64), Dot }
+             fn area(s: Shape) -> i64 { match s { Circle(r) => r, Square(w) => w } }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("missing variant `Dot` of enum `Shape`")),
+            "{diags:?}"
         );
     }
 

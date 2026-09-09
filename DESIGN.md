@@ -12,6 +12,14 @@ co-terms, and commands, but a surface language with two parallel Rust-like
 grammars would obscure both. Slant instead uses one familiar grammar and makes
 polarity explicit through type signs and arrows.
 
+What the one grammar does keep is the mirror. A program can be written
+value-first — functions take data and give data back — or continuation-first,
+where a function takes a consumer and gives a consumer back and nothing
+returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
+`fn f(k: -B) <- A`, `match` against `select`, a call against a cut, and a
+`let` against the consumer that the rest of the program becomes.
+`examples/two_styles.sl` writes one program both ways.
+
 ## 1. Design goals
 
 1. **Rust-like surface** — familiar `fn`, `mu`, `let`, `match`, braces, type

@@ -108,6 +108,16 @@ fn repository_example_suite_has_expected_results() {
             "strings.sl",
             Expected { success: true, stdout: &["Hello, world!", "H", "world"], stderr: &[] },
         ),
+        (
+            "two_styles.sl",
+            Expected {
+                success: true,
+                // The value-first half and the continuation-first half print
+                // the same two answers, in the same order.
+                stdout: &["big", "small", "big", "small"],
+                stderr: &[],
+            },
+        ),
     ];
 
     for (name, expected) in expected {
