@@ -1,10 +1,17 @@
 //! Lowering from surface AST to λ̄μμ̃ core IR.
 
 use crate::ast::*;
+use crate::token::Span;
 use slc_core::command::Command;
 use slc_core::coterm::CoTerm;
 use slc_core::term::Term;
 use slc_core::types::{Base, Type};
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+thread_local! {
+    static CONSTANTS: RefCell<HashMap<String, Pattern>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LowerError {
@@ -32,6 +39,7 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
             "u64" => Ok(Type::Pos(Base::U64)),
             "bool" => Ok(Type::Pos(Base::Bool)),
             "String" | "str" => Ok(Type::Pos(Base::Str)),
+            "char" => Ok(Type::Pos(Base::Char)),
             "unit" => Ok(Type::Pos(Base::Unit)),
             other => Err(LowerError::UnknownType(other.to_string())),
         },
@@ -131,7 +139,7 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             }
         }
 
-        Expr::Let { name, value, body } => {
+        Expr::Let { name, value, body, .. } => {
             // let x = v; body → μlet. ⟨ v ∥ λ̄x. ⟨ body' ∥ let ⟩ ⟩
             let v = lower_expr(value)?;
             let b = body
@@ -192,8 +200,80 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             ))
         }
 
-        Expr::BinOp { op: _, lhs: _, rhs: _ } => {
-            Err(LowerError::Unsupported("binary operators".into()))
+        Expr::BinOp { op, lhs, rhs } => {
+            if matches!(op, BinOp::And | BinOp::Or) {
+                let rhs_body = (**rhs).clone();
+                let rhs_span = rhs.span;
+                let true_body = if matches!(op, BinOp::And) {
+                    rhs_body.clone()
+                } else {
+                    Node { span: rhs_span, kind: Expr::Bool(true) }
+                };
+                let false_body = if matches!(op, BinOp::And) {
+                    Node { span: rhs_span, kind: Expr::Bool(false) }
+                } else {
+                    rhs_body
+                };
+                let expanded = Node {
+                    span: Span { start: lhs.span.start, end: rhs_span.end },
+                    kind: Expr::If {
+                        cond: Box::new((**lhs).clone()),
+                        then: Box::new(true_body),
+                        otherwise: Some(Box::new(false_body)),
+                    },
+                };
+                return lower_expr(&expanded);
+            }
+            let name = match op {
+                BinOp::Add => "add",
+                BinOp::Sub => "sub",
+                BinOp::Mul => "mul",
+                BinOp::Div => "div",
+                BinOp::Mod => "rem",
+                BinOp::Eq => "eq",
+                BinOp::Ne => "ne",
+                BinOp::Lt => "lt",
+                BinOp::Gt => "gt",
+                BinOp::Le => "le",
+                BinOp::Ge => "ge",
+                BinOp::And | BinOp::Or => {
+                    return Ok(Term::Var("__unimplemented_boolean_operator".into()));
+                }
+            };
+            Ok(call_curried(Term::Var(name.into()), vec![lower_expr(lhs)?, lower_expr(rhs)?]))
+        }
+
+        Expr::UnOp { op, body } => {
+            if matches!(op, UnOp::Not) {
+                let arg = lower_expr(body)?;
+                return Ok(call_curried(
+                    Term::Var("eq".into()),
+                    vec![arg, Term::Var("false".into())],
+                ));
+            }
+            Ok(call_curried(Term::Var("neg".into()), vec![lower_expr(body)?]))
+        }
+
+        Expr::Index { value, index } => Ok(call_curried(
+            Term::Var("char_at".into()),
+            vec![lower_expr(value)?, lower_expr(index)?],
+        )),
+
+        Expr::Slice { value, start, end } => {
+            let start_term = start
+                .as_ref()
+                .map(|e| lower_expr(e))
+                .transpose()?
+                .unwrap_or_else(|| Term::Var("$int_0".into()));
+            let end_term = end
+                .as_ref()
+                .map(|e| lower_expr(e))
+                .transpose()?
+                .unwrap_or_else(|| Term::Var("__string_len".into()));
+            Ok(call_curried(
+                Term::Var("substring".into()),
+                vec![lower_expr(value)?, start_term, end_term],
+            ))
         }
 
         Expr::Interaction { left, right } => {
@@ -259,10 +339,20 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             // Each arm is a Lam so it is only evaluated when selected.
             let mut arm_terms = Vec::new();
             for arm in arms {
+                let descriptor = Term::Var(format!("$str_{}", pattern_descriptor(&arm.pattern)));
                 let b = lower_expr(&arm.body)?;
-                arm_terms.push(Term::Lam("__match_arg".into(), Box::new(b)));
+                let guard = match &arm.guard {
+                    Some(guard) => lower_expr(guard)?,
+                    None => Term::Var("true".into()),
+                };
+                arm_terms.push(Term::Pair(
+                    Box::new(descriptor),
+                    Box::new(Term::Pair(
+                        Box::new(guard),
+                        Box::new(Term::Lam("__match_arg".into(), Box::new(b))),
+                    )),
+                ));
             }
-            // Build: μmatch. ⟨ __match_dispatch ∥ λ̄__f. ⟨ (s ⊗ arm1 ⊗ ...) ∥ match ⟩ ⟩
             let mut payload = s;
             for a in arm_terms {
                 payload = Term::Pair(Box::new(payload), Box::new(a));
@@ -303,7 +393,7 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
             for e in exprs.iter().rev() {
                 acc = Some(match (&e.kind, acc) {
                     // Bodyless let followed by the rest: scope the rest
-                    (Expr::Let { name, value, body: None }, Some(rest)) => {
+                    (Expr::Let { name, value, body: None, .. }, Some(rest)) => {
                         let val = lower_expr(value)?;
                         Term::Mu(
                             "__let".into(),
@@ -351,6 +441,27 @@ pub fn lower_expr(e: &Node<Expr>) -> Result<Term, LowerError> {
 
 pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     let mut out = Vec::new();
+    let constants: HashMap<String, Pattern> = p
+        .decls
+        .iter()
+        .filter_map(|d| {
+            if let Decl::Const { name, value, .. } = &d.kind {
+                let pattern = match &value.kind {
+                    Expr::Char(c) => Some(Pattern::Char(*c)),
+                    Expr::Int(n) => Some(Pattern::Int(*n)),
+                    Expr::Str(s) => Some(Pattern::Str(s.clone())),
+                    Expr::Bool(b) => Some(Pattern::Bool(*b)),
+                    _ => None,
+                };
+                pattern.map(|pattern| (name.clone(), pattern))
+            } else {
+                None
+            }
+        })
+        .collect();
+    CONSTANTS.with(|cell| {
+        *cell.borrow_mut() = constants;
+    });
     for d in &p.decls {
         match &d.kind {
             Decl::Fn { name, params, return_type: _, body, type_params: _ } => {
@@ -376,6 +487,9 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 }
                 out.push((name.clone(), term));
             }
+            Decl::Const { name, ty: _, value } => {
+                out.push((name.clone(), lower_expr(value)?));
+            }
             Decl::Struct { .. } | Decl::Enum { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }
@@ -399,6 +513,116 @@ fn call_curried(callee: Term, args: Vec<Term>) -> Term {
         );
     }
     result
+}
+
+fn pattern_descriptor(pattern: &Pattern) -> String {
+    fn escape(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+    fn write(pattern: &Pattern, out: &mut String) {
+        match pattern {
+            Pattern::Wildcard => out.push('*'),
+            Pattern::Ident(name) => {
+                if let Some(pattern) = lookup_constant(name) {
+                    write(&pattern, out);
+                } else {
+                    out.push('$');
+                    out.push_str(&escape(name));
+                }
+            }
+            Pattern::Int(n) => {
+                out.push('#');
+                out.push_str(&n.to_string());
+            }
+            Pattern::Str(s) => {
+                out.push('"');
+                out.push_str(&escape(s));
+                out.push('"');
+            }
+            Pattern::Char(c) => {
+                out.push('\'');
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '\'' => out.push_str("\\'"),
+                    c => out.push(*c),
+                }
+                out.push('\'');
+            }
+            Pattern::Bool(b) => {
+                out.push_str(if *b { "true" } else { "false" });
+            }
+            Pattern::Float(n) => {
+                out.push('#');
+                out.push_str(&n.to_string());
+            }
+            Pattern::Or(alternatives) => {
+                out.push('(');
+                for (i, alternative) in alternatives.iter().enumerate() {
+                    if i > 0 {
+                        out.push('|');
+                    }
+                    write(alternative, out);
+                }
+                out.push(')');
+            }
+            Pattern::Range { start, end } => {
+                write(start, out);
+                out.push_str("..=");
+                write(end, out);
+            }
+            Pattern::Binding { name, pattern } => {
+                out.push_str(&escape(name));
+                out.push('@');
+                write(pattern, out);
+            }
+            Pattern::Rest => out.push_str(".."),
+            Pattern::Tuple(items) => {
+                out.push('(');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write(item, out);
+                }
+                out.push(')');
+            }
+            Pattern::Struct { name, fields } => {
+                out.push_str(&escape(name));
+                out.push('{');
+                for (i, (field, pattern)) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&escape(field));
+                    out.push(':');
+                    write(pattern, out);
+                }
+                out.push('}');
+            }
+            Pattern::Enum { name, variant, fields } => {
+                out.push('"');
+                out.push_str(&escape(name));
+                out.push_str("::");
+                out.push_str(&escape(variant));
+                out.push('"');
+                out.push('(');
+                for (i, field) in fields.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    write(field, out);
+                }
+                out.push(')');
+            }
+        }
+    }
+    let mut out = String::new();
+    write(pattern, &mut out);
+    format!("{out:?}")
+}
+
+fn lookup_constant(name: &str) -> Option<Pattern> {
+    CONSTANTS.with(|cell| cell.borrow().get(name).cloned())
 }
 
 #[cfg(test)]

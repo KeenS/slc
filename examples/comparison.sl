@@ -1,8 +1,10 @@
-// Comparison builtins return bool.
+// Comparisons and boolean operators.
 
 fn main() -> i32 {
-    println(eq(1, 1));
-    println(ne(1, 2));
-    println(lt(3, 5));
-    println(ge(10, 10))
+    println(1 == 1);
+    println(1 != 2);
+    println(3 < 5);
+    println(10 >= 10);
+    println('a' < 'b');
+    println(true && !false)
 }

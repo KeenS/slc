@@ -75,6 +75,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "spawn" => TokenKind::Spawn,
                 "dual" => TokenKind::Dual,
                 "return" => TokenKind::Return,
+                "const" => TokenKind::Const,
                 "true" => TokenKind::Bool(true),
                 "false" => TokenKind::Bool(false),
                 _ => TokenKind::Ident(ident),
@@ -87,11 +88,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         if c.is_ascii_digit() {
             let mut num = String::new();
             let mut is_float = false;
-            while i < chars.len()
-                && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_')
-            {
+            while i < chars.len() {
                 if chars[i] == '.' {
+                    // `1..5` is a range, not a float.
+                    if i + 1 < chars.len() && chars[i + 1] == '.' {
+                        break;
+                    }
+                    if i + 2 < chars.len() && chars[i + 1] == '.' && chars[i + 2] == '=' {
+                        break;
+                    }
                     is_float = true;
+                } else if !(chars[i].is_ascii_digit() || chars[i] == '_') {
+                    break;
                 }
                 if chars[i] != '_' {
                     num.push(chars[i]);
@@ -125,26 +133,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                     }
                     '\\' => {
                         i += 1;
-                        if i >= chars.len() {
-                            return Err(LexError {
-                                message: "unterminated escape".into(),
-                                span: Span { start, end: i },
-                            });
-                        }
-                        match chars[i] {
-                            'n' => s.push('\n'),
-                            't' => s.push('\t'),
-                            'r' => s.push('\r'),
-                            '\\' => s.push('\\'),
-                            '"' => s.push('"'),
-                            other => {
-                                return Err(LexError {
-                                    message: format!("unknown escape: \\{other}"),
-                                    span: Span { start: i, end: i + 1 },
-                                });
-                            }
-                        }
-                        i += 1;
+                        let (ch, next) = lex_escape(&chars, i, start)?;
+                        s.push(ch);
+                        i = next;
                     }
                     ch => {
                         s.push(ch);
@@ -159,20 +150,40 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         // Chars
         if c == '\'' {
             i += 1;
-            if i + 1 >= chars.len() || chars[i + 1] != '\'' {
+            if i >= chars.len() {
                 return Err(LexError {
                     message: "unterminated char literal".into(),
                     span: Span { start, end: i },
                 });
             }
-            let ch = chars[i];
-            i += 2;
+            let ch = if chars[i] == '\\' {
+                i += 1;
+                let (ch, next) = lex_escape(&chars, i, start)?;
+                i = next;
+                ch
+            } else {
+                let ch = chars[i];
+                i += 1;
+                ch
+            };
+            if i >= chars.len() || chars[i] != '\'' {
+                return Err(LexError {
+                    message: "unterminated char literal".into(),
+                    span: Span { start, end: i },
+                });
+            }
+            i += 1;
             tokens.push(Token { kind: TokenKind::Char(ch), span: Span { start, end: i } });
             continue;
         }
 
         // Operators and punctuation
         let two = if i + 1 < chars.len() { Some([chars[i], chars[i + 1]]) } else { None };
+        if c == '.' && i + 2 < chars.len() && chars[i + 1] == '.' && chars[i + 2] == '=' {
+            i += 3;
+            tokens.push(Token { kind: TokenKind::DotDotEq, span: Span { start, end: i } });
+            continue;
+        }
         if let Some([a, b]) = two {
             let kind = match (a, b) {
                 ('=', '=') => Some(TokenKind::EqEq),
@@ -182,6 +193,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 ('-', '>') => Some(TokenKind::Arrow),
                 ('=', '>') => Some(TokenKind::FatArrow),
                 (':', ':') => Some(TokenKind::ColonColon),
+                ('&', '&') => Some(TokenKind::AmpAmp),
+                ('|', '|') => Some(TokenKind::PipePipe),
+                ('.', '.') => Some(TokenKind::DotDot),
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -204,11 +218,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '.' => TokenKind::Dot,
             '@' => TokenKind::At,
             '?' => TokenKind::Question,
+            '!' => TokenKind::Bang,
             '+' => TokenKind::Plus,
             '-' => TokenKind::Minus,
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
             '%' => TokenKind::Percent,
+            '|' => TokenKind::Pipe,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
             '=' => TokenKind::Assign,
@@ -227,6 +243,31 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     }
 
     Ok(tokens)
+}
+
+fn lex_escape(chars: &[char], i: usize, literal_start: usize) -> Result<(char, usize), LexError> {
+    if i >= chars.len() {
+        return Err(LexError {
+            message: "unterminated escape".into(),
+            span: Span { start: literal_start, end: i },
+        });
+    }
+    let ch = match chars[i] {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '0' => '\0',
+        '\\' => '\\',
+        '"' => '"',
+        '\'' => '\'',
+        other => {
+            return Err(LexError {
+                message: format!("unknown escape: \\{other}"),
+                span: Span { start: i, end: i + 1 },
+            });
+        }
+    };
+    Ok((ch, i + 1))
 }
 
 #[cfg(test)]

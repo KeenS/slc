@@ -122,6 +122,9 @@ fn infer_decl(d: &Node<Decl>) -> Result<DeclarationType, InferenceError> {
         Decl::Struct { name, .. } | Decl::Enum { name, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: Type::One })
         }
+        Decl::Const { name, ty, .. } => {
+            Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
+        }
     }
 }
 

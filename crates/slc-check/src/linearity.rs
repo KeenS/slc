@@ -90,6 +90,13 @@ fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
         Expr::Job { agent, values } => find_ident_span(agent, name)
             .or_else(|| values.iter().find_map(|v| find_ident_span(v, name))),
         Expr::Block(exprs) => exprs.iter().find_map(|e| find_ident_span(e, name)),
+        Expr::UnOp { body, .. } => find_ident_span(body, name),
+        Expr::Index { value, index } => {
+            find_ident_span(value, name).or_else(|| find_ident_span(index, name))
+        }
+        Expr::Slice { value, start, end } => find_ident_span(value, name)
+            .or_else(|| start.as_ref().and_then(|start| find_ident_span(start, name)))
+            .or_else(|| end.as_ref().and_then(|end| find_ident_span(end, name))),
         _ => None,
     }
 }
@@ -182,6 +189,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
             }
             check_dangling_continuations(body, diags);
         }
+        Decl::Const { .. } => {}
         Decl::Struct { .. } | Decl::Enum { .. } => {}
     }
 }
@@ -189,7 +197,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
 /// Collect names bound by `let` expressions (recursively).
 fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
     match &e.kind {
-        Expr::Let { name, value, body } => {
+        Expr::Let { name, value, body, .. } => {
             out.push(name.clone());
             collect_let_bindings(value, out);
             if let Some(b) = body {
@@ -229,6 +237,20 @@ fn collect_let_bindings(e: &Node<Expr>, out: &mut Vec<String>) {
         Expr::Block(exprs) => {
             for e in exprs {
                 collect_let_bindings(e, out);
+            }
+        }
+        Expr::UnOp { body, .. } => collect_let_bindings(body, out),
+        Expr::Index { value, index } => {
+            collect_let_bindings(value, out);
+            collect_let_bindings(index, out);
+        }
+        Expr::Slice { value, start, end } => {
+            collect_let_bindings(value, out);
+            if let Some(start) = start {
+                collect_let_bindings(start, out);
+            }
+            if let Some(end) = end {
+                collect_let_bindings(end, out);
             }
         }
         _ => {}
@@ -338,6 +360,20 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
         Expr::BinOp { lhs, rhs, .. } => {
             go(lhs, m);
             go(rhs, m);
+        }
+        Expr::UnOp { body, .. } => go(body, m),
+        Expr::Index { value, index } => {
+            go(value, m);
+            go(index, m);
+        }
+        Expr::Slice { value, start, end } => {
+            go(value, m);
+            if let Some(start) = start {
+                go(start, m);
+            }
+            if let Some(end) = end {
+                go(end, m);
+            }
         }
         Expr::Interaction { left, right } => {
             go(left, m);

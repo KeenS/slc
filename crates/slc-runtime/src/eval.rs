@@ -55,6 +55,283 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
+#[derive(Debug, Clone, PartialEq)]
+enum RuntimePattern {
+    Wildcard,
+    Binding(String, Box<RuntimePattern>),
+    Literal(Value),
+    Range(Box<RuntimePattern>, Box<RuntimePattern>),
+    Or(Vec<RuntimePattern>),
+    Tuple(Vec<RuntimePattern>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Descriptor {
+    Pattern(RuntimePattern),
+    Rest,
+}
+
+fn parse_runtime_pattern(s: &str) -> Descriptor {
+    if s == ".." {
+        return Descriptor::Rest;
+    }
+    let mut chars = s.chars().peekable();
+    Descriptor::Pattern(parse_runtime_pattern_inner(&mut chars))
+}
+
+fn parse_runtime_pattern_inner(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> RuntimePattern {
+    match chars.next() {
+        Some('*') => RuntimePattern::Wildcard,
+        Some('.') if chars.peek() == Some(&'.') => {
+            chars.next();
+            RuntimePattern::Wildcard
+        }
+        Some('#') => {
+            let digits = take_while(chars, |c| c.is_ascii_digit() || *c == '-');
+            let rest = parse_runtime_pattern_tail(chars);
+            match (digits.parse::<i64>().ok(), rest) {
+                (Some(start), Some(RuntimePattern::Literal(Value::Int(end)))) => {
+                    RuntimePattern::Range(
+                        Box::new(RuntimePattern::Literal(Value::Int(start))),
+                        Box::new(RuntimePattern::Literal(Value::Int(end))),
+                    )
+                }
+                (Some(n), _) => RuntimePattern::Literal(Value::Int(n)),
+                _ => RuntimePattern::Wildcard,
+            }
+        }
+        Some('"') => RuntimePattern::Literal(Value::Str(take_quoted(chars, '"'))),
+        Some('\'') => {
+            let c = match chars.next() {
+                Some('\\') => chars.next().unwrap_or('\\'),
+                Some(c) => c,
+                None => '\0',
+            };
+            let _ = chars.next();
+            let rest = parse_runtime_pattern_tail(chars);
+            match rest {
+                Some(RuntimePattern::Literal(Value::Char(end_c))) => RuntimePattern::Range(
+                    Box::new(RuntimePattern::Literal(Value::Char(c))),
+                    Box::new(RuntimePattern::Literal(Value::Char(end_c))),
+                ),
+                _ => RuntimePattern::Literal(Value::Char(c)),
+            }
+        }
+        Some('(') => {
+            let mut items = Vec::new();
+            loop {
+                match chars.peek() {
+                    Some(')') | None => {
+                        chars.next();
+                        break;
+                    }
+                    _ => {}
+                }
+                items.push(parse_runtime_pattern_inner(chars));
+                match chars.next() {
+                    Some('|') => {
+                        loop {
+                            match chars.peek() {
+                                Some(')') | None => {
+                                    chars.next();
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            items.push(parse_runtime_pattern_inner(chars));
+                            if chars.next() != Some('|') {
+                                break;
+                            }
+                        }
+                        return RuntimePattern::Or(items);
+                    }
+                    Some(',') => {}
+                    _ => break,
+                }
+            }
+            RuntimePattern::Tuple(items)
+        }
+        Some('$') => RuntimePattern::Binding(
+            take_while(chars, |c| c.is_alphanumeric() || *c == '_'),
+            Box::new(RuntimePattern::Wildcard),
+        ),
+        Some(c) => {
+            let mut name = String::new();
+            name.push(c);
+            name.push_str(&take_while(chars, |c| {
+                c.is_alphanumeric() || *c == '_' || *c == ':' || *c == '@'
+            }));
+            if let Some(stripped) = name.strip_suffix('@') {
+                name = stripped.to_string();
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    return RuntimePattern::Binding(name, Box::new(RuntimePattern::Wildcard));
+                }
+                return RuntimePattern::Binding(name, Box::new(parse_runtime_pattern_inner(chars)));
+            }
+            if name == "true" {
+                return RuntimePattern::Literal(Value::Bool(true));
+            }
+            if name == "false" {
+                return RuntimePattern::Literal(Value::Bool(false));
+            }
+            RuntimePattern::Binding(name, Box::new(RuntimePattern::Wildcard))
+        }
+        None => RuntimePattern::Wildcard,
+    }
+}
+
+fn parse_runtime_pattern_tail(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Option<RuntimePattern> {
+    if chars.peek() == Some(&'.') {
+        chars.next();
+        if chars.next() != Some('.') {
+            return None;
+        }
+        if chars.next() != Some('=') {
+            return None;
+        }
+        return Some(parse_runtime_pattern_inner(chars));
+    }
+    None
+}
+
+fn take_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, quote: char) -> String {
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some(other) => out.push(other),
+                None => break,
+            }
+        } else if c == quote {
+            break;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn take_while<F: Fn(&char) -> bool>(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+    pred: F,
+) -> String {
+    let mut out = String::new();
+    while let Some(&c) = chars.peek() {
+        if !pred(&c) {
+            break;
+        }
+        out.push(c);
+        chars.next();
+    }
+    out
+}
+
+fn try_match_arm(
+    arm: &Value,
+    scrutinee: &Value,
+    bindings: &mut Vec<(String, Value)>,
+    fuel: &mut usize,
+) -> Result<Option<Value>, EvalError> {
+    // Arm payload is (descriptor, (guard, thunk)).
+    let Value::Pair(a, b) = arm else {
+        return Err(EvalError::TypeMismatch("malformed match arm".into()));
+    };
+    let (descriptor, guard, thunk) = match (a.as_ref(), b.as_ref()) {
+        (Value::Str(descriptor), Value::Pair(guard, thunk)) => {
+            (descriptor.clone(), guard.clone(), thunk.clone())
+        }
+        _ => return Err(EvalError::TypeMismatch("malformed match arm payload".into())),
+    };
+    let descriptor = parse_runtime_pattern(&descriptor);
+    if let Descriptor::Pattern(pattern) = &descriptor
+        && !pattern_matches(pattern, scrutinee, bindings)
+    {
+        bindings.clear();
+        return Ok(None);
+    }
+    if let Value::Closure { param, body, env: closure_env } = guard.as_ref() {
+        let mut guard_env = closure_env.clone();
+        guard_env.push();
+        for (name, value) in bindings.iter() {
+            guard_env.define(name.clone(), value.clone());
+        }
+        guard_env.define(param, Value::Unit);
+        if eval(body, &mut guard_env, fuel)? != Value::Bool(true) {
+            bindings.clear();
+            return Ok(None);
+        }
+    } else if guard.as_ref() != &Value::Bool(true) {
+        bindings.clear();
+        return Ok(None);
+    }
+    let Value::Closure { param, body, env: closure_env } = thunk.as_ref() else {
+        return Err(EvalError::TypeMismatch("match arm body must be a thunk".into()));
+    };
+    let mut call_env = closure_env.clone();
+    call_env.push();
+    for (name, value) in bindings.iter() {
+        call_env.define(name.clone(), value.clone());
+    }
+    call_env.define(param, scrutinee.clone());
+    Ok(Some(eval(body, &mut call_env, fuel)?))
+}
+
+fn pattern_matches(
+    pattern: &RuntimePattern,
+    value: &Value,
+    bindings: &mut Vec<(String, Value)>,
+) -> bool {
+    match pattern {
+        RuntimePattern::Wildcard => true,
+        RuntimePattern::Binding(name, inner) => {
+            if !pattern_matches(inner, value, bindings) {
+                return false;
+            }
+            bindings.push((name.clone(), value.clone()));
+            true
+        }
+        RuntimePattern::Literal(expected) => expected == value,
+        RuntimePattern::Range(start, end) => match (start.as_ref(), end.as_ref(), value) {
+            (
+                RuntimePattern::Literal(Value::Int(s)),
+                RuntimePattern::Literal(Value::Int(e)),
+                Value::Int(v),
+            ) => v >= s && v <= e,
+            (
+                RuntimePattern::Literal(Value::Char(s)),
+                RuntimePattern::Literal(Value::Char(e)),
+                Value::Char(v),
+            ) => v >= s && v <= e,
+            _ => false,
+        },
+        RuntimePattern::Or(alternatives) => {
+            alternatives.iter().any(|alternative| pattern_matches(alternative, value, bindings))
+        }
+        RuntimePattern::Tuple(items) => {
+            if let Value::Pair(a, b) = value {
+                let mut flat = Vec::new();
+                collect_args(a, &mut flat);
+                collect_args(b, &mut flat);
+                flat.len() == items.len()
+                    && items
+                        .iter()
+                        .zip(flat.iter())
+                        .all(|(pattern, value)| pattern_matches(pattern, value, bindings))
+            } else {
+                false
+            }
+        }
+    }
+}
+
 /// Evaluate a term to a value.
 pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalError> {
     if *fuel == 0 {
@@ -189,7 +466,7 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                             Command::Cut(t, CoTerm::Covar(_)) => eval(t, &mut env2, fuel)?,
                             other => eval_command(other, &mut env2, fuel)?,
                         };
-                        let mut call_env = closure_env;
+                        let mut call_env = closure_env.clone();
                         call_env.push();
                         call_env.define(param, arg);
                         return eval(&body, &mut call_env, fuel);
@@ -282,7 +559,7 @@ fn apply_builtin_call(
             }
         };
         if let Value::Closure { param, body, env: closure_env } = chosen {
-            let mut call_env = closure_env;
+            let mut call_env = closure_env.clone();
             call_env.push();
             call_env.define(param, Value::Unit);
             return eval(&body, &mut call_env, fuel);
@@ -290,26 +567,27 @@ fn apply_builtin_call(
         return Ok(chosen);
     }
     // match dispatch: (scrutinee, arm1_thunk, arm2_thunk, ...)
-    // v0.1 pattern semantics: the checker validates exhaustiveness;
-    // at runtime we select by literal equality when possible, else
-    // the first arm. Guards/wildcards match anything.
     if name == "__match_dispatch" {
         let mut it = args.into_iter();
         let scrutinee = it.next().unwrap_or(Value::Unit);
-        let arms: Vec<Value> = it.collect();
-        // Try literal patterns by matching the thunk marker; for v0.1,
-        // every arm is a thunk and we pick the first. Pattern specificity
-        // is enforced by the exhaustiveness checker, not the runtime.
-        if let Some(first) = arms.into_iter().next() {
-            if let Value::Closure { param, body, env: closure_env } = first {
-                let mut call_env = closure_env;
-                call_env.push();
-                call_env.define(param, scrutinee);
-                return eval(&body, &mut call_env, fuel);
+        let flat: Vec<Value> = it.collect();
+        let arms = flat
+            .chunks(3)
+            .filter(|chunk| chunk.len() == 3)
+            .map(|chunk| {
+                Value::Pair(
+                    Box::new(chunk[0].clone()),
+                    Box::new(Value::Pair(Box::new(chunk[1].clone()), Box::new(chunk[2].clone()))),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut bindings: Vec<(String, Value)> = Vec::new();
+        for arm in arms {
+            if let Some(v) = try_match_arm(&arm, &scrutinee, &mut bindings, fuel)? {
+                return Ok(v);
             }
-            return Ok(first);
         }
-        return Ok(Value::Unit);
+        return Err(EvalError::TypeMismatch("non-exhaustive match".into()));
     }
     // mu escape: k(v) unwinds to the mu whose binder has this id.
     if let Some(id_str) = name.strip_prefix("__mu_escape@") {

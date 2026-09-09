@@ -9,6 +9,7 @@ pub enum Base {
     U64,
     Bool,
     Str,
+    Char,
     Unit,
 }
 
@@ -93,6 +94,8 @@ mod tests {
             Type::Neg(Base::I32),
             Type::Pos(Base::Bool),
             Type::Neg(Base::Bool),
+            Type::Pos(Base::Char),
+            Type::Neg(Base::Char),
             Type::One,
             Type::Bottom,
             Type::Tensor(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),

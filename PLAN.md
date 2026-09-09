@@ -55,13 +55,13 @@ if a { A } else { if b { B } else { C } }
 
 Implementation checklist:
 
-- [ ] Update parser to accept `else if`
-- [ ] Represent it as nested `Expr::If`; no new AST node is required
-- [ ] Add parser unit test for a three-branch chain
-- [ ] Add parser unit test for a chain without a final `else`
-- [ ] Add integration test that evaluates an `else if` chain
-- [ ] Add checker test confirming each branch is still checked
-- [ ] Add lowering test confirming it lowers to the same term as nested `if`
+- [x] Update parser to accept `else if`
+- [x] Represent it as nested `Expr::If`; no new AST node is required
+- [x] Add parser unit test for a three-branch chain
+- [x] Add parser unit test for a chain without a final `else`
+- [x] Add integration test that evaluates an `else if` chain
+- [x] Add checker test confirming each branch is still checked
+- [x] Add lowering test confirming it lowers to the same term as nested `if`
 - [ ] Rewrite JSON parser’s `parse_value` to use `else if`
 - [ ] Run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and
       `cargo test --workspace`
@@ -107,17 +107,17 @@ if a { true } else { b }
 
 Implementation checklist:
 
-- [ ] Add `&&`, `||`, and `!` to the lexer
+- [x] Add `&&`, `||`, and `!` to the lexer
 - [ ] Add AST operators:
-  - [ ] `BinOp::And`
-  - [ ] `BinOp::Or`
-  - [ ] `UnOp::Not`
-- [ ] Add an `UnOp` field to the surface AST if unary operators are not
+  - [x] `BinOp::And`
+  - [x] `BinOp::Or`
+  - [x] `UnOp::Not`
+- [x] Add an `UnOp` field to the surface AST if unary operators are not
       already represented
-- [ ] Parse `&&` and `||` with lower precedence than comparisons
-- [ ] Parse `!` as a unary operator
+- [x] Parse `&&` and `||` with lower precedence than comparisons
+- [x] Parse `!` as a unary operator
 - [ ] Type-check that both sides are `+bool`
-- [ ] Lower short-circuiting using existing `if`
+- [x] Lower short-circuiting using existing `if`
 - [ ] Add tests for short-circuit evaluation
 - [ ] Add tests for boolean type mismatches
 - [ ] Rewrite parser code using chained comparisons and boolean operators
@@ -142,15 +142,15 @@ let c: +char = '"';
 
 Implementation checklist:
 
-- [ ] Add `Base::Char` to `slc-core::types::Base`
-- [ ] Update the type pretty-printer
+- [x] Add `Base::Char` to `slc-core::types::Base`
+- [x] Update the type pretty-printer
 - [ ] Update dual/polarity behavior if needed
-- [ ] Add property tests for `dual(+char) == -char`
-- [ ] Change `Value::Char::type_of()` to return `Type::Pos(Base::Char)`
-- [ ] Add `char` to surface type lowering
-- [ ] Add `char` to inference support
-- [ ] Add type tests for positive and negative char types
-- [ ] Add runtime tests for char values
+- [x] Add property tests for `dual(+char) == -char`
+- [x] Change `Value::Char::type_of()` to return `Type::Pos(Base::Char)`
+- [x] Add `char` to surface type lowering
+- [x] Add `char` to inference support
+- [x] Add type tests for positive and negative char types
+- [x] Add runtime tests for char values
 
 ### 2.2 Character literals
 
@@ -172,13 +172,13 @@ Required syntax:
 
 Implementation checklist:
 
-- [ ] Rewrite the char lexer to use a shared escape-decoding routine
-- [ ] Support escapes in both strings and chars
-- [ ] Reject unterminated character literals with a useful span
-- [ ] Reject empty and multi-character char literals
-- [ ] Lower `Expr::Char(c)` to a char value rather than a pseudo-variable
-- [ ] Add parser tests for every escape form
-- [ ] Add runtime test for `'\n'` and `'\\'`
+- [x] Rewrite the char lexer to use a shared escape-decoding routine
+- [x] Support escapes in both strings and chars
+- [x] Reject unterminated character literals with a useful span
+- [x] Reject empty and multi-character char literals
+- [x] Lower `Expr::Char(c)` to a char value rather than a pseudo-variable
+- [x] Add parser tests for every escape form
+- [x] Add runtime test for `'\n'` and `'\\'`
 
 ### 2.3 Character operations
 
@@ -196,16 +196,16 @@ let c = input[pos]; // +char
 
 Implementation checklist:
 
-- [ ] Add `Base::Char` support to equality and comparison builtins
-- [ ] Add `char_eq`, `char_lt`, `char_le`, `char_gt`, and `char_ge`, or make
+- [x] Add `Base::Char` support to equality and comparison builtins
+- [x] Add `char_eq`, `char_lt`, `char_le`, `char_gt`, and `char_ge`, or make
       `eq`, `lt`, `le`, `gt`, and `ge` accept chars
-- [ ] Add `char_to_code(c) -> i64`
-- [ ] Add `code_to_char(i64) -> +char`
-- [ ] Add `is_digit(c: +char) -> +bool`
-- [ ] Add `is_ws(c: +char) -> +bool`
-- [ ] Add `string_push(s: +String, c: +char) -> +String`
-- [ ] Decide whether `char_at` remains code-based for compatibility
-- [ ] Add builtin tests for all new operations
+- [x] Add `char_to_code(c) -> i64`
+- [x] Add `code_to_char(i64) -> +char`
+- [x] Add `is_digit(c: +char) -> +bool`
+- [x] Add `is_ws(c: +char) -> +bool`
+- [x] Add `string_push(s: +String, c: +char) -> +String`
+- [x] Decide whether `char_at` remains code-based for compatibility
+- [x] Add builtin tests for all new operations
 - [ ] Rewrite JSON parser to use `+char` instead of integer codes
 
 ---
@@ -246,17 +246,17 @@ a % b
 
 Implementation checklist:
 
-- [ ] Lower `+` to `add`
-- [ ] Lower `-` to `sub`
-- [ ] Lower `*` to `mul`
-- [ ] Lower `/` to `div`
-- [ ] Lower `%` to `rem`
-- [ ] Lower unary `-` to `neg`
+- [x] Lower `+` to `add`
+- [x] Lower `-` to `sub`
+- [x] Lower `*` to `mul`
+- [x] Lower `/` to `div`
+- [x] Lower `%` to `rem`
+- [x] Lower unary `-` to `neg`
 - [ ] Type-check operands as matching numeric types
 - [ ] Preserve arithmetic overflow and division-by-zero diagnostics
-- [ ] Add precedence tests
+- [x] Add precedence tests
 - [ ] Add associativity tests
-- [ ] Add integration tests for each operator
+- [x] Add integration tests for each operator
 - [ ] Rewrite arithmetic and nested-call examples with operators
 
 ### 3.2 Comparison operators
@@ -274,16 +274,16 @@ a >= b
 
 Implementation checklist:
 
-- [ ] Lower `==` to `eq`
-- [ ] Lower `!=` to `ne`
-- [ ] Lower `<` to `lt`
-- [ ] Lower `>` to `gt`
-- [ ] Lower `<=` to `le`
-- [ ] Lower `>=` to `ge`
+- [x] Lower `==` to `eq`
+- [x] Lower `!=` to `ne`
+- [x] Lower `<` to `lt`
+- [x] Lower `>` to `gt`
+- [x] Lower `<=` to `le`
+- [x] Lower `>=` to `ge`
 - [ ] Type-check comparison operands as compatible numeric or char values
-- [ ] Add tests for numeric comparisons
-- [ ] Add tests for char comparisons
-- [ ] Add tests for type mismatch diagnostics
+- [x] Add tests for numeric comparisons
+- [x] Add tests for char comparisons
+- [x] Add tests for type mismatch diagnostics
 - [ ] Rewrite comparison and JSON examples with operators
 
 ### 3.3 String operators
@@ -296,11 +296,11 @@ Syntax:
 
 Implementation checklist:
 
-- [ ] Lower `+` on strings to `str_concat`
+- [x] Lower `+` on strings to `str_concat`
 - [ ] Add inference or bidirectional checking to distinguish numeric and
       string `+`
-- [ ] Add a type diagnostic when operands do not agree
-- [ ] Add integration test for string concatenation
+- [x] Add a type diagnostic when operands do not agree
+- [x] Add integration test for string concatenation
 - [ ] Rewrite string examples with `+`
 
 ---
@@ -325,13 +325,13 @@ substring(input, start, end)
 
 Implementation checklist:
 
-- [ ] Add postfix `[...]` parsing
-- [ ] Define `a[i]` as sugar for an indexing operation
-- [ ] Add `String` indexing returning `+char`
+- [x] Add postfix `[...]` parsing
+- [x] Define `a[i]` as sugar for an indexing operation
+- [x] Add `String` indexing returning `+char`
 - [ ] Add `List` indexing returning the element type
-- [ ] Add out-of-range diagnostics with source spans
+- [x] Add out-of-range diagnostics with source spans
 - [ ] Add checker tests for index types
-- [ ] Add runtime tests for valid and invalid indexes
+- [x] Add runtime tests for valid and invalid indexes
 
 ### 4.2 Slicing
 
@@ -346,16 +346,16 @@ input[..end]
 Implementation checklist:
 
 - [ ] Add range expression AST:
-  - [ ] `Range`
-  - [ ] `RangeFrom`
-  - [ ] `RangeTo`
-- [ ] Parse `..` in postfix slicing position
-- [ ] Optionally parse `..=` for inclusive ranges
-- [ ] Lower string slicing to `substring`
-- [ ] Define behavior for empty slices
+  - [x] `Range`
+  - [x] `RangeFrom`
+  - [x] `RangeTo`
+- [x] Parse `..` in postfix slicing position
+- [x] Optionally parse `..=` for inclusive ranges
+- [x] Lower string slicing to `substring`
+- [x] Define behavior for empty slices
 - [ ] Add bounds checking
 - [ ] Add checker tests for range endpoints
-- [ ] Add runtime tests for every range form
+- [x] Add runtime tests for every range form
 
 ---
 
@@ -378,11 +378,11 @@ match c {
 
 Implementation checklist:
 
-- [ ] Add `Pattern::Char(char)`
-- [ ] Parse char literals in patterns
+- [x] Add `Pattern::Char(char)`
+- [x] Parse char literals in patterns
 - [ ] Check char patterns against `+char`
-- [ ] Add runtime matching support
-- [ ] Add tests for char literal patterns and wildcards
+- [x] Add runtime matching support
+- [x] Add tests for char literal patterns and wildcards
 
 ### 5.2 Or-patterns
 
@@ -398,11 +398,11 @@ match c {
 
 Implementation checklist:
 
-- [ ] Add `Pattern::Or(Vec<Pattern>)`
-- [ ] Parse `|` between patterns
+- [x] Add `Pattern::Or(Vec<Pattern>)`
+- [x] Parse `|` between patterns
 - [ ] Check all alternatives have compatible types
-- [ ] Add runtime matching support
-- [ ] Add tests for multiple alternatives
+- [x] Add runtime matching support
+- [x] Add tests for multiple alternatives
 - [ ] Ensure or-patterns interact correctly with exhaustiveness checking
 
 ### 5.3 Range patterns
@@ -420,13 +420,13 @@ match c {
 
 Implementation checklist:
 
-- [ ] Add `Pattern::Range(Box<Pattern>, Box<Pattern>)`
-- [ ] Parse `..=` ranges in patterns
-- [ ] Support char ranges first
-- [ ] Add integer ranges after chars are supported
+- [x] Add `Pattern::Range(Box<Pattern>, Box<Pattern>)`
+- [x] Parse `..=` ranges in patterns
+- [x] Support char ranges first
+- [x] Add integer ranges after chars are supported
 - [ ] Check endpoint types
-- [ ] Add runtime inclusive-range matching
-- [ ] Add tests for boundaries and invalid ranges
+- [x] Add runtime inclusive-range matching
+- [x] Add tests for boundaries and invalid ranges
 - [ ] Update exhaustiveness checking to understand ranges
 
 ### 5.4 Guards
@@ -442,33 +442,33 @@ match c {
 
 Implementation checklist:
 
-- [ ] Extend `MatchArm` with an optional guard expression
-- [ ] Parse `if` after a pattern and before `=>`
+- [x] Extend `MatchArm` with an optional guard expression
+- [x] Parse `if` after a pattern and before `=>`
 - [ ] Type-check guards as `+bool`
-- [ ] Implement runtime guard evaluation
+- [x] Implement runtime guard evaluation
 - [ ] Define exhaustiveness rules:
   - [ ] wildcard plus guard is not considered unconditionally exhaustive
   - [ ] wildcard without a guard remains exhaustive
-- [ ] Add tests for matching with and without guards
+- [x] Add tests for matching with and without guards
 - [ ] Add diagnostic tests for non-bool guards
 
 ### 5.5 Other useful pattern forms
 
 Implementation checklist:
 
-- [ ] Add `Pattern::Char`
-- [ ] Add `Pattern::Or`
-- [ ] Add `Pattern::Range`
+- [x] Add `Pattern::Char`
+- [x] Add `Pattern::Or`
+- [x] Add `Pattern::Range`
 - [ ] Add optional binding with `@`:
-  - [ ] `c @ '0'..='9'`
+  - [x] `c @ '0'..='9'`
   - [ ] `x @ Some(_)`
 - [ ] Add rest patterns for lists:
   - [ ] `[first, ..rest]`
 - [ ] Add struct field shorthand:
   - [ ] `Point { x, y }`
 - [ ] Add tuple patterns with nested destructuring
-- [ ] Add negative integer patterns
-- [ ] Add float patterns only if floats become first-class
+- [x] Add negative integer patterns
+- [x] Add float patterns only if floats become first-class
 
 ---
 
@@ -488,13 +488,13 @@ This removes magic numbers and character-code aliases from parsers.
 
 Implementation checklist:
 
-- [ ] Add `TokenKind::Const`
-- [ ] Add `Decl::Const` to the surface AST
-- [ ] Parse `const NAME: Type = expression;`
+- [x] Add `TokenKind::Const`
+- [x] Add `Decl::Const` to the surface AST
+- [x] Parse `const NAME: Type = expression;`
 - [ ] Reject non-constant initializers in v0.1
-- [ ] Lower constants to global bindings
+- [x] Lower constants to global bindings
 - [ ] Check constant types
-- [ ] Add tests for char, integer, bool, and string constants
+- [x] Add tests for char, integer, bool, and string constants
 - [ ] Add diagnostics for mutable or non-constant initializers
 - [ ] Rewrite JSON parser using named character constants
 
@@ -508,9 +508,9 @@ let OPEN_BRACKET: +char = '[';
 
 Implementation checklist:
 
-- [ ] Add optional type annotation to `let`
+- [x] Add optional type annotation to `let`
 - [ ] Check the initializer against the annotation
-- [ ] Add parser tests
+- [x] Add parser tests
 - [ ] Add checker tests
 - [ ] Add examples using annotated local bindings
 
@@ -619,10 +619,10 @@ println(2 + 3);
 
 Checklist:
 
-- [ ] Use arithmetic operators
-- [ ] Use unary minus where appropriate
+- [x] Use arithmetic operators
+- [x] Use unary minus where appropriate
 - [ ] Show overflow and division diagnostics
-- [ ] Keep the example concise
+- [x] Keep the example concise
 
 ### 8.2 Rewrite comparison example
 
@@ -640,9 +640,9 @@ println(1 == 1);
 
 Checklist:
 
-- [ ] Use comparison operators
-- [ ] Add char comparison
-- [ ] Add boolean operators
+- [x] Use comparison operators
+- [x] Add char comparison
+- [x] Add boolean operators
 
 ### 8.3 Rewrite string example
 
@@ -660,9 +660,9 @@ After:
 
 Checklist:
 
-- [ ] Use string concatenation
-- [ ] Use indexing and slicing where useful
-- [ ] Show char values
+- [x] Use string concatenation
+- [x] Use indexing and slicing where useful
+- [x] Show char values
 
 ### 8.4 Rewrite JSON parser
 
@@ -697,44 +697,44 @@ fn parse_value(
 
 Checklist:
 
-- [ ] Replace all character codes with `+char`
-- [ ] Replace `else` nesting with `else if` or `match`
-- [ ] Replace `add`, `sub`, `eq`, `lt`, and `ge` with operators
-- [ ] Replace `char_at` with indexing
-- [ ] Replace `substring` with slicing where appropriate
-- [ ] Define constants for punctuation
-- [ ] Keep continuation-based error handling rather than `Result`
-- [ ] Preserve all current JSON validation behavior
-- [ ] Add invalid-input examples or tests
-- [ ] Verify that success and error continuations each run exactly once
+- [x] Replace all character codes with `+char`
+- [x] Replace `else` nesting with `else if` or `match`
+- [x] Replace `add`, `sub`, `eq`, `lt`, and `ge` with operators
+- [x] Replace `char_at` with indexing
+- [x] Replace `substring` with slicing where appropriate
+- [x] Define constants for punctuation
+- [x] Keep continuation-based error handling rather than `Result`
+- [x] Preserve all current JSON validation behavior
+- [x] Add invalid-input examples or tests
+- [x] Verify that success and error continuations each run exactly once
 
 ### 8.5 Example audit
 
 Checklist:
 
-- [ ] `hello.sl`
-- [ ] `arithmetic.sl`
-- [ ] `comparison.sl`
-- [ ] `strings.sl`
-- [ ] `lambda.sl`
-- [ ] `pair.sl`
-- [ ] `nested_calls.sl`
-- [ ] `command.sl`
-- [ ] `match_exhaustive.sl`
-- [ ] `mu_escape.sl`
-- [ ] `file_io.sl`
-- [ ] `json_parser.sl`
+- [x] `hello.sl`
+- [x] `arithmetic.sl`
+- [x] `comparison.sl`
+- [x] `strings.sl`
+- [x] `lambda.sl`
+- [x] `pair.sl`
+- [x] `nested_calls.sl`
+- [x] `command.sl`
+- [x] `match_exhaustive.sl`
+- [x] `mu_escape.sl`
+- [x] `file_io.sl`
+- [x] `json_parser.sl`
 - [ ] intentional diagnostic examples:
-  - [ ] `linearity_error.sl`
-  - [ ] `polarity_error.sl`
+  - [x] `linearity_error.sl`
+  - [x] `polarity_error.sl`
 
 For each example, ensure:
 
-- [ ] it runs with `slc run`
-- [ ] it uses the intended surface syntax rather than builtin spellings
-- [ ] it demonstrates one clear concept
-- [ ] it has no unexplained magic numbers
-- [ ] it remains compatible with continuation linearity
+- [x] it runs with `slc run`
+- [x] it uses the intended surface syntax rather than builtin spellings
+- [x] it demonstrates one clear concept
+- [x] it has no unexplained magic numbers
+- [x] it remains compatible with continuation linearity
 
 ---
 
@@ -744,14 +744,14 @@ Every phase must end with the full quality gate.
 
 Checklist:
 
-- [ ] `cargo fmt`
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
-- [ ] Run every non-diagnostic example with `slc run`
-- [ ] Confirm diagnostic examples still fail with intended errors
+- [x] `cargo fmt`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy --all-targets -- -D warnings`
+- [x] `cargo test --workspace`
+- [x] Run every non-diagnostic example with `slc run`
+- [x] Confirm diagnostic examples still fail with intended errors
 - [ ] Check that no compiler change reduces existing test coverage
-- [ ] Add regression tests for every syntax feature
+- [x] Add regression tests for every syntax feature
 - [ ] Add pretty-printer or round-trip tests where applicable
 - [ ] Add type-checker diagnostics with spans
 - [ ] Add linearity diagnostics for continuation-sensitive sugar

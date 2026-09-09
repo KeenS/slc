@@ -23,6 +23,18 @@ impl std::fmt::Display for BuiltinError {
 
 impl std::error::Error for BuiltinError {}
 
+fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
+    match name {
+        "eq" => a == b,
+        "ne" => a != b,
+        "lt" => a < b,
+        "gt" => a > b,
+        "le" => a <= b,
+        "ge" => a >= b,
+        _ => false,
+    }
+}
+
 /// Apply a builtin to arguments.
 pub fn apply_builtin(
     name: &str,
@@ -44,7 +56,23 @@ pub fn apply_builtin(
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
         },
+        "unquote" => match args.first() {
+            Some(Value::Closure { param, body, env }) => {
+                let mut call_env = env.clone();
+                call_env.push();
+                call_env.define(param.clone(), Value::Unit);
+                crate::eval::eval(body, &mut call_env, &mut 1_000_000)
+                    .map_err(|e| BuiltinError::TypeMismatch(e.to_string()))
+            }
+            Some(v) => Ok(v.clone()),
+            None => Ok(Value::Unit),
+        },
         "add" | "sub" | "mul" | "div" | "rem" => {
+            if name == "add"
+                && let (Some(Value::Str(a)), Some(Value::Str(b))) = (args.first(), args.get(1))
+            {
+                return Ok(Value::Str(format!("{a}{b}")));
+            }
             let (a, b) = two_ints(name, args)?;
             let r = match name {
                 "add" => a
@@ -72,21 +100,75 @@ pub fn apply_builtin(
             Ok(Value::Int(r))
         }
         "eq" | "ne" | "lt" | "gt" | "le" | "ge" => {
-            let (a, b) = two_ints(name, args)?;
-            let r = match name {
-                "eq" => a == b,
-                "ne" => a != b,
-                "lt" => a < b,
-                "gt" => a > b,
-                "le" => a <= b,
-                "ge" => a >= b,
-                _ => unreachable!(),
+            let r = match (args.first(), args.get(1)) {
+                (Some(Value::Int(a)), Some(Value::Int(b))) => Some(cmp_op(name, *a, *b)),
+                (Some(Value::Char(a)), Some(Value::Char(b))) => Some(cmp_op(name, *a, *b)),
+                (Some(Value::Str(a)), Some(Value::Str(b))) => Some(cmp_op(name, a, b)),
+                (Some(Value::Bool(a)), Some(Value::Bool(b))) => Some(cmp_op(name, *a, *b)),
+                _ => None,
             };
+            let r = r.ok_or_else(|| {
+                BuiltinError::TypeMismatch(format!(
+                    "{name} expects two matching integer, char, String, or bool arguments"
+                ))
+            })?;
             Ok(Value::Bool(r))
         }
         "str_len" => match args.first() {
+            Some(Value::Str(s)) => Ok(Value::Int(s.chars().count() as i64)),
+            _ => Err(BuiltinError::TypeMismatch(format!("{name} expects a String argument"))),
+        },
+        "str_len_bytes" => match args.first() {
             Some(Value::Str(s)) => Ok(Value::Int(s.len() as i64)),
             _ => Err(BuiltinError::TypeMismatch(format!("{name} expects a String argument"))),
+        },
+        "char_at" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(i))) => {
+                let idx = *i as usize;
+                s.chars()
+                    .nth(idx)
+                    .map(Value::Char)
+                    .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
+            }
+            _ => Err(BuiltinError::TypeMismatch("char_at expects (String, i64)".into())),
+        },
+        "char_code_at" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Int(i))) => {
+                let idx = *i as usize;
+                s.chars()
+                    .nth(idx)
+                    .map(|c| Value::Int(c as i64))
+                    .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
+            }
+            _ => Err(BuiltinError::TypeMismatch("char_code_at expects (String, i64)".into())),
+        },
+        "char_to_code" => match args.first() {
+            Some(Value::Char(c)) => Ok(Value::Int(*c as i64)),
+            _ => Err(BuiltinError::TypeMismatch("char_to_code expects a char".into())),
+        },
+        "code_to_char" => match args.first() {
+            Some(Value::Int(n)) => u32::try_from(*n)
+                .ok()
+                .and_then(char::from_u32)
+                .map(Value::Char)
+                .ok_or_else(|| BuiltinError::TypeMismatch(format!("invalid char code {n}"))),
+            _ => Err(BuiltinError::TypeMismatch("code_to_char expects an i64".into())),
+        },
+        "string_push" => match (args.first(), args.get(1)) {
+            (Some(Value::Str(s)), Some(Value::Char(c))) => {
+                let mut s = s.clone();
+                s.push(*c);
+                Ok(Value::Str(s))
+            }
+            _ => Err(BuiltinError::TypeMismatch("string_push expects (String, char)".into())),
+        },
+        "is_digit" => match args.first() {
+            Some(Value::Char(c)) => Ok(Value::Bool(c.is_ascii_digit())),
+            _ => Err(BuiltinError::TypeMismatch("is_digit expects a char".into())),
+        },
+        "is_ws" => match args.first() {
+            Some(Value::Char(c)) => Ok(Value::Bool(c.is_whitespace())),
+            _ => Err(BuiltinError::TypeMismatch("is_ws expects a char".into())),
         },
         "str_concat" => {
             let (Some(Value::Str(a)), Some(Value::Str(b))) = (args.first(), args.get(1)) else {
@@ -105,26 +187,6 @@ pub fn apply_builtin(
             let s = args.iter().map(|v| v.display()).collect::<Vec<_>>().join(" ");
             Ok(Value::Str(s))
         }
-        "char_at" => match (args.first(), args.get(1)) {
-            (Some(Value::Str(s)), Some(Value::Int(i))) => {
-                let idx = *i as usize;
-                s.chars()
-                    .nth(idx)
-                    .map(|c| Value::Int(c as i64))
-                    .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
-            }
-            _ => Err(BuiltinError::TypeMismatch("char_at expects (String, i64)".into())),
-        },
-        "is_digit" => match args.first() {
-            Some(Value::Int(c)) => Ok(Value::Bool((*c as u8).is_ascii_digit())),
-            _ => Err(BuiltinError::TypeMismatch("is_digit expects a char code".into())),
-        },
-        "is_ws" => match args.first() {
-            Some(Value::Int(c)) => Ok(Value::Bool(
-                *c == ' ' as i64 || *c == '\n' as i64 || *c == '\r' as i64 || *c == '\t' as i64,
-            )),
-            _ => Err(BuiltinError::TypeMismatch("is_ws expects a char code".into())),
-        },
         "skip_digits" => match (args.first(), args.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(pos))) => {
                 let mut i = *pos as usize;
@@ -174,10 +236,11 @@ pub fn apply_builtin(
             }
             match (args.first(), args.get(1), args.get(2)) {
                 (Some(Value::Str(s)), Some(Value::Int(start)), Some(Value::Int(end))) => {
+                    let chars: Vec<char> = s.chars().collect();
                     let a = (*start).max(0) as usize;
                     let b = (*end).max(0) as usize;
-                    if b > a && b <= s.len() {
-                        Ok(Value::Str(s[a..b].to_string()))
+                    if a <= b && a <= chars.len() {
+                        Ok(Value::Str(chars[a..b.min(chars.len())].iter().collect()))
                     } else {
                         Ok(Value::Str(String::new()))
                     }

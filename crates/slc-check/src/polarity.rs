@@ -71,6 +71,16 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
+        Decl::Const { ty, .. } => {
+            if let Ok(core_ty) = lower_type(ty)
+                && !is_positive_type(&core_ty)
+            {
+                diags.push(Diagnostic {
+                    message: format!("const type {core_ty} must be positive (+)"),
+                    span: d.span,
+                });
+            }
+        }
     }
 }
 
@@ -175,6 +185,20 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
         Expr::BinOp { lhs, rhs, .. } => {
             check_expr(lhs, diags);
             check_expr(rhs, diags);
+        }
+        Expr::UnOp { body, .. } => check_expr(body, diags),
+        Expr::Index { value, index } => {
+            check_expr(value, diags);
+            check_expr(index, diags);
+        }
+        Expr::Slice { value, start, end } => {
+            check_expr(value, diags);
+            if let Some(start) = start {
+                check_expr(start, diags);
+            }
+            if let Some(end) = end {
+                check_expr(end, diags);
+            }
         }
         Expr::Dual { body } => check_expr(body, diags),
         Expr::Interaction { left, right } => {

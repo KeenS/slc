@@ -1,8 +1,8 @@
-// Arithmetic via stdlib builtins.
+// Arithmetic with surface operators.
 
 fn main() -> i32 {
-    println(add(2, 3));
-    println(sub(10, 4));
-    println(mul(6, 7));
-    println(div(100, 10))
+    println(2 + 3);
+    println(10 - 4);
+    println(6 * 7);
+    println(100 / 10)
 }

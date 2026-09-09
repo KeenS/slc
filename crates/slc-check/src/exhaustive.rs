@@ -37,6 +37,7 @@ fn check_node_decl(
     match &d.kind {
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Command { body, .. } => check_expr(body, enums, diags),
+        Decl::Const { value, .. } => check_expr(value, enums, diags),
         Decl::Struct { .. } | Decl::Enum { .. } => {}
     }
 }
@@ -51,6 +52,9 @@ fn check_expr(
             check_match(scrutinee, arms, enums, e.span, diags);
             // Recurse into arm bodies
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    check_expr(guard, enums, diags);
+                }
                 check_expr(&arm.body, enums, diags);
             }
         }
@@ -83,6 +87,20 @@ fn check_expr(
         Expr::BinOp { lhs, rhs, .. } => {
             check_expr(lhs, enums, diags);
             check_expr(rhs, enums, diags);
+        }
+        Expr::UnOp { body, .. } => check_expr(body, enums, diags),
+        Expr::Index { value, index } => {
+            check_expr(value, enums, diags);
+            check_expr(index, enums, diags);
+        }
+        Expr::Slice { value, start, end } => {
+            check_expr(value, enums, diags);
+            if let Some(start) = start {
+                check_expr(start, enums, diags);
+            }
+            if let Some(end) = end {
+                check_expr(end, enums, diags);
+            }
         }
         Expr::Dual { body } | Expr::Spawn { body } | Expr::ErrorProp { expr: body } => {
             check_expr(body, enums, diags);

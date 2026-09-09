@@ -1,7 +1,8 @@
-// String operations from the stdlib.
+// String concatenation, indexing, and slicing.
 
 fn main() -> i32 {
-    println(str_concat("Hello, ", "world!"));
-    println(str_len("Slant"));
-    println(int_to_str(255))
+    let text: +String = "Hello, " + "world!";
+    println(text);
+    println(text[0]);
+    println(text[7..12])
 }

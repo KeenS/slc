@@ -13,11 +13,12 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
+    in_block: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new() }
+        Self { tokens, pos: 0, errors: Vec::new(), in_block: false }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -115,6 +116,7 @@ impl Parser {
                 }
             }
             Some(TokenKind::Command) => self.parse_command_decl(),
+            Some(TokenKind::Const) => self.parse_const_decl(),
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
@@ -225,6 +227,21 @@ impl Parser {
         Ok(Node { span: t.span, kind: Decl::Command { name, params, body } })
     }
 
+    fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Const, "`const`")?;
+        let name = self.expect_ident("constant name")?;
+        self.expect(TokenKind::Colon, "`:` in constant declaration")?;
+        let ty = self.parse_type()?;
+        self.expect(TokenKind::Assign, "`=` in constant declaration")?;
+        let value = self.parse_expr()?;
+        let end = self.pos;
+        self.eat(&TokenKind::Semicolon);
+        Ok(Node {
+            span: Span { start: t.span.start, end },
+            kind: Decl::Const { name, ty: ty.kind, value },
+        })
+    }
+
     fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
         let mut params = Vec::new();
         self.expect(TokenKind::LParen, "`(`")?;
@@ -271,6 +288,8 @@ impl Parser {
     fn parse_block(&mut self) -> Result<Node<Expr>, ParseError> {
         let start = self.pos;
         self.expect(TokenKind::LBrace, "`{`")?;
+        let outer_in_block = self.in_block;
+        self.in_block = true;
         let mut exprs: Vec<Node<Expr>> = Vec::new();
         loop {
             if self.eat(&TokenKind::RBrace) {
@@ -286,6 +305,7 @@ impl Parser {
         // Wrap from the inside out: each trailing Let captures the rest.
         // (Handled during lowering: Block flattens Lets by nesting.)
         let _ = &mut kind;
+        self.in_block = outer_in_block;
         Ok(Node { span: Span { start, end: self.pos }, kind })
     }
 
@@ -417,6 +437,8 @@ impl Parser {
                 Some(TokenKind::Gt) => (BinOp::Gt, 0),
                 Some(TokenKind::Le) => (BinOp::Le, 0),
                 Some(TokenKind::Ge) => (BinOp::Ge, 0),
+                Some(TokenKind::AmpAmp) => (BinOp::And, 0),
+                Some(TokenKind::PipePipe) => (BinOp::Or, 0),
                 _ => break,
             };
             if prec < min_prec {
@@ -431,20 +453,22 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Node<Expr>, ParseError> {
+        if self.eat(&TokenKind::Bang) {
+            let start = self.pos - 1;
+            let body = self.parse_unary()?;
+            let end = self.pos;
+            return Ok(Node {
+                span: Span { start, end },
+                kind: Expr::UnOp { op: UnOp::Not, body: Box::new(body) },
+            });
+        }
         if self.eat(&TokenKind::Minus) {
             let start = self.pos;
             let body = self.parse_unary()?;
             let end = self.pos;
-            // Unary minus: encode as neg(x)
             return Ok(Node {
                 span: Span { start, end },
-                kind: Expr::Call {
-                    callee: Box::new(Node {
-                        span: Span { start, end },
-                        kind: Expr::Ident("neg".into()),
-                    }),
-                    args: vec![body],
-                },
+                kind: Expr::UnOp { op: UnOp::Neg, body: Box::new(body) },
             });
         }
         if self.eat(&TokenKind::Dual) {
@@ -550,6 +574,44 @@ impl Parser {
                         kind: Expr::Interaction { left: Box::new(e), right: Box::new(rhs) },
                     };
                 }
+                Some(TokenKind::LBracket) => {
+                    self.pos += 1;
+                    let start_expr = if self.peek_kind() == Some(&TokenKind::DotDot) {
+                        None
+                    } else {
+                        Some(Box::new(self.parse_expr()?))
+                    };
+                    let mut end_expr = None;
+                    let mut is_range = false;
+                    if self.eat(&TokenKind::DotDot) {
+                        is_range = true;
+                        if self.peek_kind() != Some(&TokenKind::RBracket) {
+                            end_expr = Some(Box::new(self.parse_expr()?));
+                        }
+                    }
+                    self.expect(TokenKind::RBracket, "`]`")?;
+                    let end = self.pos;
+                    e = if let Some(index) = (!is_range).then(|| start_expr.clone()).flatten() {
+                        Node {
+                            span: Span { start: e.span.start, end },
+                            kind: Expr::Index { value: Box::new(e), index },
+                        }
+                    } else if is_range {
+                        Node {
+                            span: Span { start: e.span.start, end },
+                            kind: Expr::Slice {
+                                value: Box::new(e),
+                                start: start_expr,
+                                end: end_expr,
+                            },
+                        }
+                    } else {
+                        return Err(ParseError {
+                            message: "indexing requires an index".into(),
+                            span: Span { start: e.span.start, end },
+                        });
+                    };
+                }
                 _ => break,
             }
         }
@@ -635,10 +697,12 @@ impl Parser {
                         break;
                     }
                     let pattern = self.parse_pattern()?;
+                    let guard =
+                        if self.eat(&TokenKind::If) { Some(self.parse_expr()?) } else { None };
                     self.expect(TokenKind::FatArrow, "`=>`")?;
                     let body = self.parse_expr()?;
                     self.eat(&TokenKind::Comma);
-                    arms.push(MatchArm { pattern, body });
+                    arms.push(MatchArm { pattern, guard, body });
                 }
                 Ok(Node {
                     span: Span { start, end: self.pos },
@@ -648,6 +712,8 @@ impl Parser {
             Some(TokenKind::Let) => {
                 self.pos += 1;
                 let name = self.expect_ident("binding name")?;
+                let ty =
+                    if self.eat(&TokenKind::Colon) { Some(self.parse_type()?.kind) } else { None };
                 let value = if self.eat(&TokenKind::Assign) {
                     self.parse_expr()?
                 } else {
@@ -656,14 +722,14 @@ impl Parser {
                         span: Span { start, end: self.pos },
                     });
                 };
-                let body = if self.eat(&TokenKind::Semicolon) {
+                let body = if !self.in_block && self.eat(&TokenKind::Semicolon) {
                     Some(Box::new(self.parse_expr()?))
                 } else {
                     None
                 };
                 Ok(Node {
                     span: Span { start, end: self.pos },
-                    kind: Expr::Let { name, value: Box::new(value), body },
+                    kind: Expr::Let { name, ty, value: Box::new(value), body },
                 })
             }
             Some(TokenKind::If) => {
@@ -671,7 +737,11 @@ impl Parser {
                 let cond = self.parse_expr()?;
                 let then = self.parse_block()?;
                 let otherwise = if self.eat(&TokenKind::Else) {
-                    Some(Box::new(self.parse_block()?))
+                    if self.peek_kind() == Some(&TokenKind::If) {
+                        Some(Box::new(self.parse_expr()?))
+                    } else {
+                        Some(Box::new(self.parse_block()?))
+                    }
                 } else {
                     None
                 };
@@ -705,6 +775,7 @@ impl Parser {
                     Ok(Node { span: Span { start, end: self.pos }, kind: first.kind })
                 }
             }
+            Some(TokenKind::LBrace) => self.parse_block(),
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
                 Err(ParseError {
@@ -719,6 +790,38 @@ impl Parser {
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let first = self.parse_single_pattern()?;
+        if self.peek_kind() == Some(&TokenKind::DotDotEq) {
+            self.pos += 1;
+            let end = self.parse_single_pattern()?;
+            if self.peek_kind() == Some(&TokenKind::Pipe) {
+                let mut alternatives =
+                    vec![Pattern::Range { start: Box::new(first), end: Box::new(end) }];
+                while self.eat(&TokenKind::Pipe) {
+                    alternatives.push(self.parse_pattern()?);
+                }
+                return Ok(Pattern::Or(alternatives));
+            }
+            return Ok(Pattern::Range { start: Box::new(first), end: Box::new(end) });
+        }
+        if self.peek_kind() == Some(&TokenKind::Pipe) {
+            let mut alternatives = vec![first];
+            while self.eat(&TokenKind::Pipe) {
+                alternatives.push(self.parse_single_pattern()?);
+            }
+            return Ok(Pattern::Or(alternatives));
+        }
+        if self.peek_kind() == Some(&TokenKind::At)
+            && let Pattern::Ident(name) = first
+        {
+            self.pos += 1;
+            let pattern = self.parse_pattern()?;
+            return Ok(Pattern::Binding { name, pattern: Box::new(pattern) });
+        }
+        Ok(first)
+    }
+
+    fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind().cloned() {
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
@@ -769,6 +872,18 @@ impl Parser {
             Some(TokenKind::Str(s)) => {
                 self.pos += 1;
                 Ok(Pattern::Str(s))
+            }
+            Some(TokenKind::Char(c)) => {
+                self.pos += 1;
+                Ok(Pattern::Char(c))
+            }
+            Some(TokenKind::Float(n)) => {
+                self.pos += 1;
+                Ok(Pattern::Float(n))
+            }
+            Some(TokenKind::DotDot) => {
+                self.pos += 1;
+                Ok(Pattern::Rest)
             }
             Some(TokenKind::Bool(b)) => {
                 self.pos += 1;
@@ -947,5 +1062,83 @@ mod tests {
     fn parse_rejects_unknown_partial_method() {
         let toks = lex("f.whatever(42)").unwrap();
         assert!(parse(toks).is_err());
+    }
+
+    #[test]
+    fn parse_else_if_chain() {
+        let p = parse_str("if a { 1 } else if b { 2 } else if c { 3 } else { 4 }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(&body.kind, Expr::If { .. }));
+        let Expr::If { otherwise: Some(outer), .. } = &body.kind else {
+            panic!("expected else");
+        };
+        assert!(matches!(&outer.kind, Expr::If { .. }));
+    }
+
+    #[test]
+    fn parse_else_if_without_final_else() {
+        let p = parse_str("if a { 1 } else if b { 2 }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::If { otherwise: Some(outer), .. }
+                if matches!(&outer.kind, Expr::If { otherwise: None, .. })
+        ));
+    }
+
+    #[test]
+    fn parse_boolean_and_unary_operators() {
+        let p = parse_str("!a && b || c");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(&body.kind, Expr::BinOp { op: BinOp::Or, .. }));
+    }
+
+    #[test]
+    fn parse_index_and_slice() {
+        let p = parse_str("input[pos]");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(&body.kind, Expr::Index { .. }));
+
+        let p = parse_str("input[start..end]");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(&body.kind, Expr::Slice { .. }));
+    }
+
+    #[test]
+    fn parse_match_guard_or_range_binding() {
+        let p = parse_str("match c { c @ '0'..='9' if c < 'a' => 1, 'x' | 'y' => 2, _ => 3 }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        let Expr::Match { arms, .. } = &body.kind else {
+            panic!("expected match");
+        };
+        assert!(matches!((&arms[0].pattern, &arms[0].guard), (Pattern::Binding { .. }, Some(_))));
+        assert!(matches!(&arms[1].pattern, Pattern::Or(_)));
+    }
+
+    #[test]
+    fn parse_const_decl() {
+        let p = parse_str("const X: +char = 'x';");
+        assert!(matches!(&p.decls[0].kind, Decl::Const { name, .. } if name == "X"));
+    }
+
+    #[test]
+    fn parse_typed_let() {
+        let p = parse_str("let x: +i32 = 42; x");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        assert!(matches!(&body.kind, Expr::Let { ty: Some(_), .. }));
     }
 }

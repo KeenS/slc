@@ -43,6 +43,7 @@ pub enum Expr {
     },
     Let {
         name: String,
+        ty: Option<TypeExpr>,
         value: Box<Node<Expr>>,
         body: Option<Box<Node<Expr>>>,
     },
@@ -55,6 +56,10 @@ pub enum Expr {
         op: BinOp,
         lhs: Box<Node<Expr>>,
         rhs: Box<Node<Expr>>,
+    },
+    UnOp {
+        op: UnOp,
+        body: Box<Node<Expr>>,
     },
     Interaction {
         left: Box<Node<Expr>>,
@@ -81,6 +86,15 @@ pub enum Expr {
     },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
+    Index {
+        value: Box<Node<Expr>>,
+        index: Box<Node<Expr>>,
+    },
+    Slice {
+        value: Box<Node<Expr>>,
+        start: Option<Box<Node<Expr>>>,
+        end: Option<Box<Node<Expr>>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -115,6 +129,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Node<Expr>>,
     pub body: Node<Expr>,
 }
 
@@ -124,7 +139,13 @@ pub enum Pattern {
     Ident(String),
     Int(i64),
     Str(String),
+    Char(char),
     Bool(bool),
+    Float(f64),
+    Or(Vec<Pattern>),
+    Range { start: Box<Pattern>, end: Box<Pattern> },
+    Binding { name: String, pattern: Box<Pattern> },
+    Rest,
     Tuple(Vec<Pattern>),
     Struct { name: String, fields: Vec<(String, Pattern)> },
     Enum { name: String, variant: String, fields: Vec<Pattern> },
@@ -143,6 +164,14 @@ pub enum BinOp {
     Gt,
     Le,
     Ge,
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnOp {
+    Not,
+    Neg,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +195,11 @@ pub enum Decl {
         name: String,
         params: Vec<Param>,
         body: Node<Expr>,
+    },
+    Const {
+        name: String,
+        ty: TypeExpr,
+        value: Node<Expr>,
     },
 }
 

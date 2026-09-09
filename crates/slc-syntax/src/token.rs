@@ -30,6 +30,7 @@ pub enum TokenKind {
     Spawn,
     Dual,
     Return,
+    Const,
 
     // Punctuation
     LParen,
@@ -47,6 +48,8 @@ pub enum TokenKind {
     FatArrow,
     At,
     Question,
+    DotDot,
+    DotDotEq,
 
     // Operators
     Plus,
@@ -61,6 +64,10 @@ pub enum TokenKind {
     Le,
     Ge,
     Assign,
+    Pipe,
+    AmpAmp,
+    PipePipe,
+    Bang,
 
     // Unicode
     Tensor, // ⊗
@@ -96,6 +103,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Spawn => write!(f, "`spawn`"),
             TokenKind::Dual => write!(f, "`dual`"),
             TokenKind::Return => write!(f, "`return`"),
+            TokenKind::Const => write!(f, "`const`"),
             TokenKind::LParen => write!(f, "`(`"),
             TokenKind::RParen => write!(f, "`)`"),
             TokenKind::LBrace => write!(f, "`{{`"),
@@ -111,6 +119,8 @@ impl std::fmt::Display for TokenKind {
             TokenKind::FatArrow => write!(f, "`=>`"),
             TokenKind::At => write!(f, "`@`"),
             TokenKind::Question => write!(f, "`?`"),
+            TokenKind::DotDot => write!(f, "`..`"),
+            TokenKind::DotDotEq => write!(f, "`..=`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -123,6 +133,10 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Le => write!(f, "`<=`"),
             TokenKind::Ge => write!(f, "`>=`"),
             TokenKind::Assign => write!(f, "`=`"),
+            TokenKind::Pipe => write!(f, "`|`"),
+            TokenKind::AmpAmp => write!(f, "`&&`"),
+            TokenKind::PipePipe => write!(f, "`||`"),
+            TokenKind::Bang => write!(f, "`!`"),
             TokenKind::Tensor => write!(f, "`⊗`"),
             TokenKind::Par => write!(f, "`⅋`"),
             TokenKind::Bot => write!(f, "`⊥`"),

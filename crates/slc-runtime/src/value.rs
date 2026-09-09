@@ -151,7 +151,7 @@ impl Value {
             Value::Float(_) => Type::Pos(slc_core::types::Base::Unit),
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
-            Value::Char(_) => Type::Pos(slc_core::types::Base::Unit),
+            Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::Unit | Value::Never => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
