@@ -1,812 +1,505 @@
-# Slant Surface Syntax Ergonomics Plan
+# Slant Redesign: λ̄μμ̃ Calculus
 
-This plan addresses the gap between Slant’s symmetric core and its current
-surface syntax. The language already has `fn`, `mu`, `command`, `match`, and
-polarity types, but the examples—especially the JSON parser—still expose too
-much implementation detail. Numeric character codes, nested `else` chains,
-and builtin calls like `add(...)` and `eq(...)` make programs unnecessarily
-ugly.
+## Goal
 
-The goal is to make common Slant code look like Rust while preserving the
-λ̄μμ̃-style core. Everything in this plan is either sugar over existing
-constructs or a missing basic type that is already representable at runtime.
-
-## Non-goals
-
-- Do not add a `Result`-first error model.
-- Do not add concurrency primitives.
-- Do not replace the symmetric core.
-- Do not introduce unrestricted copying of linear continuations.
-- Do not make syntax sugar semantically ambiguous with continuation use.
+Realign Slant with the lambda-bar-mu-mu-tilde calculus (λ̄μμ̃) rather than the looser “symmetric lambda calculus” formulation currently in the compiler. The redesign must preserve the ergonomic Rust-like surface syntax, keep values and continuations syntactically symmetric, and eliminate constructs that do not map cleanly onto λ̄μμ̃.
 
 ---
 
-## Phase 1: Control-flow sugar
+## 1. Terminology and Core Mapping
 
-### 1.1 `else if`
+### Current state
 
-**Goal:** allow flat branching instead of deeply nested `else` blocks.
+| Surface construct | Current meaning | λ̄μμ̃ idea |
+|---|---|---|
+| `fn` | producer / lambda | `λx.t` |
+| `mu` | producer that captures a return continuation | `μ`-like escape, but not the standard calculus binder |
+| `command` | consumer / producer interaction with continuation parameters | a mixture of `μ` and `μ̃` |
+| `spawn` | concurrency-like process creation | not part of λ̄μμ̃ |
 
-Syntax:
+### Target mapping
+
+| Surface construct | λ̄μμ̃ core |
+|---|---|
+| `fn(x: +A) -> B` | `λx.t` |
+| `fn(k: -A) -> B` | continuation-consuming producer; equivalent to `v · e` |
+| `mu(x: +A) -> B` | `μ̃`-style consumer abstraction / consumer binder |
+| `mu(k: -A) -> B` | `μ`-style continuation abstraction / producer binder |
+| `e1 ∥ e2` | cut `⟨e1 ∥ e2⟩` |
+
+### Checklist
+
+- [ ] Audit every current surface construct and record its current λ̄μμ̃ meaning
+- [ ] Define the final core grammar for Slant after the redesign
+- [ ] Define the surface-to-core lowering rules
+- [ ] Define the core pretty-printer and round-trip tests
+- [ ] Update `DESIGN.md` to describe λ̄μμ̃ rather than “symmetric lambda calculus”
+
+---
+
+## 2. Replace `mu` Value-Return Blocks with Continuation-Taking `fn`
+
+### Problem
+
+A block that provides a value and captures a continuation is currently written as:
 
 ```sl
-if is_digit(c) {
-    parse_number(input, pos, ok, err)
-} else if c == '-' {
-    parse_number(input, pos, ok, err)
-} else if c == '"' {
-    parse_string(input, pos, ok, err)
-} else {
-    err("expected JSON value")
+mu(ret: -i32) {
+    ...
+    ret(value)
 }
 ```
 
-Semantics:
+In λ̄μμ̃ this is better understood as `v · e`: a producer paired with a continuation. The continuation parameter is not a special control construct; it is simply another function parameter.
 
-```text
-if a { A } else if b { B } else { C }
-```
+### New rule
 
-desugars to:
-
-```text
-if a { A } else { if b { B } else { C } }
-```
-
-Implementation checklist:
-
-- [x] Update parser to accept `else if`
-- [x] Represent it as nested `Expr::If`; no new AST node is required
-- [x] Add parser unit test for a three-branch chain
-- [x] Add parser unit test for a chain without a final `else`
-- [x] Add integration test that evaluates an `else if` chain
-- [x] Add checker test confirming each branch is still checked
-- [x] Add lowering test confirming it lowers to the same term as nested `if`
-- [x] Rewrite JSON parser’s `parse_value` to use `else if`
-- [x] Run `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, and
-      `cargo test --workspace`
-
-### 1.2 Boolean operators
-
-**Goal:** support ordinary boolean expressions.
-
-Syntax:
+A continuation is a first-class function-like value. Therefore:
 
 ```sl
-if is_digit(c) && c != '0' { ... }
-if !is_digit(c) || at_end { ... }
-```
-
-Semantics:
-
-- `&&` and `||` must be short-circuiting.
-- `!` negates a boolean.
-- These should desugar to `if`, not eager builtin calls.
-
-Examples:
-
-```sl
-a && b
-```
-
-desugars conceptually to:
-
-```sl
-if a { b } else { false }
-```
-
-```sl
-a || b
-```
-
-desugars conceptually to:
-
-```sl
-if a { true } else { b }
-```
-
-Implementation checklist:
-
-- [x] Add `&&`, `||`, and `!` to the lexer
-- [x] Add AST operators:
-  - [x] `BinOp::And`
-  - [x] `BinOp::Or`
-  - [x] `UnOp::Not`
-- [x] Add an `UnOp` field to the surface AST if unary operators are not
-      already represented
-- [x] Parse `&&` and `||` with lower precedence than comparisons
-- [x] Parse `!` as a unary operator
-- [x] Type-check that both sides are `+bool`
-- [x] Lower short-circuiting using existing `if`
-- [x] Add tests for short-circuit evaluation
-- [x] Add tests for boolean type mismatches
-- [x] Rewrite parser code using chained comparisons and boolean operators
-
----
-
-## Phase 2: Real character type
-
-The runtime already has `Value::Char`, but the type system does not. The JSON
-parser currently uses `i64` character codes such as `34`, `45`, `91`, `123`,
-and `125`. This is the largest readability problem in the examples.
-
-### 2.1 Core `char` type
-
-Add `Base::Char` and make `+char` a first-class positive atom.
-
-Syntax:
-
-```sl
-let c: +char = '"';
-```
-
-Implementation checklist:
-
-- [x] Add `Base::Char` to `slc-core::types::Base`
-- [x] Update the type pretty-printer
-- [x] Update dual/polarity behavior if needed
-- [x] Add property tests for `dual(+char) == -char`
-- [x] Change `Value::Char::type_of()` to return `Type::Pos(Base::Char)`
-- [x] Add `char` to surface type lowering
-- [x] Add `char` to inference support
-- [x] Add type tests for positive and negative char types
-- [x] Add runtime tests for char values
-
-### 2.2 Character literals
-
-The lexer already recognizes simple char literals, but they need escape
-support and correct lowering.
-
-Required syntax:
-
-```sl
-'"'
-'\\'
-'\''
-'\n'
-'\r'
-'\t'
-'\0'
-'x'
-```
-
-Implementation checklist:
-
-- [x] Rewrite the char lexer to use a shared escape-decoding routine
-- [x] Support escapes in both strings and chars
-- [x] Reject unterminated character literals with a useful span
-- [x] Reject empty and multi-character char literals
-- [x] Lower `Expr::Char(c)` to a char value rather than a pseudo-variable
-- [x] Add parser tests for every escape form
-- [x] Add runtime test for `'\n'` and `'\\'`
-
-### 2.3 Character operations
-
-Current operations:
-
-```sl
-let code = char_at(input, pos); // +i64
-```
-
-Desired operations:
-
-```sl
-let c = input[pos]; // +char
-```
-
-Implementation checklist:
-
-- [x] Add `Base::Char` support to equality and comparison builtins
-- [x] Add `char_eq`, `char_lt`, `char_le`, `char_gt`, and `char_ge`, or make
-      `eq`, `lt`, `le`, `gt`, and `ge` accept chars
-- [x] Add `char_to_code(c) -> i64`
-- [x] Add `code_to_char(i64) -> +char`
-- [x] Add `is_digit(c: +char) -> +bool`
-- [x] Add `is_ws(c: +char) -> +bool`
-- [x] Add `string_push(s: +String, c: +char) -> +String`
-- [x] Decide whether `char_at` remains code-based for compatibility
-- [x] Add builtin tests for all new operations
-- [x] Rewrite JSON parser to use `+char` instead of integer codes
-
----
-
-## Phase 3: Binary operators
-
-The parser already parses ordinary binary operators, but lowering currently
-rejects them. This makes arithmetic examples use builtin calls.
-
-Current ugly code:
-
-```sl
-add(pos, 1)
-eq(c, 45)
-lt(start, end)
-```
-
-Desired code:
-
-```sl
-pos + 1
-c == '-'
-start < end
-```
-
-### 3.1 Numeric operators
-
-Syntax:
-
-```sl
-a + b
-a - b
-a * b
-a / b
-a % b
--a
-```
-
-Implementation checklist:
-
-- [x] Lower `+` to `add`
-- [x] Lower `-` to `sub`
-- [x] Lower `*` to `mul`
-- [x] Lower `/` to `div`
-- [x] Lower `%` to `rem`
-- [x] Lower unary `-` to `neg`
-- [x] Type-check operands as matching numeric types
-- [x] Preserve arithmetic overflow and division-by-zero diagnostics
-- [x] Add precedence tests
-- [x] Add associativity tests
-- [x] Add integration tests for each operator
-- [x] Rewrite arithmetic and nested-call examples with operators
-
-### 3.2 Comparison operators
-
-Syntax:
-
-```sl
-a == b
-a != b
-a < b
-a > b
-a <= b
-a >= b
-```
-
-Implementation checklist:
-
-- [x] Lower `==` to `eq`
-- [x] Lower `!=` to `ne`
-- [x] Lower `<` to `lt`
-- [x] Lower `>` to `gt`
-- [x] Lower `<=` to `le`
-- [x] Lower `>=` to `ge`
-- [x] Type-check comparison operands as compatible numeric or char values
-- [x] Add tests for numeric comparisons
-- [x] Add tests for char comparisons
-- [x] Add tests for type mismatch diagnostics
-- [x] Rewrite comparison and JSON examples with operators
-
-### 3.3 String operators
-
-Syntax:
-
-```sl
-"Hello, " + "world"
-```
-
-Implementation checklist:
-
-- [x] Lower `+` on strings to `str_concat`
-- [x] Add inference or bidirectional checking to distinguish numeric and
-      string `+`
-- [x] Add a type diagnostic when operands do not agree
-- [x] Add integration test for string concatenation
-- [x] Rewrite string examples with `+`
-
----
-
-## Phase 4: Indexing and slicing
-
-Desired syntax:
-
-```sl
-let c = input[pos];
-let text = input[start..end];
-```
-
-Equivalent primitive calls:
-
-```sl
-char_at(input, pos)
-substring(input, start, end)
-```
-
-### 4.1 Indexing
-
-Implementation checklist:
-
-- [x] Add postfix `[...]` parsing
-- [x] Define `a[i]` as sugar for an indexing operation
-- [x] Add `String` indexing returning `+char`
-- [x] Add `List` indexing returning the element type
-- [x] Add out-of-range diagnostics with source spans
-- [x] Add checker tests for index types
-- [x] Add runtime tests for valid and invalid indexes
-
-### 4.2 Slicing
-
-Syntax:
-
-```sl
-input[start..end]
-input[start..]
-input[..end]
-```
-
-Implementation checklist:
-
-- [x] Add range expression AST:
-  - [x] `Range`
-  - [x] `RangeFrom`
-  - [x] `RangeTo`
-- [x] Parse `..` in postfix slicing position
-- [x] Optionally parse `..=` for inclusive ranges
-- [x] Lower string slicing to `substring`
-- [x] Define behavior for empty slices
-- [x] Add bounds checking
-- [x] Add checker tests for range endpoints
-- [x] Add runtime tests for every range form
-
----
-
-## Phase 5: Pattern-matching improvements
-
-`match` is intended to be the main control structure, but the current pattern
-language is too weak for parsers and ordinary data manipulation.
-
-### 5.1 Char patterns
-
-Syntax:
-
-```sl
-match c {
-    '"' => ...,
-    '-' => ...,
-    _ => ...,
+fn body(ret: -i32) -> i32 {
+    ...
+    ret(value)
 }
 ```
 
-Implementation checklist:
+has the same meaning. The existing `mu(ret: -i32) { ... }` form is removed rather than duplicated.
 
-- [x] Add `Pattern::Char(char)`
-- [x] Parse char literals in patterns
-- [x] Check char patterns against `+char`
-- [x] Add runtime matching support
-- [x] Add tests for char literal patterns and wildcards
+### Checklist
 
-### 5.2 Or-patterns
-
-Syntax:
-
-```sl
-match c {
-    'e' | 'E' => ...,
-    '0'..='9' | '-' => ...,
-    _ => ...,
-}
-```
-
-Implementation checklist:
-
-- [x] Add `Pattern::Or(Vec<Pattern>)`
-- [x] Parse `|` between patterns
-- [x] Check all alternatives have compatible types
-- [x] Add runtime matching support
-- [x] Add tests for multiple alternatives
-- [x] Ensure or-patterns interact correctly with exhaustiveness checking
-
-### 5.3 Range patterns
-
-Syntax:
-
-```sl
-match c {
-    '0'..='9' => ...,
-    'a'..='f' => ...,
-    'A'..='F' => ...,
-    _ => ...,
-}
-```
-
-Implementation checklist:
-
-- [x] Add `Pattern::Range(Box<Pattern>, Box<Pattern>)`
-- [x] Parse `..=` ranges in patterns
-- [x] Support char ranges first
-- [x] Add integer ranges after chars are supported
-- [x] Check endpoint types
-- [x] Add runtime inclusive-range matching
-- [x] Add tests for boundaries and invalid ranges
-- [x] Update exhaustiveness checking to understand ranges
-
-### 5.4 Guards
-
-Syntax:
-
-```sl
-match c {
-    c if c < ' ' => err("raw control character"),
-    _ => parse_string_tail(...),
-}
-```
-
-Implementation checklist:
-
-- [x] Extend `MatchArm` with an optional guard expression
-- [x] Parse `if` after a pattern and before `=>`
-- [x] Type-check guards as `+bool`
-- [x] Implement runtime guard evaluation
-- [x] Define exhaustiveness rules:
-  - [x] wildcard plus guard is not considered unconditionally exhaustive
-  - [x] wildcard without a guard remains exhaustive
-- [x] Add tests for matching with and without guards
-- [x] Add diagnostic tests for non-bool guards
-
-### 5.5 Other useful pattern forms
-
-Implementation checklist:
-
-- [x] Add `Pattern::Char`
-- [x] Add `Pattern::Or`
-- [x] Add `Pattern::Range`
-- [x] Add optional binding with `@`:
-  - [x] `c @ '0'..='9'`
-  - [x] `x @ Some(_)`
-- [x] Add rest patterns for lists:
-  - [x] `[first, ..rest]`
-- [x] Add struct field shorthand:
-  - [x] `Point { x, y }`
-- [x] Add tuple patterns with nested destructuring
-- [x] Add negative integer patterns
-- [x] Add float patterns only if floats become first-class
+- [ ] Treat `fn` parameters with negative type as continuation parameters
+- [ ] Allow negative parameters in ordinary `fn` declarations
+- [ ] Remove special lowering for value-returning `mu(ret: -T)`
+- [ ] Rewrite all examples that use `mu(ret: -T) { ... }`
+- [ ] Update checker diagnostics that refer to `mu`
+- [ ] Add tests for `fn` with continuation parameters
+- [ ] Add lowering tests proving `fn(k: -T)` maps to `v · e`
+- [ ] Update the JSON parser example to use continuation-taking `fn`
 
 ---
 
-## Phase 6: Constants and declarations
+## 3. Rename `command` to `mu`
 
-### 6.1 `const`
+### Problem
 
-Syntax:
+`command` is the genuine λ̄μμ̃ control construct. It binds both positive values and negative continuations and performs a cut. Calling it `command` obscures its relationship to `μ` and `μ̃`.
 
-```sl
-const COMMA: +char = ',';
-const OPEN_BRACKET: +char = '[';
-const CLOSE_BRACKET: +char = ']';
-```
+### New syntax
 
-This removes magic numbers and character-code aliases from parsers.
-
-Implementation checklist:
-
-- [x] Add `TokenKind::Const`
-- [x] Add `Decl::Const` to the surface AST
-- [x] Parse `const NAME: Type = expression;`
-- [x] Reject non-constant initializers in v0.1
-- [x] Lower constants to global bindings
-- [x] Check constant types
-- [x] Add tests for char, integer, bool, and string constants
-- [x] Add diagnostics for mutable or non-constant initializers
-- [x] Rewrite JSON parser using named character constants
-
-### 6.2 Local constants
-
-Syntax:
+Rename the keyword:
 
 ```sl
-let OPEN_BRACKET: +char = '[';
+mu route(x: +i32, to k: -i32) {
+    k(x)
+}
 ```
 
-Implementation checklist:
+The `to` marker remains because it distinguishes:
 
-- [x] Add optional type annotation to `let`
-- [x] Check the initializer against the annotation
-- [x] Add parser tests
-- [x] Add checker tests
-- [x] Add examples using annotated local bindings
+- positive value parameters (`x: +i32`)
+- negative continuation parameters (`k: -i32`)
+
+### Semantics
+
+The declaration lowers to a `μ̃` abstraction over value parameters and a `μ` abstraction over continuation parameters.
+
+### Checklist
+
+- [ ] Rename the `command` keyword in the lexer and parser
+- [ ] Rename `Decl::Command` in the AST to `Decl::Mu`
+- [ ] Rename parser methods and diagnostics
+- [ ] Update lowering from `Decl::Command` to `Decl::Mu`
+- [ ] Update polarity checking for the renamed declaration
+- [ ] Update linearity checking for the renamed declaration
+- [ ] Update exhaustive checking if it inspects command declarations
+- [ ] Update all examples from `command` to `mu`
+- [ ] Update all tests from `command` to `mu`
+- [ ] Remove any backward compatibility alias for `command`
+- [ ] Add a migration note explaining that old `command` syntax is rejected
 
 ---
 
-## Phase 7: Continuation error-handling sugar
+## 4. Abandon `spawn`
 
-This phase builds on the design in `DESIGN.md` rather than replacing it.
+### Problem
 
-### 7.1 Single-error `?`
+`spawn` is not part of λ̄μμ̃. It introduces concurrency-like behavior that is outside the calculus and makes the semantics harder to define.
 
-Syntax:
+### Decision
 
-```sl
-let bytes = read_file(path)?;
-```
+Remove `spawn` entirely. There will be no replacement keyword in v0.2. Any future process-like extension must be designed separately and must not compromise the λ̄μμ̃ core.
 
-Conceptual desugaring:
+### Checklist
 
-```sl
-read_file(path, to current_success, current_error)
-```
-
-Implementation checklist:
-
-- [x] Define the elaborated form of `e?`
-- [x] Infer current success and error continuations in `fn` and `command`
-      bodies
-- [x] Lower `?` to continuation application
-- [x] Reject `?` where there is no current error continuation
-- [x] Add checker diagnostics:
-  - [x] missing error continuation
-  - [x] incompatible error type
-- [x] Add tests for successful propagation
-- [x] Add tests for error propagation
-- [x] Add tests for using `?` in nested `fn` without inherited errors
-
-### 7.2 Multiple error continuations
-
-Potential syntax:
-
-```sl
-read_file(path)?missing;
-parse(bytes)?invalid;
-```
-
-Alternative syntax to investigate:
-
-```sl
-read_file(path)?[ok, missing];
-```
-
-Implementation checklist:
-
-- [x] Decide between suffix-name and bracket syntax
-- [x] Add a surface form for selecting an error continuation
-- [x] Elaborate to the selected continuation
-- [x] Ensure unselected continuations remain linear
-- [x] Add checker tests for dangling continuations
-- [x] Add runtime tests for each error path
-- [x] Rewrite JSON parser error handling using selected continuations
-
-### 7.3 Command-call continuation sugar
-
-Desired symmetry:
-
-```sl
-read_file(path, to ok, error)
-```
-
-or:
-
-```sl
-read_file(path, ok, error)
-```
-
-Implementation checklist:
-
-- [x] Decide whether `to` is required
-- [x] Support explicit continuation arguments without helper builtins
-- [x] Add partial-continuation application syntax consistently
-- [x] Preserve linearity checking for each continuation
-- [x] Add tests for commands with multiple continuations
-- [x] Add tests for partially applied commands
+- [ ] Remove `Expr::Spawn` from the AST
+- [ ] Remove `spawn` keyword handling from the parser
+- [ ] Remove `spawn` lowering logic
+- [ ] Remove `spawn` polarity checking
+- [ ] Remove `spawn` linearity checking
+- [ ] Remove `spawn` tests
+- [ ] Add a parser test that rejects the `spawn` keyword
+- [ ] Search the repository for stale `spawn` references and remove them
 
 ---
 
-## Phase 8: Example cleanup
+## 5. Continuation `if` and `match`
 
-Once the preceding features exist, rewrite the examples to demonstrate the
-intended language rather than runtime limitations.
+### Problem
 
-### 8.1 Rewrite arithmetic example
+The current `if` and `match` are producer-oriented: they choose a value and return it to the current continuation. There is no symmetric consumer-oriented construct that chooses which continuation to activate.
 
-Before:
+### Symmetry requirement
+
+For every producer construct, there should be a corresponding consumer construct.
+
+### Proposed continuation `if`
+
+Use `if` with continuation arms:
 
 ```sl
-println(add(2, 3));
+if value {
+    ok => ...,
+    err => ...,
+}
 ```
 
-After:
+A more explicit, polarity-safe syntax is:
 
 ```sl
-println(2 + 3);
+if value to {
+    ok => ...,
+    err => ...,
+}
 ```
 
-Checklist:
+Meaning:
 
-- [x] Use arithmetic operators
-- [x] Use unary minus where appropriate
-- [x] Show overflow and division diagnostics
-- [x] Keep the example concise
+- `value` is evaluated to a boolean
+- one of the continuation arms is selected
+- the selected continuation is activated with the supplied argument
 
-### 8.2 Rewrite comparison example
-
-Before:
+A dual form is:
 
 ```sl
-println(eq(1, 1));
+if value from {
+    ok => ...,
+    err => ...,
+}
 ```
 
-After:
+The dual selects the continuation to which control should return.
+
+### Proposed continuation `match`
 
 ```sl
-println(1 == 1);
+match value to {
+    Pattern => continuation,
+    Pattern => continuation,
+}
 ```
 
-Checklist:
-
-- [x] Use comparison operators
-- [x] Add char comparison
-- [x] Add boolean operators
-
-### 8.3 Rewrite string example
-
-Before:
+The dual form is:
 
 ```sl
-str_concat("Hello, ", "world!")
+match value from {
+    Pattern => continuation,
+    Pattern => continuation,
+}
 ```
 
-After:
+### Naming decision
+
+Use `to` for producer-to-consumer selection and `from` for consumer-to-producer selection.
+
+### Checklist
+
+- [ ] Choose final syntax for continuation `if`
+- [ ] Choose final syntax for continuation `match`
+- [ ] Add AST nodes for continuation conditionals
+- [ ] Add AST nodes for continuation matches
+- [ ] Update the parser with `to` and `from` forms
+- [ ] Define lowering for continuation `if`
+- [ ] Define lowering for continuation `match`
+- [ ] Update the surface type checker
+- [ ] Update polarity checking
+- [ ] Update linearity checking
+- [ ] Update exhaustiveness checking for continuation `match`
+- [ ] Add parser tests
+- [ ] Add lowering tests
+- [ ] Add type-checker tests
+- [ ] Add runtime tests
+- [ ] Rewrite error-handling examples to use continuation `match`
+
+---
+
+## 6. Dual of `enum` and `struct`
+
+### Problem
+
+The language currently has positive `struct` and positive `enum`:
+
+- `struct` is a tensor-like positive product
+- `enum` is a positive additive sum
+
+To preserve symmetry, the language needs:
+
+- a negative product, dual to `struct`
+- a negative sum, dual to `enum`
+
+### Positive constructs
 
 ```sl
-"Hello, " + "world!"
+struct Pair {
+    first: +i32,
+    second: +i32,
+}
+
+enum Shape {
+    Circle(+i32),
+    Square(+i32),
+}
 ```
 
-Checklist:
+### Negative product
 
-- [x] Use string concatenation
-- [x] Use indexing and slicing where useful
-- [x] Show char values
-
-### 8.4 Rewrite JSON parser
-
-Desired shape:
+A negative struct represents a continuation that consumes fields together. Proposed syntax:
 
 ```sl
-const COMMA: +char = ',';
-const COLON: +char = ':';
-const OPEN_BRACKET: +char = '[';
-const CLOSE_BRACKET: +char = ']';
-const OPEN_BRACE: +char = '{';
-const CLOSE_BRACE: +char = '}';
+struct NegPair {
+    from first: -i32,
+    from second: -i32,
+}
+```
 
-fn parse_value(
+This is the par-like dual of the positive struct.
+
+### Negative sum
+
+A negative enum represents a choice between continuations. Proposed syntax:
+
+```sl
+enum Result {
+    from ok: -String,
+    from err: -String,
+}
+```
+
+This is the additive dual of the positive enum.
+
+### Alternative syntax
+
+Instead of `from`, use explicit polarity on fields:
+
+```sl
+struct -Pair {
+    first: -i32,
+    second: -i32,
+}
+```
+
+The `from` marker is preferred because it is consistent with the continuation selection syntax in `if` and `match`.
+
+### Checklist
+
+- [ ] Choose final syntax for negative struct
+- [ ] Choose final syntax for negative enum
+- [ ] Add AST nodes for negative struct declarations
+- [ ] Add AST nodes for negative enum declarations
+- [ ] Update parser for negative struct declarations
+- [ ] Update parser for negative enum declarations
+- [ ] Update lowering for negative struct
+- [ ] Update lowering for negative enum
+- [ ] Update type lowering
+- [ ] Update type pretty-printing
+- [ ] Update inference
+- [ ] Update polarity checking
+- [ ] Update linearity checking
+- [ ] Update exhaustiveness checking
+- [ ] Define construction syntax for negative structs
+- [ ] Define construction syntax for negative enums
+- [ ] Define destruction syntax for positive structs and enums
+- [ ] Add parser tests
+- [ ] Add lowering tests
+- [ ] Add type-checker tests
+- [ ] Add runtime tests
+- [ ] Rewrite the JSON parser example using negative enums for success and failure continuations
+
+---
+
+## 7. Builtin Continuation `EXIT: -i32`
+
+### Purpose
+
+The language needs a top-level continuation that can terminate a program with an integer status code.
+
+### Syntax
+
+```sl
+EXIT(0)
+```
+
+### Type
+
+```sl
+EXIT: -i32
+```
+
+### Semantics
+
+Activating `EXIT` terminates the current program with the supplied status code.
+
+### Checklist
+
+- [ ] Add `EXIT` to the builtins table
+- [ ] Give `EXIT` type `-i32`
+- [ ] Ensure `EXIT` is exempt from ordinary linearity rules
+- [ ] Add a runtime test that `EXIT(0)` terminates successfully
+- [ ] Add a runtime test that `EXIT(1)` terminates with failure
+- [ ] Update examples to use `EXIT`
+- [ ] Ensure `EXIT` is documented in `DESIGN.md`
+
+---
+
+## 8. Surface Syntax After Redesign
+
+### Producer
+
+```sl
+fn add(x: +i32, y: +i32) -> i32 {
+    x + y
+}
+```
+
+### Producer with continuation parameter
+
+```sl
+fn parse(
     input: +String,
-    pos: +i64,
-    ok: +String,
-    err: +String,
-) -> i64 {
-    match input[pos] {
-        '0'..='9' | '-' => parse_number(input, pos, ok, err),
-        '"' => parse_string(input, pos, ok, err),
-        OPEN_BRACKET => parse_array(input, pos, ok, err),
-        OPEN_BRACE => parse_object(input, pos, ok, err),
-        't' => parse_literal(input, pos, "true", ok, err),
-        'f' => parse_literal(input, pos, "false", ok, err),
-        'n' => parse_literal(input, pos, "null", ok, err),
-        _ => err("expected JSON value"),
-    }
+    ok: -String,
+    err: -String,
+) -> i32 {
+    ...
 }
 ```
 
-Checklist:
+### Consumer abstraction
 
-- [x] Replace all character codes with `+char`
-- [x] Replace `else` nesting with `else if` or `match`
-- [x] Replace `add`, `sub`, `eq`, `lt`, and `ge` with operators
-- [x] Replace `char_at` with indexing
-- [x] Replace `substring` with slicing where appropriate
-- [x] Define constants for punctuation
-- [x] Keep continuation-based error handling rather than `Result`
-- [x] Preserve all current JSON validation behavior
-- [x] Add invalid-input examples or tests
-- [x] Verify that success and error continuations each run exactly once
+```sl
+mu parse(
+    input: +String,
+    to ok: -String,
+    to err: -String,
+) {
+    ...
+}
+```
 
-### 8.5 Example audit
+### Continuation conditional
 
-Checklist:
+```sl
+if value to {
+    ok => ...,
+    err => ...,
+}
+```
 
-- [x] `hello.sl`
-- [x] `arithmetic.sl`
-- [x] `comparison.sl`
-- [x] `strings.sl`
-- [x] `lambda.sl`
-- [x] `pair.sl`
-- [x] `nested_calls.sl`
-- [x] `command.sl`
-- [x] `match_exhaustive.sl`
-- [x] `mu_escape.sl`
-- [x] `file_io.sl`
-- [x] `json_parser.sl`
-- [x] intentional diagnostic examples:
-  - [x] `linearity_error.sl`
-  - [x] `polarity_error.sl`
+### Continuation match
 
-For each example, ensure:
+```sl
+match value to {
+    Number(n) => ...,
+    Text(s) => ...,
+}
+```
 
-- [x] it runs with `slc run`
-- [x] it uses the intended surface syntax rather than builtin spellings
-- [x] it demonstrates one clear concept
-- [x] it has no unexplained magic numbers
-- [x] it remains compatible with continuation linearity
+### Negative struct
+
+```sl
+struct Handler {
+    from ok: -String,
+    from err: -String,
+}
+```
+
+### Negative enum
+
+```sl
+enum Result {
+    from ok: -String,
+    from err: -String,
+}
+```
+
+### Builtin exit
+
+```sl
+EXIT(0)
+```
 
 ---
 
-## Phase 9: Testing and quality gates
+## 9. Implementation Phases
 
-Every phase must end with the full quality gate.
+### Phase 1: Cleanup
 
-Checklist:
+- [ ] Remove `spawn`
+- [ ] Rename `command` to `mu`
+- [ ] Remove the old value-returning `mu` syntax
+- [ ] Update examples
+- [ ] Update tests
 
-- [x] `cargo fmt`
-- [x] `cargo fmt --check`
-- [x] `cargo clippy --all-targets -- -D warnings`
-- [x] `cargo test --workspace`
-- [x] Run every non-diagnostic example with `slc run`
-- [x] Confirm diagnostic examples still fail with intended errors
-- [x] Check that no compiler change reduces existing test coverage
-- [x] Add regression tests for every syntax feature
-- [x] Add pretty-printer or round-trip tests where applicable
-- [x] Add type-checker diagnostics with spans
-- [x] Add linearity diagnostics for continuation-sensitive sugar
+### Phase 2: Continuation Functions
+
+- [ ] Allow continuation parameters in ordinary `fn`
+- [ ] Define the lowering for continuation-taking `fn`
+- [ ] Add tests for continuation-taking `fn`
+- [ ] Rewrite JSON parser to use continuation-taking `fn`
+
+### Phase 3: Builtin Exit
+
+- [ ] Add `EXIT: -i32`
+- [ ] Add runtime behavior
+- [ ] Add tests
+- [ ] Update examples
+
+### Phase 4: Symmetric Control
+
+- [ ] Implement continuation `if`
+- [ ] Implement continuation `match`
+- [ ] Add exhaustive checking for continuation `match`
+- [ ] Add tests
+- [ ] Rewrite error-handling examples
+
+### Phase 5: Dual Data
+
+- [ ] Implement negative struct
+- [ ] Implement negative enum
+- [ ] Implement construction and destruction forms
+- [ ] Add tests
+- [ ] Rewrite JSON parser using dual data
+
+### Phase 6: Documentation
+
+- [ ] Rewrite `DESIGN.md` around λ̄μμ̃
+- [ ] Document the final grammar
+- [ ] Document the mapping from surface syntax to core calculus
+- [ ] Add a migration guide from the current syntax
+- [ ] Remove stale concurrency references
 
 ---
 
-## Suggested implementation order
+## 10. Acceptance Criteria
 
-The phases are ordered by impact and dependency:
-
-1. `else if`
-2. Real `+char`
-3. Binary operators
-4. `&&`, `||`, and `!`
-5. Indexing and slicing
-6. Char, or-, and range patterns
-7. Match guards
-8. `const`
-9. `?` and continuation-call sugar
-10. Example cleanup
-
-The highest immediate impact comes from the first three phases. They turn:
-
-```sl
-if eq(ch, 45) {
-    parse_number(input, pos, ok, err)
-} else {
-    if eq(ch, 34) {
-        parse_string(input, pos, ok, err)
-    } else {
-        err("expected JSON value")
-    }
-}
-```
-
-into:
-
-```sl
-if ch == '-' {
-    parse_number(input, pos, ok, err)
-} else if ch == '"' {
-    parse_string(input, pos, ok, err)
-} else {
-    err("expected JSON value")
-}
-```
-
-and eventually into:
-
-```sl
-match input[pos] {
-    '-' => parse_number(input, pos, ok, err),
-    '"' => parse_string(input, pos, ok, err),
-    _ => err("expected JSON value"),
-}
-```
-
-without changing the underlying symmetric calculus.
+- [ ] No `spawn` remains in the language
+- [ ] `command` no longer exists as a keyword
+- [ ] `mu` is the only keyword for consumer abstraction
+- [ ] Ordinary `fn` can take continuation parameters
+- [ ] Continuation `if` and `match` exist
+- [ ] Negative `struct` and `enum` exist
+- [ ] `EXIT: -i32` works as a top-level continuation
+- [ ] Every core λ̄μμ̃ construct has a surface representation
+- [ ] Every surface construct has a documented lowering to λ̄μμ̃
+- [ ] `cargo fmt --check` passes
+- [ ] `cargo clippy --all-targets -- -D warnings` passes
+- [ ] `cargo test --workspace` passes
+- [ ] All examples run successfully
