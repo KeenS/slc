@@ -15,7 +15,7 @@ fn name(c: Color) -> String {
     }
 }
 
-mu main() | (exit: -i32) {
+mu main | (exit: -i32) {
     println(name(Color::Red));
     0 @ exit
 }

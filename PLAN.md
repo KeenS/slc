@@ -71,7 +71,7 @@ and where the two disagree, `DESIGN.md` is right.
 - An integer literal takes the integer type its port requires, `()` is the
   unit value, and a call with no arguments applies its callee to a marker that
   carries none — so `f()` and `f(())` are no longer the same thing.
-- The entry point is `mu main() | (exit: -i32)`: a program is a command, its
+- The entry point is `mu main | (exit: -i32)`: a program is a command, its
   status is the value it cuts against `exit`, and linearity makes every
   terminating path leave through it. There is no final-result value; output is
   what the program prints.
@@ -125,7 +125,8 @@ example suite.
   continuation parameters in `fn`, and added `EXIT: -i32`.
 - **Phase 1** — parameter syntax: removed `from`/`to`, introduced
   `mu(values) | (continuations)` with the optional `-> ⊥` annotation, and added
-  migration diagnostics.
+  migration diagnostics. A group with no parameters is since left out rather
+  than written `()`.
 - **Phase 2** — polarized functions by type rather than by keyword: `->` and
   `<-`, rejecting bare `fn` and the `+fn`/`-fn` prefixes, with continuation-row
   equality and inference.

@@ -300,18 +300,8 @@ impl Parser {
     fn parse_mu_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Mu, "`mu`")?;
         let name = self.expect_ident("`mu` name")?;
-        let value_params = self.parse_params()?;
-        self.expect(TokenKind::Pipe, "`|` between `mu` parameter groups")?;
-        // A parameter in the second group is a continuation parameter because
-        // of where it is declared, not because of anything that follows it.
-        let continuation_params: Vec<Param> = self
-            .parse_params()?
-            .into_iter()
-            .map(|mut p| {
-                p.is_continuation = true;
-                p
-            })
-            .collect();
+        let (value_params, continuation_params) =
+            self.parse_mu_params(TypeAnnotations::Required)?;
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
@@ -327,6 +317,53 @@ impl Parser {
             span: t.span,
             kind: Decl::Mu { name, value_params, continuation_params, return_type, body },
         })
+    }
+
+    /// The parameter groups of a `mu`: `(values) | (continuations)`, with
+    /// either side left out when it has none. `mu f | (k)` takes no values,
+    /// `mu f(x)` takes no continuations, and an empty group is not written.
+    fn parse_mu_params(
+        &mut self,
+        annotations: TypeAnnotations,
+    ) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
+        let value_params = match self.peek_kind() {
+            Some(TokenKind::LParen) => self.parse_group(annotations, "value")?,
+            _ => Vec::new(),
+        };
+        if !self.eat(&TokenKind::Pipe) {
+            return Ok((value_params, Vec::new()));
+        }
+        // A parameter in the second group is a continuation parameter because
+        // of where it is declared, not because of anything that follows it.
+        let continuation_params = self
+            .parse_group(annotations, "continuation")?
+            .into_iter()
+            .map(|mut p| {
+                p.is_continuation = true;
+                p
+            })
+            .collect();
+        Ok((value_params, continuation_params))
+    }
+
+    /// One group, which must hold something: an empty group is written by
+    /// leaving it out.
+    fn parse_group(
+        &mut self,
+        annotations: TypeAnnotations,
+        which: &str,
+    ) -> Result<Vec<Param>, ParseError> {
+        let start = self.span_start();
+        let params = self.parse_params_with(annotations)?;
+        if params.is_empty() {
+            return Err(ParseError {
+                message: format!(
+                    "a `mu` with no {which} parameters leaves the group out, as `mu f | (k)`"
+                ),
+                span: Span { start, end: self.span_end() },
+            });
+        }
+        Ok(params)
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -824,9 +861,8 @@ impl Parser {
                     Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
                     _ => None,
                 };
-                let value_params = self.parse_params_with(TypeAnnotations::Optional)?;
-                self.expect(TokenKind::Pipe, "`|` between local `mu` parameter groups")?;
-                let continuation_params = self.parse_params_with(TypeAnnotations::Optional)?;
+                let (value_params, continuation_params) =
+                    self.parse_mu_params(TypeAnnotations::Optional)?;
                 let body = self.parse_block()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
@@ -1419,7 +1455,7 @@ mod tests {
 
     #[test]
     fn a_local_mu_may_leave_out_its_name_and_its_parameter_types() {
-        let p = parse_str("mu() | (k) { 42 @ k }");
+        let p = parse_str("mu | (k) { 42 @ k }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Mu { name, continuation_params, .. } = &body.kind else {
             panic!("expected a local mu: {:?}", body.kind)
@@ -1430,7 +1466,7 @@ mod tests {
 
         // Either may still be written. With a name it needs an enclosing
         // declaration: `mu name(…)` at the top level is a declaration.
-        let p = parse_str("fn f() -> i32 { mu here() | (k: -i32) { 42 @ k } }");
+        let p = parse_str("fn f() -> i32 { mu here | (k: -i32) { 42 @ k } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
         let Expr::Mu { name, continuation_params, .. } = &exprs[0].kind else {
@@ -1438,6 +1474,34 @@ mod tests {
         };
         assert_eq!(name.as_deref(), Some("here"));
         assert!(continuation_params[0].ty.is_some());
+    }
+
+    #[test]
+    fn a_mu_writes_only_the_parameter_groups_it_has() {
+        // No values: the group is left out, not written empty.
+        let p = parse_str("mu main | (exit: -i32) { 0 @ exit }");
+        let Decl::Mu { value_params, continuation_params, .. } = &p.decls[0].kind else {
+            panic!("expected a mu declaration: {:?}", p.decls[0].kind)
+        };
+        assert!(value_params.is_empty());
+        assert_eq!(continuation_params[0].name, "exit");
+        assert!(continuation_params[0].is_continuation);
+
+        // No continuations: the `|` goes with the group it introduces.
+        let p = parse_str("mu log(message: +String) { println(message) }");
+        let Decl::Mu { value_params, continuation_params, .. } = &p.decls[0].kind else {
+            panic!("expected a mu declaration: {:?}", p.decls[0].kind)
+        };
+        assert_eq!(value_params[0].name, "message");
+        assert!(continuation_params.is_empty());
+
+        for source in ["mu main() | (exit: -i32) { 0 @ exit }", "mu log(m: +String) | () { m }"] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(
+                errors.iter().any(|e| e.message.contains("leaves the group out")),
+                "{source}: {errors:?}"
+            );
+        }
     }
 
     #[test]

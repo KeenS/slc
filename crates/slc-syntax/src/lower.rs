@@ -1212,7 +1212,7 @@ mod tests {
         // A nested local `mu` extends the row, so its binder wins inside it.
         let out = lower_str(
             "mu f(x: +i32) | (err: -i32) {
-                mu inner() | (nested: -i32) { fail(x)? }
+                mu inner | (nested: -i32) { fail(x)? }
             }",
         );
         let printed = format!("{}", out[0].1);
@@ -1241,7 +1241,7 @@ mod tests {
         // A local mu adds its binder only inside its own body.
         let out = lower_str(
             "fn f(ok: -i32) <- i32 {
-                mu escape() | (inner: -i32) { ok(escape(1, inner)) }
+                mu escape | (inner: -i32) { ok(escape(1, inner)) }
             }",
         );
         let printed = format!("{}", out[0].1);

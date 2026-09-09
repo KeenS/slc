@@ -47,7 +47,7 @@ fn explicit_connectives_parse_and_lower() {
             Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
         ),
         (
-            "mu f() | (k: (-i64 ⅋ -i64)) { k(0) }",
+            "mu f | (k: (-i64 ⅋ -i64)) { k(0) }",
             Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64))),
         ),
         (
@@ -57,7 +57,7 @@ fn explicit_connectives_parse_and_lower() {
         ("fn f(xs: [+i64]) -> i64 { 0 }", Type::List(Box::new(Type::Pos(Base::I64)))),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
-        ("mu f() | (k: -⊥) { k(0) }", Type::Bottom),
+        ("mu f | (k: -⊥) { k(0) }", Type::Bottom),
     ];
 
     for (source, expected) in cases {
@@ -74,16 +74,13 @@ fn a_function_into_bottom_is_a_consumer() {
     // `A → ⊥` and `-A` are one type, not two that convert: a function that
     // never returns is a consumer of its argument.
     assert_eq!(
-        lower_type(&parameter_type("mu f() | (k: (+i32 -> ⊥)) { 0 @ k }")),
+        lower_type(&parameter_type("mu f | (k: (+i32 -> ⊥)) { 0 @ k }")),
         Ok(Type::Neg(Base::I32))
     );
-    assert_eq!(
-        lower_type(&parameter_type("mu f() | (k: -i32) { 0 @ k }")),
-        Ok(Type::Neg(Base::I32))
-    );
+    assert_eq!(lower_type(&parameter_type("mu f | (k: -i32) { 0 @ k }")), Ok(Type::Neg(Base::I32)));
 
     // So it is a consumer wherever one is wanted, and nowhere else.
-    assert!(check("mu f() | (k: (+i32 -> ⊥)) { 0 @ k }").is_ok());
+    assert!(check("mu f | (k: (+i32 -> ⊥)) { 0 @ k }").is_ok());
     let diags = check("mu f(x: (+i32 -> ⊥)) | (k: -i32) { 0 @ k }").unwrap_err();
     assert!(
         diags.iter().any(|d| d.message.contains("has type -i32")),
@@ -109,7 +106,7 @@ fn explicit_connectives_reach_inference() {
     );
 
     // A `mu` ends in bottom, and its continuation keeps the par type.
-    let out = declared("mu f() | (k: (-i64 ⅋ -i64)) { k(0) }");
+    let out = declared("mu f | (k: (-i64 ⅋ -i64)) { k(0) }");
     assert_eq!(
         out[0].ty,
         // `A → ⊥` is `-A`, so a `mu`'s type is the dual of its row.
@@ -121,18 +118,18 @@ fn explicit_connectives_reach_inference() {
 fn connective_polarity_is_enforced_by_position() {
     // A tensor is positive: it is a value parameter, not a continuation.
     assert!(check("fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }").is_ok());
-    assert!(check("mu f(p: (+i64 ⊗ +i64)) | () { p }").is_ok());
+    assert!(check("mu f(p: (+i64 ⊗ +i64))  { p }").is_ok());
 
     // A par is negative: it is a continuation, not a value parameter.
-    assert!(check("mu f() | (k: (-i64 ⅋ -i64)) { k(0) }").is_ok());
-    let diags = check("mu f(p: (-i64 ⅋ -i64)) | () { p }").unwrap_err();
+    assert!(check("mu f | (k: (-i64 ⅋ -i64)) { k(0) }").is_ok());
+    let diags = check("mu f(p: (-i64 ⅋ -i64))  { p }").unwrap_err();
     assert!(
         diags.iter().any(|d| d.message.contains("expected positive (+) polarity")),
         "a par-typed value parameter should be rejected: {diags:?}"
     );
 
     // Bottom is negative too.
-    let diags = check("mu f(p: ⊥) | () { p }").unwrap_err();
+    let diags = check("mu f(p: ⊥)  { p }").unwrap_err();
     assert!(
         diags.iter().any(|d| d.message.contains("expected positive (+) polarity")),
         "a bottom-typed value parameter should be rejected: {diags:?}"
@@ -151,7 +148,7 @@ fn duals_of_connectives_are_involutive() {
     let named = lower_type(&parameter_type("fn f(k: dual(i64)) <- i64 { 0 }")).unwrap();
     assert_eq!(named, Type::Neg(Base::I64));
 
-    let par = lower_type(&parameter_type("mu f() | (k: (-i64 ⅋ -i64)) { k(0) }")).unwrap();
+    let par = lower_type(&parameter_type("mu f | (k: (-i64 ⅋ -i64)) { k(0) }")).unwrap();
     assert_eq!(
         par.dual(),
         Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64)))

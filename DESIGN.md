@@ -135,7 +135,7 @@ expected. There are four places to write one, and all four occur:
 | | argument position | continuation position |
 |---|---|---|
 | **positive type** | data arrives: `fn f(x: +i64)` | the type after `<-`: `fn config() <- Request` |
-| **negative type** | a consumer arrives: `fn f(note: -String)` | the row of a `mu`: `mu f() \| (k: -i64)` |
+| **negative type** | a consumer arrives: `fn f(note: -String)` | the row of a `mu`: `mu f \| (k: -i64)` |
 
 The diagonal is the ordinary reading — data in, control out. The other two are
 what polarity buys:
@@ -225,6 +225,10 @@ mu route(x: +i32) | (k: -i32) {
 The declaration denotes a command. Its return type is bottom; an optional
 `-> ⊥` annotation may be used as documentation and does not change lowering.
 
+A group with nothing in it is left out rather than written empty: `mu main |
+(exit: -i32)` takes no values, and `mu log(message: +String)` takes no
+continuations. An empty `()` is a parse error saying so.
+
 Conceptually, `mu f(x: +A) | (k: -B) { E }` lowers to `λx. Λk. E`: the value
 parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
@@ -232,12 +236,12 @@ continuations.
 
 As an *expression*, a `mu` with no value parameters captures the continuation
 of the expression it stands in — this is the language's `call/cc`. Its value
-is whatever that continuation receives, so `mu f() | (k: -A) { … }` has type
+is whatever that continuation receives, so `mu f | (k: -A) { … }` has type
 `A`, and a call whose result comes back through a continuation can be written
 without nesting the rest of the program inside it:
 
 ```sl
-let source = mu here() | (k: -String) {
+let source = mu here | (k: -String) {
     read_file(path, k, complain)
 };
 print(source);
@@ -386,7 +390,7 @@ are always parenthesized:
 
 ```sl
 fn sum_pair(p: (+i64 ⊗ +i64)) -> i64 { … }
-mu consume_pair() | (k: (-i64 ⅋ -i64)) { … }
+mu consume_pair | (k: (-i64 ⅋ -i64)) { … }
 ```
 
 | Type syntax | Meaning |
@@ -471,7 +475,7 @@ inside one may leave a type out when something else already says it:
 ```sl
 // `k` goes to a slot `read_file` declares, so it is `-String`, and this
 // `let` binds a `+String`.
-let source = mu() | (k) {
+let source = mu | (k) {
     read_file("input.json", k, complain)
 };
 
@@ -521,7 +525,7 @@ A program is a command, so its entry point is a `mu`. It takes no values and
 exactly one continuation — the exit status:
 
 ```sl
-mu main() | (exit: -i32) {
+mu main | (exit: -i32) {
     println("Hello, Slant!");
     0 @ exit
 }
@@ -746,7 +750,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
-| `expr.mu` | `mu f() \| (k: -A) { e }` | `Λ`-free: `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the local form captures the ambient continuation |
+| `expr.mu` | `mu f \| (k: -A) { e }` | `Λ`-free: `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the local form captures the ambient continuation |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |

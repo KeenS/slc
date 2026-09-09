@@ -623,7 +623,7 @@ mod tests {
     fn negative_fn_and_local_mu_capture_do_not_conflict() {
         let r = check(
             "fn f(k: -i32) <- i32 {
-                mu escape() | (outer: -i32) {
+                mu escape | (outer: -i32) {
                     k(escape(42, outer))
                 }
             }",

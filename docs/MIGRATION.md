@@ -95,6 +95,21 @@ Write:
 mu route(x: +i32) | (k: -i32) { k(x) }
 ```
 
+### An empty parameter group is left out
+
+A `mu` writes only the groups it has.
+
+```sl
+mu main() | (exit: -i32) { … }   // old
+mu main | (exit: -i32) { … }     // new
+
+mu log(message: +String) | () { … }   // old
+mu log(message: +String) { … }        // new
+```
+
+The same applies to a local `mu`, which is usually the one with no values:
+`mu | (k) { … }`.
+
 ### Bottom annotation
 
 The declaration denotes a command, so its result is bottom. The annotation is
@@ -184,7 +199,7 @@ fn main() -> i32 {          // old
     42
 }
 
-mu main() | (exit: -i32) {  // new
+mu main | (exit: -i32) {  // new
     println("hi");
     0 @ exit
 }

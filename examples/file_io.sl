@@ -7,7 +7,7 @@
 // an atom, whose single arm binds the value that arrives, and over an `enum`,
 // whose arms are one per outcome.
 
-mu main() | (exit: -i32) {
+mu main | (exit: -i32) {
     // `select` over an atom is a consumer literal: the arm names what arrives
     // and runs a command with it.
     let complain = select +String {
@@ -24,7 +24,7 @@ mu main() | (exit: -i32) {
     //
     // `k` needs no annotation: it is handed to a slot `read_file` declares,
     // which makes it a `-String`, and the `let` a `+String`.
-    let source = mu() | (k) {
+    let source = mu | (k) {
         read_file("examples/hello.sl", k, complain)
     };
     print(source);

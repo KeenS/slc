@@ -74,7 +74,7 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
-    /// A local μ abstraction: `mu() | (k) { body }`. The name is optional —
+    /// A local μ abstraction: `mu | (k) { body }`. The name is optional —
     /// nothing refers to it — and so is a parameter's type, when the body
     /// says what it is.
     Mu {

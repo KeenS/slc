@@ -5,7 +5,7 @@ enum RunOutcome {
     Exit(i32),
 }
 
-const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `mu main() | (exit: -i32) { ... }`: a command with no value \
+const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `mu main | (exit: -i32) { ... }`: a command with no value \
      parameters and one continuation, the exit status";
 
 fn main() -> ExitCode {
@@ -94,7 +94,7 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let main = defs
         .iter()
         .find(|(name, _)| name == "main")
-        .ok_or("no `main`: define `mu main() | (exit: -i32) { ... }`")?;
+        .ok_or("no `main`: define `mu main | (exit: -i32) { ... }`")?;
     let eval_span = slc_core::span!("eval");
     let _eval_guard = eval_span.enter();
 
@@ -152,7 +152,7 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
         .iter()
         .filter(|decl| matches!(&decl.kind, Decl::Mu { name, .. } | Decl::Fn { name, .. } if name == "main"));
     let Some(main) = mains.next() else {
-        return Err("no `main`: define `mu main() | (exit: -i32) { ... }`".into());
+        return Err("no `main`: define `mu main | (exit: -i32) { ... }`".into());
     };
     if mains.next().is_some() {
         return Err("program contains multiple `main` declarations".into());

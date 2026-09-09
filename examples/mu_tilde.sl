@@ -16,7 +16,7 @@ mu twice(x: +i64) | (k: -i64) {
     (x * 2) @ k
 }
 
-mu main() | (exit: -i32) {
+mu main | (exit: -i32) {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet. ⟨ v ∥ μ̃x. ⟨ rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.

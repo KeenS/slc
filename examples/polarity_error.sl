@@ -13,10 +13,10 @@ mu bad_value(x: -i32) | (k: -i32) {
 
 // ...and a value cannot be a continuation parameter: control cannot leave
 // through something that is not a consumer.
-mu bad_continuation() | (j: +i32) {
+mu bad_continuation | (j: +i32) {
     0
 }
 
-mu main() | (exit: -i32) {
+mu main | (exit: -i32) {
     0 @ exit
 }
