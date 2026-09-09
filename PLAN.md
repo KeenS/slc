@@ -89,7 +89,7 @@ has the same meaning. The existing `mu(ret: -i32) { ... }` form is removed rathe
 Rename the keyword:
 
 ```sl
-mu route(x: +i32, to k: -i32) {
+mu route(x: +i32, to k: -i32) -> ⊥ {
     k(x)
 }
 ```
@@ -102,6 +102,10 @@ The `to` marker remains because it distinguishes:
 ### Semantics
 
 The declaration lowers to a `μ̃` abstraction over value parameters and a `μ` abstraction over continuation parameters.
+
+Because a `mu` declaration denotes an activated command rather than a value-producing function, its return type is always `⊥`. Activating one of its continuations is the only way for control to leave the declaration; control never falls through the end of the body.
+
+The explicit `-> ⊥` annotation is optional. Omitting it is equivalent to writing it.
 
 ### Checklist
 
@@ -389,7 +393,7 @@ mu parse(
     input: +String,
     to ok: -String,
     to err: -String,
-) {
+) -> ⊥ {
     ...
 }
 ```
