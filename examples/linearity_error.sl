@@ -6,10 +6,10 @@
 //
 //   slc run examples/linearity_error.sl
 
-mu bad(x: +i32, to k: -i32) {
+mu bad(x: +i32) | (k: -i32) {
     x
 }
 
-fn main() -> i32 {
-    42
+mu main() | (exit: -i32) {
+    0 @ exit
 }

@@ -1,5 +1,6 @@
 // The simplest Slant program.
 
-fn main() -> i32 {
-    println("Hello, Slant!")
+mu main() | (exit: -i32) {
+    println("Hello, Slant!");
+    0 @ exit
 }
