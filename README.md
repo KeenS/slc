@@ -1,8 +1,7 @@
 # Slant
 
-A Rust-flavored programming language whose core semantics are based on the
-symmetric lambda calculus tradition, instantiated as a λ̄μμ̃-style calculus
-(Curien–Herbelin).
+A Rust-flavored programming language whose core semantics follow the classical
+λ̄μμ̃ calculus.
 
 ## Building
 
@@ -19,4 +18,5 @@ cargo test
 ## Documentation
 
 - `DESIGN.md` — language design
+- `docs/MIGRATION.md` — syntax migration from the pre-redesign language
 - `PLAN.md` — implementation plan and progress checklist

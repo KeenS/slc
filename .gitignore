@@ -1,1 +1,5 @@
 /target
+# Local agent/editor artifacts; never commit these.
+instructions.txt
+.#instructions.txt
+\#*#
