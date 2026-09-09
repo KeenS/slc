@@ -243,10 +243,7 @@ fn check_expr(
                 });
             }
         }
-        Expr::Mu { value_params, continuation_params, body, .. } => {
-            for p in value_params {
-                check_param_polarity(p, false, false, &Default::default(), declared, e.span, diags);
-            }
+        Expr::Mu { continuation_params, body, .. } => {
             for p in continuation_params {
                 check_param_polarity(p, true, false, &Default::default(), declared, e.span, diags);
             }

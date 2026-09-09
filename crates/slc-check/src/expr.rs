@@ -1377,39 +1377,32 @@ fn check_expr(
             }
             Some(Type::Bottom)
         }
-        Expr::Mu { value_params, continuation_params, body, .. } => {
+        Expr::Mu { continuation_params, body, .. } => {
             env.push();
             let mut captured_types = Vec::new();
-            for p in value_params.iter().chain(continuation_params.iter()) {
+            for p in continuation_params {
                 let ty = match &p.ty {
                     Some(ty) => enums.resolve(ty),
                     // Nothing was written, so the body says it.
                     None => infer_param_type(&p.name, body, enums, env),
                 };
-                if p.is_continuation || value_params.iter().all(|v| v.name != p.name) {
-                    // Recorded in the order the row is written.
-                }
                 if let Some(ty) = ty.clone() {
                     env.define(&p.name, ty);
                 }
-                if continuation_params.iter().any(|c| c.name == p.name) {
-                    captured_types.push(ty);
-                }
+                captured_types.push(ty);
             }
             let result = check_expr(body, enums, env, diags);
             env.pop();
-            // A local `mu` captures the ambient continuation, so its value is
-            // whatever that continuation receives: `mu f | (k: -A) { … }`
-            // has type `A`. With value parameters, or with a row whose
-            // positions disagree, there is no single such type.
+            // A `mu` captures the ambient continuation, so its value is
+            // whatever that continuation receives: `mu | (k: -A) { … }` has
+            // type `A`. A row whose positions disagree has no single such
+            // type, and neither does one that is empty.
             let captured = captured_types
                 .into_iter()
                 .map(|ty| ty.map(|ty| ty.dual()))
                 .collect::<Option<Vec<_>>>()
                 .filter(|types| {
-                    value_params.is_empty()
-                        && !types.is_empty()
-                        && types.windows(2).all(|pair| pair[0] == pair[1])
+                    !types.is_empty() && types.windows(2).all(|pair| pair[0] == pair[1])
                 })
                 .map(|mut types| types.remove(0));
             captured.or(result)

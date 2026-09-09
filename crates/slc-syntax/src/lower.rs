@@ -292,13 +292,10 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             };
             Ok(Term::Mu(cut_binder(&consumer.kind), Box::new(command)))
         }
-        Expr::Mu { value_params, continuation_params, body, .. } => {
+        Expr::Mu { continuation_params, body, .. } => {
             let mut body_scope = continuations.to_vec();
             body_scope.extend(continuation_params.iter().map(|p| p.name.clone()));
             let mut term = lower_expr(body, &body_scope)?;
-            for p in value_params.iter().rev() {
-                term = Term::Lam(p.name.clone(), Box::new(term));
-            }
             for p in continuation_params.iter().rev() {
                 term = Term::Mu(
                     p.name.clone(),
@@ -1251,7 +1248,7 @@ mod tests {
         // Named selected propagation resolves through nested mu scopes.
         let out = lower_str(
             "command outer(x: +i32) | (err: -i32) {
-                mu inner(y: +i32) | (inner_err: -i32) { fail(x)?err }
+                mu inner | (inner_err: -i32) { fail(x)?err }
             }",
         );
         let printed = format!("{}", out[0].1);

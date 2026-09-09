@@ -245,6 +245,10 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 ⟨ μk. c ∥ e ⟩  →  c[e/k]
 ```
 
+A `mu` abstracts over that continuation and over nothing else: it takes no
+value parameters, because `mu(v) { … }` and `fn(v) { … }` both lower to
+`λv. …` and one spelling of the lambda is enough. Writing one says so.
+
 So `k` is bound to whatever consumer the expression meets. Its type is what
 that continuation receives, which makes `mu | (k: -A) { … }` an `A`, and a
 call whose result comes back through a continuation can be written without
@@ -760,7 +764,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
-| `expr.mu` | `mu f \| (k: -A) { e }` | `Λ`-free: `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the local form captures the ambient continuation |
+| `expr.mu` | `mu \| (k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, with no `Λ` in sight |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |

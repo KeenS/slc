@@ -94,6 +94,9 @@ let source = mu | (k) { read_file(path, k, err) };   // unchanged: the capture
 
 A declaration written with `mu` is a parse error naming the difference.
 
+A `mu` expression also takes no value parameters. `mu(v) { … }` lowered to
+`λv. …`, exactly what `fn(v) { … }` lowers to; write the `fn`.
+
 ### Remove `to`
 
 The directional `to` marker is removed.

@@ -74,12 +74,13 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
-    /// A local μ abstraction: `mu | (k) { body }`. The name is optional —
-    /// nothing refers to it — and so is a parameter's type, when the body
-    /// says what it is.
+    /// A local μ abstraction: `mu | (k) { body }`, which captures the
+    /// continuation the expression is cut against. It has no value
+    /// parameters — abstracting over a value is what `fn` does — and the
+    /// name is optional, since nothing refers to it, as is a parameter's
+    /// type, when the body says what it is.
     Mu {
         name: Option<String>,
-        value_params: Vec<Param>,
         continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
     },

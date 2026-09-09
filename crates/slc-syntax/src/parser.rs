@@ -312,7 +312,7 @@ impl Parser {
         let t = self.expect(TokenKind::Command, "`command`")?;
         let name = self.expect_ident("`command` name")?;
         let (value_params, continuation_params) =
-            self.parse_mu_params(TypeAnnotations::Required)?;
+            self.parse_command_params(TypeAnnotations::Required)?;
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
@@ -330,11 +330,10 @@ impl Parser {
         })
     }
 
-    /// The parameter groups of a `command` or a local `mu`:
-    /// `(values) | (continuations)`, with
+    /// The parameter groups of a `command`: `(values) | (continuations)`, with
     /// either side left out when it has none. `mu f | (k)` takes no values,
     /// `mu f(x)` takes no continuations, and an empty group is not written.
-    fn parse_mu_params(
+    fn parse_command_params(
         &mut self,
         annotations: TypeAnnotations,
     ) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
@@ -873,17 +872,30 @@ impl Parser {
                     Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
                     _ => None,
                 };
-                let (value_params, continuation_params) =
-                    self.parse_mu_params(TypeAnnotations::Optional)?;
+                // A `mu` expression abstracts over the continuation it is
+                // cut against, and over nothing else: with a value parameter
+                // it would just be a lambda, and `fn` is the lambda.
+                if self.peek_kind() == Some(&TokenKind::LParen) {
+                    return Err(ParseError {
+                        message:
+                            "a `mu` expression captures a continuation; to take a value, write `fn`"
+                                .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                    });
+                }
+                self.expect(TokenKind::Pipe, "`|` before the continuation a `mu` captures")?;
+                let continuation_params = self
+                    .parse_group(TypeAnnotations::Optional, "continuation")?
+                    .into_iter()
+                    .map(|mut p| {
+                        p.is_continuation = true;
+                        p
+                    })
+                    .collect();
                 let body = self.parse_block()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Mu {
-                        name,
-                        value_params,
-                        continuation_params,
-                        body: Box::new(body),
-                    },
+                    kind: Expr::Mu { name, continuation_params, body: Box::new(body) },
                 })
             }
             Some(TokenKind::Fn) => {
@@ -1511,6 +1523,27 @@ mod tests {
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
+    }
+
+    #[test]
+    fn a_mu_expression_takes_no_value_parameters() {
+        // `mu(v) { … }` lowered to `λv. …` — a lambda with a second
+        // spelling. The lambda is `fn`.
+        for source in ["fn f() -> i32 { mu(v) { v } }", "fn f() -> i32 { mu(v) | (k) { v @ k } }"] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(
+                errors.iter().any(|e| e.message.contains("to take a value, write `fn`")),
+                "{source}: {errors:?}"
+            );
+        }
+
+        // The continuation row is what a `mu` abstracts over, so it is
+        // required.
+        let errors = parse(lex("fn f() -> i32 { mu { 1 } }").unwrap()).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("`|` before the continuation")),
+            "errors: {errors:?}"
+        );
     }
 
     #[test]

@@ -69,9 +69,11 @@ and where the two disagree, `DESIGN.md` is right.
   is an enum-value expression; a struct literal is an ordinary expression and
   a struct pattern binds its fields, a struct value being the labelled product
   an `enum` variant already was.
-- A local `mu` used as an expression is `call/cc`, and its type is what the
-  captured continuation receives, so a call whose result arrives through a
-  continuation no longer nests the rest of the program inside it.
+- A `mu` expression is `call/cc`: it abstracts over the continuation it is cut
+  against and over nothing else — a value parameter would make it a lambda,
+  which is what `fn` is. Its type is what the captured continuation receives,
+  so a call whose result arrives through a continuation no longer nests the
+  rest of the program inside it.
 - An integer literal takes the integer type its port requires, `()` is the
   unit value, and a call with no arguments applies its callee to a marker that
   carries none — so `f()` and `f(())` are no longer the same thing.
