@@ -369,7 +369,8 @@ impl Parser {
                     "⅋" => Type::Par(left, right),
                     "&" => Type::With(left, right),
                     "+" => Type::Sum(left, right),
-                    _ => Type::Fun(left, right),
+                    // `A -> B` is `-A ⅋ B`.
+                    _ => Type::arrow(*left, *right),
                 })
             }
             Some(_) => {

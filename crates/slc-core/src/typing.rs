@@ -115,7 +115,6 @@ impl Unification {
             Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Bang(t) => Type::Bang(Box::new(self.apply(t))),
             Type::List(t) => Type::List(Box::new(self.apply(t))),
-            Type::Fun(a, b) => Type::Fun(Box::new(self.apply(a)), Box::new(self.apply(b))),
             atom => atom.clone(),
         }
     }
@@ -125,11 +124,9 @@ impl Unification {
             Type::Var(v) => {
                 *v == var || self.substitutions.get(v).is_some_and(|t| self.occurs(var, t))
             }
-            Type::Tensor(a, b)
-            | Type::Par(a, b)
-            | Type::With(a, b)
-            | Type::Sum(a, b)
-            | Type::Fun(a, b) => self.occurs(var, a) || self.occurs(var, b),
+            Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
+                self.occurs(var, a) || self.occurs(var, b)
+            }
             Type::Dual(t) | Type::Bang(t) | Type::List(t) => self.occurs(var, t),
             _ => false,
         }
@@ -159,15 +156,13 @@ impl Unification {
             (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
             (Type::Bang(a), Type::Bang(b)) => self.unify(a, b),
             (Type::List(a), Type::List(b)) => self.unify(a, b),
-            (Type::Fun(a1, a2), Type::Fun(b1, b2))
-            | (Type::Tensor(a1, a2), Type::Tensor(b1, b2))
+            (Type::Tensor(a1, a2), Type::Tensor(b1, b2))
             | (Type::Par(a1, a2), Type::Par(b1, b2))
             | (Type::Sum(a1, a2), Type::Sum(b1, b2))
             | (Type::With(a1, a2), Type::With(b1, b2)) => {
                 let left = self.unify(a1, b1)?;
                 let right = self.unify(a2, b2)?;
                 match (&expected, &actual) {
-                    (Type::Fun(..), _) => Ok(Type::Fun(Box::new(left), Box::new(right))),
                     (Type::Tensor(..), _) => Ok(Type::Tensor(Box::new(left), Box::new(right))),
                     (Type::Par(..), _) => Ok(Type::Par(Box::new(left), Box::new(right))),
                     (Type::Sum(..), _) => Ok(Type::Sum(Box::new(left), Box::new(right))),
@@ -210,11 +205,9 @@ impl Unification {
 fn contains_var(ty: &Type) -> bool {
     match ty {
         Type::Var(_) => true,
-        Type::Tensor(a, b)
-        | Type::Par(a, b)
-        | Type::With(a, b)
-        | Type::Sum(a, b)
-        | Type::Fun(a, b) => contains_var(a) || contains_var(b),
+        Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
+            contains_var(a) || contains_var(b)
+        }
         Type::Dual(t) | Type::Bang(t) | Type::List(t) => contains_var(t),
         _ => false,
     }
@@ -236,7 +229,7 @@ pub fn infer_term(
             // For inference, we require x's type to be in the context already.
             let xt = gamma.lookup(x).cloned().ok_or(TypeError::Unbound(format!("(param) {x}")))?;
             let bt = infer_term(body, gamma, delta)?;
-            Ok(Type::Fun(Box::new(xt), Box::new(bt)))
+            Ok(Type::arrow(xt, bt))
         }
 
         Term::Mu(a, body) => {
@@ -272,7 +265,7 @@ pub fn infer_term(
             // Λα.t consumes the continuation α and produces t.
             let at = delta.lookup(a).cloned().ok_or(TypeError::Unbound(format!("(covar) {a}")))?;
             let bt = infer_term(body, gamma, delta)?;
-            Ok(Type::Fun(Box::new(at), Box::new(bt)))
+            Ok(Type::arrow(at, bt))
         }
 
         Term::Co(e) => {
@@ -380,8 +373,8 @@ pub fn infer_coterm(
                 .unwrap_or(Type::One))
         }
 
-        CoTerm::Fst => Ok(Type::Fun(Box::new(Type::One), Box::new(Type::One))),
-        CoTerm::Snd => Ok(Type::Fun(Box::new(Type::One), Box::new(Type::One))),
+        CoTerm::Fst => Ok(Type::arrow(Type::One, Type::One)),
+        CoTerm::Snd => Ok(Type::arrow(Type::One, Type::One)),
     }
 }
 
@@ -484,7 +477,7 @@ mod tests {
         let f = Term::CoAbs("k".into(), Box::new(Term::Var("v".into())));
         assert_eq!(
             infer_term(&f, &mut g, &mut d),
-            Ok(Type::Fun(Box::new(Type::Neg(Base::I32)), Box::new(Type::Pos(Base::Bool))))
+            Ok(Type::arrow(Type::Neg(Base::I32), Type::Pos(Base::Bool)))
         );
     }
 
@@ -563,10 +556,12 @@ mod tests {
     fn unification_structural() {
         let mut u = Unification::new();
         let a = u.fresh_var();
-        let expected = Type::Fun(Box::new(a.clone()), Box::new(Type::Pos(Base::I32)));
-        let actual = Type::Fun(Box::new(Type::Pos(Base::Bool)), Box::new(Type::Pos(Base::I32)));
+        let expected = Type::arrow(a.clone(), Type::Pos(Base::I32));
+        let actual = Type::arrow(Type::Pos(Base::Bool), Type::Pos(Base::I32));
         u.unify(&expected, &actual).unwrap();
-        assert_eq!(u.apply(&a), Type::Pos(Base::Bool));
+        // `A → B` is `-A ⅋ B`, so a variable in argument position stands for
+        // the dualized argument.
+        assert_eq!(u.apply(&a), Type::Neg(Base::Bool));
     }
 
     #[test]

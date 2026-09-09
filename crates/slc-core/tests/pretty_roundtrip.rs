@@ -102,7 +102,7 @@ fn every_type() -> Vec<Type> {
         Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
         Type::Bang(Box::new(Type::Pos(Base::I32))),
         Type::List(Box::new(Type::Pos(Base::I32))),
-        Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::Bool))),
+        Type::arrow(Type::Pos(Base::I32), Type::Neg(Base::Bool)),
         Type::Dual(Box::new(Type::Named("Color".into()))),
         Type::Named("Color".into()),
     ]

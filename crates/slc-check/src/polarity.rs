@@ -41,13 +41,9 @@ fn resolve(ty: &TypeExpr, declared: &std::collections::HashSet<String>) -> Optio
         TypeExpr::Par(a, b) => {
             Type::Par(Box::new(resolve(&a.kind, declared)?), Box::new(resolve(&b.kind, declared)?))
         }
+        // `A → B` is `-A ⅋ B`.
         TypeExpr::Fun(a, b) => {
-            let result = resolve(&b.kind, declared)?;
-            // `A → ⊥` is `-A`.
-            if result == Type::Bottom {
-                return Some(resolve(&a.kind, declared)?.dual());
-            }
-            Type::Fun(Box::new(resolve(&a.kind, declared)?), Box::new(result))
+            Type::arrow(resolve(&a.kind, declared)?, resolve(&b.kind, declared)?)
         }
         TypeExpr::List(inner) => Type::List(Box::new(resolve(&inner.kind, declared)?)),
         other => return lower_type(other).ok(),

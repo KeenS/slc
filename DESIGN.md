@@ -383,7 +383,7 @@ mu consume_pair() | (k: (-i64 ⅋ -i64)) { … }
 |---|---|
 | `(A ⊗ B)` | positive product; the anonymous form of a two-field `struct` |
 | `(A ⅋ B)` | negative product; the dual of `⊗`, a joint consumer of both sides |
-| `(A -> B)` | function — and `(A -> ⊥)` *is* `-A`, since a function that never returns is a consumer of its argument |
+| `(A -> B)` | function: `-A ⅋ B`. So a function is negative, `(A -> ⊥)` *is* `-A`, and `dual(A -> B)` is `A ⊗ -B` — an argument together with a continuation for the result, which is what a call stack is |
 | `[A]` | list |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
 | `⊥` | bottom |
@@ -530,6 +530,16 @@ either way.
 
 The `-> ⊥` may be omitted — the body decides the type — but the examples
 write it, because a consumer literal is worth reading as one at a glance.
+
+`A → B` is `-A ⅋ B`, which is why this works: `A → ⊥` is `-A ⅋ ⊥`, and `⊥` is
+the unit of `⅋`. The same identity gives the dual: `dual(A → B)` is `A ⊗ -B`,
+an argument together with a continuation for the result — a *call stack*. So
+`f(v)` and the cut of `f` against the pair `(v, k)` are the same interaction,
+and a consumer of a function is an ordinary value of that product type.
+
+A cut is well typed exactly when its two sides are dual. Which side is
+written negatively is not itself the question: `v @ k` sends `v` to something
+that consumes it, and for a function that something is a call stack.
 
 An integer literal takes the integer type its port requires — `0 @ EXIT`
 sends an `i32` — and is `+i64` when nothing constrains it. Every other value

@@ -52,7 +52,7 @@ fn explicit_connectives_parse_and_lower() {
         ),
         (
             "fn f(g: (+i64 -> +bool)) -> i64 { 0 }",
-            Type::Fun(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::Bool))),
+            Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Bool)),
         ),
         ("fn f(xs: [+i64]) -> i64 { 0 }", Type::List(Box::new(Type::Pos(Base::I64)))),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
@@ -93,7 +93,7 @@ fn a_function_into_bottom_is_a_consumer() {
     // An ordinary function type is unaffected.
     assert_eq!(
         lower_type(&parameter_type("fn f(g: (+i64 -> +bool)) -> i64 { 0 }")),
-        Ok(Type::Fun(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::Bool))))
+        Ok(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Bool)))
     );
 }
 
@@ -102,9 +102,9 @@ fn explicit_connectives_reach_inference() {
     let out = declared("fn f(p: (+i64 ⊗ +i64)) -> bool { true }");
     assert_eq!(
         out[0].ty,
-        Type::Fun(
-            Box::new(Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64)))),
-            Box::new(Type::Pos(Base::Bool))
+        Type::arrow(
+            Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
+            Type::Pos(Base::Bool)
         )
     );
 
@@ -112,10 +112,8 @@ fn explicit_connectives_reach_inference() {
     let out = declared("mu f() | (k: (-i64 ⅋ -i64)) { k(0) }");
     assert_eq!(
         out[0].ty,
-        Type::Fun(
-            Box::new(Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64)))),
-            Box::new(Type::Bottom)
-        )
+        // `A → ⊥` is `-A`, so a `mu`'s type is the dual of its row.
+        Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64))).dual()
     );
 }
 

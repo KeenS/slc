@@ -33,6 +33,7 @@ Current implementation status:
 - `examples/connectives.sl` writes all four connectives in both polarities, with the units; it replaces the separate tensor and par examples.
 - A local `mu` used as an expression is `call/cc`, and its type is what the captured continuation receives, so a call whose result arrives through a continuation no longer nests the rest of the program inside it.
 - `A → ⊥` and `-A` are one type: a lambda whose body ends in a cut *is* a consumer, and a continuation may be annotated either way.
+- `A → B` is `-A ⅋ B`, so `Type::Fun` is gone: a function is negative, `dual(A → B)` is the call stack `A ⊗ -B`, and a cut is checked by duality rather than by which side is written negatively. A negative function's declared type dualizes its result, not the whole function.
 - The two intentionally failing examples are `linearity_error.sl` and `polarity_error.sl`; every other example runs successfully.
 - `to` is removed from the lexer and parser. `from` is not a lexer keyword.
 - The core Rust types and evaluator still use `Command` as a type name. This is internal naming, not surface syntax, and is acceptable unless renamed separately.

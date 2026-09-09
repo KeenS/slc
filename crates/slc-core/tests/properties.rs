@@ -29,7 +29,7 @@ fn types() -> Vec<Type> {
         Type::With(Box::new(ni32.clone()), Box::new(nbool)),
         Type::Bang(Box::new(i32.clone())),
         Type::List(Box::new(i32.clone())),
-        Type::Fun(Box::new(i32), Box::new(bool)),
+        Type::arrow(i32, bool),
     ]
 }
 

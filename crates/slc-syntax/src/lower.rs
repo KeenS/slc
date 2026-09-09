@@ -63,15 +63,9 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Par(a, b) => {
             Ok(Type::Par(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
         }
-        TypeExpr::Fun(a, b) => {
-            let result = lower_type(&b.kind)?;
-            // `A → ⊥` is `-A`: a function that never returns is a consumer of
-            // its argument, so the two are one type, not two that convert.
-            if result == Type::Bottom {
-                return Ok(lower_type(&a.kind)?.dual());
-            }
-            Ok(Type::Fun(Box::new(lower_type(&a.kind)?), Box::new(result)))
-        }
+        // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
+        // `-A`: a function that never returns is a consumer of its argument.
+        TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
         TypeExpr::List(inner) => Ok(Type::List(Box::new(lower_type(&inner.kind)?))),
         // `dual(A)` applies the involution rather than wrapping a node, so
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a

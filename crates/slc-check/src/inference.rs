@@ -124,7 +124,7 @@ pub fn variant_type(
     let packed = pack(payload)?;
     Ok(match packed {
         None => declared,
-        Some(payload) => Type::Fun(Box::new(payload), Box::new(declared)),
+        Some(payload) => Type::arrow(payload, declared),
     })
 }
 
@@ -181,15 +181,15 @@ fn infer_decl(
                 None => u.fresh_var(),
             };
 
-            let ty = inputs
-                .into_iter()
-                .rev()
-                .fold(output, |acc, input| Type::Fun(Box::new(input), Box::new(acc)));
-            let ty = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
-                ty.dual()
+            // A negative function produces the *consumer* of the type written
+            // after `<-`; its row is unchanged. Dualizing the whole function
+            // type would give `A ⊗ -B`, which is a call stack, not a function.
+            let output = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
+                output.dual()
             } else {
-                ty
+                output
             };
+            let ty = inputs.into_iter().rev().fold(output, Type::arrow_from);
             let ty = if type_params.is_empty() {
                 u.resolve_or_cannot_infer(&ty, &format!("fn {name}"))?
             } else {
@@ -209,10 +209,7 @@ fn infer_decl(
                 inputs.push(u.unify_with_polarity(&ty, &ty, false)?);
             }
             let output = Type::Bottom;
-            let ty = inputs
-                .into_iter()
-                .rev()
-                .fold(output, |acc, input| Type::Fun(Box::new(input), Box::new(acc)));
+            let ty = inputs.into_iter().rev().fold(output, Type::arrow_from);
             let ty = u.resolve_or_cannot_infer(&ty, &format!("command {name}"))?;
             Ok(DeclarationType { name: name.clone(), ty })
         }
@@ -301,17 +298,14 @@ mod tests {
         // A variant with a payload is a constructor from that payload.
         assert_eq!(
             ty("Shape::Circle"),
-            Type::Fun(Box::new(Type::Pos(Base::I64)), Box::new(Type::Named("Shape".into())))
+            Type::arrow(Type::Pos(Base::I64), Type::Named("Shape".into()))
         );
         // Several payload values are packed into one tensor.
         assert_eq!(
             ty("Shape::Rect"),
-            Type::Fun(
-                Box::new(Type::Tensor(
-                    Box::new(Type::Pos(Base::I64)),
-                    Box::new(Type::Pos(Base::I64))
-                )),
-                Box::new(Type::Named("Shape".into()))
+            Type::arrow(
+                Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
+                Type::Named("Shape".into())
             )
         );
     }
@@ -343,19 +337,14 @@ mod tests {
     #[test]
     fn fn_annotation_infers_function_type() {
         let out = infer("fn id(x: +i32) -> i32 { x }").unwrap();
-        assert_eq!(
-            out[0].ty,
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::I32)))
-        );
+        assert_eq!(out[0].ty, Type::arrow(Type::Pos(Base::I32), Type::Pos(Base::I32)));
     }
 
     #[test]
     fn negative_fn_infers_dual_function_type() {
+        // It takes a consumer and produces one: `-i32 → -i32`.
         let out = infer("fn k(x: -i32) <- i32 { x }").unwrap();
-        assert_eq!(
-            out[0].ty,
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
-        );
+        assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
     }
 
     #[test]
@@ -364,18 +353,15 @@ mod tests {
         assert_eq!(empty, Type::Neg(Base::I32));
 
         let singleton = infer("fn k(ok: -i32) <- i32 { ok(0) }").unwrap()[0].ty.clone();
-        assert_eq!(
-            singleton,
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
-        );
+        assert_eq!(singleton, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
         let multi =
             infer("fn k(ok: -i32, err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
         assert_eq!(
             multi,
-            Type::Fun(
-                Box::new(Type::Pos(Base::I32)),
-                Box::new(Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32))))
+            Type::arrow(
+                Type::Neg(Base::I32),
+                Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32))
             )
         );
     }
@@ -383,16 +369,11 @@ mod tests {
     #[test]
     fn negative_fn_output_is_dual_not_collapsed_by_polarity_unification() {
         let out = infer("fn k(return: -i32) <- i32 { return(0) }").unwrap();
-        assert_eq!(
-            out[0].ty,
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::I32)))
-        );
+        assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
+        // The row and the result stay independent: `-i32 → -bool`.
         let out = infer("fn k(return: -i32) <- bool { return(true) }").unwrap();
-        assert_eq!(
-            out[0].ty,
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Neg(Base::Bool)))
-        );
+        assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::Bool)));
     }
 
     #[test]
@@ -407,29 +388,26 @@ mod tests {
         let out = infer("mu step(x: +i32) | (k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
-            Type::Fun(
-                Box::new(Type::Pos(Base::I32)),
-                Box::new(Type::Fun(Box::new(Type::Neg(Base::I32)), Box::new(Type::Bottom)))
-            )
+            Type::arrow(Type::Pos(Base::I32), Type::arrow(Type::Neg(Base::I32), Type::Bottom))
         );
     }
 
     #[test]
     fn generic_type_variables_are_supported() {
         let out = infer("fn id<T>(x: +T) -> T { x }").unwrap();
-        assert_eq!(out[0].ty, Type::Fun(Box::new(Type::Var(0)), Box::new(Type::Var(0))));
+        assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 
     #[test]
     fn generic_negative_functions_preserve_declared_polarity() {
         let out = infer("fn k<T>(ok: -T) <- T { ok(0) }").unwrap();
-        assert_eq!(out[0].ty, Type::Fun(Box::new(Type::Var(0).dual()), Box::new(Type::Var(0))));
+        assert_eq!(out[0].ty, Type::arrow(Type::Var(0).dual(), Type::Var(0)));
     }
 
     #[test]
     fn generic_function_bare_type_positions_instantiate_to_variables() {
         let out = infer("fn k<T>(value: T) -> T { value }").unwrap();
-        assert_eq!(out[0].ty, Type::Fun(Box::new(Type::Var(0)), Box::new(Type::Var(0))));
+        assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 
     #[test]

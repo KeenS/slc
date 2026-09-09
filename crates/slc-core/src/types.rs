@@ -40,8 +40,6 @@ pub enum Type {
     Bang(Box<Type>),
     /// List sugar.
     List(Box<Type>),
-    /// Function sugar: `A -> B`.
-    Fun(Box<Type>, Box<Type>),
     /// A named positive declaration, such as `struct` or `enum`. Named types
     /// are opaque to core unification; declaration-specific fields and
     /// variants are checked by the surface checker.
@@ -49,6 +47,22 @@ pub enum Type {
 }
 
 impl Type {
+    /// A function type: `A → B` is `-A ⅋ B`, so its dual is `A ⊗ -B` — an
+    /// argument together with a continuation for the result, which is what a
+    /// call stack is. `A → ⊥` is `-A`, since `⊥` is the unit of `⅋`.
+    pub fn arrow(argument: Type, result: Type) -> Type {
+        if result == Type::Bottom {
+            return argument.dual();
+        }
+        Type::Par(Box::new(argument.dual()), Box::new(result))
+    }
+
+    /// `arrow` with the arguments in fold order: the accumulated result
+    /// first, then the input.
+    pub fn arrow_from(result: Type, argument: Type) -> Type {
+        Type::arrow(argument, result)
+    }
+
     /// The dual of a type. An involution: `dual(dual(t)) == t`.
     pub fn dual(&self) -> Type {
         match self {
@@ -64,7 +78,6 @@ impl Type {
             Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
             Type::Bang(t) => Type::Bang(Box::new(t.dual())),
             Type::List(t) => Type::List(Box::new(t.dual())),
-            Type::Fun(a, b) => Type::Fun(Box::new(a.dual()), Box::new(b.dual())),
             Type::Named(name) => Type::Dual(Box::new(Type::Named(name.clone()))),
         }
     }
@@ -121,7 +134,6 @@ mod tests {
             Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
             Type::Bang(Box::new(Type::Pos(Base::I32))),
             Type::List(Box::new(Type::Pos(Base::I32))),
-            Type::Fun(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
             Type::Named("Color".into()),
         ]
     }

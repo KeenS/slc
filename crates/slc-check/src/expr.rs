@@ -65,14 +65,8 @@ impl Declarations {
             TypeExpr::Par(a, b) => {
                 Type::Par(Box::new(self.resolve(&a.kind)?), Box::new(self.resolve(&b.kind)?))
             }
-            TypeExpr::Fun(a, b) => {
-                let result = self.resolve(&b.kind)?;
-                // `A → ⊥` is `-A`.
-                if result == Type::Bottom {
-                    return Some(self.resolve(&a.kind)?.dual());
-                }
-                Type::Fun(Box::new(self.resolve(&a.kind)?), Box::new(result))
-            }
+            // `A → B` is `-A ⅋ B`.
+            TypeExpr::Fun(a, b) => Type::arrow(self.resolve(&a.kind)?, self.resolve(&b.kind)?),
             TypeExpr::List(inner) => Type::List(Box::new(self.resolve(&inner.kind)?)),
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
@@ -843,13 +837,7 @@ fn check_expr(
             // A lambda is a function value, and its result is what the body
             // produces. A body that ends in a cut produces nothing, and
             // `A → ⊥` is `-A`, so such a lambda simply *is* a consumer.
-            let param_ty = param_ty.unwrap_or(Type::One);
-            let result = result.unwrap_or(Type::One);
-            Some(if result == Type::Bottom {
-                param_ty.dual()
-            } else {
-                Type::Fun(Box::new(param_ty), Box::new(result))
-            })
+            Some(Type::arrow(param_ty.unwrap_or(Type::One), result.unwrap_or(Type::One)))
         }
         Expr::Call { callee, args } => {
             // A variant applied to its payload is a value, not a call.
@@ -885,10 +873,13 @@ fn check_expr(
                 }
                 return Some(Type::Named(declaration));
             }
-            // A continuation is not applied: it is cut against a value.
+            // A continuation is not applied: it is cut against a value. Only
+            // an atomic consumer is certainly not a function — `A → B` is
+            // `-A ⅋ B`, so a function is negative too, and a `⅋` may be
+            // either a function or a consumer of a product.
             if let Expr::Ident(name) = &callee.kind
                 && let Some(ty) = env.lookup(name)
-                && (ty.is_negative() || matches!(ty, Type::Dual(_)))
+                && matches!(ty, Type::Neg(_) | Type::Bottom | Type::Dual(_))
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -1274,32 +1265,25 @@ fn check_expr(
         }
         Expr::Cut { value, consumer } => {
             // `v @ k` is a command: it sends `v` to the consumer `k` and does
-            // not return, so its type is bottom. The consumer must be a
-            // consumer of exactly what the value produces.
+            // not return, so its type is bottom. A cut is well typed when the
+            // two sides are dual — that is what makes the interaction fit,
+            // and with `A → B` being `-A ⅋ B` it is the whole rule: which
+            // side is written negatively is not itself the question.
             let value_ty = check_expr(value, enums, env, diags);
             let consumer_ty = check_expr(consumer, enums, env, diags);
-            if let Some(consumer_ty) = &consumer_ty
+            if let (Some(value_ty), Some(consumer_ty)) = (&value_ty, &consumer_ty)
+                && value_ty != &Type::One
                 && consumer_ty != &Type::One
+                && !fits(&consumer_ty.dual(), value_ty, &value.kind)
             {
-                if !consumer_ty.is_negative() && !matches!(consumer_ty, Type::Dual(_)) {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "`@` sends a value to a consumer; the right-hand side has type \
-                             {consumer_ty}, which is not one"
-                        ),
-                        span: consumer.span,
-                    });
-                } else if let Some(value_ty) = &value_ty
-                    && !fits(&consumer_ty.dual(), value_ty, &value.kind)
-                {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "consumer accepts {}; the value has type {value_ty}",
-                            consumer_ty.dual()
-                        ),
-                        span: value.span,
-                    });
-                }
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`@` sends a value to a consumer of it: {consumer_ty} accepts {}, \
+                         and the value has type {value_ty}",
+                        consumer_ty.dual()
+                    ),
+                    span: e.span,
+                });
             }
             Some(Type::Bottom)
         }
@@ -1594,16 +1578,20 @@ mod tests {
     }
 
     #[test]
-    fn a_cut_needs_a_consumer_on_the_right() {
+    fn a_cut_needs_dual_sides() {
+        // Two values of the same positive type do not interact.
         let diags = check("fn f(x: +i32, y: +i32) -> i32 { x @ y }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("which is not one")), "{diags:?}");
+        assert!(
+            diags.iter().any(|d| d.message.contains("sends a value to a consumer of it")),
+            "{diags:?}"
+        );
     }
 
     #[test]
     fn a_cut_checks_what_the_consumer_accepts() {
         let diags = check("mu route(x: +String) | (k: -i32) { x @ k }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("consumer accepts +i32")
+            diags.iter().any(|d| d.message.contains("-i32 accepts +i32")
                 && d.message.contains("the value has type +String")),
             "{diags:?}"
         );
