@@ -1,7 +1,7 @@
 //! Polarity checking for surface programs.
 
 use slc_core::types::Type;
-use slc_syntax::ast::{Decl, Expr, Node, Param, Program};
+use slc_syntax::ast::{Decl, Expr, Node, Param, Program, TypeExpr};
 use slc_syntax::lower::LowerError;
 use slc_syntax::lower::lower_type;
 
@@ -37,12 +37,12 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { params, .. } => {
             for p in params {
-                check_param_polarity(p, false, d.span, diags);
+                check_param_polarity(p, p.is_continuation, &d.kind, d.span, diags);
             }
         }
         Decl::Mu { params, .. } => {
             for p in params {
-                check_param_polarity(p, p.is_continuation, d.span, diags);
+                check_param_polarity(p, p.is_continuation, &d.kind, d.span, diags);
             }
         }
         Decl::Struct { fields, .. } => {
@@ -87,15 +87,17 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
 fn check_param_polarity(
     p: &Param,
     is_cont: bool,
+    current_decl: &Decl,
     span: slc_syntax::token::Span,
     diags: &mut Vec<Diagnostic>,
 ) {
     if let Ok(ty) = lower_type(&p.ty) {
-        let ok = if is_cont {
-            // Continuations must be negative: -T
+        let is_fn_decl = matches!(current_decl, Decl::Fn { .. });
+        let ok = if is_fn_decl && matches!(p.ty, TypeExpr::Negative(_)) {
+            is_negative_type(&ty)
+        } else if is_cont || p.is_continuation {
             is_negative_type(&ty)
         } else {
-            // Values must be positive: +T
             is_positive_type(&ty)
         };
         if !ok {
@@ -149,6 +151,7 @@ fn check_expr(e: &Node<Expr>, diags: &mut Vec<Diagnostic>) {
         Expr::Lambda { param_type: Some(ty), .. } => {
             if let Ok(core_ty) = lower_type(ty)
                 && !core_ty.is_positive()
+                && !core_ty.is_negative()
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -245,9 +248,8 @@ mod tests {
     }
 
     #[test]
-    fn fn_negative_param_fails() {
-        let r = check("fn bad(x: -i32) -> i32 { x }");
-        assert!(r.is_err());
+    fn fn_continuation_params_ok() {
+        assert!(check("fn run(k: -i32) -> i32 { k(1) }").is_ok());
     }
 
     #[test]

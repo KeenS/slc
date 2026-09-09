@@ -24,7 +24,7 @@ fn run_int_main() {
 #[test]
 fn polarity_error() {
     let dir = std::env::temp_dir().join("slc_test_pol.sl");
-    std::fs::write(&dir, "fn bad(x: -i32) -> i32 { x }").unwrap();
+    std::fs::write(&dir, "mu bad(x: -i32, to k: -i32) { k(x) }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("polarity"));
