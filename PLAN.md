@@ -146,188 +146,101 @@ Remove `spawn` entirely. There will be no replacement keyword in v0.2. Any futur
 
 ---
 
-## 5. Dual Control: Negative Multiplicatives and Additives
+## 5. Dual Control: `select` and `choose`
 
 ### Problem
 
-The current `if` and `match` are producer-oriented:
+The current `enum` and `match` are producer-oriented:
 
-- `if` chooses one of two value branches
-- `match` chooses one of several value branches
+- `enum` constructs a positive additive sum
+- `match` decomposes a positive additive sum by choosing one arm
 
-That is only the positive half of control. We also need their exact duals:
+That is only the positive half. Their exact duals are:
 
-- the dual of `if` is negative additive choice
-- the dual of `match` is negative multiplicative decomposition
+- `select` is the dual of `enum`
+- `choose` is the dual of `match`
 
-Keeping this symmetry is required. `if`, `match`, `struct`, and `enum` must form a polarity square.
+Keeping this symmetry is required. `enum` and `select` are additive type constructors; `match` and `choose` are their respective elimination forms.
 
 ### Symmetry requirement
 
 For every producer construct, there should be a corresponding consumer construct:
 
-| Positive construct | Polarity | Kind | Negative dual | Polarity | Kind |
+| Positive | Polarity | Kind | Negative dual | Polarity | Kind |
 |---|---|---|---|---|---|
-| `if` | positive additive | selects one value branch | `if not` | negative additive | offers one value to one of two continuations |
-| `match` | positive additive | selects one value arm | `match not` | negative additive | offers one value to one of several continuations |
-| `struct` | positive multiplicative | bundles values with `⊗` | `struct not` | negative multiplicative | splits a value into multiple continuations with `⅋` |
-| `enum` | positive additive | chooses one variant with `⊕` | `enum not` | negative additive | accepts one of several variants with `&` |
+| `enum` | positive additive | constructs one variant with `⊕` | `select` | negative additive | constructs one continuation with `&` |
+| `match` | positive additive elimination | chooses one value arm | `choose` | negative additive elimination | offers one value to one of several continuations |
 
-The key point is that `if` and `match` are additive control, while `struct` and `enum` are data. We need the negative forms of both.
+### `select`
 
-### Negative multiplicative `if`
-
-`if` is the simplest additive control form. Its negative dual should offer a value to one of two continuations. Proposed syntax:
+`select` is the dual of `enum`. It constructs a negative additive sum, i.e. a continuation that can be activated in one of several ways. Proposed syntax:
 
 ```sl
-if not value {
-    zero => EXIT(0),
-    nonzero => EXIT(1),
+select Color {
+    EXIT(0) => Red,
+    EXIT(1) => Green,
+    EXIT(2) => Blue,
 }
 ```
 
-Meaning:
-
-- `value` is evaluated to a boolean
-- one of the two named continuations is selected
-- the value is passed to the selected continuation
-
-This is the negative additive dual of positive `if`.
-
-### Negative multiplicative `match`
-
-`match` should offer a value to one of several continuations. Proposed syntax:
-
-```sl
-match not value {
-    Red => EXIT(0),
-    Green => EXIT(1),
-    Blue => EXIT(2),
-}
-```
+Each arm is a producer expression on the left and a variant name on the right. The result is a continuation of type `-Color`.
 
 Meaning:
 
-- `value` is evaluated
-- one of the patterns matches
-- the corresponding continuation is activated with the bound values
-
-This is the negative additive dual of positive `match`.
-
-### Negative multiplicative struct
-
-A positive `struct` bundles values together using `⊗`. Its dual should split a value into multiple continuations using `⅋`. Proposed syntax:
-
-```sl
-struct not Handler {
-    ok: -String,
-    err: -String,
-}
-```
-
-Meaning:
-
-- a value of type `Handler` is a continuation
-- the continuation jointly consumes both fields
-- the fields are not independently activated; they are consumed together as a `⅋`
-
-This is the negative multiplicative dual of positive `struct`.
-
-### Negative additive enum
-
-A positive `enum` chooses one variant using `⊕`. Its dual should accept one of several variants using `&`. Proposed syntax:
-
-```sl
-enum not Result {
-    ok: -String,
-    err: -String,
-}
-```
-
-Meaning:
-
-- a value of type `Result` is a continuation
-- the continuation accepts exactly one of the listed variants
-- each variant is a distinct continuation branch
+- the continuation is a negative additive sum
+- each arm is a possible way to activate it
+- activating the continuation with variant `Red` runs `EXIT(0)`
+- activating with `Green` runs `EXIT(1)`
 
 This is the negative additive dual of positive `enum`.
 
-### Why `not`
+### `choose`
 
-`not` is already the natural polarity-flip operation in the language. Using it before a type or control keyword keeps the surface syntax readable while remaining unambiguous:
-
-```sl
-struct not T   // negative multiplicative
-enum not T     // negative additive
-if not e       // negative additive control
-match not e    // negative additive control
-```
-
-This is clearer than reusing `+`/`-` on the declaration itself, because those are type polarities, not data declarations.
-
-### Construction and destruction
-
-For positive `struct` and `enum`, construction produces a value:
+`choose` is the dual of `match`. It offers a value to one of several continuations. Proposed syntax:
 
 ```sl
-let p = Pair { first: 1, second: 2 };
-let c = Shape::Circle(3);
+choose Color { Red }  // exits with 0
 ```
 
-For negative `struct` and `enum`, construction produces a continuation:
+Meaning:
 
-```sl
-let h: Handler = Handler {
-    ok: fn(value: +String) -> i32 { EXIT(0) },
-    err: fn(message: +String) -> i32 { EXIT(1) },
-};
+- the value `Color_Red` is offered to the consumer
+- the consumer selects one branch based on the variant
+- control jumps to the corresponding continuation
 
-let r: Result = Result::ok(
-    fn(value: +String) -> i32 { EXIT(0) }
-);
-```
+This is the negative additive dual of positive `match`.
 
-Destruction is by activation, not by destructuring:
+### Why `select` and `choose`
 
-```sl
-h(value);         // negative struct: jointly consumes fields
-r(value);         // negative enum: selects one variant
-```
+These keywords directly name the two directions of additive choice:
+
+- `enum` **constructs** a positive choice
+- `match` **eliminates** a positive choice
+- `select` **constructs** a negative choice
+- `choose` **eliminates** a negative choice
+
+This is clearer than a generic `not` prefix because it names the actual operation, not merely the polarity.
 
 ### Checklist
 
-- [ ] Choose final syntax for negative `if`
-- [ ] Choose final syntax for negative `match`
-- [ ] Choose final syntax for negative `struct`
-- [ ] Choose final syntax for negative `enum`
-- [ ] Add AST nodes for negative conditionals
-- [ ] Add AST nodes for negative matches
-- [ ] Add AST nodes for negative struct declarations
-- [ ] Add AST nodes for negative enum declarations
-- [ ] Update parser for negative `if`
-- [ ] Update parser for negative `match`
-- [ ] Update parser for negative struct declarations
-- [ ] Update parser for negative enum declarations
-- [ ] Define lowering for negative `if`
-- [ ] Define lowering for negative `match`
-- [ ] Define lowering for negative struct
-- [ ] Define lowering for negative enum
+- [ ] Add AST node for `select`
+- [ ] Add AST node for `choose`
+- [ ] Update the parser for `select`
+- [ ] Update the parser for `choose`
+- [ ] Define lowering for `select`
+- [ ] Define lowering for `choose`
 - [ ] Update type lowering
 - [ ] Update type pretty-printing
 - [ ] Update inference
 - [ ] Update polarity checking
 - [ ] Update linearity checking
-- [ ] Update exhaustiveness checking for negative `match`
-- [ ] Define construction syntax for negative structs
-- [ ] Define construction syntax for negative enums
-- [ ] Define destruction syntax for positive structs and enums
+- [ ] Update exhaustiveness checking for `choose`
 - [ ] Add parser tests
 - [ ] Add lowering tests
 - [ ] Add type-checker tests
 - [ ] Add runtime tests
-- [ ] Rewrite error-handling examples to use negative `struct`
-- [ ] Rewrite error-handling examples to use negative `enum`
-- [ ] Rewrite the JSON parser example using negative enums for success and failure continuations
+- [ ] Rewrite error-handling examples to use `select` and `choose`
+- [ ] Rewrite the JSON parser example using `select` and `choose`
 
 
 ---
@@ -400,40 +313,20 @@ mu parse(
 }
 ```
 
-### Negative conditional
+### Negative additive construction
 
 ```sl
-if not value {
-    zero => ...,
-    nonzero => ...,
+select Color {
+    EXIT(0) => Red,
+    EXIT(1) => Green,
+    EXIT(2) => Blue,
 }
 ```
 
-### Negative match
+### Negative additive elimination
 
 ```sl
-match not value {
-    Red => ...,
-    Green => ...,
-}
-```
-
-### Negative struct
-
-```sl
-struct not Handler {
-    ok: -String,
-    err: -String,
-}
-```
-
-### Negative enum
-
-```sl
-enum not Result {
-    ok: -String,
-    err: -String,
-}
+choose Color { Red }  // exits with 0
 ```
 
 ### Builtin exit
@@ -468,31 +361,28 @@ EXIT(0)
 - [ ] Add tests
 - [ ] Update examples
 
-### Phase 4: Negative Multiplicative and Additive Control
+### Phase 4: Negative Additive Control and Data
 
-#### Negative additive control
+#### Negative additive construction
 
-- [ ] Implement `if not`
-- [ ] Implement `match not`
-- [ ] Add exhaustive checking for `match not`
+- [ ] Implement `select`
+- [ ] Add exhaustive checking for `select`
 
-#### Negative multiplicative data
+#### Negative additive elimination
 
-- [ ] Implement `struct not`
-- [ ] Implement `enum not`
-- [ ] Implement construction forms for negative data
-- [ ] Implement destruction forms for negative data
+- [ ] Implement `choose`
+- [ ] Add exhaustive checking for `choose`
 
 #### Shared
 
 - [ ] Add tests
 - [ ] Rewrite error-handling examples
 
-### Phase 5: Integrated Dual Data and Control
+### Phase 5: Integrated Negative Additive Control
 
-- [ ] Combine negative structs and enums with `if not` and `match not`
+- [ ] Combine `select` and `choose` with continuation-taking `fn`
 - [ ] Add exhaustiveness and linearity tests for the combined forms
-- [ ] Rewrite JSON parser using negative data and negative control
+- [ ] Rewrite JSON parser using `select` and `choose`
 
 ### Phase 6: Documentation
 
@@ -510,8 +400,8 @@ EXIT(0)
 - [ ] `command` no longer exists as a keyword
 - [ ] `mu` is the only keyword for consumer abstraction
 - [ ] Ordinary `fn` can take continuation parameters
-- [ ] Negative multiplicative control exists (`if not`, `match not`)
-- [ ] Negative additive data exists (`struct not`, `enum not`)
+- [ ] Negative additive construction exists (`select`)
+- [ ] Negative additive elimination exists (`choose`)
 - [ ] `EXIT: -i32` works as a top-level continuation
 - [ ] Every core λ̄μμ̃ construct has a surface representation
 - [ ] Every surface construct has a documented lowering to λ̄μμ̃
