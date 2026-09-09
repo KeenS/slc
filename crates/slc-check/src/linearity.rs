@@ -170,8 +170,11 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { name, params, body, .. } => {
             let bound: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
-            let unrestricted: HashSet<String> =
-                params.iter().filter(|p| is_unrestricted(&p.ty)).map(|p| p.name.clone()).collect();
+            let unrestricted: HashSet<String> = params
+                .iter()
+                .filter(|p| p.ty.as_ref().is_some_and(is_unrestricted))
+                .map(|p| p.name.clone())
+                .collect();
             // Let-bound variables inside the body are also linear.
             let mut let_bound = Vec::new();
             collect_let_bindings(body, &mut let_bound);
@@ -181,7 +184,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                     continue;
                 }
                 let u = uses.get(&p.name);
-                let consumer = p.is_continuation || is_consumer(&p.ty);
+                let consumer = p.is_continuation || p.ty.as_ref().is_some_and(is_consumer);
                 report_linearity(name, &p.name, u, consumer, body.span, diags);
             }
             check_dangling_continuations(body, diags);
@@ -198,15 +201,18 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
         Decl::Mu { name, value_params, continuation_params, body, .. } => {
             let params: Vec<_> = value_params.iter().chain(continuation_params.iter()).collect();
             let uses = count_uses(body);
-            let unrestricted: HashSet<String> =
-                params.iter().filter(|p| is_unrestricted(&p.ty)).map(|p| p.name.clone()).collect();
+            let unrestricted: HashSet<String> = params
+                .iter()
+                .filter(|p| p.ty.as_ref().is_some_and(is_unrestricted))
+                .map(|p| p.name.clone())
+                .collect();
             for p in params.into_iter() {
                 if unrestricted.contains(&p.name) {
                     continue;
                 }
                 let u = uses.get(&p.name);
-                let consumer =
-                    continuation_params.iter().any(|x| x.name == p.name) || is_consumer(&p.ty);
+                let consumer = continuation_params.iter().any(|x| x.name == p.name)
+                    || p.ty.as_ref().is_some_and(is_consumer);
                 report_linearity(name, &p.name, u, consumer, body.span, diags);
             }
             check_dangling_continuations(body, diags);

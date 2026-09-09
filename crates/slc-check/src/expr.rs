@@ -7,7 +7,7 @@
 //! mistakes that used to appear only at runtime.
 
 use slc_core::types::{Base, Type};
-use slc_syntax::ast::{Decl, Expr, Node, Program, TypeExpr};
+use slc_syntax::ast::{Decl, Expr, Named, Node, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
 use std::collections::HashMap;
@@ -82,6 +82,11 @@ impl Declarations {
     }
 
     /// Resolve a variant path or an unambiguous unqualified variant name.
+    /// Whether a name is a declared `struct` or `enum`.
+    fn declares(&self, name: &str) -> bool {
+        self.declarations.contains(name)
+    }
+
     fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
         if let Some(signature) = self.signatures.get(name) {
             return Some(signature);
@@ -130,6 +135,10 @@ struct Env<'a> {
     constants: &'a HashMap<String, Type>,
     functions: &'a HashMap<String, FunctionSignature>,
     locals: Vec<HashMap<String, Type>>,
+    /// The type the enclosing negative `fn` consumes — what follows its
+    /// `<-`. A `select` in its body is the consumer of exactly that, so a
+    /// `select` there need not repeat it.
+    consumed: Option<Type>,
 }
 
 impl<'a> Env<'a> {
@@ -137,7 +146,7 @@ impl<'a> Env<'a> {
         constants: &'a HashMap<String, Type>,
         functions: &'a HashMap<String, FunctionSignature>,
     ) -> Self {
-        Self { constants, functions, locals: Vec::new() }
+        Self { constants, functions, locals: Vec::new(), consumed: None }
     }
 
     fn push(&mut self) {
@@ -306,6 +315,12 @@ fn builtin_functions() -> Vec<Builtin> {
     ]
 }
 
+/// A declaration's parameter type. Declarations are interfaces, so one is
+/// always written; anything else is unknown to the caller.
+fn declared_type(p: &slc_syntax::ast::Param) -> Type {
+    p.ty.as_ref().and_then(|ty| lower_type(ty).ok()).unwrap_or(Type::One)
+}
+
 fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
     let mut out = builtin_functions()
         .into_iter()
@@ -337,8 +352,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
             Decl::Mu { name, value_params, continuation_params, .. } => {
                 let declared: Vec<_> =
                     value_params.iter().chain(continuation_params.iter()).collect();
-                let params =
-                    declared.iter().map(|p| lower_type(&p.ty).unwrap_or(Type::One)).collect();
+                let params = declared.iter().map(|p| declared_type(p)).collect();
                 let continuations = declared.iter().map(|p| p.is_continuation).collect();
                 out.insert(
                     name.clone(),
@@ -352,7 +366,7 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
             out.insert(
                 name.clone(),
                 FunctionSignature {
-                    params: params.iter().map(|p| lower_type(&p.ty).unwrap_or(Type::One)).collect(),
+                    params: params.iter().map(declared_type).collect(),
                     continuations: params.iter().map(|p| p.is_continuation).collect(),
                     result,
                 },
@@ -362,22 +376,71 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
     out
 }
 
+/// The type a `select`'s arms name, when one of them does: a struct pattern
+/// names its struct, `Color::Red(x)` its enum, and a bare `Red` the enum that
+/// declares it.
+fn named_by_arms(arms: &[slc_syntax::ast::SelectArm], enums: &Declarations) -> Option<Type> {
+    arms.iter().find_map(|arm| match arm.pattern.names()? {
+        Named::Declaration(name) if enums.declares(name) => Some(Type::Named(name.to_string())),
+        Named::Variant(name) => {
+            enums.variant(name).map(|(declaration, _)| Type::Named(declaration.clone()))
+        }
+        Named::Declaration(_) => None,
+    })
+}
+
+/// The type an unannotated local-`mu` parameter has, read off the body that
+/// uses it. Two shapes say it outright: a call that hands the parameter to a
+/// slot whose type the callee declares, and a cut that sends a value to it.
+fn infer_param_type(
+    name: &str,
+    body: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+) -> Option<Type> {
+    if let Expr::Call { callee, args } = &body.kind
+        && let Expr::Ident(function) = &callee.kind
+        && let Some(slot) =
+            args.iter().position(|a| matches!(&a.kind, Expr::Ident(x) if x == name))
+        && let Some(ty) = env.functions.get(function).and_then(|s| s.params.get(slot)).cloned()
+        // `Type::One` is what an untyped slot carries; it says nothing.
+        && ty != Type::One
+    {
+        return Some(ty);
+    }
+    if let Expr::Cut { value, consumer } = &body.kind
+        && matches!(&consumer.kind, Expr::Ident(x) if x == name)
+    {
+        // `v @ k` makes `k` the consumer of whatever `v` is. The value is
+        // checked again in place, so these diagnostics are thrown away.
+        return check_expr(value, enums, env, &mut Vec::new()).map(|ty| ty.dual());
+    }
+    body.kind.children().into_iter().find_map(|child| infer_param_type(name, child, enums, env))
+}
+
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { params, body, .. } => {
+        Decl::Fn { params, body, polarity, return_type, .. } => {
             env.push();
             for p in params {
-                if let Some(ty) = enums.resolve(&p.ty) {
+                if let Some(ty) = p.ty.as_ref().and_then(|ty| enums.resolve(ty)) {
                     env.define(&p.name, ty);
                 }
             }
+            // A negative function produces the consumer of what follows its
+            // `<-`, so that is what a `select` in its body consumes.
+            let outer = env.consumed.take();
+            env.consumed = (*polarity == slc_syntax::ast::FunctionPolarity::Negative)
+                .then(|| return_type.as_ref().and_then(|ty| enums.resolve(ty)))
+                .flatten();
             check_expr(body, enums, env, diags);
+            env.consumed = outer;
             env.pop();
         }
         Decl::Mu { value_params, continuation_params, body, .. } => {
             env.push();
             for p in value_params.iter().chain(continuation_params.iter()) {
-                if let Some(ty) = enums.resolve(&p.ty) {
+                if let Some(ty) = p.ty.as_ref().and_then(|ty| enums.resolve(ty)) {
                     env.define(&p.name, ty);
                 }
             }
@@ -1202,10 +1265,26 @@ fn check_expr(
             // `select T { p <= c, … }` builds the consumer of T. Each arm
             // covers one shape of T, binds that shape's components, and runs
             // a command; the whole expression is dual to T.
-            let Some(resolved) = enums.resolve(&ty.kind) else {
+            let resolved = match ty {
+                Some(ty) => match enums.resolve(&ty.kind) {
+                    Some(resolved) => Some(resolved),
+                    None => {
+                        diags.push(Diagnostic {
+                            message: "`select` needs a declared type or an explicit connective"
+                                .into(),
+                            span: ty.span,
+                        });
+                        return None;
+                    }
+                },
+                // Left out: an arm's pattern may name the type, and inside a
+                // negative `fn` the declaration already said it.
+                None => named_by_arms(arms, enums).or_else(|| env.consumed.clone()),
+            };
+            let Some(resolved) = resolved else {
                 diags.push(Diagnostic {
-                    message: "`select` needs a declared type or an explicit connective".into(),
-                    span: ty.span,
+                    message: "no arm names a type, so write what this `select` consumes".into(),
+                    span: e.span,
                 });
                 return None;
             };
@@ -1300,9 +1379,21 @@ fn check_expr(
         }
         Expr::Mu { value_params, continuation_params, body, .. } => {
             env.push();
+            let mut captured_types = Vec::new();
             for p in value_params.iter().chain(continuation_params.iter()) {
-                if let Some(ty) = enums.resolve(&p.ty) {
+                let ty = match &p.ty {
+                    Some(ty) => enums.resolve(ty),
+                    // Nothing was written, so the body says it.
+                    None => infer_param_type(&p.name, body, enums, env),
+                };
+                if p.is_continuation || value_params.iter().all(|v| v.name != p.name) {
+                    // Recorded in the order the row is written.
+                }
+                if let Some(ty) = ty.clone() {
                     env.define(&p.name, ty);
+                }
+                if continuation_params.iter().any(|c| c.name == p.name) {
+                    captured_types.push(ty);
                 }
             }
             let result = check_expr(body, enums, env, diags);
@@ -1311,9 +1402,9 @@ fn check_expr(
             // whatever that continuation receives: `mu f() | (k: -A) { … }`
             // has type `A`. With value parameters, or with a row whose
             // positions disagree, there is no single such type.
-            let captured = continuation_params
-                .iter()
-                .map(|p| enums.resolve(&p.ty).map(|ty| ty.dual()))
+            let captured = captured_types
+                .into_iter()
+                .map(|ty| ty.map(|ty| ty.dual()))
                 .collect::<Option<Vec<_>>>()
                 .filter(|types| {
                     value_params.is_empty()
@@ -1824,6 +1915,76 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_select_reads_its_type_off_its_arms() {
+        // A bare variant name says which enum, so writing it again is
+        // redundant.
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 fn code(return: -i32) <- Color {
+                     select { Red <= 0 @ return, Green <= 1 @ return }
+                 }"
+            )
+            .is_ok()
+        );
+
+        // Exhaustiveness of an inferred type is checked in `exhaustive`.
+    }
+
+    #[test]
+    fn a_select_in_a_negative_fn_takes_the_type_it_consumes() {
+        // Nothing in `n <= …` names a type, but the declaration already did.
+        assert!(check("fn twice(out: -i64) <- +i64 { select { n <= (n * 2) @ out } }").is_ok());
+        let diags = check("fn twice(out: -String) <- +i64 { select { n <= str_len(n) @ out } }")
+            .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("has type +i64")),
+            "the binder should carry the consumed type: {diags:?}"
+        );
+
+        // Outside one, with no arm naming a type, it has to be written.
+        let diags = check(
+            "mu main() | (exit: -i32) {
+                 let show = select { n <= println(n) };
+                 42 @ show;
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("no arm names a type")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_local_mu_takes_its_parameter_type_from_the_body() {
+        // `k` is handed to a slot `read_file` declares, so it is `-String`,
+        // and the `mu` therefore produces a `+String`.
+        let diags = check(
+            "mu main() | (exit: -i32) {
+                 let text = mu() | (k) { read_file(\"in\", k, complain) };
+                 println(text + 1);
+                 0 @ exit
+             }
+             fn complain(m: +String) -> ⊥ { println(m); 1 @ EXIT }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("+String and +i64")),
+            "the inferred type should reach the use: {diags:?}"
+        );
+
+        // A cut says it just as well: `42 @ k` makes `k` a consumer of i64.
+        let diags = check(
+            "mu main() | (exit: -i32) {
+                 let answer = mu() | (k) { 42 @ k };
+                 println(str_len(answer));
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("+i64")), "{diags:?}");
     }
 
     #[test]

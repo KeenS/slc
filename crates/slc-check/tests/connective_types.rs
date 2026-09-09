@@ -26,7 +26,7 @@ fn parameter_type(source: &str) -> TypeExpr {
         }
         other => panic!("expected a declaration with parameters: {other:?}"),
     };
-    params[0].ty.clone()
+    params[0].ty.clone().expect("a declaration's parameters carry types")
 }
 
 fn declared(source: &str) -> Vec<DeclarationType> {
@@ -164,7 +164,7 @@ fn a_connective_type_expression_keeps_its_spans() {
     // can point at the source.
     let program = parse(lex("fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }").unwrap()).unwrap();
     let Decl::Fn { params, .. } = &program.decls[0].kind else { panic!("expected fn") };
-    let TypeExpr::Tensor(left, right) = &params[0].ty else { panic!("expected a tensor") };
+    let Some(TypeExpr::Tensor(left, right)) = &params[0].ty else { panic!("expected a tensor") };
     let left: &Node<TypeExpr> = left;
     assert!(left.span.end >= left.span.start);
     assert!(right.span.end >= right.span.start);

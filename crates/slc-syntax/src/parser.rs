@@ -9,6 +9,13 @@ pub struct ParseError {
     pub span: Span,
 }
 
+/// Whether the parameters being parsed must carry types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeAnnotations {
+    Required,
+    Optional,
+}
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -337,7 +344,17 @@ impl Parser {
         })
     }
 
+    /// A declaration's parameters are its interface, so their types are
+    /// written. A local `mu` is not an interface: its types may be left to
+    /// the body that uses them.
     fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
+        self.parse_params_with(TypeAnnotations::Required)
+    }
+
+    fn parse_params_with(
+        &mut self,
+        annotations: TypeAnnotations,
+    ) -> Result<Vec<Param>, ParseError> {
         let mut params = Vec::new();
         self.expect(TokenKind::LParen, "`(`")?;
         loop {
@@ -345,9 +362,15 @@ impl Parser {
                 break;
             }
             let name = self.expect_ident("parameter name")?;
-            self.expect(TokenKind::Colon, "`:`")?;
-            let ty = self.parse_type()?;
-            params.push(Param { name, ty: ty.kind, is_continuation: false });
+            let ty = if annotations == TypeAnnotations::Required {
+                self.expect(TokenKind::Colon, "`:` — a declaration's parameters carry types")?;
+                Some(self.parse_type()?.kind)
+            } else if self.eat(&TokenKind::Colon) {
+                Some(self.parse_type()?.kind)
+            } else {
+                None
+            };
+            params.push(Param { name, ty, is_continuation: false });
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RParen, "`)`")?;
                 break;
@@ -796,10 +819,14 @@ impl Parser {
             }
             Some(TokenKind::Mu) => {
                 self.pos += 1;
-                let name = self.expect_ident("local `mu` name")?;
-                let value_params = self.parse_params()?;
+                // Nothing refers to a local `mu`'s name, so it is optional.
+                let name = match self.peek_kind() {
+                    Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
+                    _ => None,
+                };
+                let value_params = self.parse_params_with(TypeAnnotations::Optional)?;
                 self.expect(TokenKind::Pipe, "`|` between local `mu` parameter groups")?;
-                let continuation_params = self.parse_params()?;
+                let continuation_params = self.parse_params_with(TypeAnnotations::Optional)?;
                 let body = self.parse_block()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
@@ -852,8 +879,12 @@ impl Parser {
             Some(TokenKind::Select) => {
                 self.pos += 1;
                 // The type whose consumer this builds: a declaration name, or
-                // an explicit connective such as `(+i64 ⊗ +String)`.
-                let ty = self.parse_type()?;
+                // an explicit connective such as `(+i64 ⊗ +String)`. It may be
+                // left out when an arm's pattern names it.
+                let ty = match self.peek_kind() {
+                    Some(TokenKind::LBrace) => None,
+                    _ => Some(Box::new(self.parse_type()?)),
+                };
                 self.expect(TokenKind::LBrace, "`{` after the `select` type")?;
                 let mut arms = Vec::new();
                 loop {
@@ -882,7 +913,7 @@ impl Parser {
                 }
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Select { ty: Box::new(ty), arms },
+                    kind: Expr::Select { ty, arms },
                 })
             }
             Some(TokenKind::Let) => {
@@ -1379,9 +1410,54 @@ mod tests {
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
         };
-        assert!(matches!(&ty.kind, TypeExpr::Base(name) if name == "Color"));
+        assert!(
+            matches!(ty.as_deref().map(|ty| &ty.kind), Some(TypeExpr::Base(name)) if name == "Color")
+        );
         assert_eq!(arms.len(), 2);
         assert!(matches!(&arms[0].pattern, Pattern::Ident(name) if name == "Red"));
+    }
+
+    #[test]
+    fn a_local_mu_may_leave_out_its_name_and_its_parameter_types() {
+        let p = parse_str("mu() | (k) { 42 @ k }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Mu { name, continuation_params, .. } = &body.kind else {
+            panic!("expected a local mu: {:?}", body.kind)
+        };
+        assert_eq!(*name, None);
+        assert_eq!(continuation_params[0].name, "k");
+        assert_eq!(continuation_params[0].ty, None);
+
+        // Either may still be written. With a name it needs an enclosing
+        // declaration: `mu name(…)` at the top level is a declaration.
+        let p = parse_str("fn f() -> i32 { mu here() | (k: -i32) { 42 @ k } }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
+        let Expr::Mu { name, continuation_params, .. } = &exprs[0].kind else {
+            panic!("expected a local mu: {:?}", exprs[0].kind)
+        };
+        assert_eq!(name.as_deref(), Some("here"));
+        assert!(continuation_params[0].ty.is_some());
+    }
+
+    #[test]
+    fn a_declaration_still_needs_its_parameter_types() {
+        let errors = parse(lex("fn f(x) -> i32 { x }").unwrap()).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("a declaration's parameters carry types")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_select_may_leave_out_its_type() {
+        let p = parse_str("select { Red <= 0 @ return }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Select { ty, arms } = &body.kind else {
+            panic!("expected a select: {:?}", body.kind)
+        };
+        assert!(ty.is_none());
+        assert_eq!(arms.len(), 1);
     }
 
     #[test]
@@ -1415,7 +1491,7 @@ mod tests {
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
         };
-        assert!(matches!(&ty.kind, TypeExpr::Tensor(..)), "{:?}", ty.kind);
+        assert!(matches!(ty.as_deref().map(|ty| &ty.kind), Some(TypeExpr::Tensor(..))), "{ty:?}");
         assert_eq!(arms.len(), 1);
         assert!(matches!(&arms[0].pattern, Pattern::Tuple(items) if items.len() == 2));
     }

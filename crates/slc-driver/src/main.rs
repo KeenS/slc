@@ -163,7 +163,7 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
     let [exit] = continuation_params.as_slice() else {
         return Err(MAIN_ENTRY_POINT_ERROR.into());
     };
-    let exits_with_a_status = matches!(&exit.ty, TypeExpr::Negative(inner)
+    let exits_with_a_status = matches!(&exit.ty, Some(TypeExpr::Negative(inner))
         if matches!(&inner.kind, TypeExpr::Base(name) if name == "i32"));
     if !value_params.is_empty() || !exits_with_a_status {
         return Err(MAIN_ENTRY_POINT_ERROR.into());

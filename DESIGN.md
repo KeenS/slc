@@ -456,6 +456,45 @@ of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
 
+### What may be left unwritten
+
+A declaration is an interface, so its parameters carry types. Everything
+inside one may leave a type out when something else already says it:
+
+| written | may be omitted when |
+|---|---|
+| a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used |
+| a local `mu`'s name: `mu() \| (k) { … }` | always — nothing refers to it |
+| a local `mu`'s parameter type: `mu() \| (k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
+| a `select`'s type: `select { … }` | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
+
+```sl
+// `k` goes to a slot `read_file` declares, so it is `-String`, and this
+// `let` binds a `+String`.
+let source = mu() | (k) {
+    read_file("input.json", k, complain)
+};
+
+// `Red` is a variant of exactly one enum, so the type is `Color`.
+fn code(return: -i32) <- Color {
+    select {
+        Red <= 0 @ return,
+        Green <= 1 @ return,
+    }
+}
+
+// Nothing in the arm names a type, but `<- +i64` did.
+fn twice(out: -i64) <- +i64 {
+    select {
+        n <= (n * 2) @ out,
+    }
+}
+```
+
+What is left is what nothing else says. `select { n <= println(n) }` bound to
+a `let`, outside any negative `fn`, is rejected: no arm names a type and no
+declaration supplied one, so it is written.
+
 There is deliberately **no** way to build such a consumer out of two
 independent consumers, and no way to feed one half at a time. Both are the
 same thing — halves that progress independently — and both need either a send

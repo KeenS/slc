@@ -21,7 +21,10 @@ mu main() | (exit: -i32) {
     // becomes `source`, and the rest of the block runs. The local `mu` — the
     // language's `call/cc` — is what keeps the program flat; without it, every
     // line below would nest inside the success consumer.
-    let source = mu here() | (k: -String) {
+    //
+    // `k` needs no annotation: it is handed to a slot `read_file` declares,
+    // which makes it a `-String`, and the `let` a `+String`.
+    let source = mu() | (k) {
         read_file("examples/hello.sl", k, complain)
     };
     print(source);

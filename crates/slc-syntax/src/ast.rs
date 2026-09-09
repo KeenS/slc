@@ -39,8 +39,11 @@ pub enum Expr {
     /// `select T { pattern <= command, … }` — the consumer of a positive
     /// type, given by cases on it. An `enum` has one arm per variant; a
     /// product has exactly one, binding its components.
+    /// The type may be omitted when an arm's pattern names it: `Red` names
+    /// its enum, `S { … }` names its struct. A product or an atom has no
+    /// such name, so it is written.
     Select {
-        ty: Box<Node<TypeExpr>>,
+        ty: Option<Box<Node<TypeExpr>>>,
         arms: Vec<SelectArm>,
     },
     Let {
@@ -71,9 +74,11 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
-    /// A local μ abstraction: `mu name() | (k: -T) { body }`.
+    /// A local μ abstraction: `mu() | (k) { body }`. The name is optional —
+    /// nothing refers to it — and so is a parameter's type, when the body
+    /// says what it is.
     Mu {
-        name: String,
+        name: Option<String>,
         value_params: Vec<Param>,
         continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
@@ -93,6 +98,46 @@ pub enum Expr {
         start: Option<Box<Node<Expr>>>,
         end: Option<Box<Node<Expr>>>,
     },
+}
+
+impl Expr {
+    /// Every immediate sub-expression, in source order. A walk over an
+    /// expression needs no case for each node this way.
+    pub fn children(&self) -> Vec<&Node<Expr>> {
+        match self {
+            Expr::Int(_)
+            | Expr::Float(_)
+            | Expr::Str(_)
+            | Expr::Char(_)
+            | Expr::Bool(_)
+            | Expr::Ident(_) => Vec::new(),
+            Expr::Lambda { body, .. } | Expr::UnOp { body, .. } | Expr::Mu { body, .. } => {
+                vec![body]
+            }
+            Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
+            Expr::Pair(items) | Expr::Block(items) => items.iter().collect(),
+            Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
+                .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
+                .collect(),
+            Expr::Struct { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
+            Expr::Select { arms, .. } => arms.iter().map(|arm| &arm.command).collect(),
+            Expr::Let { value, body, .. } => {
+                std::iter::once(&**value).chain(body.iter().map(|b| &**b)).collect()
+            }
+            Expr::If { cond, then, otherwise } => std::iter::once(&**cond)
+                .chain(std::iter::once(&**then))
+                .chain(otherwise.iter().map(|e| &**e))
+                .collect(),
+            Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
+            Expr::Cut { value, consumer } => vec![value, consumer],
+            Expr::ErrorProp { expr, .. } => vec![expr],
+            Expr::Index { value, index } => vec![value, index],
+            Expr::Slice { value, start, end } => std::iter::once(&**value)
+                .chain(start.iter().map(|e| &**e))
+                .chain(end.iter().map(|e| &**e))
+                .collect(),
+        }
+    }
 }
 
 /// The polarity of a function declaration.
@@ -122,7 +167,10 @@ pub enum TypeExpr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
-    pub ty: TypeExpr,
+    /// `None` where the type was left out. A declaration's parameters always
+    /// carry one — a declaration is an interface — so this is `None` only for
+    /// the parameters of a local `mu`.
+    pub ty: Option<TypeExpr>,
     pub is_continuation: bool,
 }
 
@@ -142,6 +190,14 @@ pub struct MatchArm {
     pub body: Node<Expr>,
 }
 
+/// What a pattern names: a declaration outright, or a variant whose
+/// declaration the caller looks up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Named<'a> {
+    Declaration(&'a str),
+    Variant(&'a str),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Wildcard,
@@ -159,6 +215,24 @@ pub enum Pattern {
     List { items: Vec<Pattern>, rest: Option<Box<Pattern>> },
     Struct { name: String, fields: Vec<(String, Pattern)> },
     Enum { name: String, variant: String, fields: Vec<Pattern> },
+}
+
+impl Pattern {
+    /// The type this pattern names, when it names one. A `select` whose type
+    /// is left out reads it off its arms: `S { … }` names its struct,
+    /// `Color::Red(x)` its enum, and a bare `Red` its variant, whose
+    /// declaration the caller resolves. A tuple or a plain binder names
+    /// nothing — a product and an atom have no name of their own.
+    pub fn names(&self) -> Option<Named<'_>> {
+        match self {
+            Pattern::Struct { name, .. } => Some(Named::Declaration(name)),
+            Pattern::Enum { name, variant, .. } if variant.is_empty() => Some(Named::Variant(name)),
+            Pattern::Enum { name, .. } => Some(Named::Declaration(name)),
+            Pattern::Ident(name) => Some(Named::Variant(name)),
+            Pattern::Binding { pattern, .. } => pattern.names(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

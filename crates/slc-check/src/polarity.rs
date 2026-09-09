@@ -82,7 +82,7 @@ fn check_decl(
                 check_param_polarity(
                     p,
                     *polarity == FunctionPolarity::Negative,
-                    matches!(p.ty, TypeExpr::Negative(_)),
+                    matches!(p.ty, Some(TypeExpr::Negative(_))),
                     &generics,
                     declared,
                     d.span,
@@ -146,17 +146,22 @@ fn check_param_polarity(
     span: slc_syntax::token::Span,
     diags: &mut Vec<Diagnostic>,
 ) {
+    // Nothing was written, so there is no sign to check: an omitted type
+    // takes the polarity of the group it stands in.
+    let Some(param_type) = &p.ty else {
+        return;
+    };
     // A bare generic is polarity-polymorphic: it instantiates at each use.
     // An explicitly signed generic keeps its constraint even though its
     // lowered core representation is an unconstrained variable.
-    if let Some(name) = bare_type_name(&p.ty)
+    if let Some(name) = bare_type_name(param_type)
         && generics.contains(name)
     {
         return;
     }
     let requires_negative = allow_negative_value_parameter || is_cont || p.is_continuation;
     if requires_negative {
-        if let TypeExpr::Positive(_) = &p.ty {
+        if let TypeExpr::Positive(_) = param_type {
             diags.push(Diagnostic {
                 message: format!(
                     "parameter `{}` has explicitly positive type; expected negative (-) polarity",
@@ -166,7 +171,7 @@ fn check_param_polarity(
             });
             return;
         }
-    } else if let TypeExpr::Negative(_) = &p.ty {
+    } else if let TypeExpr::Negative(_) = param_type {
         diags.push(Diagnostic {
             message: format!(
                 "parameter `{}` has explicitly negative type; expected positive (+) polarity",
@@ -176,7 +181,7 @@ fn check_param_polarity(
         });
         return;
     }
-    if let Some(ty) = resolve(&p.ty, declared) {
+    if let Some(ty) = resolve(param_type, declared) {
         let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };
         if !ok {
             diags.push(Diagnostic {

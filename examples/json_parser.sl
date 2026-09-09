@@ -68,7 +68,7 @@ fn is_hex(c: +char) -> bool {
 mu parse_json(input: +String) | (report: -ParseResult) {
     let start = skip_ws(input, 0);
     if start < str_len(input) {
-        let end = mu value() | (k: -i64) {
+        let end = mu value() | (k) {
             parse_value(input, start, k, report)
         };
         if skip_ws(input, end) == str_len(input) {
@@ -110,7 +110,7 @@ mu parse_number(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
 
 mu parse_number_tail(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if at(input, pos) == '.' {
-        let after_fraction = mu fraction() | (k: -i64) {
+        let after_fraction = mu fraction() | (k) {
             parse_fraction(input, pos + 1, k, report)
         };
         parse_exponent(input, after_fraction, ok, report)
@@ -211,7 +211,7 @@ mu parse_array(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
 }
 
 mu parse_array_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
-    let value_end = mu value() | (k: -i64) {
+    let value_end = mu value() | (k) {
         parse_value(input, pos, k, report)
     };
     let after_value = skip_ws(input, value_end);
@@ -241,12 +241,12 @@ mu parse_object(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
 
 mu parse_object_body(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
     if at(input, pos) == QUOTE {
-        let key_end = mu key() | (k: -i64) {
+        let key_end = mu key() | (k) {
             parse_string(input, pos, k, report)
         };
         let after_key = skip_ws(input, key_end);
         if at(input, after_key) == COLON {
-            let value_end = mu value() | (k: -i64) {
+            let value_end = mu value() | (k) {
                 parse_value(input, skip_ws(input, after_key + 1), k, report)
             };
             let after_value = skip_ws(input, value_end);

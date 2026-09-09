@@ -1,7 +1,7 @@
 //! Match exhaustiveness checking: verify that all enum constructors
 //! are covered by the match arms.
 
-use slc_syntax::ast::{Decl, Expr, MatchArm, Node, Pattern, Program};
+use slc_syntax::ast::{Decl, Expr, MatchArm, Named, Node, Pattern, Program};
 use slc_syntax::token::Span;
 use std::collections::HashSet;
 
@@ -96,7 +96,19 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
         Expr::Select { ty, arms } => {
             // A `select` covers each shape of its type exactly once: one arm
             // per variant of an `enum`, and exactly one for a product.
-            match written_type_name(&ty.kind) {
+            // The written type, or the one an arm names: `Red` is a variant
+            // of exactly one enum, and `S { … }` names its struct.
+            let written = match ty {
+                Some(ty) => written_type_name(&ty.kind),
+                None => arms.iter().find_map(|arm| match arm.pattern.names()? {
+                    Named::Declaration(name) => Some(name.to_string()),
+                    Named::Variant(name) => enums
+                        .iter()
+                        .find(|(_, variants)| variants.contains(&name.to_string()))
+                        .map(|(declaration, _)| declaration.clone()),
+                }),
+            };
+            match written {
                 Some(name) if enums.get(&name).is_some() => {
                     let variants = enums.get(&name).cloned().unwrap_or_default();
                     let mut seen: HashSet<String> = HashSet::new();
@@ -142,7 +154,9 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
                 // a type.
                 Some(name)
                     if !enums.declared.contains(&name)
-                        && slc_syntax::lower::lower_type(&ty.kind).is_err() =>
+                        && ty
+                            .as_ref()
+                            .is_none_or(|ty| slc_syntax::lower::lower_type(&ty.kind).is_err()) =>
                 {
                     diags.push(Diagnostic {
                         message: format!("`select {name}` refers to an unknown type"),
@@ -588,6 +602,27 @@ mod tests {
         );
         assert!(r.is_err());
         assert!(r.unwrap_err().iter().any(|d| d.message.contains("unknown variant")));
+    }
+
+    #[test]
+    fn a_select_that_leaves_out_its_type_is_still_exhaustive_or_not() {
+        // The arms name the enum, so coverage is checked against it.
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 fn code(return: -i32) <- Color {
+                     select { Red <= 0 @ return, Green <= 1 @ return }
+                 }"
+            )
+            .is_ok()
+        );
+
+        let diags = check(
+            "enum Color { Red, Green }
+             fn code(return: -i32) <- Color { select { Red <= 0 @ return } }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("missing variants Green")), "{diags:?}");
     }
 
     #[test]

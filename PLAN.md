@@ -93,6 +93,13 @@ and where the two disagree, `DESIGN.md` is right.
   pattern covers the type, so a single-shape type needs no `_`.
 - Surface AST spans are source byte offsets, so a diagnostic quotes the text it
   is about.
+- A type is written where nothing else says it. A declaration's parameters
+  always carry one; inside a declaration, a lambda's parameter and result, a
+  local `mu`'s name and parameter types, and a `select`'s type may be left out
+  — the local `mu`'s from the slot its body passes it to or the value it is
+  cut against, the `select`'s from an arm that names it or from the enclosing
+  negative `fn`. What nothing says is still written, and saying so is a
+  diagnostic rather than an unchecked hole.
 
 ## Deferred, with no accepted replacement
 

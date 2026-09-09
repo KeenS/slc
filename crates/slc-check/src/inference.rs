@@ -85,7 +85,12 @@ pub fn infer_expr(
 ) -> Result<Type, InferenceError> {
     match &e.kind {
         Expr::Select { ty, .. } => {
-            // The consumer of a type is dual to it.
+            // The consumer of a type is dual to it. A `select` that leaves
+            // its type out is checked in `expr`, which can see the arms and
+            // the enclosing declaration; here it is simply unknown.
+            let Some(ty) = ty else {
+                return Ok(Type::Var(usize::MAX));
+            };
             let consumed = match &ty.kind {
                 slc_syntax::ast::TypeExpr::Base(name) => {
                     declarations.get(name).cloned().ok_or_else(|| {
@@ -151,6 +156,15 @@ fn pack(types: &[slc_syntax::ast::TypeExpr]) -> Result<Option<Type>, InferenceEr
     Ok(packed)
 }
 
+/// A declaration is an interface, so every parameter of one carries a type.
+/// Only a local `mu` may leave one out, and it is not a declaration.
+fn missing_parameter_type(p: &slc_syntax::ast::Param, span: Span) -> InferenceError {
+    InferenceError::Diag(vec![Diagnostic {
+        message: format!("parameter `{}` of a declaration needs a type", p.name),
+        span,
+    }])
+}
+
 fn infer_decl(
     d: &Node<Decl>,
     declared_types: &[String],
@@ -165,9 +179,13 @@ fn infer_decl(
 
             let mut inputs = Vec::new();
             for p in params {
-                let ty = generic_or_lower(&p.ty, &vars)?;
-                let ty =
-                    if vars.is_empty() { declaration_or_lower(&p.ty, declared_types)? } else { ty };
+                let written = p.ty.as_ref().ok_or_else(|| missing_parameter_type(p, d.span))?;
+                let ty = generic_or_lower(written, &vars)?;
+                let ty = if vars.is_empty() {
+                    declaration_or_lower(written, declared_types)?
+                } else {
+                    ty
+                };
                 let ty = u.apply(&ty);
                 inputs.push(u.unify_with_polarity(&ty, &ty, !p.is_continuation)?);
             }
@@ -201,11 +219,13 @@ fn infer_decl(
             let mut u = Unification::new();
             let mut inputs = Vec::new();
             for p in value_params {
-                let ty = lower_type(&p.ty)?;
+                let ty =
+                    lower_type(p.ty.as_ref().ok_or_else(|| missing_parameter_type(p, d.span))?)?;
                 inputs.push(u.unify_with_polarity(&ty, &ty, true)?);
             }
             for p in continuation_params {
-                let ty = lower_type(&p.ty)?;
+                let ty =
+                    lower_type(p.ty.as_ref().ok_or_else(|| missing_parameter_type(p, d.span))?)?;
                 inputs.push(u.unify_with_polarity(&ty, &ty, false)?);
             }
             let output = Type::Bottom;
