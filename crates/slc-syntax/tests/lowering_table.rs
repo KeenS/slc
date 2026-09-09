@@ -1,0 +1,156 @@
+//! Every row of the lowering table in `DESIGN.md` must correspond to an
+//! actual lowering implementation.
+//!
+//! The table gives each row a construct id. This test reads those ids out of
+//! the document and requires a fixture for each: a program that uses the
+//! construct, and the core shape its lowering is documented to produce. A row
+//! that is added to the document without an implementation, or an id that is
+//! renamed, fails here.
+
+use slc_syntax::lexer::lex;
+use slc_syntax::lower::lower_program;
+use slc_syntax::parser::parse;
+
+struct Row {
+    id: &'static str,
+    source: &'static str,
+    /// A fragment of the printed core that only this lowering produces.
+    core: &'static str,
+}
+
+const ROWS: &[Row] = &[
+    Row { id: "expr.literal", source: "fn f() -> i32 { 42 }", core: "$int_42" },
+    Row { id: "expr.ident", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
+    Row {
+        id: "expr.enum",
+        source: "enum Color { Red } fn f() -> Color { Color::Red }",
+        core: "Color::Red($unit)",
+    },
+    Row {
+        id: "expr.call",
+        source: "fn f() -> i32 { g(1) }",
+        core: "⟨g ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩",
+    },
+    Row { id: "expr.lambda", source: "fn f() -> i32 { fn(x: +i32) -> i32 { x } }", core: "λx. x" },
+    Row { id: "expr.pair", source: "fn f() -> i32 { (1, 2) }", core: "($int_1 ⊗ $int_2)" },
+    Row {
+        id: "expr.cut", source: "fn f(k: -i32) <- i32 { 1 @ k }", core: "μ__cut. ⟨$int_1 ∥ k⟩"
+    },
+    Row {
+        id: "expr.let", source: "fn f() -> i32 { let x = 1; x }", core: "μlet. ⟨$int_1 ∥ λ̄x."
+    },
+    Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "λ̄__discarded." },
+    Row {
+        id: "expr.if",
+        source: "fn f() -> i32 { if true { 1 } else { 2 } }",
+        core: "__if_dispatch",
+    },
+    Row {
+        id: "expr.binop",
+        source: "fn f() -> i32 { 1 + 2 }",
+        core: "⟨add ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩",
+    },
+    Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨neg ∥" },
+    Row { id: "expr.index", source: "fn f(s: +String) -> char { s[0] }", core: "⟨__index ∥" },
+    Row {
+        id: "expr.slice",
+        source: "fn f(s: +String) -> String { s[0..1] }",
+        core: "⟨substring ∥",
+    },
+    Row {
+        id: "expr.mu",
+        source: "fn f() -> i32 { mu escape() | (k: -i32) { k(1) } }",
+        core: "μk. ⟨μ__call. ⟨k ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩ ∥ k⟩",
+    },
+    Row {
+        id: "expr.match",
+        source: "fn f(x: +i32) -> i32 { match x { 1 => 1, _ => 0 } }",
+        core: "__match_dispatch",
+    },
+    Row {
+        id: "expr.struct",
+        source: "struct S { a: i32 } fn f() -> i32 { use_struct(S { a: 1 }) }",
+        core: "S($int_1)",
+    },
+    Row {
+        id: "expr.select",
+        source: "enum Color { Red } fn k(return: -i32) <- Color { select Color { 0 @ return => Red } }",
+        core: "co(μ̃[Color::Red(). ⟨$int_0 ∥ return⟩])",
+    },
+    Row {
+        id: "expr.errorprop.named",
+        source: "mu f(x: +i32) | (err: -i32) { g(x)?err }",
+        core: "⟨err ∥ __call⟩",
+    },
+    Row {
+        id: "expr.errorprop.bare",
+        source: "mu f(x: +i32) | (err: -i32) { g(x)? }",
+        core: "⟨err ∥ __call⟩",
+    },
+    Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
+    Row { id: "decl.fn.negative", source: "fn f(k: -i32) <- i32 { k(1) }", core: "Λk." },
+    Row { id: "decl.mu", source: "mu f(x: +i32) | (k: -i32) { k(x) }", core: "λx. Λk." },
+    Row { id: "decl.const", source: "const C: +i32 = 1;", core: "$int_1" },
+    Row {
+        id: "decl.enum",
+        source: "enum Color { Red } fn f() -> i32 { 0 }",
+        core: "Color::Red($unit)",
+    },
+    Row { id: "decl.struct", source: "struct S { a: i32 } fn f() -> i32 { 0 }", core: "$int_0" },
+];
+
+fn documented_ids() -> Vec<String> {
+    let design = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../DESIGN.md"))
+        .expect("DESIGN.md");
+    let table = design
+        .split("### Lowering table")
+        .nth(1)
+        .expect("DESIGN.md has a lowering table")
+        .split("### Surface-to-core coverage")
+        .next()
+        .expect("the lowering table ends before the coverage table");
+    table
+        .lines()
+        .filter_map(|line| {
+            let id = line.strip_prefix("| `")?.split('`').next()?;
+            id.contains('.').then(|| id.to_string())
+        })
+        .collect()
+}
+
+fn lowered(source: &str) -> String {
+    let program = parse(lex(source).expect("lex")).expect("parse");
+    lower_program(&program)
+        .expect("lower")
+        .iter()
+        .map(|(name, term)| format!("{name} = {term}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn every_documented_lowering_row_has_an_implementation() {
+    let documented = documented_ids();
+    assert!(!documented.is_empty(), "no lowering-table rows were found in DESIGN.md");
+
+    for id in &documented {
+        let row = ROWS
+            .iter()
+            .find(|row| row.id == id)
+            .unwrap_or_else(|| panic!("DESIGN.md documents `{id}`, but no fixture covers it"));
+        let printed = lowered(row.source);
+        assert!(
+            printed.contains(row.core),
+            "`{id}` does not lower as documented.\nexpected to contain: {}\nactual:\n{printed}",
+            row.core
+        );
+    }
+
+    for row in ROWS {
+        assert!(
+            documented.iter().any(|id| id == row.id),
+            "fixture `{}` covers a construct the lowering table does not document",
+            row.id
+        );
+    }
+}

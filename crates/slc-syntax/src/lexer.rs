@@ -64,8 +64,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             let kind = match ident.as_str() {
                 "fn" => TokenKind::Fn,
                 "mu" => TokenKind::Mu,
-                "to" => TokenKind::To,
                 "match" => TokenKind::Match,
+                "select" => TokenKind::Select,
                 "let" => TokenKind::Let,
                 "if" => TokenKind::If,
                 "else" => TokenKind::Else,
@@ -189,6 +189,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 ('<', '=') => Some(TokenKind::Le),
                 ('>', '=') => Some(TokenKind::Ge),
                 ('-', '>') => Some(TokenKind::Arrow),
+                ('<', '-') => Some(TokenKind::ReverseArrow),
                 ('=', '>') => Some(TokenKind::FatArrow),
                 (':', ':') => Some(TokenKind::ColonColon),
                 ('&', '&') => Some(TokenKind::AmpAmp),
@@ -281,12 +282,11 @@ mod tests {
 
     #[test]
     fn lex_keywords() {
-        let toks = lex("fn mu to match let").unwrap();
+        let toks = lex("fn mu match let").unwrap();
         assert_eq!(toks[0].kind, TokenKind::Fn);
         assert_eq!(toks[1].kind, TokenKind::Mu);
-        assert_eq!(toks[2].kind, TokenKind::To);
-        assert_eq!(toks[3].kind, TokenKind::Match);
-        assert_eq!(toks[4].kind, TokenKind::Let);
+        assert_eq!(toks[2].kind, TokenKind::Match);
+        assert_eq!(toks[3].kind, TokenKind::Let);
     }
 
     #[test]
@@ -334,6 +334,13 @@ mod tests {
         assert_eq!(toks[10].kind, TokenKind::ColonColon);
         assert_eq!(toks[11].kind, TokenKind::At);
         assert_eq!(toks[12].kind, TokenKind::Question);
+    }
+
+    #[test]
+    fn lex_reverse_arrow() {
+        let toks = lex("<-").unwrap();
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].kind, TokenKind::ReverseArrow);
     }
 
     #[test]

@@ -14,11 +14,14 @@ pub struct Parser {
     pos: usize,
     errors: Vec<ParseError>,
     in_block: bool,
+    /// True where a following `{` opens a block, so an identifier before it
+    /// is not a struct literal.
+    no_struct_literal: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new(), in_block: false }
+        Self { tokens, pos: 0, errors: Vec::new(), in_block: false, no_struct_literal: false }
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -44,6 +47,18 @@ impl Parser {
         } else {
             false
         }
+    }
+
+    /// The source offset a node starting at the current token begins at.
+    /// Spans are byte offsets into the source, so a diagnostic can quote the
+    /// text it is about.
+    fn span_start(&self) -> usize {
+        self.peek().map(|t| t.span.start).unwrap_or_else(|| self.span_end())
+    }
+
+    /// The source offset just past the last token consumed.
+    fn span_end(&self) -> usize {
+        self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)).map(|t| t.span.end).unwrap_or(0)
     }
 
     fn expect(&mut self, kind: TokenKind, what: &str) -> Result<Token, ParseError> {
@@ -93,10 +108,25 @@ impl Parser {
     }
 
     fn parse_decl(&mut self) -> Result<Node<Decl>, ParseError> {
-        let start = self.pos;
+        let start = self.span_start();
         match self.peek_kind() {
             Some(TokenKind::Struct) => self.parse_struct(),
             Some(TokenKind::Enum) => self.parse_enum(),
+            Some(TokenKind::Plus) | Some(TokenKind::Minus)
+                if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Fn) =>
+            {
+                let kind = match self.next() {
+                    Some(token) => token.kind,
+                    None => unreachable!("peek matched a token"),
+                };
+                Err(ParseError {
+                    message: format!(
+                        "the `{}` `fn` prefix is no longer supported; use `->` for a positive function or `<-` for a negative function",
+                        if matches!(kind, TokenKind::Plus) { "+" } else { "-" }
+                    ),
+                    span: Span { start, end: self.span_end() },
+                })
+            }
             Some(TokenKind::Fn) => {
                 // fn( — lambda expression, not declaration
                 if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
@@ -106,6 +136,7 @@ impl Parser {
                         kind: Decl::Fn {
                             name: "main".into(),
                             type_params: vec![],
+                            polarity: FunctionPolarity::Positive,
                             params: vec![],
                             return_type: None,
                             body: e,
@@ -116,7 +147,10 @@ impl Parser {
                 }
             }
             Some(TokenKind::Mu)
-                if self.tokens.get(self.pos + 1).map(|t| &t.kind) != Some(&TokenKind::LParen) =>
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                    Some(TokenKind::Ident(_))
+                ) =>
             {
                 self.parse_mu_decl()
             }
@@ -124,13 +158,14 @@ impl Parser {
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
-                let end = self.pos;
+                let end = self.span_end();
                 let _ = self.eat(&TokenKind::Semicolon);
                 Ok(Node {
                     span: Span { start, end },
                     kind: Decl::Fn {
                         name: "main".into(),
                         type_params: vec![],
+                        polarity: FunctionPolarity::Positive,
                         params: vec![],
                         return_type: None,
                         body: e,
@@ -142,7 +177,7 @@ impl Parser {
 
     fn parse_struct(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Struct, "`struct`")?;
-        let name = self.expect_ident("struct name")?;
+        let name = self.expect_name("struct name")?;
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         loop {
@@ -199,10 +234,42 @@ impl Parser {
         let name = self.expect_ident("function name")?;
         let type_params = self.parse_type_params()?;
         let params = self.parse_params()?;
-        let return_type =
-            if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
+        let (polarity, return_type) = self.parse_fn_arrow()?;
+        let params = match polarity {
+            FunctionPolarity::Positive => params,
+            FunctionPolarity::Negative => params
+                .into_iter()
+                .map(|mut p| {
+                    p.is_continuation = true;
+                    p
+                })
+                .collect(),
+        };
         let body = self.parse_block()?;
-        Ok(Node { span: t.span, kind: Decl::Fn { name, type_params, params, return_type, body } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Fn { name, type_params, polarity, params, return_type, body },
+        })
+    }
+
+    /// Parse a function's required polarity arrow and return type.
+    fn parse_fn_arrow(&mut self) -> Result<(FunctionPolarity, Option<TypeExpr>), ParseError> {
+        let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
+        match self.peek_kind().cloned() {
+            Some(TokenKind::Arrow) => {
+                self.pos += 1;
+                Ok((FunctionPolarity::Positive, Some(self.parse_type()?.kind)))
+            }
+            Some(TokenKind::ReverseArrow) => {
+                self.pos += 1;
+                Ok((FunctionPolarity::Negative, Some(self.parse_type()?.kind)))
+            }
+            _ => Err(ParseError {
+                message: "expected `->` for a positive function or `<-` for a negative function"
+                    .into(),
+                span,
+            }),
+        }
     }
 
     fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
@@ -226,11 +293,33 @@ impl Parser {
     fn parse_mu_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Mu, "`mu`")?;
         let name = self.expect_ident("`mu` name")?;
-        let params = self.parse_params()?;
+        let value_params = self.parse_params()?;
+        self.expect(TokenKind::Pipe, "`|` between `mu` parameter groups")?;
+        // A parameter in the second group is a continuation parameter because
+        // of where it is declared, not because of anything that follows it.
+        let continuation_params: Vec<Param> = self
+            .parse_params()?
+            .into_iter()
+            .map(|mut p| {
+                p.is_continuation = true;
+                p
+            })
+            .collect();
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
+        if let Some(ref ty) = return_type
+            && !matches!(ty, TypeExpr::Bottom)
+        {
+            return Err(ParseError {
+                message: "`mu` return type must be `⊥`; remove the arrow or annotate `-> ⊥`".into(),
+                span: t.span,
+            });
+        }
         let body = self.parse_block()?;
-        Ok(Node { span: t.span, kind: Decl::Mu { name, params, return_type, body } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Mu { name, value_params, continuation_params, return_type, body },
+        })
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -240,7 +329,7 @@ impl Parser {
         let ty = self.parse_type()?;
         self.expect(TokenKind::Assign, "`=` in constant declaration")?;
         let value = self.parse_expr()?;
-        let end = self.pos;
+        let end = self.span_end();
         self.eat(&TokenKind::Semicolon);
         Ok(Node {
             span: Span { start: t.span.start, end },
@@ -255,18 +344,10 @@ impl Parser {
             if self.eat(&TokenKind::RParen) {
                 break;
             }
-            // to k: -T  — continuation parameter
-            if self.eat(&TokenKind::To) {
-                let name = self.expect_ident("continuation name")?;
-                self.expect(TokenKind::Colon, "`:`")?;
-                let ty = self.parse_type()?;
-                params.push(Param { name, ty: ty.kind, is_continuation: true });
-            } else {
-                let name = self.expect_ident("parameter name")?;
-                self.expect(TokenKind::Colon, "`:`")?;
-                let ty = self.parse_type()?;
-                params.push(Param { name, ty: ty.kind, is_continuation: false });
-            }
+            let name = self.expect_ident("parameter name")?;
+            self.expect(TokenKind::Colon, "`:`")?;
+            let ty = self.parse_type()?;
+            params.push(Param { name, ty: ty.kind, is_continuation: false });
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RParen, "`)`")?;
                 break;
@@ -275,27 +356,31 @@ impl Parser {
         Ok(params)
     }
 
-    /// Parse the two partial-agent forms:
-    ///
-    /// - `step.to(k, h)` — connect output ports first (`Service`)
-    /// - `f.partial(a)` — connect input ports first (`Job`)
-    fn parse_partial(&mut self) -> Result<PartialKind, ParseError> {
-        let name = self.expect_ident("partial application method")?;
-        match name.as_str() {
-            "to" => Ok(PartialKind::Service),
-            "partial" => Ok(PartialKind::Job),
-            other => Err(ParseError {
-                message: format!("expected `.to` or `.partial`, found `.{other}`"),
-                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
-            }),
+    fn parse_struct_expr_fields(&mut self) -> Result<Vec<(String, Node<Expr>)>, ParseError> {
+        let mut fields = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            let field = self.expect_ident("struct field name")?;
+            self.expect(TokenKind::Colon, "`:` in struct literal")?;
+            let value = self.parse_expr()?;
+            fields.push((field, value));
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}` after struct literal")?;
+                break;
+            }
         }
+        Ok(fields)
     }
 
     fn parse_block(&mut self) -> Result<Node<Expr>, ParseError> {
-        let start = self.pos;
+        let start = self.span_start();
         self.expect(TokenKind::LBrace, "`{`")?;
         let outer_in_block = self.in_block;
+        let outer_no_struct_literal = self.no_struct_literal;
         self.in_block = true;
+        self.no_struct_literal = false;
         let mut exprs: Vec<Node<Expr>> = Vec::new();
         loop {
             if self.eat(&TokenKind::RBrace) {
@@ -307,23 +392,25 @@ impl Parser {
         }
         // Chain lets: `let x = v; rest` makes rest the let's body, so
         // scoping survives lowering.
-        let mut kind = if exprs.is_empty() { Expr::Int(0) } else { Expr::Block(exprs) };
+        // An empty block produces unit, like `()`.
+        let mut kind = if exprs.is_empty() { Expr::Pair(Vec::new()) } else { Expr::Block(exprs) };
         // Wrap from the inside out: each trailing Let captures the rest.
         // (Handled during lowering: Block flattens Lets by nesting.)
         let _ = &mut kind;
         self.in_block = outer_in_block;
-        Ok(Node { span: Span { start, end: self.pos }, kind })
+        self.no_struct_literal = outer_no_struct_literal;
+        Ok(Node { span: Span { start, end: self.span_end() }, kind })
     }
 
-    fn expect_ident(&mut self, what: &str) -> Result<String, ParseError> {
+    fn expect_name(&mut self, what: &str) -> Result<String, ParseError> {
         match self.peek_kind().cloned() {
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 Ok(s)
             }
-            Some(TokenKind::To) => {
+            Some(TokenKind::Return) => {
                 self.pos += 1;
-                Ok("to".into())
+                Ok("return".to_string())
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -338,8 +425,12 @@ impl Parser {
         }
     }
 
+    fn expect_ident(&mut self, what: &str) -> Result<String, ParseError> {
+        self.expect_name(what)
+    }
+
     pub fn parse_type(&mut self) -> Result<Node<TypeExpr>, ParseError> {
-        let start = self.pos;
+        let start = self.span_start();
         let kind = match self.peek_kind().cloned() {
             Some(TokenKind::Plus) => {
                 self.pos += 1;
@@ -359,21 +450,30 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)`")?;
                     TypeExpr::Fun(
                         Box::new(left),
-                        Box::new(Node { span: Span { start, end: self.pos }, kind: right.kind }),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
                     )
                 } else if self.eat(&TokenKind::Tensor) {
                     let right = self.parse_type()?;
                     self.expect(TokenKind::RParen, "`)`")?;
                     TypeExpr::Tensor(
                         Box::new(left),
-                        Box::new(Node { span: Span { start, end: self.pos }, kind: right.kind }),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
                     )
                 } else if self.eat(&TokenKind::Par) {
                     let right = self.parse_type()?;
                     self.expect(TokenKind::RParen, "`)`")?;
                     TypeExpr::Par(
                         Box::new(left),
-                        Box::new(Node { span: Span { start, end: self.pos }, kind: right.kind }),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
                     )
                 } else {
                     self.expect(TokenKind::RParen, "`)`")?;
@@ -399,16 +499,7 @@ impl Parser {
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
-                // `Command<I, O>` is a type former, not a base name.
-                if s == "Command" && self.eat(&TokenKind::Lt) {
-                    let input = self.parse_type()?;
-                    self.expect(TokenKind::Comma, "`,` in `Command<I, O>`")?;
-                    let output = self.parse_type()?;
-                    self.expect(TokenKind::Gt, "`>` after `Command<I, O>`")?;
-                    TypeExpr::Command(Box::new(input), Box::new(output))
-                } else {
-                    TypeExpr::Base(s)
-                }
+                TypeExpr::Base(s)
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -421,11 +512,30 @@ impl Parser {
                 });
             }
         };
-        Ok(Node { span: Span { start, end: self.pos }, kind })
+        Ok(Node { span: Span { start, end: self.span_end() }, kind })
     }
 
     pub fn parse_expr(&mut self) -> Result<Node<Expr>, ParseError> {
-        self.parse_binary(0)
+        // A cut binds more loosely than every operator: `a + b @ k` sends the
+        // sum to `k`. It is not associative — a cut has no result, so it
+        // cannot be the value of another cut.
+        let value = self.parse_binary(0)?;
+        if !self.eat(&TokenKind::At) {
+            return Ok(value);
+        }
+        let consumer = self.parse_binary(0)?;
+        if self.peek_kind() == Some(&TokenKind::At) {
+            return Err(ParseError {
+                message: "a cut has no result, so it cannot be cut again; \
+                          write one `@` per command"
+                    .into(),
+                span: Span { start: value.span.start, end: self.span_end() },
+            });
+        }
+        Ok(Node {
+            span: Span { start: value.span.start, end: consumer.span.end },
+            kind: Expr::Cut { value: Box::new(value), consumer: Box::new(consumer) },
+        })
     }
 
     fn parse_binary(&mut self, min_prec: u8) -> Result<Node<Expr>, ParseError> {
@@ -459,34 +569,38 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Node<Expr>, ParseError> {
-        if self.eat(&TokenKind::Bang) {
-            let start = self.pos - 1;
+        if self.peek_kind() == Some(&TokenKind::Bang) {
+            let start = self.span_start();
+            self.pos += 1;
             let body = self.parse_unary()?;
-            let end = self.pos;
+            let end = self.span_end();
             return Ok(Node {
                 span: Span { start, end },
                 kind: Expr::UnOp { op: UnOp::Not, body: Box::new(body) },
             });
         }
-        if self.eat(&TokenKind::Minus) {
-            let start = self.pos;
+        if self.peek_kind() == Some(&TokenKind::Minus) {
+            let start = self.span_start();
+            self.pos += 1;
             let body = self.parse_unary()?;
-            let end = self.pos;
+            let end = self.span_end();
             return Ok(Node {
                 span: Span { start, end },
                 kind: Expr::UnOp { op: UnOp::Neg, body: Box::new(body) },
             });
         }
-        if self.eat(&TokenKind::Dual) {
-            let start = self.pos;
-            let body = self.parse_unary()?;
-            let end = self.pos;
-            return Ok(Node {
-                span: Span { start, end },
-                kind: Expr::Dual { body: Box::new(body) },
-            });
-        }
         self.parse_postfix()
+    }
+
+    /// Parse an expression in a position where a following `{` opens a block
+    /// rather than a struct literal: the condition of an `if`, the scrutinee
+    /// of a `match`.
+    fn parse_scrutinee(&mut self) -> Result<Node<Expr>, ParseError> {
+        let outer = self.no_struct_literal;
+        self.no_struct_literal = true;
+        let parsed = self.parse_expr();
+        self.no_struct_literal = outer;
+        parsed
     }
 
     fn parse_postfix(&mut self) -> Result<Node<Expr>, ParseError> {
@@ -506,32 +620,31 @@ impl Parser {
                             break;
                         }
                     }
-                    let end = self.pos;
+                    let end = self.span_end();
                     e = Node {
                         span: Span { start: e.span.start, end },
                         kind: Expr::Call { callee: Box::new(e), args },
                     };
                 }
                 Some(TokenKind::Question) => {
+                    let question = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
                     self.pos += 1;
-                    let continuation =
-                        if self.peek_kind().is_some_and(|kind| matches!(kind, TokenKind::Ident(_)))
-                        {
-                            Some(
-                                self.next()
-                                    .map(|t| {
-                                        if let TokenKind::Ident(name) = t.kind {
-                                            name
-                                        } else {
-                                            String::new()
-                                        }
-                                    })
-                                    .unwrap_or_default(),
-                            )
-                        } else {
-                            None
-                        };
-                    let end = self.pos;
+                    // A name written immediately after `?` — with nothing
+                    // between them — selects that error continuation. Any name
+                    // the language accepts as a continuation parameter is
+                    // accepted here, including the reserved word `return`.
+                    // `e? name`, with a space, is bare `?` followed by a
+                    // separate expression.
+                    let selects_name = self.peek().is_some_and(|t| {
+                        matches!(t.kind, TokenKind::Ident(_) | TokenKind::Return)
+                            && t.span.start == question.end
+                    });
+                    let continuation = if selects_name {
+                        Some(self.expect_name("continuation name")?)
+                    } else {
+                        None
+                    };
+                    let end = self.span_end();
                     e = Node {
                         span: Span { start: e.span.start, end },
                         kind: Expr::ErrorProp { expr: Box::new(e), continuation },
@@ -539,54 +652,43 @@ impl Parser {
                 }
                 Some(TokenKind::Dot) => {
                     self.pos += 1;
-                    match self.parse_partial()? {
-                        PartialKind::Service => {
-                            self.expect(TokenKind::LParen, "`(` after `.to`")?;
-                            let mut continuations = Vec::new();
-                            loop {
-                                if self.eat(&TokenKind::RParen) {
-                                    break;
-                                }
-                                continuations.push(self.parse_expr()?);
-                                if !self.eat(&TokenKind::Comma) {
-                                    self.expect(TokenKind::RParen, "`)`")?;
-                                    break;
-                                }
-                            }
-                            let end = self.pos;
+                    if self.peek_kind() == Some(&TokenKind::ColonColon) {
+                        self.pos += 1;
+                        let variant = self.expect_ident("enum variant name")?;
+                        if let Expr::Ident(name) = &e.kind {
                             e = Node {
-                                span: Span { start: e.span.start, end },
-                                kind: Expr::Service { agent: Box::new(e), continuations },
+                                span: e.span,
+                                kind: Expr::Ident(format!("{name}::{variant}")),
                             };
+                            continue;
                         }
-                        PartialKind::Job => {
-                            self.expect(TokenKind::LParen, "`(` after `.partial`")?;
-                            let mut values = Vec::new();
-                            loop {
-                                if self.eat(&TokenKind::RParen) {
-                                    break;
-                                }
-                                values.push(self.parse_expr()?);
-                                if !self.eat(&TokenKind::Comma) {
-                                    self.expect(TokenKind::RParen, "`)`")?;
-                                    break;
-                                }
-                            }
-                            let end = self.pos;
-                            e = Node {
-                                span: Span { start: e.span.start, end },
-                                kind: Expr::Job { agent: Box::new(e), values },
-                            };
-                        }
+                        return Err(ParseError {
+                            message: "enum variant paths require an enum name".into(),
+                            span: e.span,
+                        });
                     }
-                }
-                Some(TokenKind::At) => {
-                    self.pos += 1;
-                    let rhs = self.parse_unary()?;
-                    e = Node {
-                        span: Span { start: e.span.start, end: rhs.span.end },
-                        kind: Expr::Interaction { left: Box::new(e), right: Box::new(rhs) },
-                    };
+                    let field_name = self.peek_kind().cloned();
+                    if matches!(field_name, Some(TokenKind::Ident(_)) | Some(TokenKind::Return))
+                        && self.tokens.get(self.pos + 1).map(|t| &t.kind)
+                            == Some(&TokenKind::LBrace)
+                    {
+                        let name = self.expect_name("struct name")?;
+                        let fields = self.parse_struct_expr_fields()?;
+                        let end = self.span_end();
+                        e = Node {
+                            span: Span { start: e.span.start, end },
+                            kind: Expr::Struct { name, fields },
+                        };
+                        continue;
+                    }
+                    if let Some(TokenKind::Ident(_)) = field_name {
+                        let end = self.pos + 1;
+                        return Err(ParseError {
+                            message: "field projection is not accepted language syntax; its design is deferred"
+                                .into(),
+                            span: Span { start: e.span.start, end },
+                        });
+                    }
                 }
                 Some(TokenKind::LBracket) => {
                     self.pos += 1;
@@ -604,7 +706,7 @@ impl Parser {
                         }
                     }
                     self.expect(TokenKind::RBracket, "`]`")?;
-                    let end = self.pos;
+                    let end = self.span_end();
                     e = if let Some(index) = (!is_range).then(|| start_expr.clone()).flatten() {
                         Node {
                             span: Span { start: e.span.start, end },
@@ -633,31 +735,81 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Node<Expr>, ParseError> {
-        let start = self.pos;
+        let start = self.span_start();
         match self.peek_kind().cloned() {
             Some(TokenKind::Int(n)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Int(n) })
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Int(n) })
             }
             Some(TokenKind::Float(n)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Float(n) })
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Float(n) })
             }
             Some(TokenKind::Str(s)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Str(s) })
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Str(s) })
             }
             Some(TokenKind::Char(c)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Char(c) })
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Char(c) })
             }
             Some(TokenKind::Bool(b)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Bool(b) })
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Bool(b) })
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Ident(s) })
+                if self.peek_kind() == Some(&TokenKind::ColonColon) {
+                    self.pos += 1;
+                    let variant = self.expect_ident("enum variant name")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Ident(format!("{s}::{variant}")),
+                    });
+                }
+                // `S { field: value }` is a struct literal wherever a `{`
+                // here cannot be a block.
+                if !self.no_struct_literal && self.peek_kind() == Some(&TokenKind::LBrace) {
+                    self.pos += 1;
+                    let fields = self.parse_struct_expr_fields()?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Struct { name: s, fields },
+                    });
+                }
+                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Ident(s) })
+            }
+            Some(TokenKind::Return) => {
+                self.pos += 1;
+                if !self.no_struct_literal && self.peek_kind() == Some(&TokenKind::LBrace) {
+                    self.pos += 1;
+                    let fields = self.parse_struct_expr_fields()?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Struct { name: "return".into(), fields },
+                    });
+                }
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Ident("return".into()),
+                })
+            }
+            Some(TokenKind::Mu) => {
+                self.pos += 1;
+                let name = self.expect_ident("local `mu` name")?;
+                let value_params = self.parse_params()?;
+                self.expect(TokenKind::Pipe, "`|` between local `mu` parameter groups")?;
+                let continuation_params = self.parse_params()?;
+                let body = self.parse_block()?;
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Mu {
+                        name,
+                        value_params,
+                        continuation_params,
+                        body: Box::new(body),
+                    },
+                })
             }
             Some(TokenKind::Fn) => {
                 self.pos += 1;
@@ -671,13 +823,13 @@ impl Parser {
                     if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
                 let body = self.parse_block()?;
                 Ok(Node {
-                    span: Span { start, end: self.pos },
+                    span: Span { start, end: self.span_end() },
                     kind: Expr::Lambda { param, param_type, return_type, body: Box::new(body) },
                 })
             }
             Some(TokenKind::Match) => {
                 self.pos += 1;
-                let scrutinee = self.parse_expr()?;
+                let scrutinee = self.parse_scrutinee()?;
                 self.expect(TokenKind::LBrace, "`{`")?;
                 let mut arms = Vec::new();
                 loop {
@@ -693,8 +845,33 @@ impl Parser {
                     arms.push(MatchArm { pattern, guard, body });
                 }
                 Ok(Node {
-                    span: Span { start, end: self.pos },
+                    span: Span { start, end: self.span_end() },
                     kind: Expr::Match { scrutinee: Box::new(scrutinee), arms },
+                })
+            }
+            Some(TokenKind::Select) => {
+                self.pos += 1;
+                // The type whose consumer this builds: a declaration name, or
+                // an explicit connective such as `(+i64 ⊗ +String)`.
+                let ty = self.parse_type()?;
+                self.expect(TokenKind::LBrace, "`{` after the `select` type")?;
+                let mut arms = Vec::new();
+                loop {
+                    if self.eat(&TokenKind::RBrace) {
+                        break;
+                    }
+                    let command = self.parse_expr()?;
+                    self.expect(TokenKind::FatArrow, "`=>` in `select` arm")?;
+                    let pattern = self.parse_pattern()?;
+                    arms.push(SelectArm { command, pattern });
+                    if !self.eat(&TokenKind::Comma) {
+                        self.expect(TokenKind::RBrace, "`}` after `select` arm")?;
+                        break;
+                    }
+                }
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Select { ty: Box::new(ty), arms },
                 })
             }
             Some(TokenKind::Let) => {
@@ -707,7 +884,7 @@ impl Parser {
                 } else {
                     return Err(ParseError {
                         message: "expected `=` in let binding".into(),
-                        span: Span { start, end: self.pos },
+                        span: Span { start, end: self.span_end() },
                     });
                 };
                 let body = if !self.in_block && self.eat(&TokenKind::Semicolon) {
@@ -716,13 +893,13 @@ impl Parser {
                     None
                 };
                 Ok(Node {
-                    span: Span { start, end: self.pos },
+                    span: Span { start, end: self.span_end() },
                     kind: Expr::Let { name, ty, value: Box::new(value), body },
                 })
             }
             Some(TokenKind::If) => {
                 self.pos += 1;
-                let cond = self.parse_expr()?;
+                let cond = self.parse_scrutinee()?;
                 let then = self.parse_block()?;
                 let otherwise = if self.eat(&TokenKind::Else) {
                     if self.peek_kind() == Some(&TokenKind::If) {
@@ -734,7 +911,7 @@ impl Parser {
                     None
                 };
                 Ok(Node {
-                    span: Span { start, end: self.pos },
+                    span: Span { start, end: self.span_end() },
                     kind: Expr::If { cond: Box::new(cond), then: Box::new(then), otherwise },
                 })
             }
@@ -742,7 +919,11 @@ impl Parser {
                 self.pos += 1;
                 // () or (e) or (e1, e2)
                 if self.eat(&TokenKind::RParen) {
-                    return Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Int(0) });
+                    // `()` is the unit value: the empty product.
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Pair(Vec::new()),
+                    });
                 }
                 let first = self.parse_expr()?;
                 if self.eat(&TokenKind::Comma) {
@@ -757,10 +938,10 @@ impl Parser {
                             break;
                         }
                     }
-                    Ok(Node { span: Span { start, end: self.pos }, kind: Expr::Pair(items) })
+                    Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Pair(items) })
                 } else {
                     self.expect(TokenKind::RParen, "`)`")?;
-                    Ok(Node { span: Span { start, end: self.pos }, kind: first.kind })
+                    Ok(Node { span: Span { start, end: self.span_end() }, kind: first.kind })
                 }
             }
             Some(TokenKind::LBrace) => self.parse_block(),
@@ -818,7 +999,7 @@ impl Parser {
                     Pattern::Float(n) => Ok(Pattern::Float(-n)),
                     _ => Err(ParseError {
                         message: "negative patterns require a numeric literal".into(),
-                        span: Span { start: self.pos - 1, end: self.pos },
+                        span: Span { start: self.pos - 1, end: self.span_end() },
                     }),
                 }
             }
@@ -993,13 +1174,131 @@ mod tests {
     }
 
     #[test]
-    fn parse_command_def() {
-        let p = parse_str("mu step(x: +i32, to k: -i32) { k(x) }");
+    fn parse_negative_fn_def() {
+        let p = parse_str("fn run(k: -i32) <- i32 { k(1) }");
+        assert_eq!(p.decls.len(), 1);
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Fn { name, polarity, params, .. }
+                if name == "run"
+                    && *polarity == FunctionPolarity::Negative
+                    && params.iter().all(|p| p.is_continuation)
+        ));
+    }
+
+    #[test]
+    fn parse_fn_polarity_comes_from_arrow_not_lookahead() {
+        let p = parse_str("fn run(k: -i32) <- i32 { k(1) }");
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Fn { polarity, params, .. }
+                if *polarity == FunctionPolarity::Negative
+                    && params.iter().all(|p| p.is_continuation)
+        ));
+
+        let p = parse_str("fn run(k: -i32) -> i32 { k(1) }");
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Fn { polarity, params, .. }
+                if *polarity == FunctionPolarity::Positive
+                    && params.iter().all(|p| !p.is_continuation)
+        ));
+    }
+
+    #[test]
+    fn parse_return_in_ordinary_positions() {
+        // `return` may be declared as a continuation parameter...
+        let p = parse_str("fn k(return: -i32) <- i32 { return(0) }");
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Fn { params, .. } if params.first().is_some_and(|p| p.name == "return")
+        ));
+
+        // ...and used as an expression callee and an expression argument.
+        let p = parse_str("fn main() -> i32 { return(0, return) }");
+        let body = match &p.decls[0].kind {
+            Decl::Fn { body, .. } => body.clone(),
+            _ => panic!("expected fn declaration"),
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::Block(exprs)
+                if matches!(&exprs[0].kind,
+                    Expr::Call { callee, args }
+                        if matches!(&callee.kind, Expr::Ident(name) if name == "return")
+                            && matches!(&args[0].kind, Expr::Int(n) if *n == 0)
+                            && matches!(&args[1].kind, Expr::Ident(name) if name == "return")
+                )
+        ));
+
+        // In ordinary call syntax it can also be a struct-name marker.
+        let p = parse_str("fn main() -> i32 { return(return { x: 0 }) }");
+        let body = match &p.decls[0].kind {
+            Decl::Fn { body, .. } => body.clone(),
+            _ => panic!("expected fn declaration"),
+        };
+        assert!(matches!(
+            &body.kind,
+            Expr::Block(exprs)
+                if matches!(&exprs[0].kind,
+                    Expr::Call { callee, args }
+                        if matches!(&callee.kind, Expr::Ident(name) if name == "return")
+                            && matches!(&args[0].kind,
+                                Expr::Struct { name, .. } if name == "return")
+                )
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_bare_fn() {
+        let tokens = lex("fn f(x: +i32) { x }").unwrap();
+        let errors = parse(tokens).unwrap_err();
+        assert!(
+            errors[0]
+                .message
+                .contains("expected `->` for a positive function or `<-` for a negative function"),
+            "got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_polarity_prefixed_fn() {
+        for source in ["+fn f(x: +i32) -> i32 { x }", "-fn f(k: -i32) <- i32 { k(1) }"] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(
+                errors[0].message.contains("`fn` prefix is no longer supported"),
+                "source: {source}; errors: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_rejects_old_to_parameter_marker() {
+        let source = "mu step(x: +i32, to k: -i32) { k(x) }";
+        let errors = parse(lex(source).unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("expected `:`"), "source: {source}; errors: {errors:?}");
+    }
+
+    #[test]
+    fn parse_mu_def() {
+        let p = parse_str("mu step(x: +i32) | (k: -i32) { k(x) }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
-        assert!(
-            matches!(&d.kind, Decl::Mu { name, params, .. } if name == "step" && params.len() == 2)
-        );
+        assert!(matches!(&d.kind, Decl::Mu { name, value_params, continuation_params, .. }
+                if name == "step" && value_params.len() == 1 && continuation_params.len() == 1));
+    }
+
+    #[test]
+    fn parse_mu_bottom_annotation() {
+        let p = parse_str("mu step(x: +i32) | (k: -i32) -> ⊥ { k(x) }");
+        assert!(matches!(&p.decls[0].kind, Decl::Mu { return_type: Some(TypeExpr::Bottom), .. }));
+    }
+
+    #[test]
+    fn parse_mu_rejects_non_bottom_return() {
+        let errors =
+            parse(lex("mu step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("`mu` return type must be `⊥`"), "got: {errors:?}");
     }
 
     #[test]
@@ -1012,6 +1311,137 @@ mod tests {
     fn parse_match() {
         let p = parse_str("match x { _ => 0, }");
         assert_eq!(p.decls.len(), 1);
+    }
+
+    #[test]
+    fn parse_select() {
+        // One arm per variant of an enum.
+        let p = parse_str("select Color { 0 @ return => Red, 1 @ return => Green }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Select { ty, arms } = &body.kind else {
+            panic!("expected a select: {:?}", body.kind)
+        };
+        assert!(matches!(&ty.kind, TypeExpr::Base(name) if name == "Color"));
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(&arms[0].pattern, Pattern::Ident(name) if name == "Red"));
+    }
+
+    #[test]
+    fn parse_select_over_a_product() {
+        // A product has one shape, so one arm, binding its components.
+        let p = parse_str("select (+i64 ⊗ +String) { end @ done => (end, text) }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Select { ty, arms } = &body.kind else {
+            panic!("expected a select: {:?}", body.kind)
+        };
+        assert!(matches!(&ty.kind, TypeExpr::Tensor(..)), "{:?}", ty.kind);
+        assert_eq!(arms.len(), 1);
+        assert!(matches!(&arms[0].pattern, Pattern::Tuple(items) if items.len() == 2));
+    }
+
+    #[test]
+    fn parse_select_over_a_struct() {
+        let p = parse_str("select Reading { 0 @ out => Reading { value: v, unit: u } }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        let Expr::Select { arms, .. } = &body.kind else {
+            panic!("expected a select: {:?}", body.kind)
+        };
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Struct { name, fields }
+                if name == "Reading" && fields.len() == 2),
+            "{:?}",
+            arms[0].pattern
+        );
+    }
+
+    #[test]
+    fn parse_cut_binds_more_loosely_than_every_operator() {
+        // `1 + 2 @ k` sends the sum to `k`.
+        let p = parse_str("fn main() -> i32 { 1 + 2 @ k }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
+        let Expr::Cut { value, consumer } = &exprs[0].kind else {
+            panic!("expected a cut: {:?}", exprs[0].kind)
+        };
+        assert!(matches!(value.kind, Expr::BinOp { .. }), "value: {:?}", value.kind);
+        assert!(matches!(&consumer.kind, Expr::Ident(name) if name == "k"));
+    }
+
+    #[test]
+    fn parse_rejects_a_cut_of_a_cut() {
+        let errors = parse(lex("fn main() -> i32 { 1 @ j @ k }").unwrap()).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("a cut has no result")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_error_prop_selects_an_adjacent_name_including_return() {
+        // `return` is a reserved word that is still an accepted continuation
+        // parameter name, so it is accepted after `?` like any other name.
+        let p = parse_str("fn f(return: -i32) <- i32 { fail(1)?return }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected block: {:?}", body.kind) };
+        assert!(
+            matches!(&exprs[0].kind, Expr::ErrorProp { continuation: Some(name), .. } if name == "return"),
+            "expected `?return` to select `return`: {:?}",
+            exprs[0].kind
+        );
+    }
+
+    #[test]
+    fn parse_error_prop_without_an_adjacent_name_is_bare() {
+        // A space separates the propagation from the next expression, so the
+        // name is not consumed as the selected continuation.
+        let p = parse_str("mu f(x: +i32) | (err: -i32) { fail(x)? err(0) }");
+        let Decl::Mu { body, .. } = &p.decls[0].kind else { panic!("expected mu") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected block: {:?}", body.kind) };
+        assert!(
+            matches!(&exprs[0].kind, Expr::ErrorProp { continuation: None, .. }),
+            "expected a bare `?`: {:?}",
+            exprs[0].kind
+        );
+    }
+
+    #[test]
+    fn parse_rejects_removed_expression_level_dual() {
+        let errors = parse(lex("fn main() -> i32 { dual(42) }").unwrap()).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("expected expression, found `dual`")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_removed_command_type_former() {
+        let errors = parse(lex("fn f(x: Command<i64, +i64>) -> i64 { 0 }").unwrap()).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.message.contains("expected `)`, found `<`")),
+            "errors: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn parse_choose_is_an_ordinary_identifier() {
+        let p = parse_str("choose");
+        match &p.decls[0].kind {
+            Decl::Fn { body, .. } => {
+                assert!(matches!(&body.kind, Expr::Ident(name) if name == "choose"));
+            }
+            _ => panic!("expected a function declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_variant_expression() {
+        let p = parse_str("Color::Red");
+        match &p.decls[0].kind {
+            Decl::Fn { body, .. } => {
+                assert!(matches!(&body.kind, Expr::Ident(name) if name == "Color::Red"));
+            }
+            _ => panic!("expected enum variant expression"),
+        }
     }
 
     #[test]
@@ -1034,59 +1464,8 @@ mod tests {
 
     #[test]
     fn parse_interaction() {
-        let p = parse_str("f @ dual(42)");
+        let p = parse_str("f @ k");
         assert_eq!(p.decls.len(), 1);
-    }
-
-    #[test]
-    fn parse_command_type() {
-        let src = "fn parse(text: Command<i64, +i64>) -> i64 { 1 }";
-        let toks = lex(src).unwrap();
-        let ast = parse(toks).unwrap();
-        let Decl::Fn { params, .. } = &ast.decls[0].kind else {
-            panic!("expected fn declaration");
-        };
-        assert!(matches!(
-            &params[0].ty,
-            TypeExpr::Command(input, output)
-                if matches!(&input.kind, TypeExpr::Base(base) if base == "i64")
-                    && matches!(&output.kind, TypeExpr::Positive(inner)
-                        if matches!(&inner.kind, TypeExpr::Base(out) if out == "i64"))
-        ));
-    }
-
-    #[test]
-    fn parse_service_partial_application() {
-        let p = parse_str("step.to(k, h)");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(
-            &body.kind,
-            Expr::Service { agent, continuations }
-                if matches!(&agent.kind, Expr::Ident(name) if name == "step")
-                    && continuations.len() == 2
-        ));
-    }
-
-    #[test]
-    fn parse_job_partial_application() {
-        let p = parse_str("f.partial(42)");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(
-            &body.kind,
-            Expr::Job { agent, values }
-                if matches!(&agent.kind, Expr::Ident(name) if name == "f")
-                    && values.len() == 1
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_unknown_partial_method() {
-        let toks = lex("f.whatever(42)").unwrap();
-        assert!(parse(toks).is_err());
     }
 
     #[test]

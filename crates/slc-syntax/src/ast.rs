@@ -31,6 +31,18 @@ pub enum Expr {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
     },
+    /// A struct literal: `Direction { left: 0, right: 1 }`.
+    Struct {
+        name: String,
+        fields: Vec<(String, Node<Expr>)>,
+    },
+    /// `select T { command => pattern, … }` — the consumer of a positive
+    /// type, given by cases on it. An `enum` has one arm per variant; a
+    /// product has exactly one, binding its components.
+    Select {
+        ty: Box<Node<TypeExpr>>,
+        arms: Vec<SelectArm>,
+    },
     Let {
         name: String,
         ty: Option<TypeExpr>,
@@ -51,26 +63,24 @@ pub enum Expr {
         op: UnOp,
         body: Box<Node<Expr>>,
     },
-    Interaction {
-        left: Box<Node<Expr>>,
-        right: Box<Node<Expr>>,
+    /// A cut: `v @ k` sends the value `v` to the consumer `k`.
+    ///
+    /// A cut is a command, not an application: it has no result and control
+    /// does not return from it. Application is `Call`, at either polarity.
+    Cut {
+        value: Box<Node<Expr>>,
+        consumer: Box<Node<Expr>>,
     },
-    Dual {
+    /// A local μ abstraction: `mu name() | (k: -T) { body }`.
+    Mu {
+        name: String,
+        value_params: Vec<Param>,
+        continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
     },
     ErrorProp {
         expr: Box<Node<Expr>>,
         continuation: Option<String>,
-    },
-    /// `agent.to(k, h)` — wire continuation ports first.
-    Service {
-        agent: Box<Node<Expr>>,
-        continuations: Vec<Node<Expr>>,
-    },
-    /// `fn.partial(a)` — wire value ports first.
-    Job {
-        agent: Box<Node<Expr>>,
-        values: Vec<Node<Expr>>,
     },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
@@ -85,10 +95,14 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum PartialKind {
-    Service,
-    Job,
+/// The polarity of a function declaration.
+///
+/// A positive function consumes values and produces a value. A negative
+/// function consumes continuations and produces a continuation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionPolarity {
+    Positive,
+    Negative,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,8 +115,6 @@ pub enum TypeExpr {
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     List(Box<Node<TypeExpr>>),
     Dual(Box<Node<TypeExpr>>),
-    /// `Command<I, O>` — the symmetric agent type.
-    Command(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Unit,
     Bottom,
 }
@@ -112,6 +124,14 @@ pub struct Param {
     pub name: String,
     pub ty: TypeExpr,
     pub is_continuation: bool,
+}
+
+/// One arm of a `select`: the shape that selects it, and the command that
+/// runs when it arrives. The pattern's binders scope over the command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectArm {
+    pub command: Node<Expr>,
+    pub pattern: Pattern,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,13 +196,15 @@ pub enum Decl {
     Fn {
         name: String,
         type_params: Vec<String>,
+        polarity: FunctionPolarity,
         params: Vec<Param>,
         return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },
     Mu {
         name: String,
-        params: Vec<Param>,
+        value_params: Vec<Param>,
+        continuation_params: Vec<Param>,
         return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },

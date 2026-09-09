@@ -1,4 +1,5 @@
-//! Round-trip property: parse(lower(ast)) produces alpha-equivalent IR.
+//! Round-trip property: parse(lower(ast)) produces alpha-equivalent IR, and
+//! the pretty-printed core reads back as the same IR.
 
 use slc_core::substitution::alpha_eq_term;
 use slc_core::term::Term;
@@ -71,4 +72,32 @@ fn roundtrip_patterns() {
         r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, c if c < '0' => 2, _ => 3 } }"#,
     );
     assert_eq!(a, b);
+}
+
+#[test]
+fn lowered_declarations_round_trip_through_the_printed_core() {
+    // Whole declarations, as the compiler actually lowers them: printing a
+    // lowered declaration and reading it back must give the same IR.
+    let defs = lower_str(
+        "enum Color { Red, Green, Blue }
+         fn positive(x: +i32) -> i32 { x }
+         fn negative(return: -i32) <- Color {
+             select Color {
+                 0 @ return => Red,
+                 1 @ return => Green,
+                 2 @ return => Blue,
+             }
+         }
+         mu route(x: +i32) | (k: -i32) { x @ k }
+         fn main() -> i32 { let y = 1; y }",
+    );
+    assert!(defs.len() > 5, "expected every declaration: {defs:?}");
+    for (name, term) in defs {
+        let printed = term.to_string();
+        assert_eq!(
+            slc_core::parse::parse_term(&printed),
+            Ok(term.clone()),
+            "{name} printed as {printed}"
+        );
+    }
 }
