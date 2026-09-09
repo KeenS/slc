@@ -80,6 +80,14 @@ fn repository_example_suite_has_expected_results() {
         ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
         ("mu.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
+        (
+            "mu_tilde.sl",
+            Expected {
+                success: true,
+                stdout: &["42", "42", "the value was consumed", "17", "100"],
+                stderr: &[],
+            },
+        ),
         ("nested_calls.sl", Expected { success: true, stdout: &["\"320\""], stderr: &[] }),
         ("pair.sl", Expected { success: true, stdout: &["30"], stderr: &[] }),
         ("polarity.sl", Expected { success: true, stdout: &["3", "positive"], stderr: &[] }),

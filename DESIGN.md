@@ -440,7 +440,8 @@ fn show(out: -String) <- +i64 {
 ```
 
 That is the surface spelling of the core's value abstraction `μ̃x. c` — the
-same binder `let` lowers to, written directly. So `select` builds the consumer
+same binder `let` lowers to, written directly; `examples/mu_tilde.sl` writes
+that one co-term every way the surface offers. So `select` builds the consumer
 of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
