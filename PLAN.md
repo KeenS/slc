@@ -341,24 +341,24 @@ EXIT(0)
 
 ### Phase 1: Cleanup
 
-- [ ] Remove `spawn`
-- [ ] Rename `command` to `mu`
+- [x] Remove `spawn`
+- [x] Rename `command` to `mu`
 - [ ] Remove the old value-returning `mu` syntax
 - [ ] Update examples
 - [ ] Update tests
 
 ### Phase 2: Continuation Functions
 
-- [ ] Allow continuation parameters in ordinary `fn`
-- [ ] Define the lowering for continuation-taking `fn`
-- [ ] Add tests for continuation-taking `fn`
+- [x] Allow continuation parameters in ordinary `fn`
+- [x] Define the lowering for continuation-taking `fn`
+- [x] Add tests for continuation-taking `fn`
 - [ ] Rewrite JSON parser to use continuation-taking `fn`
 
 ### Phase 3: Builtin Exit
 
-- [ ] Add `EXIT: -i32`
-- [ ] Add runtime behavior
-- [ ] Add tests
+- [x] Add `EXIT: -i32`
+- [x] Add runtime behavior
+- [x] Add tests
 - [ ] Update examples
 
 ### Phase 4: Negative Additive Control and Data
