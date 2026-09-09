@@ -639,16 +639,12 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                         _ => Ok(v),
                     }
                 }
+                // ⟨ f ∥ λ̄x. c ⟩ — application: `c` computes the argument.
                 CoTerm::CoLam(x, c2) => {
-                    // Lowering marks an application's co-abstraction binder
-                    // `__f`. Any other binder is a `let`, a discarded block
-                    // expression, or another binding form: it binds the value
-                    // and continues with `c2` rather than applying anything.
-                    let is_application = x == "__f";
                     let mut env2 = env.clone();
                     env2.push();
                     env2.define(x.clone(), v.clone());
-                    if is_application {
+                    {
                         // A builtin decides how many arguments it still needs,
                         // so it collects them itself.
                         if let Value::Builtin(name) = &v {
@@ -691,9 +687,13 @@ pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Valu
                     let r = eval_command(c2, &mut env2, fuel)?;
                     Ok(r)
                 }
-                CoTerm::MuTilde(_, _) => {
-                    // Already reduced by β; here treat as return
-                    Ok(v)
+                // ⟨ v ∥ μ̃x. c ⟩ → c[v/x] — a binder: `let`, a discarded
+                // block expression, or any other form that names a value.
+                CoTerm::MuTilde(x, c2) => {
+                    let mut env2 = env.clone();
+                    env2.push();
+                    env2.define(x.clone(), v);
+                    eval_command(c2, &mut env2, fuel)
                 }
                 _ => Ok(v),
             }

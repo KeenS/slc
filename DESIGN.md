@@ -632,9 +632,9 @@ re-parsed without loss.
 ### Reduction
 
 ```text
-⟨ λx. t ∥ μ̃y. c ⟩            → c[t/x]              β
 ⟨ μα. c ∥ e ⟩                → c[e/α]              μ
-⟨ t ∥ λ̄x. c ⟩                → c[t/x]              co-β
+⟨ v ∥ μ̃x. c ⟩                → c[v/x]              μ̃ — the binder
+⟨ t ∥ λ̄x. c ⟩                → c[t/x]              co-β — application
 ⟨ t₁ ⊗ t₂ ∥ fst ⟩            → t₁                  projection
 ⟨ t₁ ⊗ t₂ ∥ snd ⟩            → t₂                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[… L(x…). c …] ⟩ → c[vᵢ/xᵢ]          labelled
@@ -668,8 +668,8 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `expr.pair` | `(a, b)`, `()` | `⟦a⟧ ⊗ ⟦b⟧`, right-nested; `()` is `unit` |
-| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ λ̄x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` |
-| `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ λ̄__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
+| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction |
+| `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
 | `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
 | `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to `expr.if` first, keeping them short-circuiting |
 | `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
@@ -705,8 +705,8 @@ continuation parameter becomes a Λ binder.
 | `inl` / `inr` | not surface-visible; used internally to tag lowered `match` arms |
 | `co(e)` | `select` |
 | `α` | the consumer named on the right of a cut, `v @ k` |
-| `λ̄x. c` | application |
-| `μ̃x. c` | not surface-visible; produced by reduction |
+| `λ̄x. c` | application, and nothing else |
+| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |

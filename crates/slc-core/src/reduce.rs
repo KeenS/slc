@@ -16,21 +16,18 @@ pub enum Step {
 /// Perform one small-step reduction on a command.
 pub fn step(c: &Command) -> Step {
     match c {
-        // β-rule: ⟨ λx.t ∥ μ̃x.c ⟩ → c[t/x]
-        Command::Cut(Term::Lam(x, t), CoTerm::MuTilde(y, c2)) => {
-            if x == y {
-                Step::Reduced((**c2).clone())
-            } else {
-                // α-rename y to x's name, then substitute
-                let renamed = subst_command(y, &Term::Var(x.clone()), c2);
-                Step::Reduced(subst_command(x, t, &renamed))
-            }
-        }
-
         // μ-rule: ⟨ μα.c ∥ e ⟩ → c[e/α]
         // Substitution of co-terms for co-variables is handled during
-        // evaluation; here we return the command body.
+        // evaluation; here we return the command body. It is tried before the
+        // μ̃-rule, which settles the critical pair ⟨μα.c ∥ μ̃x.c'⟩ in favour of
+        // the producer.
         Command::Cut(Term::Mu(_, c1), _) => Step::Reduced((**c1).clone()),
+
+        // μ̃-rule: ⟨ v ∥ μ̃x.c ⟩ → c[v/x]
+        // This is the binder: it takes what the cut delivers and runs `c`
+        // with it bound, which is what `let` and every other binding form
+        // lowers to.
+        Command::Cut(v, CoTerm::MuTilde(x, c2)) => Step::Reduced(subst_command(x, v, c2)),
 
         // Labelled rule: ⟨ L(v₁ ⊗ … ⊗ vₙ) ∥ μ̃[… L(x₁,…,xₙ). c …] ⟩ → c[vᵢ/xᵢ]
         // The label selects exactly one branch; the others are discarded
@@ -114,15 +111,13 @@ mod tests {
     }
 
     #[test]
-    fn beta_reduces() {
-        // ⟨ λx.x ∥ μ̃x. ⟨ x ∥ k ⟩ ⟩ → ⟨ x ∥ k ⟩
-        let inner = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
-        let mu_tilde = CoTerm::MuTilde("x".into(), Box::new(inner));
-        let cut = Command::Cut(identity(), mu_tilde);
-        match step(&cut) {
+    fn mu_tilde_binds_the_value() {
+        // ⟨ λx.x ∥ μ̃y. ⟨ y ∥ k ⟩ ⟩ → ⟨ λx.x ∥ k ⟩
+        let inner = Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into()));
+        let mu_tilde = CoTerm::MuTilde("y".into(), Box::new(inner));
+        match step(&Command::Cut(identity(), mu_tilde)) {
             Step::Reduced(c) => {
-                let expected = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
-                assert_eq!(c, expected);
+                assert_eq!(c, Command::Cut(identity(), CoTerm::Covar("k".into())));
             }
             Step::Normal => panic!("expected reduction"),
         }

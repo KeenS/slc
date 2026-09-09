@@ -37,9 +37,9 @@ const ROWS: &[Row] = &[
         id: "expr.cut", source: "fn f(k: -i32) <- i32 { 1 @ k }", core: "μ__cut. ⟨$int_1 ∥ k⟩"
     },
     Row {
-        id: "expr.let", source: "fn f() -> i32 { let x = 1; x }", core: "μlet. ⟨$int_1 ∥ λ̄x."
+        id: "expr.let", source: "fn f() -> i32 { let x = 1; x }", core: "μlet. ⟨$int_1 ∥ μ̃x."
     },
-    Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "λ̄__discarded." },
+    Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "μ̃__discarded." },
     Row {
         id: "expr.if",
         source: "fn f() -> i32 { if true { 1 } else { 2 } }",

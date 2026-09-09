@@ -33,6 +33,7 @@ Current implementation status:
 - `examples/connectives.sl` writes all four connectives in both polarities, with the units; it replaces the separate tensor and par examples.
 - A local `mu` used as an expression is `call/cc`, and its type is what the captured continuation receives, so a call whose result arrives through a continuation no longer nests the rest of the program inside it.
 - `A → ⊥` and `-A` are one type: a lambda whose body ends in a cut *is* a consumer, and a continuation may be annotated either way.
+- A binder lowers to `μ̃`, the value abstraction, and `λ̄` is application and nothing else — so the evaluator no longer tells them apart by the binder's name. `let x = v; body` is `μlet. ⟨v ∥ μ̃x. ⟨body ∥ let⟩⟩`, and the μ̃ reduction rule applies to any value rather than only to a λ.
 - `A → B` is `-A ⅋ B`, so `Type::Fun` is gone: a function is negative, `dual(A → B)` is the call stack `A ⊗ -B`, and a cut is checked by duality rather than by which side is written negatively. A negative function's declared type dualizes its result, not the whole function.
 - The two intentionally failing examples are `linearity_error.sl` and `polarity_error.sl`; every other example runs successfully.
 - `to` is removed from the lexer and parser. `from` is not a lexer keyword.

@@ -211,7 +211,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 "__if".into(),
                 Box::new(Command::Cut(
                     c,
-                    CoTerm::CoLam(
+                    CoTerm::MuTilde(
                         "__cond".into(),
                         Box::new(Command::Cut(dispatch_call, CoTerm::Covar("__if".into()))),
                     ),
@@ -322,7 +322,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 "__err".into(),
                 Box::new(Command::Cut(
                     e,
-                    CoTerm::CoLam(
+                    CoTerm::MuTilde(
                         "__ok".into(),
                         Box::new(Command::Cut(
                             Term::Var("__ok".into()),
@@ -457,7 +457,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     seq_name,
                     Box::new(Command::Cut(
                         t,
-                        CoTerm::CoLam(
+                        CoTerm::MuTilde(
                             "__discarded".into(),
                             Box::new(Command::Cut(rest, CoTerm::Covar(covar))),
                         ),
@@ -587,7 +587,10 @@ fn cut_binder(consumer: &Expr) -> String {
 
 const CUT_BINDER: &str = "__cut";
 
-/// `let x = v; body` → `μlet. ⟨ v ∥ λ̄x. ⟨ body ∥ let ⟩ ⟩`.
+/// `let x = v; body` → `μlet. ⟨ v ∥ μ̃x. ⟨ body ∥ let ⟩ ⟩`.
+///
+/// A binder is `μ̃`, the value abstraction: it takes what the cut delivers
+/// and runs the rest with it bound. `λ̄` is application, and nothing else.
 ///
 /// Both surface `let` forms — the expression form with an explicit body and
 /// the bodyless form that scopes over the rest of its block — lower here.
@@ -596,7 +599,7 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
         "let".into(),
         Box::new(Command::Cut(
             value,
-            CoTerm::CoLam(
+            CoTerm::MuTilde(
                 name.to_string(),
                 Box::new(Command::Cut(body, CoTerm::Covar("let".into()))),
             ),
