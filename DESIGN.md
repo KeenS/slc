@@ -644,6 +644,19 @@ terminating path is not yet enforced by the linearity checker; today an
 unclosed handle merely leaks until the program ends, and a read after
 `close_file` is a runtime error.
 
+Until the checker watches it, the program can make the leak impossible by
+construction: compose the close onto the only door out, by shadowing `exit`
+where the handle comes into scope.
+
+```sl
+let handle = mu(k) { open_file(path, k, complain) };
+let exit = select +i32 { status <= { close_file(handle); status @ exit } };
+```
+
+The arm's `exit` is the outer one; everything after the shadow sees only the
+composed door, so every later `@ exit` — unhappy paths included — closes the
+file on its way through. `examples/file_io.sl` is written this way.
+
 Two failures stay fatal rather than becoming outcomes: an out-of-range index
 `s[i]` and a division by zero. They are reached through operator syntax, which
 has nowhere to put a continuation, and — as in Rust, where `v[i]` panics while

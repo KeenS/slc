@@ -137,7 +137,11 @@ and where the two disagree, `DESIGN.md` is right.
   with a lifetime, and the linearity checker does not yet watch it: an
   unclosed handle leaks until the program ends, and only a read after
   `close_file` fails. Watching it means value-linearity for one type —
-  spent exactly once, by `close_file` or by being handed on.
+  spent exactly once, by `close_file` or by being handed on. Until then the
+  idiom is composition at the door: shadow `exit` with
+  `select +i32 { status <= { close_file(handle); status @ exit } }` where the
+  handle comes into scope, and no later path can leave the file open —
+  `examples/file_io.sl` does exactly this.
 
 - **Soundness is enforced by inference, argued informally.** What remains
   short of a proof: no mechanized subject-reduction argument ties the checker
