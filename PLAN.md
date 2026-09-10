@@ -50,80 +50,18 @@ machine the redesign already built.
   acceptable unless renamed separately.
 - **`Result` and `Option` in the prelude.** Removed: error handling is
   continuation-based, so neither is canonical any more.
+- **Static dictionary passing for traits.** Traits are implemented by
+  dynamic dispatch on the argument's runtime type, checked total, rather than
+  the static dictionary passing the plan first sketched: threading dictionaries
+  through the unifier was too large a change to land safely, and runtime
+  dispatch makes generic impls fall out for free. The zero-cost monomorphic
+  version, and trait objects (`dyn`, the existential package), remain open.
 - **The interaction-net backend.** An unwired experiment: `slc-core::net`
   and its bridge were reachable only from their own tests, never from the
   pipeline. Removed as dead code; git history has it, and an abstract
   machine (see the continuations limit) is the likelier evaluator future.
 
 ## Next
-
-- **Ad-hoc polymorphism: traits, by dictionary passing.** Rust-shaped
-  `trait`/`impl` with bounds `<T: Show>`, elaborated the way modules are —
-  traits exist only to a pass that rewrites them away, leaving the checker,
-  lowering, and machine on constructs they already have.
-
-  *The idea.* A dictionary is a struct — a positive product — of a trait's
-  method values, and a bound `T: Show` is an implicit value parameter of that
-  struct type. A monomorphic call supplies a concrete dictionary; a bounded
-  generic forwards its parameter; a generic impl (`impl<T: Show> Show for
-  List<T>`) is a dictionary-*building* function, resolved recursively. Since a
-  dictionary lowers to a tensor and a method call to a field projection plus
-  application — both already in the language — lowering and the runtime need
-  no change.
-
-  *Surface.* `trait`, `impl … for …`, `Self`, and bounds on declaration type
-  parameters. A method is a free function, called `show(x)` and overloaded on
-  the argument's type — **never** `x.show()`. This is settled, not a default:
-  Slant has no receiver anywhere (it reads struct fields by `match`, not
-  `x.field`), and a method is only a function whose meaning depends on an
-  argument's type, so it should look like the function it is. `.` stays out
-  of the value language entirely.
-
-  *Where the work is — the checker.* Unlike module resolution, this cannot
-  run before checking: the impl to pass is chosen from a type, so it is
-  type-directed elaboration. Inference threads a constraint set; a bounded
-  generic instantiated at a ground type discharges its constraint against a
-  coherence-checked impl table (one impl per trait-and-head-type, trivial
-  orphan rules while single-file); a constraint on a still-unknown variable
-  propagates to the enclosing declaration's bounds or errors at a monomorphic
-  site. Elaboration then inserts dictionary parameters, arguments, and
-  projections. Soundness holds to the same informal standard: a dictionary is
-  a value, so passing one runs nothing and the value restriction is
-  untouched; coherence makes the checker's chosen impl the one that runs.
-
-  *Continuations and linearity.* A method may be negative — a `command` or a
-  `fn … <- …` that takes continuations — with no new machinery: a dictionary
-  holds method *values*, and a negative function is a closure like any other,
-  so a `Parse`- or `Emit`-style trait whose methods talk to continuations
-  just works. The one real constraint is linearity. A bounded generic may
-  call a method any number of times or none, so a dictionary must be
-  duplicable: it is an **exponential**, `!Show<T>` — the linear-logic reading
-  of a type class — and rides the value group as an unrestricted parameter
-  (`Type::Bang`, and the checker's `is_unrestricted`, both already exist). A
-  method's *continuation arguments* stay linear per call; the dictionary that
-  supplies the method does not. And because impls are resolved globally and
-  coherently, the dictionary a captured continuation closes over is fixed:
-  reinstating that continuation re-uses the same impl, so there is none of the
-  dynamic-scope hazard that implicit or dynamically-scoped instances would
-  carry across a jump. Bounds are on positive type variables only in v1;
-  bounding a negative variable — a trait describing what a *provider* of
-  codata must offer — is the dual and is deferred with the rest.
-
-  *Staging.* (1) syntax + AST; (2) impl table + coherence; (3) constraints in
-  inference with ground resolution; (4) elaboration to dictionary structs,
-  params, and projections; (5) generic impls, resolved recursively; (6)
-  method-name overload resolution; (7) a `Show`-and-`List` example plus
-  must-reject tests for a missing impl and overlapping impls.
-
-  *Deliberately deferred.* Associated types, default methods, supertraits
-  (beyond a trivial `trait Ord: Eq`), and — notably — trait objects: `dyn
-  Trait` is the existential package `∃T. (↓T ⊗ Show<T>)`, so it waits on the
-  `∀`/`∃` quantifiers already sketched in the shifts discussion. Traits give
-  the constraint machinery; the quantifiers give it a first-class dynamic
-  form. Further out, the dual of a trait is an **effect**: a dictionary of
-  functions a value *provides* becomes a dictionary of continuations a
-  computation *demands* — algebraic effects and handlers as the negative
-  mirror of type classes, on the same dictionary machinery.
 
 - **Algebraic effects and handlers: the negative dual of traits.** A trait
   hands a computation a dictionary of functions a value *provides*, resolved

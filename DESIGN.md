@@ -478,6 +478,33 @@ of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
 
+### Traits
+
+A `trait` names operations over an implicit `Self`; an `impl` gives them for a
+type; a bound `<T: Show>` lets a generic use them. A method is a free function
+overloaded on its first argument's type — `show(x)`, never `x.show()`:
+
+```sl
+trait Show { fn show(self: +Self) -> String; }
+impl Show for i64  { fn show(self: +i64)  -> String { int_to_str(self) } }
+impl Show for bool { fn show(self: +bool) -> String { if self { "t" } else { "f" } } }
+
+fn labelled<T: Show>(x: +T) -> String { "= " + show(x) }
+```
+
+Dispatch is on the runtime type of the argument, and the checker makes the
+dispatch total: coherence allows one `impl` per trait and type, and a method
+call is accepted only when the type has an impl — a ground type directly, a
+bounded type parameter through its bound, and an unbounded one not at all.
+Because dispatch is on the value that actually arrives, a generic `impl` needs
+no machinery: `impl Show for [T]` may `show` each element, each resolved at
+its own type.
+
+A method may be a `command`, taking continuations like any other; the
+dispatch is unchanged. Method names are unique across traits in v1, bounds are
+on positive type parameters, and associated types, default methods, and
+supertraits are not yet provided.
+
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —
