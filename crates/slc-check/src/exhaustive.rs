@@ -6,11 +6,7 @@ use slc_syntax::ast::{Decl, Expr, MatchArm, Named, Node, Pattern, Program};
 use slc_syntax::token::Span;
 use std::collections::HashSet;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
-    pub message: String,
-    pub span: Span,
-}
+pub use crate::Diagnostic;
 
 /// Check all match expressions in a program for exhaustiveness.
 pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {

@@ -6,11 +6,7 @@ use slc_syntax::ast::{Decl, Expr, FunctionPolarity, Node, Param, Program, TypeEx
 use slc_syntax::lower::LowerError;
 use slc_syntax::lower::lower_type;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
-    pub message: String,
-    pub span: slc_syntax::token::Span,
-}
+pub use crate::Diagnostic;
 
 #[derive(Debug)]
 pub enum CheckError {

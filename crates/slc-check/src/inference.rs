@@ -13,11 +13,7 @@ use slc_syntax::lower::{LowerError, lower_type};
 use slc_syntax::token::Span;
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
-    pub message: String,
-    pub span: Span,
-}
+pub use crate::Diagnostic;
 
 #[derive(Debug)]
 pub enum InferenceError {

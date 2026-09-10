@@ -5,11 +5,7 @@ use slc_syntax::ast::{Decl, Expr, Node, Program};
 use slc_syntax::token::Span;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
-    pub message: String,
-    pub span: Span,
-}
+pub use crate::Diagnostic;
 
 /// Continue checking after `if` without an `else`: a linear continuation
 /// that is used only in the taken branch is left dangling when control
