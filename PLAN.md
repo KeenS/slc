@@ -1,20 +1,24 @@
-# Slant Redesign Plan: λ̄μμ̃ and Additive/Multiplicative Duals
+# Slant: the standing plan
 
-## Goal
+Slant is a Rust-flavoured surface over a classical λ̄μμ̃ core. The redesign
+that established it is finished and recorded in `docs/HISTORY.md`; the
+language itself is defined in `DESIGN.md`. This file is neither — it holds
+only what is still open: the known limits, the deliberate deferrals, and the
+work queued next.
 
-Realign Slant with the classical lambda-bar-mu-mu-tilde calculus (λ̄μμ̃),
-preserve a Rust-like surface, and make the syntax symmetric without pretending
-that a Rust-like surface can itself be literally symmetric.
+The contract that keeps it short: a decision, once made, goes to `DESIGN.md`
+and leaves this file. The plan is where work stops being open, not where it
+is remembered — so an entry here is a promise still outstanding, and nothing
+else belongs.
 
 ## Status
 
-The redesign is finished, and the acceptance suite is green.
-
-`DESIGN.md` is the language reference, and `docs/HISTORY.md` is the record of
-what the redesign settled. This file holds only what is still open: known
-limits, deliberate deferrals, and the work queued next. A decision, once
-made, goes to `DESIGN.md`; this file is where it stops being open, not where
-it is remembered.
+The language is complete and the acceptance suite is green. Two substantial
+features are planned and specified below; both build on machinery already in
+place, and they are ordered — traits first, effects second — because the
+constraint handling traits introduce is the positive half of what effects
+then mirror, and effects additionally reuse the resumable-continuation
+machine the redesign already built.
 
 ## Known limits
 
@@ -33,7 +37,6 @@ it is remembered.
   to the reduction rules, comparing two values nothing else constrains stays
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
-
 
 ## Deferred, with no accepted replacement
 
