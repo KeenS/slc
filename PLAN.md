@@ -121,15 +121,15 @@ and where the two disagree, `DESIGN.md` is right.
 
 ## Known limits
 
-- **The checker is a bug-catcher, not a soundness proof.** Well-typed programs
-  can still fail in the evaluator, which is the actual safety net: unknown
-  types (`Type::One`) fit everything in both directions, unannotated lambda
-  results flow as unknown, and there is no subject-reduction argument tying
-  the checker's judgments to the reduction rules. Closing this means one
-  typed account of the core that both the checker and the evaluator answer
-  to. Recently closed instances: bodies are now checked against declared
-  return types, type parameters are rigid inside their bodies, and value
-  arguments are checked at calls.
+- **Soundness is enforced by inference, argued informally.** The checker
+  runs on unification: everything it cannot read off an annotation is a
+  variable solved by use — an unannotated binder, a closure's parameter, a
+  generic instantiated afresh at each call, a list's element type — and
+  nothing fits everything (`1` is the unit type and only that). What remains
+  short of a proof: there is no mechanized subject-reduction argument tying
+  the checker to the reduction rules, comparing two values nothing else
+  constrains stays unchecked, type variables carry no polarity kind, and the
+  untyped evaluator remains the backstop for whatever that gap hides.
 
 - **Captured continuations escape rather than resume.** The evaluator unwinds
   to the `mu` that captured a continuation, so one used after its `mu` has

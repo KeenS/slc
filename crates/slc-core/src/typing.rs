@@ -87,6 +87,10 @@ impl std::fmt::Display for TypeError {
 /// A unification state for type variables.
 #[derive(Debug, Clone, Default)]
 pub struct Unification {
+    /// Rigid variables: type parameters seen from inside their own body.
+    /// They bind nothing and nothing binds them — `T` is whatever the caller
+    /// chose, not a type the body may pick.
+    rigid: std::collections::HashSet<usize>,
     substitutions: HashMap<usize, Type>,
     next_var: usize,
 }
@@ -99,6 +103,14 @@ impl Unification {
     pub fn fresh_var(&mut self) -> Type {
         let v = self.next_var;
         self.next_var += 1;
+        Type::Var(v)
+    }
+
+    /// A rigid variable: a type parameter, seen from inside its own body.
+    pub fn fresh_rigid(&mut self) -> Type {
+        let v = self.next_var;
+        self.next_var += 1;
+        self.rigid.insert(v);
         Type::Var(v)
     }
 
@@ -115,6 +127,8 @@ impl Unification {
             Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Bang(t) => Type::Bang(Box::new(self.apply(t))),
             Type::List(t) => Type::List(Box::new(self.apply(t))),
+            Type::Down(t) => Type::Down(Box::new(self.apply(t))),
+            Type::Up(t) => Type::Up(Box::new(self.apply(t))),
             atom => atom.clone(),
         }
     }
@@ -127,7 +141,9 @@ impl Unification {
             Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
                 self.occurs(var, a) || self.occurs(var, b)
             }
-            Type::Dual(t) | Type::Bang(t) | Type::List(t) => self.occurs(var, t),
+            Type::Dual(t) | Type::Bang(t) | Type::List(t) | Type::Down(t) | Type::Up(t) => {
+                self.occurs(var, t)
+            }
             _ => false,
         }
     }
@@ -145,15 +161,29 @@ impl Unification {
         let actual = self.apply(actual);
         match (&expected, &actual) {
             (Type::Var(a), Type::Var(b)) if a == b => Ok(expected),
-            (Type::Var(a), _) => {
+            (Type::Var(a), _) if !self.rigid.contains(a) => {
                 self.bind(*a, actual.clone())?;
                 Ok(expected)
             }
-            (_, Type::Var(b)) => {
+            (_, Type::Var(b)) if !self.rigid.contains(b) => {
                 self.bind(*b, expected.clone())?;
                 Ok(actual)
             }
+            // A rigid variable stands for a type the caller chose; only
+            // itself (handled above) or a flexible variable (handled above,
+            // by binding the flexible one) can meet it.
+            (Type::Var(_), _) | (_, Type::Var(_)) => {
+                Err(TypeError::Mismatch { expected: expected.clone(), actual: actual.clone() })
+            }
             (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
+            // `dual` is semantic, not structural: `dual(X)` meets `B` when
+            // `X` meets `dual(B)`.
+            (Type::Dual(inner), other) | (other, Type::Dual(inner)) => {
+                self.unify(inner, &other.dual())?;
+                Ok(self.apply(&expected))
+            }
+            (Type::Down(a), Type::Down(b)) => Ok(Type::Down(Box::new(self.unify(a, b)?))),
+            (Type::Up(a), Type::Up(b)) => Ok(Type::Up(Box::new(self.unify(a, b)?))),
             (Type::Bang(a), Type::Bang(b)) => self.unify(a, b),
             (Type::List(a), Type::List(b)) => self.unify(a, b),
             (Type::Tensor(a1, a2), Type::Tensor(b1, b2))
@@ -202,12 +232,13 @@ impl Unification {
     }
 }
 
-fn contains_var(ty: &Type) -> bool {
+pub fn contains_var(ty: &Type) -> bool {
     match ty {
         Type::Var(_) => true,
         Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
             contains_var(a) || contains_var(b)
         }
+        Type::Down(t) | Type::Up(t) => contains_var(t),
         Type::Dual(t) | Type::Bang(t) | Type::List(t) => contains_var(t),
         _ => false,
     }
@@ -559,9 +590,9 @@ mod tests {
         let expected = Type::arrow(a.clone(), Type::Pos(Base::I32));
         let actual = Type::arrow(Type::Pos(Base::Bool), Type::Pos(Base::I32));
         u.unify(&expected, &actual).unwrap();
-        // `A → B` is `-A ⅋ B`, so a variable in argument position stands for
-        // the dualized argument.
-        assert_eq!(u.apply(&a), Type::Neg(Base::Bool));
+        // `A → B` is `-A ⅋ B`, and `dual` is semantic: the wrapped variable
+        // meets `-bool` by becoming `+bool` — the argument itself.
+        assert_eq!(u.apply(&a), Type::Pos(Base::Bool));
     }
 
     #[test]

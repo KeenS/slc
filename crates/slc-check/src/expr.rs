@@ -7,6 +7,7 @@
 //! mistakes that used to appear only at runtime.
 
 use slc_core::types::{Base, Type};
+use slc_core::typing::{Unification, contains_var};
 use slc_syntax::ast::{Decl, Expr, Named, Node, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
@@ -20,8 +21,8 @@ pub struct Diagnostic {
 
 pub fn check_program(p: &Program) -> Result<(), Vec<Diagnostic>> {
     let constants = constant_types(p);
-    let functions = function_types(p);
     let enums = enum_types(p);
+    let functions = function_types(p, &enums);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions);
     for d in &p.decls {
@@ -137,6 +138,10 @@ struct Env<'a> {
     constants: &'a HashMap<String, Type>,
     functions: &'a HashMap<String, FunctionSignature>,
     locals: Vec<HashMap<String, Type>>,
+    /// The program-wide unification state. Everything the checker cannot
+    /// read off an annotation is a variable here, solved by use — never a
+    /// wildcard that fits anything.
+    uni: Unification,
     /// The type the enclosing negative `fn` consumes — what follows its
     /// `<-`. A `select` in its body is the consumer of exactly that, so a
     /// `select` there need not repeat it.
@@ -148,7 +153,7 @@ impl<'a> Env<'a> {
         constants: &'a HashMap<String, Type>,
         functions: &'a HashMap<String, FunctionSignature>,
     ) -> Self {
-        Self { constants, functions, locals: Vec::new(), consumed: None }
+        Self { constants, functions, locals: Vec::new(), uni: Unification::new(), consumed: None }
     }
 
     fn push(&mut self) {
@@ -244,7 +249,12 @@ fn builtin_functions() -> Vec<Builtin> {
     let string = Type::Pos(Str);
     let bool_ = Type::Pos(Bool);
     let char_ = Type::Pos(Char);
-    let unknown = Type::One;
+    // Template variables: instantiated afresh at every call, so `same`
+    // relates two slots of one call and promises nothing across calls.
+    let same = Type::Var(0);
+    let element = Type::Var(0);
+    let key = Type::Var(1);
+    let value = Type::Var(2);
 
     // An ordinary function: every parameter is a value.
     let function = |name, params: Vec<Type>, result| Builtin {
@@ -270,12 +280,12 @@ fn builtin_functions() -> Vec<Builtin> {
         function("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("div", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("rem", vec![i64.clone(), i64.clone()], Some(i64.clone())),
-        function("eq", vec![Type::One, Type::One], Some(bool_.clone())),
-        function("ne", vec![Type::One, Type::One], Some(bool_.clone())),
-        function("lt", vec![Type::One, Type::One], Some(bool_.clone())),
-        function("gt", vec![Type::One, Type::One], Some(bool_.clone())),
-        function("le", vec![Type::One, Type::One], Some(bool_.clone())),
-        function("ge", vec![Type::One, Type::One], Some(bool_.clone())),
+        function("eq", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("ne", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("lt", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("gt", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("le", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("ge", vec![same.clone(), same.clone()], Some(bool_.clone())),
         function("str_len", vec![string.clone()], Some(i64.clone())),
         function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
         function("int_to_str", vec![i64.clone()], Some(string.clone())),
@@ -286,12 +296,12 @@ fn builtin_functions() -> Vec<Builtin> {
         function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
         function("file_exists", vec![string.clone()], Some(bool_.clone())),
-        function("list_new", vec![], Some(Type::List(Box::new(i64.clone())))),
-        function("list_len", vec![unknown.clone()], Some(i64.clone())),
+        function("list_new", vec![], Some(Type::List(Box::new(element.clone())))),
+        function("list_len", vec![Type::List(Box::new(element.clone()))], Some(i64.clone())),
         function(
             "list_push",
-            vec![Type::List(Box::new(i64.clone())), i64.clone()],
-            Some(Type::List(Box::new(i64.clone()))),
+            vec![Type::List(Box::new(element.clone())), element.clone()],
+            Some(Type::List(Box::new(element.clone()))),
         ),
         // Parsing, input/output, and lookup can fail or find nothing, so they
         // offer their outcomes to continuations.
@@ -309,21 +319,44 @@ fn builtin_functions() -> Vec<Builtin> {
         offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
         offers(
             "list_get",
-            vec![unknown.clone(), i64.clone()],
-            vec![unknown.clone(), Type::Neg(Str)],
+            vec![Type::List(Box::new(element.clone())), i64.clone()],
+            vec![Type::Dual(Box::new(element.clone())), Type::Neg(Str)],
         ),
-        offers("map_get", vec![unknown.clone(), unknown.clone()], vec![unknown, Type::Neg(Str)]),
+        offers(
+            "map_get",
+            vec![Type::Var(3), key],
+            vec![Type::Dual(Box::new(value)), Type::Neg(Str)],
+        ),
         offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
     ]
 }
 
-/// A declaration's parameter type. Declarations are interfaces, so one is
-/// always written; anything else is unknown to the caller.
-fn declared_type(p: &slc_syntax::ast::Param) -> Type {
-    p.ty.as_ref().and_then(|ty| lower_type(ty).ok()).unwrap_or(Type::One)
+/// A written type as a signature sees it: declaration names resolved, and a
+/// generic name a template variable, instantiated afresh at every call. A
+/// type that resolves to nothing gets its own template variable — unknown to
+/// the caller, but one thing, not anything.
+fn signature_type(
+    ty: Option<&TypeExpr>,
+    generics: &[String],
+    enums: &Declarations,
+    next_template: &mut usize,
+) -> Type {
+    let generic = |written: &TypeExpr| match written {
+        TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) => match &inner.kind {
+            TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
+            _ => None,
+        },
+        _ => None,
+    };
+    ty.and_then(|ty| generic(ty).or_else(|| enums.resolve(ty))).unwrap_or_else(|| {
+        let v = Type::Var(generics.len() + *next_template);
+        *next_template += 1;
+        v
+    })
 }
 
-fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
+fn function_types(p: &Program, enums: &Declarations) -> HashMap<String, FunctionSignature> {
     let mut out = builtin_functions()
         .into_iter()
         .map(|builtin| {
@@ -338,41 +371,46 @@ fn function_types(p: &Program) -> HashMap<String, FunctionSignature> {
         })
         .collect::<HashMap<_, _>>();
     for d in &p.decls {
-        let signature = match &d.kind {
-            Decl::Fn { name, params, return_type, polarity, .. } => {
+        match &d.kind {
+            Decl::Fn { name, params, return_type, polarity, type_params, .. } => {
+                let mut next_template = 0;
+                let resolved: Vec<Type> = params
+                    .iter()
+                    .map(|p| signature_type(p.ty.as_ref(), type_params, enums, &mut next_template))
+                    .collect();
                 // A negative function produces the *consumer* of the type
                 // written after `<-`.
-                let result = return_type.as_ref().and_then(|ty| lower_type(ty).ok()).map(|ty| {
-                    if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
-                        ty.dual()
-                    } else {
-                        ty
-                    }
-                });
-                Some((name, params, result))
+                let result =
+                    signature_type(return_type.as_ref(), type_params, enums, &mut next_template);
+                let result = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
+                    result.dual()
+                } else {
+                    result
+                };
+                out.insert(
+                    name.clone(),
+                    FunctionSignature {
+                        params: resolved,
+                        continuations: params.iter().map(|p| p.is_continuation).collect(),
+                        result: Some(result),
+                    },
+                );
             }
             Decl::Command { name, value_params, continuation_params, .. } => {
+                let mut next_template = 0;
                 let declared: Vec<_> =
                     value_params.iter().chain(continuation_params.iter()).collect();
-                let params = declared.iter().map(|p| declared_type(p)).collect();
+                let params = declared
+                    .iter()
+                    .map(|p| signature_type(p.ty.as_ref(), &[], enums, &mut next_template))
+                    .collect();
                 let continuations = declared.iter().map(|p| p.is_continuation).collect();
                 out.insert(
                     name.clone(),
                     FunctionSignature { params, continuations, result: Some(Type::Bottom) },
                 );
-                continue;
             }
-            _ => None,
-        };
-        if let Some((name, params, result)) = signature {
-            out.insert(
-                name.clone(),
-                FunctionSignature {
-                    params: params.iter().map(declared_type).collect(),
-                    continuations: params.iter().map(|p| p.is_continuation).collect(),
-                    result,
-                },
-            );
+            _ => {}
         }
     }
     out
@@ -405,8 +443,9 @@ fn infer_param_type(
         && let Some(slot) =
             args.iter().position(|a| matches!(&a.kind, Expr::Ident(x) if x == name))
         && let Some(ty) = env.functions.get(function).and_then(|s| s.params.get(slot)).cloned()
-        // `Type::One` is what an untyped slot carries; it says nothing.
-        && ty != Type::One
+        // A template variable in a signature is per-call; it says nothing
+        // about this parameter.
+        && !contains_var(&ty)
     {
         return Some(ty);
     }
@@ -426,12 +465,12 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             env.push();
             // A type parameter is rigid inside the body: `T` is some type the
             // caller chose, not a licence to treat the value as any type.
+            let rigid_vars: HashMap<&str, Type> =
+                type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
             let rigid = |ty: &TypeExpr| match ty {
-                TypeExpr::Base(written) => type_params
-                    .iter()
-                    .position(|tp| tp == written)
-                    .map(Type::Var)
-                    .or_else(|| enums.resolve(ty)),
+                TypeExpr::Base(written) => {
+                    rigid_vars.get(written.as_str()).cloned().or_else(|| enums.resolve(ty))
+                }
                 other => enums.resolve(other),
             };
             for p in params {
@@ -458,7 +497,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             };
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
                 && actual != &Type::Bottom
-                && !fits(promised, actual, tail_expr(&body.kind))
+                && !fits(env, promised, actual, tail_expr(&body.kind))
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -683,15 +722,16 @@ fn tail_expr(e: &Expr) -> &Expr {
     }
 }
 
-fn fits(expected: &Type, actual: &Type, expr: &Expr) -> bool {
-    if expected == actual || expected == &Type::One || actual == &Type::One {
-        return true;
-    }
+fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     // A value that never arrives constrains nothing.
     if actual == &Type::Bottom {
         return true;
     }
-    is_integer_literal(expr) && is_numeric(expected) && is_numeric(actual)
+    if env.uni.unify(expected, actual).is_ok() {
+        return true;
+    }
+    // An integer literal takes the width its port requires.
+    is_integer_literal(expr) && is_numeric(&env.uni.apply(expected)) && is_numeric(actual)
 }
 
 fn is_integer_literal(expr: &Expr) -> bool {
@@ -709,6 +749,42 @@ fn is_numeric(ty: &Type) -> bool {
 fn is_comparable(ty: &Type) -> bool {
     is_numeric(ty)
         || matches!(ty, Type::Pos(Base::Char) | Type::Pos(Base::Str) | Type::Pos(Base::Bool))
+}
+
+/// A signature's template variables are instantiated afresh at each call:
+/// one template maps to one fresh variable within the call, and calls never
+/// share them.
+fn instantiate(signature: &FunctionSignature, uni: &mut Unification) -> FunctionSignature {
+    let mut seen: HashMap<usize, Type> = HashMap::new();
+    FunctionSignature {
+        params: signature.params.iter().map(|ty| freshen(ty, &mut seen, uni)).collect(),
+        continuations: signature.continuations.clone(),
+        result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
+    }
+}
+
+fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) -> Type {
+    match ty {
+        Type::Var(v) => seen.entry(*v).or_insert_with(|| uni.fresh_var()).clone(),
+        Type::Tensor(a, b) => {
+            Type::Tensor(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Par(a, b) => {
+            Type::Par(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::With(a, b) => {
+            Type::With(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Sum(a, b) => {
+            Type::Sum(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
+        Type::Bang(t) => Type::Bang(Box::new(freshen(t, seen, uni))),
+        Type::List(t) => Type::List(Box::new(freshen(t, seen, uni))),
+        Type::Down(t) => Type::Down(Box::new(freshen(t, seen, uni))),
+        Type::Up(t) => Type::Up(Box::new(freshen(t, seen, uni))),
+        atom => atom.clone(),
+    }
 }
 
 /// A declaration's continuation row is positional and invariant: the
@@ -740,6 +816,10 @@ fn check_call_arguments(
         return;
     }
     for (index, arg) in args.iter().enumerate() {
+        // Every argument is checked, whether or not the signature has a slot
+        // for it — `println` takes anything, and what it takes may itself be
+        // a call.
+        let actual = check_expr(arg, enums, env, diags);
         let in_row = signature.continuations.get(index) == Some(&true);
         if !in_row && is_builtin(name) {
             continue;
@@ -747,13 +827,14 @@ fn check_call_arguments(
         let Some(expected) = signature.params.get(index) else {
             continue;
         };
-        let Some(actual) = check_expr(arg, enums, env, diags) else {
+        let Some(actual) = actual else {
             continue;
         };
         // `Type::One` is this checker's "not determined" placeholder — an
         // unannotated `let` binding, for instance. A mismatch is only
         // reported for an argument whose type is actually known.
-        if !fits(expected, &actual, &arg.kind) {
+        if !fits(env, expected, &actual, &arg.kind) {
+            let expected = &env.uni.apply(expected);
             let message = if in_row {
                 format!(
                     "continuation row mismatch: argument {} of `{name}` has type {actual}; \
@@ -783,9 +864,9 @@ fn check_let_binding(
     diags: &mut Vec<Diagnostic>,
 ) -> Type {
     let actual = check_expr(value, enums, env, diags);
-    let annotation = ty.as_ref().and_then(|ty| lower_type(ty).ok());
+    let annotation = ty.as_ref().and_then(|ty| enums.resolve(ty));
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
-        && !fits(annotation, &actual, &value.kind)
+        && !fits(env, annotation, &actual, &value.kind)
     {
         diags.push(Diagnostic {
             message: format!(
@@ -794,7 +875,9 @@ fn check_let_binding(
             span: value.span,
         });
     }
-    annotation.or(actual).unwrap_or(Type::One)
+    // A binder the checker cannot type is a variable its uses will solve,
+    // never a wildcard.
+    annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var())
 }
 
 /// Bind an arm's components and check that its pattern is a shape of the type
@@ -910,7 +993,20 @@ fn infer_expr(
     check_expr(e, enums, env, diags)
 }
 
+/// Check an expression and give back its type, solved as far as unification
+/// currently knows — a caller never sees a variable that already has an
+/// answer.
 fn check_expr(
+    e: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let found = check_expr_unapplied(e, enums, env, diags);
+    found.map(|ty| env.uni.apply(&ty))
+}
+
+fn check_expr_unapplied(
     e: &Node<Expr>,
     enums: &Declarations,
     env: &mut Env,
@@ -950,16 +1046,19 @@ fn check_expr(
         }
         Expr::Lambda { param, param_type, body, .. } => {
             env.push();
-            let param_ty = param_type.as_ref().and_then(|ty| enums.resolve(ty));
-            if let Some(ty) = param_ty.clone() {
-                env.define(param, ty);
-            }
+            let param_ty = param_type
+                .as_ref()
+                .and_then(|ty| enums.resolve(ty))
+                .or_else(|| infer_param_type(param, body, enums, env))
+                .unwrap_or_else(|| env.uni.fresh_var());
+            env.define(param, param_ty.clone());
             let result = check_expr(body, enums, env, diags);
             env.pop();
             // A lambda is a function value, and its result is what the body
             // produces. A body that ends in a cut produces nothing, and
             // `A → ⊥` is `-A`, so such a lambda simply *is* a consumer.
-            Some(Type::arrow(param_ty.unwrap_or(Type::One), result.unwrap_or(Type::One)))
+            let result = result.unwrap_or_else(|| env.uni.fresh_var());
+            Some(Type::arrow(param_ty, result))
         }
         Expr::Call { callee, args } => {
             // A variant applied to its payload is a value, not a call.
@@ -982,7 +1081,7 @@ fn check_expr(
                 }
                 for (arg, expected) in args.iter().zip(payload.iter()) {
                     if let Some(actual) = check_expr(arg, enums, env, diags)
-                        && !fits(expected, &actual, &arg.kind)
+                        && !fits(env, expected, &actual, &arg.kind)
                     {
                         diags.push(Diagnostic {
                             message: format!(
@@ -1027,13 +1126,11 @@ fn check_expr(
                 }
                 return Some(Type::Bottom);
             }
-            check_expr(callee, enums, env, diags);
-            for arg in args {
-                check_expr(arg, enums, env, diags);
-            }
+            let callee_ty = check_expr(callee, enums, env, diags);
             if let Expr::Ident(name) = &callee.kind
                 && let Some(signature) = env.functions.get(name)
             {
+                let signature = instantiate(signature, &mut env.uni);
                 if is_builtin(name) {
                     for ((arg, param), is_continuation) in
                         args.iter().zip(signature.params.iter()).zip(&signature.continuations)
@@ -1042,8 +1139,9 @@ fn check_expr(
                             continue;
                         }
                         if let Some(actual) = check_expr(arg, enums, env, diags)
-                            && !fits(param, &actual, &arg.kind)
+                            && !fits(env, param, &actual, &arg.kind)
                         {
+                            let param = env.uni.apply(param);
                             diags.push(Diagnostic {
                                 message: format!(
                                     "argument to `{name}` has type {actual}; expected {param}"
@@ -1053,14 +1151,59 @@ fn check_expr(
                         }
                     }
                 }
-                check_call_arguments(name, signature, args, enums, env, diags);
-                return signature.result.clone();
+                check_call_arguments(name, &signature, args, enums, env, diags);
+                return signature.result.map(|ty| env.uni.apply(&ty));
             }
-            None
+            // A local callee: a closure, or a binder whose type its uses
+            // decide. `A → B` is `-A ⅋ B`, so application peels a `⅋`, and
+            // an unknown callee becomes one.
+            let callee_ty = callee_ty.map(|ty| env.uni.apply(&ty));
+            match callee_ty {
+                Some(Type::Par(argument_dual, result)) => {
+                    if let [argument] = args.as_slice()
+                        && let Some(actual) = check_expr(argument, enums, env, diags)
+                        && !fits(env, &argument_dual.dual(), &actual, &argument.kind)
+                    {
+                        let expected = env.uni.apply(&argument_dual.dual());
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "this call's argument has type {actual}; the function takes \
+                                 {expected}"
+                            ),
+                            span: argument.span,
+                        });
+                    }
+                    Some(env.uni.apply(&result))
+                }
+                Some(Type::Var(_)) if args.len() == 1 => {
+                    let actual = check_expr(&args[0], enums, env, diags)
+                        .unwrap_or_else(|| env.uni.fresh_var());
+                    let result = env.uni.fresh_var();
+                    let callee_ty = callee_ty.unwrap();
+                    if env.uni.unify(&callee_ty, &Type::arrow(actual, result.clone())).is_err() {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "this callee has type {}, which is not a function",
+                                env.uni.apply(&callee_ty)
+                            ),
+                            span: callee.span,
+                        });
+                        return None;
+                    }
+                    Some(env.uni.apply(&result))
+                }
+                _ => {
+                    for arg in args {
+                        check_expr(arg, enums, env, diags);
+                    }
+                    None
+                }
+            }
         }
         Expr::If { cond, then, otherwise } => {
             let cond_ty = check_expr(cond, enums, env, diags);
-            if cond_ty != Some(Type::Pos(Base::Bool)) {
+            if !cond_ty.as_ref().is_some_and(|ty| fits(env, &Type::Pos(Base::Bool), ty, &cond.kind))
+            {
                 diags.push(Diagnostic {
                     message: format!(
                         "`if` condition has type {}; expected +bool",
@@ -1079,7 +1222,9 @@ fn check_expr(
             match (then_ty, else_ty) {
                 (Some(Type::Bottom), other) | (other, Some(Type::Bottom)) => other,
                 (Some(then_ty), Some(else_ty)) => {
-                    if then_ty != else_ty {
+                    if env.uni.unify(&then_ty, &else_ty).is_err() {
+                        let then_ty = env.uni.apply(&then_ty);
+                        let else_ty = env.uni.apply(&else_ty);
                         diags.push(Diagnostic {
                             message: format!(
                                 "`if` branches have incompatible types {then_ty} and {else_ty}"
@@ -1106,7 +1251,10 @@ fn check_expr(
             match op {
                 slc_syntax::ast::BinOp::And | slc_syntax::ast::BinOp::Or => {
                     for (operand, ty) in [(lhs, lhs_ty.clone()), (rhs, rhs_ty.clone())] {
-                        if ty != Some(Type::Pos(Base::Bool)) {
+                        if !ty
+                            .as_ref()
+                            .is_some_and(|ty| fits(env, &Type::Pos(Base::Bool), ty, &operand.kind))
+                        {
                             diags.push(Diagnostic {
                                 message: format!(
                                     "boolean operand has type {}; expected +bool",
@@ -1124,18 +1272,26 @@ fn check_expr(
                 | slc_syntax::ast::BinOp::Div
                 | slc_syntax::ast::BinOp::Mod => {
                     if let (Some(lhs_ty), Some(rhs_ty)) = (lhs_ty.clone(), rhs_ty.clone()) {
-                        let string_add = matches!(
-                            (op, lhs_ty.clone(), rhs_ty.clone()),
-                            (
-                                slc_syntax::ast::BinOp::Add,
-                                Type::Pos(Base::Str),
-                                Type::Pos(Base::Str)
-                            )
-                        );
+                        // The operands agree — an integer literal adapting
+                        // to the other side's width.
+                        let agree = fits(env, &lhs_ty, &rhs_ty, &rhs.kind)
+                            || fits(env, &rhs_ty, &lhs_ty, &lhs.kind);
+                        let mut joined = env.uni.apply(&lhs_ty);
+                        // An operand nothing constrains is the default
+                        // integer, exactly as a bare literal is.
+                        if agree && matches!(joined, Type::Var(_)) {
+                            let _ = env.uni.unify(&joined, &Type::Pos(Base::I64));
+                            joined = env.uni.apply(&joined);
+                        }
+                        let string_add = agree
+                            && matches!(op, slc_syntax::ast::BinOp::Add)
+                            && joined == Type::Pos(Base::Str);
                         if string_add {
                             return Some(Type::Pos(Base::Str));
                         }
-                        if lhs_ty != rhs_ty || !is_numeric(&lhs_ty) || !is_numeric(&rhs_ty) {
+                        if !agree || !is_numeric(&joined) {
+                            let lhs_ty = env.uni.apply(&lhs_ty);
+                            let rhs_ty = env.uni.apply(&rhs_ty);
                             diags.push(Diagnostic {
                                 message: format!(
                                     "arithmetic operands have types {lhs_ty} and {rhs_ty}"
@@ -1143,6 +1299,7 @@ fn check_expr(
                                 span: e.span,
                             });
                         }
+                        return Some(joined);
                     }
                     lhs_ty.or(rhs_ty)
                 }
@@ -1153,8 +1310,15 @@ fn check_expr(
                 | slc_syntax::ast::BinOp::Le
                 | slc_syntax::ast::BinOp::Ge => {
                     if let (Some(lhs_ty), Some(rhs_ty)) = (lhs_ty, rhs_ty)
-                        && (lhs_ty != rhs_ty || !is_comparable(&lhs_ty) || !is_comparable(&rhs_ty))
+                        && !{
+                            let agree = fits(env, &lhs_ty, &rhs_ty, &rhs.kind)
+                                || fits(env, &rhs_ty, &lhs_ty, &lhs.kind);
+                            let joined = env.uni.apply(&lhs_ty);
+                            agree && (matches!(joined, Type::Var(_)) || is_comparable(&joined))
+                        }
                     {
+                        let lhs_ty = env.uni.apply(&lhs_ty);
+                        let rhs_ty = env.uni.apply(&rhs_ty);
                         diags.push(Diagnostic {
                             message: format!(
                                 "comparison operands have types {lhs_ty} and {rhs_ty}"
@@ -1308,7 +1472,7 @@ fn check_expr(
                 let actual = check_expr(value, enums, env, diags);
                 if let (Some(actual), Some((_, expected))) =
                     (actual, declared.iter().find(|(declared, _)| declared == field))
-                    && !fits(expected, &actual, &value.kind)
+                    && !fits(env, expected, &actual, &value.kind)
                 {
                     diags.push(Diagnostic {
                         message: format!(
@@ -1464,6 +1628,9 @@ fn check_expr(
             // it consumes.
             if let Some(value_ty) = &value_ty
                 && value_ty.is_negative()
+                // An unsolved variable is not yet anything; the duality
+                // check below still constrains it.
+                && !contains_var(value_ty)
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -1475,9 +1642,10 @@ fn check_expr(
                 return Some(Type::Bottom);
             }
             if let (Some(value_ty), Some(consumer_ty)) = (&value_ty, &consumer_ty)
-                && value_ty != &Type::One
-                && consumer_ty != &Type::One
-                && !fits(&consumer_ty.dual(), value_ty, &value.kind)
+                // The ⊥/1 corner: `-⊥` resolves to `1`, so the idiomatic
+                // `() @ k` against it is unit meeting unit.
+                && !(value_ty == &Type::One && consumer_ty == &Type::One)
+                && !fits(env, &consumer_ty.dual(), value_ty, &value.kind)
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -1498,11 +1666,10 @@ fn check_expr(
                     Some(ty) => enums.resolve(ty),
                     // Nothing was written, so the body says it.
                     None => infer_param_type(&p.name, body, enums, env),
-                };
-                if let Some(ty) = ty.clone() {
-                    env.define(&p.name, ty);
                 }
-                captured_types.push(ty);
+                .unwrap_or_else(|| env.uni.fresh_var());
+                env.define(&p.name, ty.clone());
+                captured_types.push(Some(ty));
             }
             let result = check_expr(body, enums, env, diags);
             env.pop();
@@ -2021,6 +2188,93 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn unit_is_a_type_and_not_a_wildcard() {
+        let diags = check(
+            "fn wants(x: +String) -> i64 { 0 }
+             command main | (exit: -i32) { println(wants(())); 0 @ exit }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("has type 1")),
+            "unit fit everything once: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_closure_is_checked_at_its_calls() {
+        // An unannotated binder is a variable its uses solve together, so
+        // two uses cannot disagree.
+        let diags = check(
+            "command main | (exit: -i32) {
+                 let g = fn(x) { x };
+                 println(g(1) + str_len(g(1)));
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("expected +String")),
+            "closure calls went unchecked once: {diags:?}"
+        );
+
+        // The body constrains the parameter, and the call site honors it.
+        let diags = check(
+            "command main | (exit: -i32) {
+                 println(fn(x) { x + 1 }(\"not a number\"));
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the function takes +i64")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_generic_call_is_instantiated_per_call() {
+        // Two calls choose two types.
+        assert!(
+            check(
+                "fn id<T>(x: T) -> T { x }
+                 command main | (exit: -i32) {
+                     println(id(42) + 1);
+                     println(str_len(id(\"each call its own T\")));
+                     0 @ exit
+                 }"
+            )
+            .is_ok()
+        );
+
+        // Within one call, T is one type.
+        let diags = check(
+            "fn id<T>(x: T) -> T { x }
+             command main | (exit: -i32) { println(str_len(id(42))); 0 @ exit }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
+    }
+
+    #[test]
+    fn list_elements_flow_through_the_builtins() {
+        // `list_push(list_new(), 42)` makes a `[+i64]`, and its `list_get`
+        // continuation must consume an element of it.
+        let diags = check(
+            "command main | (exit: -i32) {
+                 let xs = list_push(list_new(), 42);
+                 list_get(
+                     xs,
+                     0,
+                     fn(c: +char) -> ⊥ { println(c); 0 @ exit },
+                     fn(m: +String) -> ⊥ { println(m); 1 @ exit },
+                 )
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("has type -char")),
+            "the element type should reach the row: {diags:?}"
+        );
     }
 
     #[test]

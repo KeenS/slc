@@ -421,7 +421,10 @@ mod tests {
     #[test]
     fn generic_negative_functions_preserve_declared_polarity() {
         let out = infer("fn k<T>(ok: -T) <- T { ok(0) }").unwrap();
-        assert_eq!(out[0].ty, Type::arrow(Type::Var(0).dual(), Type::Var(0)));
+        // A bare generic atom erases its sign (it is polarity-polymorphic),
+        // and the negative declaration produces the consumer of `T` — whose
+        // dual now stays wrapped around the variable instead of collapsing.
+        assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0).dual()));
     }
 
     #[test]

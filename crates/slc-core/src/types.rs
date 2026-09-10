@@ -73,7 +73,10 @@ impl Type {
     /// The dual of a type. An involution: `dual(dual(t)) == t`.
     pub fn dual(&self) -> Type {
         match self {
-            Type::Var(v) => Type::Var(*v),
+            // The dual of an unknown is not itself: `dual(?a)` is the
+            // consumer of whatever `?a` becomes, and stays wrapped until it
+            // is known.
+            Type::Var(v) => Type::Dual(Box::new(Type::Var(*v))),
             Type::Pos(b) => Type::Neg(*b),
             Type::Neg(b) => Type::Pos(*b),
             Type::Tensor(a, b) => Type::Par(Box::new(a.dual()), Box::new(b.dual())),
