@@ -150,6 +150,7 @@ impl Parser {
                             polarity: FunctionPolarity::Positive,
                             params: vec![],
                             return_type: None,
+                            effects: vec![],
                             body: e,
                         },
                     })
@@ -196,6 +197,7 @@ impl Parser {
                         polarity: FunctionPolarity::Positive,
                         params: vec![],
                         return_type: None,
+                        effects: vec![],
                         body: e,
                     },
                 })
@@ -257,12 +259,33 @@ impl Parser {
         Ok(Node { span: t.span, kind: Decl::Enum { name, variants } })
     }
 
+    /// An optional effect row: `/ { E1, E2 }`, or nothing for pure.
+    fn parse_effect_row(&mut self) -> Result<Vec<String>, ParseError> {
+        if !self.eat(&TokenKind::Slash) {
+            return Ok(Vec::new());
+        }
+        self.expect(TokenKind::LBrace, "`{` after `/` in an effect row")?;
+        let mut effects = Vec::new();
+        if self.eat(&TokenKind::RBrace) {
+            return Ok(effects);
+        }
+        loop {
+            effects.push(self.expect_ident("an effect name")?);
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}` after the effect row")?;
+                break;
+            }
+        }
+        Ok(effects)
+    }
+
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
         let params = self.parse_params()?;
         let (polarity, return_type) = self.parse_fn_arrow()?;
+        let effects = self.parse_effect_row()?;
         let params = match polarity {
             FunctionPolarity::Positive => params,
             FunctionPolarity::Negative => params
@@ -276,7 +299,16 @@ impl Parser {
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
-            kind: Decl::Fn { name, type_params, bounds, polarity, params, return_type, body },
+            kind: Decl::Fn {
+                name,
+                type_params,
+                bounds,
+                polarity,
+                params,
+                return_type,
+                effects,
+                body,
+            },
         })
     }
 
@@ -343,6 +375,7 @@ impl Parser {
                 span: t.span,
             });
         }
+        let effects = self.parse_effect_row()?;
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
@@ -353,6 +386,7 @@ impl Parser {
                 value_params,
                 continuation_params,
                 return_type,
+                effects,
                 body,
             },
         })

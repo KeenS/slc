@@ -38,6 +38,10 @@ machine the redesign already built.
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
 
+- **Effect rows are explicit and monomorphic.** A function declares its
+  effects (`/ {E}`) and the checker enforces them, but there is no inference
+  and no row polymorphism, so a higher-order function cannot forward an
+  argument's effects — `map(f, xs)` cannot say it performs whatever `f` does.
 - **Effect handlers are tail-resumptive only.** An operation's continuation
   is reified partly as `Prompt` frames and partly as the `Value::Kont`s the
   μ-based application lowering captures, which escape the handler delimiter.

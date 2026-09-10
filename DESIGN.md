@@ -534,12 +534,21 @@ the operations it *provides*, an effect hands a computation the answers it
 *demands*. A handler is installed dynamically by `handle`; a trait's impl is
 resolved statically.
 
+A function declares the effects it may perform in an **effect row** on its
+arrow — `fn scaled(x: +i64) -> i64 / {Reader}` — and a bare arrow is the
+empty row, a pure function. A function may perform an operation only when its
+effect is in the row; a call propagates the callee's row; and `handle e with
+E` discharges `E`. `main` has the empty row, so a well-typed program performs
+no unhandled operation. (Rows are explicit in v1: no inference, and no row
+polymorphism — a higher-order function cannot yet forward an argument's
+effects.)
+
 A clause may use `resume` at most once and only in tail position. Not
 resuming is an exception; resuming once in tail position is a reader,
 state-passing, and the like. Multi-shot handlers (resuming twice — full
 nondeterminism) are rejected rather than run, because the continuation is
 only partly reified; the checker says so. Operation names are unique across
-effects, and a performed operation with no handler is a runtime error.
+effects.
 
 ### Polymorphism
 

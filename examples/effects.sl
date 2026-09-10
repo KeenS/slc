@@ -19,7 +19,7 @@ effect Exn {
     fn throw(message: +String) -> i64;
 }
 
-fn checked_div(a: +i64, b: +i64) -> i64 {
+fn checked_div(a: +i64, b: +i64) -> i64 / {Exn} {
     if b == 0 {
         throw("division by zero")
     } else {
@@ -33,7 +33,7 @@ effect Reader {
     fn config() -> i64;
 }
 
-fn scaled(x: +i64) -> i64 {
+fn scaled(x: +i64) -> i64 / {Reader} {
     x * config()
 }
 

@@ -105,6 +105,14 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
+    slc_check::effects::check_effects(&program).map_err(|diags| {
+        diags
+            .iter()
+            .map(|d| format!("effect: {} (at {})", d.message, format_span(&source, d.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+
     let defs = slc_syntax::lower::lower_program(&program).map_err(|e| format!("lowering: {e}"))?;
     drop(_compile_guard);
     drop(compile_span);
