@@ -23,13 +23,14 @@ pub fn check_program(p: &Program, traits: &TraitInfo) -> Result<(), Vec<Diagnost
     check_program_resolving(p, traits).map(|_| ())
 }
 
-/// Type-check the program and, on success, return the static-dispatch map:
-/// each trait-method call whose receiver type was concrete, keyed by span
-/// and resolved to its impl. Lowering uses it to call impls directly.
+/// Type-check the program and, on success, return how its trait dispatch
+/// resolves: per method call, a direct impl or a dictionary projection; per
+/// bounded-function call, the dictionaries to pass. Lowering uses this to
+/// compile traits without any runtime method value.
 pub fn check_program_resolving(
     p: &Program,
     traits: &TraitInfo,
-) -> Result<std::collections::HashMap<Span, String>, Vec<Diagnostic>> {
+) -> Result<slc_syntax::lower::DispatchInfo, Vec<Diagnostic>> {
     let constants = constant_types(p);
     let enums = enum_types(p);
     let functions = function_types(p, &enums);
@@ -38,7 +39,7 @@ pub fn check_program_resolving(
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
-    if diags.is_empty() { Ok(std::mem::take(&mut env.resolved)) } else { Err(diags) }
+    if diags.is_empty() { Ok(std::mem::take(&mut env.dispatch)) } else { Err(diags) }
 }
 
 /// The type key a resolved type dispatches on — matching the runtime's key
@@ -65,7 +66,7 @@ fn discharge_bound(
     diags: &mut Vec<Diagnostic>,
 ) {
     if let Type::Var(v) = target {
-        if env.bounds.iter().any(|(bv, bt)| bv == v && bt == trait_name) {
+        if env.bounds.iter().any(|(bv, bt, _)| bv == v && bt == trait_name) {
             return;
         }
         diags.push(Diagnostic {
@@ -124,14 +125,29 @@ fn check_trait_method_call(
     // Discharge `Self: Trait` against what the first argument fixed it to.
     let target = env.uni.apply(&self_ty);
     discharge_bound(&trait_name, &target, method, span, env, diags);
-    // If the receiver type is concrete here, the impl is known: record it so
-    // lowering can dispatch this call directly, with no runtime type-key
-    // lookup. A still-unsolved or rigid `Self` stays a dynamic dispatch.
-    if let Some(key) = type_key(&target)
-        && let Some(mangled) = env.traits.method_impls.get(method).and_then(|m| m.get(&key))
-    {
-        let mangled = mangled.clone();
-        env.resolved.insert(span, mangled);
+    // Resolve the dispatch for lowering. A concrete receiver calls the impl
+    // directly; a bounded type parameter projects the method from the
+    // enclosing function's dictionary for that bound.
+    let resolution = match &target {
+        Type::Var(v) => env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == &trait_name).map(
+            |(_, _, type_param)| {
+                let methods = env.traits.traits.get(&trait_name);
+                let count = methods.map(|m| m.len()).unwrap_or(1);
+                let index =
+                    methods.and_then(|m| m.iter().position(|tm| tm.name == method)).unwrap_or(0);
+                slc_syntax::lower::MethodDispatch::Dict {
+                    dict_var: slc_syntax::lower::dict_param_name(&trait_name, type_param),
+                    index,
+                    count,
+                }
+            },
+        ),
+        _ => type_key(&target)
+            .and_then(|key| env.traits.method_impls.get(method).and_then(|m| m.get(&key)))
+            .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone())),
+    };
+    if let Some(resolution) = resolution {
+        env.dispatch.methods.insert(span, resolution);
     }
     // A command method returns bottom; a fn method returns its (Self-subst)
     // result type.
@@ -230,16 +246,17 @@ fn resolve_rigid(
 }
 
 /// Put a declaration's bounds in scope for its body, as (rigid-variable
-/// index, trait), and return the previous set to restore afterward.
+/// index, trait, type-parameter name), and return the previous set to
+/// restore afterward.
 fn record_bounds(
     bounds: &[(String, String)],
     rigid_vars: &HashMap<&str, Type>,
     env: &mut Env,
-) -> Vec<(usize, String)> {
+) -> Vec<(usize, String, String)> {
     let outer = env.bounds.clone();
     for (var, trait_name) in bounds {
         if let Some(Type::Var(v)) = rigid_vars.get(var.as_str()) {
-            env.bounds.push((*v, trait_name.clone()));
+            env.bounds.push((*v, trait_name.clone(), var.clone()));
         }
     }
     outer
@@ -1030,12 +1047,34 @@ fn check_expr_unapplied(
                 }
                 check_call_arguments(name, &signature, args, enums, env, diags);
                 // Discharge each bound against what its type parameter
-                // resolved to, now that the arguments have constrained it.
+                // resolved to, now that the arguments have constrained it, and
+                // record the dictionary the call must pass for it: the global
+                // dict of a concrete type, or the enclosing function's own
+                // dict parameter when the bound is forwarded.
+                let mut dict_args: Vec<String> = Vec::new();
                 for (param_index, trait_name) in &signature.bounds {
                     if let Some(var) = seen.get(param_index) {
                         let target = env.uni.apply(var);
                         discharge_bound(trait_name, &target, name, e.span, env, diags);
+                        let dict = match &target {
+                            Type::Var(v) => env
+                                .bounds
+                                .iter()
+                                .find(|(bv, bt, _)| bv == v && bt == trait_name)
+                                .map(|(_, _, tp)| {
+                                    slc_syntax::lower::dict_param_name(trait_name, tp)
+                                }),
+                            _ => type_key(&target)
+                                .filter(|key| env.traits.has_impl(trait_name, key))
+                                .map(|key| slc_syntax::lower::dict_global_name(trait_name, &key)),
+                        };
+                        if let Some(dict) = dict {
+                            dict_args.push(dict);
+                        }
                     }
+                }
+                if !signature.bounds.is_empty() {
+                    env.dispatch.calls.insert(e.span, dict_args);
                 }
                 return signature.result.map(|ty| env.uni.apply(&ty));
             }
@@ -2186,26 +2225,39 @@ mod tests {
             let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
             check_program_resolving(&prog, &traits).expect("checks")
         };
-        let resolved = resolve(
+        let mono = resolve(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
              command main | (exit: -i32) { println(show(1)); 0 @ exit }",
         );
-        assert_eq!(resolved.len(), 1, "one monomorphic call should resolve: {resolved:?}");
+        assert_eq!(mono.methods.len(), 1, "one method call should resolve: {mono:?}");
         assert!(
-            resolved.values().any(|mangled| mangled.contains("show")),
-            "resolves to the show impl: {resolved:?}"
+            matches!(
+                mono.methods.values().next(),
+                Some(slc_syntax::lower::MethodDispatch::Static(m)) if m.contains("show")
+            ),
+            "concrete receiver dispatches statically to the impl: {mono:?}"
         );
 
-        let polymorphic = resolve(
+        let poly = resolve(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
              fn label<T: Show>(x: +T) -> String { show(x) }
              command main | (exit: -i32) { println(label(1)); 0 @ exit }",
         );
-        // `show(x)` inside `label` is polymorphic — unresolved; only the
-        // nothing-to-dispatch `label(1)` call (not a trait method) remains.
-        assert!(polymorphic.is_empty(), "a polymorphic method call stays dynamic: {polymorphic:?}");
+        // `show(x)` inside `label` projects from the dictionary parameter;
+        // `label(1)` passes the concrete i64 dictionary.
+        assert!(
+            poly.methods.values().any(|d| matches!(
+                d,
+                slc_syntax::lower::MethodDispatch::Dict { dict_var, .. } if dict_var.contains("Show")
+            )),
+            "bounded receiver dispatches through a dictionary: {poly:?}"
+        );
+        assert!(
+            poly.calls.values().any(|dicts| dicts.iter().any(|d| d.contains("Show"))),
+            "the call to the bounded function passes a dictionary: {poly:?}"
+        );
     }
 
     #[test]

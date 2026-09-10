@@ -33,14 +33,15 @@ pub(crate) struct Env<'a> {
     pub(crate) consumed: Option<Type>,
     /// The program's traits and impls.
     pub(crate) traits: &'a TraitInfo,
-    /// Bounds in scope: a rigid type-variable index with the trait it is
-    /// known to satisfy, from the enclosing declaration's `<T: Trait>`.
-    pub(crate) bounds: Vec<(usize, String)>,
-    /// Trait-method calls whose receiver type was concrete at the call site,
-    /// keyed by the call's span and resolved to the mangled impl function.
-    /// Lowering reads this to dispatch statically — a direct call to the
-    /// impl — instead of through the runtime type-key lookup.
-    pub(crate) resolved: std::collections::HashMap<slc_syntax::token::Span, String>,
+    /// Bounds in scope: a rigid type-variable index, the trait it is known to
+    /// satisfy, and the type parameter's name — from the enclosing
+    /// declaration's `<T: Trait>`. The name identifies the dictionary
+    /// parameter a bounded call forwards or a method call projects from.
+    pub(crate) bounds: Vec<(usize, String, String)>,
+    /// What lowering needs to dispatch traits without a runtime method value:
+    /// how each trait-method call resolves, and the dictionaries each call to
+    /// a bounded function must pass.
+    pub(crate) dispatch: slc_syntax::lower::DispatchInfo,
 }
 
 impl<'a> Env<'a> {
@@ -57,7 +58,7 @@ impl<'a> Env<'a> {
             consumed: None,
             traits,
             bounds: Vec::new(),
-            resolved: std::collections::HashMap::new(),
+            dispatch: slc_syntax::lower::DispatchInfo::default(),
         }
     }
 

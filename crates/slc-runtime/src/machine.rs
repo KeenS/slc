@@ -387,18 +387,6 @@ fn step_apply(
             *kont = frames;
             State::Return(arg)
         }
-        // A trait method dispatches on the runtime type of its argument.
-        Value::Method { method, impls } => {
-            let key = crate::value::type_key(&arg);
-            match impls.get(&key) {
-                Some(closure) => State::Apply { callee: closure.clone(), arg },
-                None => {
-                    return Err(EvalError::TypeMismatch(format!(
-                        "no impl of method `{method}` for a value of type {key}"
-                    )));
-                }
-            }
-        }
         // Performing an operation: find the nearest handler, capture the
         // delimited continuation, and run the matching clause with `resume`.
         Value::Operation { op, .. } => {

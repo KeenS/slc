@@ -166,23 +166,37 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         let v = slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| e.to_string())?;
         env.define_global(name, v);
     }
-    // Bind each trait method to a value that dispatches on its first
-    // argument's runtime type. The impl functions are already globals; the
-    // method value points at the right one per type key.
-    for (method, per_type) in &traits.method_impls {
-        let mut impls = std::collections::HashMap::new();
-        for (key, mangled) in per_type {
-            if let Some(closure) = env.lookup(mangled) {
-                impls.insert(key.clone(), closure);
+    // Trait methods need no runtime method value: every accepted call was
+    // resolved by the checker to a direct impl call (concrete receiver) or a
+    // dictionary projection (bounded receiver).
+    //
+    // Build a dictionary per `(trait, type)` with an impl: the trait's method
+    // impls, in declaration order, as one value — a right-nested tuple, or
+    // the lone impl for a single-method trait. A bounded function receives
+    // one and projects its methods; monomorphic calls dispatch directly and
+    // never consult these.
+    for (trait_name, methods) in &traits.traits {
+        let keys: Vec<String> = methods
+            .first()
+            .and_then(|m| traits.method_impls.get(&m.name))
+            .map(|per_type| per_type.keys().cloned().collect())
+            .unwrap_or_default();
+        for key in keys {
+            let impls: Vec<_> = methods
+                .iter()
+                .filter_map(|m| traits.method_impls.get(&m.name).and_then(|t| t.get(&key)))
+                .filter_map(|mangled| env.lookup(mangled))
+                .collect();
+            if impls.len() != methods.len() {
+                continue; // an incomplete impl — leave the dictionary unbuilt
             }
+            let mut it = impls.into_iter().rev();
+            let Some(mut dict) = it.next() else { continue };
+            for impl_value in it {
+                dict = slc_runtime::value::Value::Pair(Box::new(impl_value), Box::new(dict));
+            }
+            env.define_global(slc_syntax::lower::dict_global_name(trait_name, &key), dict);
         }
-        env.define_global(
-            method,
-            slc_runtime::value::Value::Method {
-                method: method.clone(),
-                impls: std::rc::Rc::new(impls),
-            },
-        );
     }
 
     // The program's exit continuation is `EXIT`: supplying it to `main` runs

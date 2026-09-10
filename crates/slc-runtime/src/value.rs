@@ -140,12 +140,6 @@ pub enum Value {
     /// An open file handle: an id into the runtime's handle registry,
     /// produced by `open_file` and spent by `close_file`.
     File(u64),
-    /// A trait method: dispatched on the runtime type of its first argument.
-    /// `impls` maps a type key to the implementing closure.
-    Method {
-        method: String,
-        impls: Rc<HashMap<String, Value>>,
-    },
     /// An effect operation: applying it performs the effect, capturing the
     /// continuation up to the nearest handler for `effect`.
     Operation {
@@ -201,7 +195,6 @@ impl PartialEq for Value {
             | (Value::Never, Value::Never)
             | (Value::NoArguments, Value::NoArguments) => true,
             (Value::File(a), Value::File(b)) => a == b,
-            (Value::Method { method: a, .. }, Value::Method { method: b, .. }) => a == b,
             (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
             (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
             (Value::Kont(a), Value::Kont(b)) => crate::machine::Kont::ptr_eq(a, b),
@@ -229,7 +222,7 @@ impl Value {
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
-            Value::Method { .. } | Value::Operation { .. } => Type::One,
+            Value::Operation { .. } => Type::One,
             Value::Resume(_) => Type::Bottom,
             Value::Unit | Value::Never | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
@@ -266,7 +259,6 @@ impl Value {
             Value::Unit => "()".to_string(),
             Value::NoArguments => "<no arguments>".to_string(),
             Value::File(id) => format!("<file@{id}>"),
-            Value::Method { method, .. } => format!("<method {method}>"),
             Value::Operation { op, .. } => format!("<operation {op}>"),
             Value::Resume(_) => "<resume>".to_string(),
             Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
@@ -307,27 +299,6 @@ impl Value {
             Value::CoTensor { arity, .. } => format!("consumer/{arity}"),
             Value::CoAbs { .. } => "<continuation>".to_string(),
         }
-    }
-}
-
-/// The runtime type key of a value: what a trait method dispatches on. Must
-/// agree with `slc_syntax::traits::type_key` for the corresponding written
-/// type.
-pub fn type_key(v: &Value) -> String {
-    match v {
-        Value::Int(_) => "i64".into(),
-        Value::Float(_) => "f64".into(),
-        Value::Str(_) => "String".into(),
-        Value::Bool(_) => "bool".into(),
-        Value::Char(_) => "char".into(),
-        Value::Unit => "unit".into(),
-        Value::File(_) => "File".into(),
-        Value::List(_) => "list".into(),
-        Value::Map(_) => "map".into(),
-        Value::Set(_) => "set".into(),
-        // A struct or enum value: its label's head names the type.
-        Value::Tagged(label, _) => label.split("::").next().unwrap_or(label).into(),
-        other => other.display(),
     }
 }
 

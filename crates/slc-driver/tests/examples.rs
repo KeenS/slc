@@ -40,7 +40,14 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("effects.sl", Expected { success: true, stdout: &["-1", "5", "70"], stderr: &[] }),
+        (
+            "effects.sl",
+            Expected { success: true, stdout: &["-1", "5", "1070", "HH HT TH TT"], stderr: &[] },
+        ),
+        (
+            "dictionaries.sl",
+            Expected { success: true, stdout: &["42", "[77]", "[TT]"], stderr: &[] },
+        ),
         (
             "file_io.sl",
             Expected {

@@ -500,10 +500,13 @@ Because dispatch is on the value that actually arrives, a generic `impl` needs
 no machinery: `impl Show for [T]` may `show` each element, each resolved at
 its own type.
 
-Where the receiver type is concrete at the call site, the impl is known at
-compile time, so the call compiles to a direct call to that impl and the
-runtime type check is skipped; only a call on a bounded type parameter, whose
-type is not yet known, dispatches at runtime.
+Dispatch is resolved entirely at compile time, with no runtime method value.
+A call on a concrete type compiles to a direct call to its impl. A call on a
+bound type parameter `<T: Show>` projects the method from a *dictionary* — the
+trait's impls for `T`, passed to the bounded function as a hidden argument;
+the function forwards it to any bounded call it makes, so the impl is chosen
+once, by whoever supplied the concrete type. A single-method trait's
+dictionary is just its impl.
 
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are

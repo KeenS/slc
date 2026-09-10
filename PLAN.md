@@ -96,24 +96,23 @@ machine the redesign already built.
   stable. `Value`'s code-bearing variants carry IR and dropped their binder
   names.
 
-  **Static dispatch — monomorphic calls done.** The checker resolves each
-  trait-method call whose receiver type is concrete to its impl
-  (`check_program_resolving` returns a span→impl map), and lowering turns
-  that call into a direct call to the impl — no runtime `type_key` lookup.
-  A call whose receiver is a rigid `<T: Trait>` parameter stays dynamic
-  (the `Value::Method` path).
+  **Static dictionary passing — done; `Value::Method` retired.** The checker
+  (`check_program_resolving`) resolves every trait-method call: a concrete
+  receiver to a direct impl call, a bounded `<T: Trait>` receiver to a
+  projection from a dictionary. A bounded function takes its dictionaries as
+  hidden leading parameters (lowering adds them), a call supplies them — the
+  global dictionary of a concrete type, or the caller's own forwarded
+  dictionary parameter — and a single-method trait's dictionary is simply its
+  impl. Because every accepted call resolves one way or the other, there is no
+  runtime method value at all: `Value::Method` and the runtime `type_key` are
+  gone (`examples/dictionaries.sl`).
 
   Remaining:
-  - **Dictionary passing for the polymorphic case** — so a bounded function
-    `fn f<T: Trait>(…)` receives its trait dictionary as a hidden argument
-    and dispatches statically inside too, retiring `Value::Method` entirely.
-    Larger: it adds dictionary parameters in lowering and threads them from
-    every call site.
   - **Linearize the IR to a flat instruction stream** (`Op::Local(u16)`,
     `Op::CallDict`, `Op::Prompt`, …) run by an explicit instruction pointer
     instead of the tree-walk. Mostly mechanical on top of the closed IR; the
-    headline wins (no name resolution, O(1) env/continuation capture) are
-    already banked, so this is a smaller, later speedup.
+    headline wins (no name resolution, O(1) env/continuation capture, static
+    dispatch) are already banked, so this is a smaller, later speedup.
 
   The shape is the one the calculus already describes: the machine state is
   `⟨ term-closure ∥ coterm-closure ⟩`, and the coterm side *is* the

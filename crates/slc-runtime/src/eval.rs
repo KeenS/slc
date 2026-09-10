@@ -122,7 +122,6 @@ pub(crate) fn is_applicable(v: &Value) -> bool {
             | Value::CoAbs { .. }
             | Value::Continuation(_)
             | Value::Kont(_)
-            | Value::Method { .. }
             | Value::Operation { .. }
             | Value::Resume(_)
             | Value::Builtin(_)

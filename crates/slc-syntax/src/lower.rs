@@ -14,10 +14,75 @@ thread_local! {
     /// Variant name → fully qualified label, for every declared enum. An
     /// unqualified variant name is recorded only when it is unambiguous.
     static VARIANTS: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
-    /// Call span → mangled impl, for trait-method calls the checker resolved
-    /// to a concrete impl. A call recorded here lowers to a direct call to
-    /// that impl — static dispatch — rather than through the method value.
-    static DISPATCH: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
+    /// Trait-method call span → how the checker resolved it. A concrete
+    /// receiver is a direct call to the impl; a bounded one projects the
+    /// method from the enclosing function's dictionary parameter.
+    static METHODS: RefCell<HashMap<Span, MethodDispatch>> = RefCell::new(HashMap::new());
+    /// Call-to-bounded-function span → the dictionary arguments to pass
+    /// (variable names), in the order the function's bounds are declared.
+    static CALLS: RefCell<HashMap<Span, Vec<String>>> = RefCell::new(HashMap::new());
+}
+
+/// How a trait-method call dispatches, as the checker resolved it.
+#[derive(Debug, Clone)]
+pub enum MethodDispatch {
+    /// The receiver type is concrete: call the impl directly.
+    Static(String),
+    /// The receiver is a bound type parameter: project method `index` (of
+    /// `count` the trait declares) from the dictionary named `dict_var`.
+    Dict { dict_var: String, index: usize, count: usize },
+}
+
+/// What the checker resolved about a program's trait dispatch, handed to
+/// lowering so method calls become direct calls or dictionary projections
+/// and bounded functions take and forward dictionaries.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchInfo {
+    pub methods: HashMap<Span, MethodDispatch>,
+    pub calls: HashMap<Span, Vec<String>>,
+}
+
+/// The dictionary parameter name for a bound: one value threaded into a
+/// bounded function, carrying the trait's impls for that type parameter.
+pub fn dict_param_name(trait_name: &str, type_param: &str) -> String {
+    format!("__dict_{trait_name}_{type_param}")
+}
+
+/// The global dictionary name for a concrete `(trait, type key)`.
+pub fn dict_global_name(trait_name: &str, key: &str) -> String {
+    format!("__dict_{trait_name}_{key}")
+}
+
+/// Project method `index` from a dictionary. A single-method trait's
+/// dictionary is its one impl, so the dictionary *is* the method; a
+/// multi-method dictionary is a right-nested tuple of impls, projected by
+/// binding all `count` components and returning the `index`-th.
+fn dict_projection(dict_var: &str, index: usize, count: usize) -> Term {
+    if count <= 1 {
+        return Term::Var(dict_var.to_string());
+    }
+    let binders: Vec<String> = (0..count).map(|i| format!("__d{i}")).collect();
+    let chosen = binders[index].clone();
+    Term::Mu(
+        "__dp".into(),
+        Box::new(Command::Cut(
+            Term::Var(dict_var.to_string()),
+            CoTerm::MuTildeTensor(
+                binders,
+                Box::new(Command::Cut(Term::Var(chosen), CoTerm::Covar("__dp".into()))),
+            ),
+        )),
+    )
+}
+
+/// Wrap a bounded declaration's body in its dictionary parameters, outermost
+/// and in declared-bound order, so a call supplies them before the value
+/// arguments.
+fn bind_dict_params(bounds: &[(String, String)], mut term: Term) -> Term {
+    for (type_param, trait_name) in bounds.iter().rev() {
+        term = Term::Lam(dict_param_name(trait_name, type_param), Box::new(term));
+    }
+    term
 }
 
 /// The fully qualified label a variant path or unambiguous variant name
@@ -26,21 +91,29 @@ fn lookup_variant(name: &str) -> Option<String> {
     VARIANTS.with(|cell| cell.borrow().get(name).cloned().flatten())
 }
 
-/// The impl a trait-method call at `span` was resolved to, if the checker
-/// found the receiver type concrete there.
-fn static_dispatch(span: Span) -> Option<String> {
-    DISPATCH.with(|cell| cell.borrow().get(&span).cloned())
+/// How the checker resolved the trait-method call at `span`, if it is one.
+fn method_dispatch(span: Span) -> Option<MethodDispatch> {
+    METHODS.with(|cell| cell.borrow().get(&span).cloned())
 }
 
-/// Lower a program with the checker's static-dispatch map in force, so that
-/// resolved trait-method calls become direct calls to their impls.
+/// The dictionary arguments a call at `span` must pass, if it calls a
+/// bounded function.
+fn call_dicts(span: Span) -> Option<Vec<String>> {
+    CALLS.with(|cell| cell.borrow().get(&span).cloned())
+}
+
+/// Lower a program with the checker's dispatch resolution in force, so that
+/// trait-method calls become direct calls or dictionary projections and
+/// bounded functions take and forward their dictionaries.
 pub fn lower_program_resolving(
     p: &Program,
-    resolved: &HashMap<Span, String>,
+    dispatch: &DispatchInfo,
 ) -> Result<Vec<(String, Term)>, LowerError> {
-    DISPATCH.with(|cell| *cell.borrow_mut() = resolved.clone());
+    METHODS.with(|cell| *cell.borrow_mut() = dispatch.methods.clone());
+    CALLS.with(|cell| *cell.borrow_mut() = dispatch.calls.clone());
     let result = lower_program(p);
-    DISPATCH.with(|cell| cell.borrow_mut().clear());
+    METHODS.with(|cell| cell.borrow_mut().clear());
+    CALLS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -147,23 +220,33 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // f(a, b) lowers to nested single-argument applications:
             //   f(a) applied to (b)
             // Multi-arg functions are curried: fn f(x, y) → λx. λy. body.
-            // A trait-method call the checker resolved to a concrete impl is
-            // a direct call to that impl — no runtime dispatch.
+            // A trait-method call resolves to a direct impl call (concrete
+            // receiver) or a projection from a dictionary parameter (bounded
+            // receiver) — never a runtime method value.
             let mut result = match &callee.kind {
-                Expr::Ident(_) => match static_dispatch(e.span) {
-                    Some(mangled) => Term::Var(mangled),
+                Expr::Ident(_) => match method_dispatch(e.span) {
+                    Some(MethodDispatch::Static(mangled)) => Term::Var(mangled),
+                    Some(MethodDispatch::Dict { dict_var, index, count }) => {
+                        dict_projection(&dict_var, index, count)
+                    }
                     None => lower_expr(callee, continuations)?,
                 },
                 _ => lower_expr(callee, continuations)?,
             };
-            let args = if args.is_empty() {
-                // A call with no arguments still applies its callee, to the
-                // marker that carries none.
-                vec![Term::Var(NO_ARGUMENTS.into())]
+            // A call to a bounded function forwards its dictionaries first,
+            // in bound order, then the value arguments.
+            let mut call_args: Vec<Term> =
+                call_dicts(e.span).unwrap_or_default().into_iter().map(Term::Var).collect();
+            if args.is_empty() {
+                // A call with no value arguments still applies its callee, to
+                // the marker that carries none.
+                call_args.push(Term::Var(NO_ARGUMENTS.into()));
             } else {
-                args.iter().map(|e| lower_expr(e, continuations)).collect::<Result<Vec<_>, _>>()?
-            };
-            for arg in args {
+                for arg in args {
+                    call_args.push(lower_expr(arg, continuations)?);
+                }
+            }
+            for arg in call_args {
                 result = Term::Mu(
                     "__call".into(),
                     Box::new(Command::Cut(
@@ -605,7 +688,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     });
     for d in &p.decls {
         match &d.kind {
-            Decl::Fn { name, params, body, polarity, .. } => {
+            Decl::Fn { name, params, body, polarity, bounds, .. } => {
                 // Multi-param fn: nest lambdas. Continuation parameters form
                 // the declaration's explicit lexical continuation row.
                 // Negative functions are genuine co-abstractions: each
@@ -626,9 +709,12 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 if params.is_empty() && *polarity == FunctionPolarity::Positive {
                     term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
                 }
+                // A bounded function takes its dictionaries outermost, before
+                // the value arguments.
+                term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
-            Decl::Command { name, value_params, continuation_params, body, .. } => {
+            Decl::Command { name, value_params, continuation_params, body, bounds, .. } => {
                 // mu f(x: +A) | (k: -B) { E } → λx. μk. E
                 let continuations: Vec<String> =
                     continuation_params.iter().map(|p| p.name.clone()).collect();
@@ -642,6 +728,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 for p in value_params.iter().rev() {
                     term = Term::Lam(p.name.clone(), Box::new(term));
                 }
+                term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
             Decl::Const { name, ty: _, value } => {
