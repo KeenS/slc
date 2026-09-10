@@ -77,7 +77,7 @@ and where the two disagree, `DESIGN.md` is right.
 - An integer literal takes the integer type its port requires, `()` is the
   unit value, and a call with no arguments applies its callee to a marker that
   carries none — so `f()` and `f(())` are no longer the same thing.
-- The entry point is `mu main | (exit: -i32)`: a program is a command, its
+- The entry point is `mu main(exit: -i32)`: a program is a command, its
   status is the value it cuts against `exit`, and linearity makes every
   terminating path leave through it. There is no final-result value; output is
   what the program prints.

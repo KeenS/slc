@@ -89,13 +89,22 @@ for both hid that.
 mu route(x: +i32) | (k: -i32) { x @ k }        // old: the declaration
 command route(x: +i32) | (k: -i32) { x @ k }   // new
 
-let source = mu | (k) { read_file(path, k, err) };   // unchanged: the capture
+let source = mu(k) { read_file(path, k, err) };   // unchanged: the capture
 ```
 
 A declaration written with `mu` is a parse error naming the difference.
 
-A `mu` expression also takes no value parameters. `mu(v) { … }` lowered to
-`λv. …`, exactly what `fn(v) { … }` lowers to; write the `fn`.
+A `mu` expression binds one thing, the continuation it captures, and writes it
+in one group:
+
+```sl
+mu | (k: -String) { … }   // old
+mu(k: -String) { … }      // new
+```
+
+It has no value parameters: `mu(v) { … }` used to lower to `λv. …`, exactly
+what `fn(v) { … }` lowers to. A binder whose body is a command rather than an
+expression is `select`.
 
 ### Remove `to`
 
@@ -126,7 +135,7 @@ command log(message: +String) { … }        // new
 ```
 
 The same applies to a local `mu`, which is usually the one with no values:
-`mu | (k) { … }`.
+`mu(k) { … }`.
 
 ### Bottom annotation
 

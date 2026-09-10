@@ -59,7 +59,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         id: "expr.mu",
-        source: "fn f() -> i32 { mu escape | (k: -i32) { k(1) } }",
+        source: "fn f() -> i32 { mu escape(k: -i32) { k(1) } }",
         core: "μk. ⟨μ__call. ⟨k ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩ ∥ k⟩",
     },
     Row {

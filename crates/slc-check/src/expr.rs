@@ -1394,7 +1394,7 @@ fn check_expr(
             let result = check_expr(body, enums, env, diags);
             env.pop();
             // A `mu` captures the ambient continuation, so its value is
-            // whatever that continuation receives: `mu | (k: -A) { … }` has
+            // whatever that continuation receives: `mu(k: -A) { … }` has
             // type `A`. A row whose positions disagree has no single such
             // type, and neither does one that is empty.
             let captured = captured_types
@@ -1706,7 +1706,7 @@ mod tests {
                      }
                  }
                  fn main() -> i64 {
-                     mu ask | (answer: -i64) { Color::Green @ code(answer) }
+                     mu ask(answer: -i64) { Color::Green @ code(answer) }
                  }"
             )
             .is_ok()
@@ -1718,7 +1718,7 @@ mod tests {
         assert!(
             check(
                 "command route(x: +i32) | (k: -i32) { x @ k }
-                 fn main() -> i32 { mu run | (out: -i32) { route(1, out) } }"
+                 fn main() -> i32 { mu run(out: -i32) { route(1, out) } }"
             )
             .is_ok()
         );
@@ -1728,7 +1728,7 @@ mod tests {
     fn continuation_row_rejects_an_incompatible_continuation_type() {
         let diags = check(
             "command route(x: +i32) | (k: -i32) { x @ k }
-             fn main() -> i32 { mu run | (out: -bool) { route(1, out) } }",
+             fn main() -> i32 { mu run(out: -bool) { route(1, out) } }",
         )
         .unwrap_err();
         assert!(
@@ -1747,7 +1747,7 @@ mod tests {
         let diags = check(
             "command route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
              fn main() -> i32 {
-                 mu run | (first: -i32, second: -bool) { route(0, true, second, first) }
+                 mu run(first: -i32, second: -bool) { route(0, true, second, first) }
              }",
         )
         .unwrap_err();
@@ -1761,7 +1761,7 @@ mod tests {
     fn continuation_row_rejects_extra_arguments() {
         let diags = check(
             "command route(x: +i32) | (k: -i32) { x @ k }
-             fn main() -> i32 { mu run | (out: -i32) { route(1, out, out) } }",
+             fn main() -> i32 { mu run(out: -i32) { route(1, out, out) } }",
         )
         .unwrap_err();
         assert!(
@@ -1956,7 +1956,7 @@ mod tests {
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) {
-                 let text = mu | (k) { read_file(\"in\", k, complain) };
+                 let text = mu(k) { read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 @ exit
              }
@@ -1971,7 +1971,7 @@ mod tests {
         // A cut says it just as well: `42 @ k` makes `k` a consumer of i64.
         let diags = check(
             "command main | (exit: -i32) {
-                 let answer = mu | (k) { 42 @ k };
+                 let answer = mu(k) { 42 @ k };
                  println(str_len(answer));
                  0 @ exit
              }",

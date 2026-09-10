@@ -331,7 +331,7 @@ impl Parser {
     }
 
     /// The parameter groups of a `command`: `(values) | (continuations)`, with
-    /// either side left out when it has none. `mu f | (k)` takes no values,
+    /// either side left out when it has none. `mu f(k)` takes no values,
     /// `mu f(x)` takes no continuations, and an empty group is not written.
     fn parse_command_params(
         &mut self,
@@ -368,9 +368,7 @@ impl Parser {
         let params = self.parse_params_with(annotations)?;
         if params.is_empty() {
             return Err(ParseError {
-                message: format!(
-                    "no {which} parameters means the group is left out, as `command f | (k)`"
-                ),
+                message: format!("a group with no {which} parameters is not written"),
                 span: Span { start, end: self.span_end() },
             });
         }
@@ -872,19 +870,18 @@ impl Parser {
                     Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
                     _ => None,
                 };
-                // A `mu` expression abstracts over the continuation it is
-                // cut against, and over nothing else: with a value parameter
-                // it would just be a lambda, and `fn` is the lambda.
-                if self.peek_kind() == Some(&TokenKind::LParen) {
+                // One group, and it is the continuation the expression
+                // captures — `fn(x)` binds a value, `mu(k)` binds the
+                // continuation. Nothing separates it from a second group,
+                // because a `mu` has no second group.
+                if self.peek_kind() == Some(&TokenKind::Pipe) {
                     return Err(ParseError {
-                        message:
-                            "a `mu` expression captures a continuation; to take a value, write `fn`"
-                                .into(),
+                        message: "a `mu` binds only the continuation it captures: write `mu(k)`"
+                            .into(),
                         span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
                     });
                 }
-                self.expect(TokenKind::Pipe, "`|` before the continuation a `mu` captures")?;
-                let continuation_params = self
+                let continuation_params: Vec<Param> = self
                     .parse_group(TypeAnnotations::Optional, "continuation")?
                     .into_iter()
                     .map(|mut p| {
@@ -892,6 +889,13 @@ impl Parser {
                         p
                     })
                     .collect();
+                if self.peek_kind() == Some(&TokenKind::Pipe) {
+                    return Err(ParseError {
+                        message: "a `mu` has one parameter group: the continuation it captures"
+                            .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                    });
+                }
                 let body = self.parse_block()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
@@ -1482,7 +1486,7 @@ mod tests {
 
     #[test]
     fn a_local_mu_may_leave_out_its_name_and_its_parameter_types() {
-        let p = parse_str("mu | (k) { 42 @ k }");
+        let p = parse_str("mu(k) { 42 @ k }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Mu { name, continuation_params, .. } = &body.kind else {
             panic!("expected a local mu: {:?}", body.kind)
@@ -1493,7 +1497,7 @@ mod tests {
 
         // Either may still be written. With a name it needs an enclosing
         // declaration: `mu name(…)` at the top level is a declaration.
-        let p = parse_str("fn f() -> i32 { mu here | (k: -i32) { 42 @ k } }");
+        let p = parse_str("fn f() -> i32 { mu here(k: -i32) { 42 @ k } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
         let Expr::Mu { name, continuation_params, .. } = &exprs[0].kind else {
@@ -1507,8 +1511,7 @@ mod tests {
     fn a_declaration_is_a_command_and_mu_is_the_expression() {
         // `mu name(…)` was the declaration before the two forms were told
         // apart; the diagnostic says which is which.
-        for source in ["mu main | (exit: -i32) { 0 @ exit }", "mu f(x: +i32) | (k: -i32) { x @ k }"]
-        {
+        for source in ["mu main(exit: -i32) { 0 @ exit }", "mu f(x: +i32) | (k: -i32) { x @ k }"] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
                 errors.iter().any(|e| e.message.contains("a declaration is a `command`")),
@@ -1519,31 +1522,34 @@ mod tests {
         // A named `mu` inside a declaration is still the capturing form.
         let p = parse_str("command f | (k: -i32) { 1 @ k }");
         assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
-        let p = parse_str("fn g() -> i32 { mu here | (k: -i32) { 1 @ k } }");
+        let p = parse_str("fn g() -> i32 { mu here(k: -i32) { 1 @ k } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
     }
 
     #[test]
-    fn a_mu_expression_takes_no_value_parameters() {
-        // `mu(v) { … }` lowered to `λv. …` — a lambda with a second
-        // spelling. The lambda is `fn`.
-        for source in ["fn f() -> i32 { mu(v) { v } }", "fn f() -> i32 { mu(v) | (k) { v @ k } }"] {
+    fn a_mu_binds_one_group_and_it_is_the_continuation() {
+        // `fn(x)` binds a value, `mu(k)` binds the continuation it captures.
+        let p = parse_str("fn f() -> i32 { mu(k: -i32) { 1 @ k } }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
+        let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
+        let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
+            panic!("expected a mu: {:?}", exprs[0].kind)
+        };
+        assert_eq!(continuation_params[0].name, "k");
+        assert!(continuation_params[0].is_continuation);
+
+        // There is no second group to separate, so `|` is a mistake.
+        for source in
+            ["fn f() -> i32 { mu | (k) { 1 @ k } }", "fn f() -> i32 { mu(x) | (k) { x @ k } }"]
+        {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
-                errors.iter().any(|e| e.message.contains("to take a value, write `fn`")),
+                errors.iter().any(|e| e.message.contains("continuation it captures")),
                 "{source}: {errors:?}"
             );
         }
-
-        // The continuation row is what a `mu` abstracts over, so it is
-        // required.
-        let errors = parse(lex("fn f() -> i32 { mu { 1 } }").unwrap()).unwrap_err();
-        assert!(
-            errors.iter().any(|e| e.message.contains("`|` before the continuation")),
-            "errors: {errors:?}"
-        );
     }
 
     #[test]
@@ -1570,7 +1576,7 @@ mod tests {
         {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
-                errors.iter().any(|e| e.message.contains("the group is left out")),
+                errors.iter().any(|e| e.message.contains("is not written")),
                 "{source}: {errors:?}"
             );
         }

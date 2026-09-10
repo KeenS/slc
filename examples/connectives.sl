@@ -99,10 +99,10 @@ command main | (exit: -i32) {
     println(sum(Pair { left: 2, right: 40 }));
 
     // ⅋ : hand the consumer the whole product.
-    println(mu ask | (answer: -i64) {
+    println(mu ask(answer: -i64) {
         Pair { left: 2, right: 40 } @ report_sum(answer)
     });
-    println(mu ask | (answer: -i64) {
+    println(mu ask(answer: -i64) {
         (7, "ignored") @ report_first(answer)
     });
 
@@ -110,17 +110,17 @@ command main | (exit: -i32) {
     println(name(Colour::Green));
 
     // & : hand the consumer one variant; only its branch runs.
-    println(mu ask | (answer: -i64) {
+    println(mu ask(answer: -i64) {
         Colour::Green @ code(answer)
     });
 
     // codata: ask the provider for one field. The other is never computed.
-    println(mu ask | (answer: -i64) {
+    println(mu ask(answer: -i64) {
         Request::Retries(answer) @ config
     });
 
     // 1 and ⊥.
-    println(mu halt | (k: -⊥) { done(k) });
+    println(mu halt(k: -⊥) { done(k) });
 
     0 @ exit
 }

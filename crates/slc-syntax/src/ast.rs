@@ -74,7 +74,7 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
-    /// A local μ abstraction: `mu | (k) { body }`, which captures the
+    /// A local μ abstraction: `mu(k) { body }`, which captures the
     /// continuation the expression is cut against. It has no value
     /// parameters — abstracting over a value is what `fn` does — and the
     /// name is optional, since nothing refers to it, as is a parameter's

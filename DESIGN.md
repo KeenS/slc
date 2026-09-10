@@ -236,7 +236,7 @@ continuations. `k` is a *parameter*: the caller passes it.
 
 ## 6. `mu`: capturing the current continuation
 
-The expression `mu | (k: -A) { … }` is the other half, and it is the real μ of
+The expression `mu(k: -A) { … }` is the other half, and it is the real μ of
 the calculus: it captures the continuation of the expression it stands in —
 the language's `call/cc`. Nothing supplies `k`; an expression has no caller,
 only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a cut:
@@ -245,17 +245,20 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 ⟨ μk. c ∥ e ⟩  →  c[e/k]
 ```
 
-A `mu` abstracts over that continuation and over nothing else: it takes no
-value parameters, because `mu(v) { … }` and `fn(v) { … }` both lower to
-`λv. …` and one spelling of the lambda is enough. Writing one says so.
+A `mu` abstracts over that continuation and over nothing else, so it has one
+parameter group and no `|` to separate a second: `fn(x)` binds a value and
+`mu(k)` binds the continuation. There is no value-binding `mu` because there
+is already a value-binding form — `mu(v) { … }` and `fn(v) { … }` both lowered
+to `λv. …`, and a binder whose body is a *command* rather than an expression
+is `select`, the μ̃.
 
 So `k` is bound to whatever consumer the expression meets. Its type is what
-that continuation receives, which makes `mu | (k: -A) { … }` an `A`, and a
+that continuation receives, which makes `mu(k: -A) { … }` an `A`, and a
 call whose result comes back through a continuation can be written without
 nesting the rest of the program inside it:
 
 ```sl
-let source = mu here | (k: -String) {
+let source = mu here(k: -String) {
     read_file(path, k, complain)
 };
 print(source);
@@ -482,14 +485,14 @@ inside one may leave a type out when something else already says it:
 | written | may be omitted when |
 |---|---|
 | a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used |
-| a local `mu`'s name: `mu \| (k) { … }` | always — nothing refers to it |
-| a local `mu`'s parameter type: `mu \| (k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
+| a `mu`'s name: `mu(k) { … }` | always — nothing refers to it |
+| a `mu`'s parameter type: `mu(k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
 | a `select`'s type: `select { … }` | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
 
 ```sl
 // `k` goes to a slot `read_file` declares, so it is `-String`, and this
 // `let` binds a `+String`.
-let source = mu | (k) {
+let source = mu(k) {
     read_file("input.json", k, complain)
 };
 
@@ -764,7 +767,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
-| `expr.mu` | `mu \| (k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, with no `Λ` in sight |
+| `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, with no `Λ` in sight |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |

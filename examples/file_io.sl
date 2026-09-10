@@ -24,7 +24,7 @@ command main | (exit: -i32) {
     //
     // `k` needs no annotation: it is handed to a slot `read_file` declares,
     // which makes it a `-String`, and the `let` a `+String`.
-    let source = mu | (k) {
+    let source = mu(k) {
         read_file("examples/hello.sl", k, complain)
     };
     print(source);
