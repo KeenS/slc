@@ -93,17 +93,6 @@ fn run(start: State, kont: Vec<Frame>, fuel: &mut usize) -> Result<Value, EvalEr
             return Err(EvalError::Diverged);
         }
         *fuel -= 1;
-        if std::env::var("SLC_TRACE").is_ok() {
-            let tag = match &state {
-                State::Term(t, _) => format!("Term {t}"),
-                State::Command(c, _) => format!("Command {c}"),
-                State::Apply { callee, arg } => {
-                    format!("Apply {} <- {}", callee.display(), arg.display())
-                }
-                State::Return(v) => format!("Return {}", v.display()),
-            };
-            eprintln!("[{}] {}", kont.len(), tag);
-        }
         state = match state {
             State::Term(t, env) => step_term(&t, env, &mut kont)?,
             State::Command(c, env) => step_command(&c, env, &mut kont)?,
