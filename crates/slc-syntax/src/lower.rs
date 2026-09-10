@@ -216,7 +216,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     c,
                     CoTerm::MuTilde(
                         "__cond".into(),
-                        Box::new(Command::Cut(dispatch_call, CoTerm::Covar("__if".into()))),
+                        Box::new(Command::Cut(dispatch_call, CoTerm::Covar("__tail".into()))),
                     ),
                 )),
             ))

@@ -522,7 +522,7 @@ command main | (exit: -i32) {
         return(n) => n,
     };
     let scaled = handle x * config() {
-        config() resume => resume(10) + 1,  // resumes once; work after it is fine
+        flip() resume => resume(true) + resume(false),  // resumes twice
         return(n) => n,
     };
     …
@@ -543,12 +543,11 @@ no unhandled operation. (Rows are explicit in v1: no inference, and no row
 polymorphism — a higher-order function cannot yet forward an argument's
 effects.)
 
-A clause may resume at most once per path, in any position — the continuation
-is one frame stack, so the resumed result flows back into the clause and work
-after a `resume` runs normally. Not resuming is an exception; resuming once
-covers readers, state, and logging. Resuming twice on a path (full
-nondeterminism) is rejected, not run — multi-shot is not yet supported — and
-the checker says so. Operation names are unique across effects.
+A clause may resume any number of times — the continuation is a first-class
+value sliced from the one frame stack. Not resuming is an exception; resuming
+once (with work after it, which composes) is a reader or state; resuming
+twice is nondeterminism, the same captured continuation run with two answers.
+Operation names are unique across effects.
 
 Bounds and effect rows are independent of a function's polarity: a negative
 function carries them in the same places — `fn emit<T: Show>(out: -String)

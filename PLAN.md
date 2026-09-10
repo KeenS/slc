@@ -42,12 +42,6 @@ machine the redesign already built.
   effects (`/ {E}`) and the checker enforces them, but there is no inference
   and no row polymorphism, so a higher-order function cannot forward an
   argument's effects — `map(f, xs)` cannot say it performs whatever `f` does.
-- **Effect handlers are single-shot.** `let` and blocks now flow through the
-  frame stack (Stage 1, partial), so a clause may resume once in any position
-  and work after the resume composes. Resuming *twice* on a path —
-  nondeterminism — is still rejected, not run: application is not yet fully
-  frame-based, so two delimited captures of the same continuation don't
-  compose. Finishing Stage 1 (application to frames too) unlocks multi-shot.
 
 ## Deferred, with no accepted replacement
 
@@ -73,15 +67,14 @@ machine the redesign already built.
   handler is part frames, part escaping `Kont`. Healing it addresses all
   three goals at once.
 
-  *Stage 1 — unify the continuation (unlocks multi-shot effects).* Re-lower
-  application, `let`, and blocks so a body's result flows through frames, not
-  through a captured covariable that replaces the stack. **Done for `let` and
-  blocks** (single-shot `resume` now composes in any position, no longer
-  tail-only). **Remaining: application**, which still lowers through a μ that
-  scatters the continuation, so resuming twice (nondeterminism) does not yet
-  compose and is rejected. Finishing it makes `mu` (undelimited) and a
-  `Prompt` (delimited) two cases of one mechanism and unlocks multi-shot —
-  with the nondeterminism example (`resume` twice) as the proof.
+  *Stage 1 — unify the continuation. **Done.*** `let`, blocks, and `if`
+  routed their result through a μ-captured covariable that the machine turned
+  into a stack-replacing `Kont`; they now route to an unbound covar the
+  machine delivers to the current frame stack. A handler's `resume` is a
+  first-class slice of that one stack, so it composes and repeats freely —
+  multi-shot handlers (nondeterminism) work, and the restriction is gone
+  (`examples/effects.sl`). Application's `__call` was already framewise (the
+  arg-shortcut ignores it).
 
   *Stage 2 — persistent continuation + indexed environments (cheap capture,
   faster lookup).* Represent the stack as a shared persistent cons so capture

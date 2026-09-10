@@ -187,41 +187,6 @@ fn infer_param_type(
     body.kind.children().into_iter().find_map(|child| infer_param_type(name, child, enums, env))
 }
 
-/// The maximum number of times `resume` is called on any single execution
-/// path through a clause body. Sequencing adds; branching takes the max, so
-/// `if c { resume(a) } else { resume(b) }` counts once. More than one on a
-/// path is multi-shot, which the machine does not yet support.
-fn resume_uses(e: &Expr, resume: &str) -> usize {
-    match e {
-        Expr::Call { callee, args } => {
-            let here = matches!(&callee.kind, Expr::Ident(n) if n == resume) as usize;
-            let callee_uses = if here == 1 { 0 } else { resume_uses(&callee.kind, resume) };
-            here + callee_uses + args.iter().map(|a| resume_uses(&a.kind, resume)).sum::<usize>()
-        }
-        Expr::If { cond, then, otherwise } => {
-            resume_uses(&cond.kind, resume)
-                + resume_uses(&then.kind, resume)
-                    .max(otherwise.as_ref().map_or(0, |o| resume_uses(&o.kind, resume)))
-        }
-        Expr::Match { scrutinee, arms } => {
-            resume_uses(&scrutinee.kind, resume)
-                + arms
-                    .iter()
-                    .map(|a| {
-                        a.guard.as_ref().map_or(0, |g| resume_uses(&g.kind, resume))
-                            + resume_uses(&a.body.kind, resume)
-                    })
-                    .max()
-                    .unwrap_or(0)
-        }
-        // Everything else sequences its children on one path.
-        other => {
-            let node = Node { kind: other.clone(), span: Span { start: 0, end: 0 } };
-            node.kind.children().iter().map(|c| resume_uses(&c.kind, resume)).sum()
-        }
-    }
-}
-
 /// Resolve a declared type, substituting a rigid variable for each type
 /// parameter even under a sign or a shift: `+T` and `↓-T` find `T` too.
 fn resolve_rigid(
@@ -1484,20 +1449,6 @@ fn check_expr_unapplied(
             let body_ty =
                 check_expr(body, enums, env, diags).unwrap_or_else(|| env.uni.fresh_var());
             for clause in clauses {
-                // A clause may resume at most once per path: the continuation
-                // is one frame stack now, so a single `resume` composes in
-                // any position, but resuming twice (multi-shot) is not yet
-                // supported. Count the resumes on the busiest path.
-                if resume_uses(&clause.body.kind, &clause.resume) > 1 {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "`{}` is used more than once on a path; multi-shot handlers are not \
-                             yet supported (a clause may resume at most once)",
-                            clause.resume
-                        ),
-                        span: clause.body.span,
-                    });
-                }
                 env.push();
                 for p in &clause.params {
                     let v = env.uni.fresh_var();
@@ -2175,17 +2126,22 @@ mod tests {
     }
 
     #[test]
-    fn resuming_twice_on_a_path_is_rejected() {
-        let diags = check(
-            "effect C { fn c() -> bool; }
-             fn f() -> i64 / {C} { if c() { 1 } else { 2 } }
-             command main | (exit: -i32) {
-                 let r = handle f() { c() resume => resume(true) + resume(false), return(n) => n };
-                 println(r); 0 @ exit
-             }",
-        )
-        .unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("more than once")), "{diags:?}");
+    fn a_handler_may_resume_more_than_once() {
+        // Multi-shot: the clause resumes twice and combines both results.
+        assert!(
+            check(
+                "effect C { fn c() -> bool; }
+                 fn f() -> i64 / {C} { if c() { 1 } else { 2 } }
+                 command main | (exit: -i32) {
+                     let r = handle f() {
+                         c() resume => resume(true) + resume(false),
+                         return(n) => n,
+                     };
+                     println(r); 0 @ exit
+                 }"
+            )
+            .is_ok()
+        );
     }
 
     #[test]
