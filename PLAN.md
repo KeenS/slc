@@ -42,15 +42,12 @@ machine the redesign already built.
   effects (`/ {E}`) and the checker enforces them, but there is no inference
   and no row polymorphism, so a higher-order function cannot forward an
   argument's effects — `map(f, xs)` cannot say it performs whatever `f` does.
-- **Effect handlers are tail-resumptive only.** An operation's continuation
-  is reified partly as `Prompt` frames and partly as the `Value::Kont`s the
-  μ-based application lowering captures, which escape the handler delimiter.
-  So a handler clause may use `resume` at most once and only in tail
-  position — exceptions and tail-resumptive effects (readers, state-passing);
-  multi-shot (nondeterminism) is rejected, not run. Lifting it needs
-  application and `let` re-lowered to explicit frames so the whole
-  continuation is the frame stack, at which point `resume` composes and
-  repeats freely.
+- **Effect handlers are single-shot.** `let` and blocks now flow through the
+  frame stack (Stage 1, partial), so a clause may resume once in any position
+  and work after the resume composes. Resuming *twice* on a path —
+  nondeterminism — is still rejected, not run: application is not yet fully
+  frame-based, so two delimited captures of the same continuation don't
+  compose. Finishing Stage 1 (application to frames too) unlocks multi-shot.
 
 ## Deferred, with no accepted replacement
 

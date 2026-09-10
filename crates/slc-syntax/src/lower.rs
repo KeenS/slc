@@ -501,7 +501,6 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 }
                 let t = lower_expr(e, continuations)?;
                 let seq_name = format!("__seq{}", *seq_counter);
-                let covar = format!("__ret{}", *seq_counter);
                 *seq_counter += 1;
                 Ok(Term::Mu(
                     seq_name,
@@ -509,7 +508,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                         t,
                         CoTerm::MuTilde(
                             "__discarded".into(),
-                            Box::new(Command::Cut(rest, CoTerm::Covar(covar))),
+                            Box::new(Command::Cut(rest, CoTerm::Covar("__tail".into()))),
                         ),
                     )),
                 ))
@@ -658,7 +657,7 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
             value,
             CoTerm::MuTilde(
                 name.to_string(),
-                Box::new(Command::Cut(body, CoTerm::Covar("let".into()))),
+                Box::new(Command::Cut(body, CoTerm::Covar("__tail".into()))),
             ),
         )),
     )

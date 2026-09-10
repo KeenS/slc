@@ -9,9 +9,10 @@
 // (like a trait method) — the dual of a trait: a trait hands a value the
 // functions it provides, an effect hands a computation the answers it demands.
 //
-// v1 supports tail-resumptive handlers: a clause uses `resume` at most once,
-// in tail position. Exceptions (never resuming) are the degenerate case;
-// resuming once in tail position covers readers, state-passing, and the like.
+// v1 supports single-shot handlers: a clause resumes at most once per path,
+// in any position. Not resuming at all is an exception; resuming once — even
+// with work after it — covers readers, state, logging, and the like.
+// Resuming twice (full nondeterminism) is not yet supported.
 
 // An exception: `throw` never returns to the caller, so its clause does not
 // resume — it replaces the computation with the handler's answer.
@@ -52,11 +53,13 @@ command main | (exit: -i32) {
     println(ok);                        // 5
 
     // The reader resumes with the configured value.
+    // `resume(10)` continues `scaled` with config = 10, yielding 70; the
+    // clause then adds 1000 — work after a resume, which single-shot allows.
     let result = handle scaled(7) {
-        config() resume => resume(10),
+        config() resume => resume(10) + 1000,
         return(n) => n,
     };
-    println(result);                    // 70
+    println(result);                    // 70 + 1000 = 1070
 
     0 @ exit
 }
