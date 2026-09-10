@@ -73,14 +73,15 @@ machine the redesign already built.
   handler is part frames, part escaping `Kont`. Healing it addresses all
   three goals at once.
 
-  *Stage 1 — unify the continuation (unlocks multi-shot/non-tail effects).*
-  Re-lower application, `let`, and blocks so a body's result flows through
-  frames, not through a captured covariable that replaces the stack. Then
-  `mu` (undelimited capture) and a handler `Prompt` (delimited capture) are
-  two cases of one mechanism, both slicing the one frame stack; multi-shot
-  and non-tail `resume` fall out, and the tail-position restriction is
-  retired — with the nondeterminism example (`resume` twice) as the test
-  that proves it.
+  *Stage 1 — unify the continuation (unlocks multi-shot effects).* Re-lower
+  application, `let`, and blocks so a body's result flows through frames, not
+  through a captured covariable that replaces the stack. **Done for `let` and
+  blocks** (single-shot `resume` now composes in any position, no longer
+  tail-only). **Remaining: application**, which still lowers through a μ that
+  scatters the continuation, so resuming twice (nondeterminism) does not yet
+  compose and is rejected. Finishing it makes `mu` (undelimited) and a
+  `Prompt` (delimited) two cases of one mechanism and unlocks multi-shot —
+  with the nondeterminism example (`resume` twice) as the proof.
 
   *Stage 2 — persistent continuation + indexed environments (cheap capture,
   faster lookup).* Represent the stack as a shared persistent cons so capture
