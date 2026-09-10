@@ -112,6 +112,17 @@ and where the two disagree, `DESIGN.md` is right.
   negative `fn`. What nothing says is still written, and saying so is a
   diagnostic rather than an unchecked hole.
 
+## Known limits
+
+- **`¬¬A` is `A` as a type.** `dual` is an involution and the surface has no
+  polarity shifts, so a value and a consumer-of-consumers share one type while
+  differing at run time: `dne(42)` type-checks and misbehaves. Shifts (`⇑`/`⇓`)
+  are the standard fix and are not designed.
+- **Captured continuations escape rather than resume.** The evaluator unwinds
+  to the `mu` that captured a continuation, so one used after its `mu` has
+  answered fails with `escaped to a continuation`. `examples/classical.sl`
+  stays inside that limit deliberately.
+
 ## Deferred, with no accepted replacement
 
 - **Negative partial application.** The partial-agent forms

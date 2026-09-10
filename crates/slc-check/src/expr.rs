@@ -951,6 +951,18 @@ fn check_expr(
             // an atomic consumer is certainly not a function — `A → B` is
             // `-A ⅋ B`, so a function is negative too, and a `⅋` may be
             // either a function or a consumer of a product.
+            // Nor is data applied: a `+A` is a value, and a value is not a
+            // function.
+            if let Expr::Ident(name) = &callee.kind
+                && let Some(ty) = env.lookup(name)
+                && matches!(ty, Type::Pos(_))
+            {
+                diags.push(Diagnostic {
+                    message: format!("`{name}` has type {ty}, which is not a function"),
+                    span: e.span,
+                });
+                return None;
+            }
             if let Expr::Ident(name) = &callee.kind
                 && let Some(ty) = env.lookup(name)
                 && matches!(ty, Type::Neg(_) | Type::Bottom | Type::Dual(_))
@@ -1908,6 +1920,15 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn data_is_not_applied() {
+        // A `+A` is a value. Applying one used to be accepted, which let a
+        // `¬¬A` — the same type, by the involution — be called like a
+        // function.
+        let diags = check("fn f(x: +i64) -> i64 { x(1) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("which is not a function")), "{diags:?}");
     }
 
     #[test]

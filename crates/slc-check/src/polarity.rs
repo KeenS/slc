@@ -159,7 +159,13 @@ fn check_param_polarity(
     {
         return;
     }
-    let requires_negative = allow_negative_value_parameter || is_cont || p.is_continuation;
+    // A written `-` lets a value parameter be a consumer — but only when the
+    // type is one. `dual` is an involution, so `-(-A)` is `+A`, and a
+    // parameter written that way is ordinary data.
+    let resolved = resolve(param_type, declared);
+    let written_consumer =
+        allow_negative_value_parameter && resolved.as_ref().is_some_and(is_negative_type);
+    let requires_negative = written_consumer || is_cont || p.is_continuation;
     if requires_negative {
         if let TypeExpr::Positive(_) = param_type {
             diags.push(Diagnostic {
@@ -172,23 +178,29 @@ fn check_param_polarity(
             return;
         }
     } else if let TypeExpr::Negative(_) = param_type {
-        diags.push(Diagnostic {
-            message: format!(
+        // A double negation is the case worth explaining: it reads as a
+        // consumer and is not one.
+        let message = match &resolved {
+            Some(ty) if is_positive_type(ty) => format!(
+                "parameter `{}` is written negative but has type {ty}: dual is an involution",
+                p.name
+            ),
+            _ => format!(
                 "parameter `{}` has explicitly negative type; expected positive (+) polarity",
                 p.name
             ),
-            span,
-        });
+        };
+        diags.push(Diagnostic { message, span });
         return;
     }
-    if let Some(ty) = resolve(param_type, declared) {
+    if let Some(ty) = resolved {
         let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };
         if !ok {
             diags.push(Diagnostic {
                 message: format!(
                     "parameter `{}` has type {ty}; expected {} polarity",
                     p.name,
-                    if is_cont { "negative (-)" } else { "positive (+)" }
+                    if requires_negative { "negative (-)" } else { "positive (+)" }
                 ),
                 span,
             });
@@ -320,6 +332,22 @@ mod tests {
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         check_program(&prog)
+    }
+
+    #[test]
+    fn a_double_negation_is_data_and_says_so() {
+        // `-(-i64)` is `+i64`, so it is fine as data and wrong as a
+        // consumer — and the diagnostic explains which.
+        let diags = check("fn f(x: -(-i64)) -> i64 { 0 }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("dual is an involution")), "{diags:?}");
+
+        // A `fn` may still take a genuine consumer as data it forwards.
+        assert!(check("fn f(x: -i64) -> i64 { 0 }").is_ok());
+
+        // A `command`'s value group may not, and keeps the ordinary
+        // diagnostic.
+        let diags = check("command f(x: -i32) | (k: -i32) { 0 @ k }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("explicitly negative type")), "{diags:?}");
     }
 
     #[test]

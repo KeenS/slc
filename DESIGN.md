@@ -806,6 +806,39 @@ continuation parameter becomes a Λ binder.
 | `κx. t` | not surface-visible; the internal command abstraction |
 | `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |
 
+### Classical control
+
+The core is classical, so the classical laws are ordinary programs. Negation
+is a consumer — `¬A` is `-A`, since `A → ⊥` and `-A` are one type — and both
+laws are written with `mu`, which hands out the continuation of the expression
+it stands in:
+
+```sl
+// ¬¬A → A: give the refuter this call's continuation.
+fn dne(refuter: +i64) -> i64 {
+    mu(k) { k @ refuter }
+}
+
+// A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
+fn lem() -> Choice {
+    mu(k) {
+        Choice::Refutes(select +i64 { a <= Choice::Holds(a) @ k }) @ k
+    }
+}
+```
+
+`examples/classical.sl` runs both. Two limits are worth knowing:
+
+- **`dual` is an involution with no shift**, so `¬¬A` *is* `A` as a type —
+  `dne`'s parameter is written `+i64`. The values differ, though: one is an
+  integer and the other consumes a consumer. The checker cannot tell them
+  apart, so `dne(42)` type-checks and misbehaves at run time. Distinguishing
+  them needs polarity shifts, which the surface does not have.
+- **A captured continuation escapes; it does not resume.** The evaluator
+  unwinds to the `mu` that captured it, so a refutation is good only while
+  its `mu` is still running. Used after that `mu` has answered, it fails with
+  `escaped to a continuation`.
+
 ## 11. Error continuations
 
 Fallible operations receive their result continuations directly. For example,
