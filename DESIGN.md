@@ -505,6 +505,42 @@ dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and
 supertraits are not yet provided.
 
+### Effects and handlers
+
+An `effect` names operations a computation may perform; a `handle` answers
+them. Performing an operation suspends the computation and passes control to
+the nearest enclosing handler, whose clause receives `resume`, the captured
+continuation:
+
+```sl
+effect Exn    { fn throw(message: +String) -> i64; }
+effect Reader { fn config() -> i64; }
+
+command main | (exit: -i32) {
+    let safe = handle checked_div(10, 0) with Exn {
+        throw(message) resume => 0 - 1,   // never resumes: an exception
+        return(n) => n,
+    };
+    let scaled = handle x * config() with Reader {
+        config() resume => resume(10),    // resumes once, in tail position
+        return(n) => n,
+    };
+    …
+}
+```
+
+An operation is a free function, dual to a trait method: a trait hands a value
+the operations it *provides*, an effect hands a computation the answers it
+*demands*. A handler is installed dynamically by `handle`; a trait's impl is
+resolved statically.
+
+A clause may use `resume` at most once and only in tail position. Not
+resuming is an exception; resuming once in tail position is a reader,
+state-passing, and the like. Multi-shot handlers (resuming twice — full
+nondeterminism) are rejected rather than run, because the continuation is
+only partly reified; the checker says so. Operation names are unique across
+effects, and a performed operation with no handler is a runtime error.
+
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —

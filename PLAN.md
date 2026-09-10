@@ -38,6 +38,16 @@ machine the redesign already built.
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
 
+- **Effect handlers are tail-resumptive only.** An operation's continuation
+  is reified partly as `Prompt` frames and partly as the `Value::Kont`s the
+  μ-based application lowering captures, which escape the handler delimiter.
+  So a handler clause may use `resume` at most once and only in tail
+  position — exceptions and tail-resumptive effects (readers, state-passing);
+  multi-shot (nondeterminism) is rejected, not run. Lifting it needs
+  application and `let` re-lowered to explicit frames so the whole
+  continuation is the frame stack, at which point `resume` composes and
+  repeats freely.
+
 ## Deferred, with no accepted replacement
 
 - **Negative partial application.** The partial-agent forms
@@ -63,51 +73,4 @@ machine the redesign already built.
 
 ## Next
 
-- **Algebraic effects and handlers: the negative dual of traits.** A trait
-  hands a computation a dictionary of functions a value *provides*, resolved
-  statically; an effect hands it a way to answer the requests a computation
-  *demands*, installed dynamically by `handle`. Same dictionary shape, dual
-  polarity — and effects need one ingredient traits do not: capturing the
-  continuation at the operation and resuming it under the handler.
-
-  *The runtime is the easy part — already built.* An operation captures the
-  continuation up to its handler and the handler resumes it zero times
-  (abort), once (normal), or many (nondeterminism) — exactly the resumable
-  `Value::Kont` the abstract machine already reifies. The only addition is a
-  **delimiter**: a `Prompt` frame on the machine's frame stack. `handle e
-  with H` pushes one and runs `e`; `perform op(v)` scans the stack down to
-  the nearest `Prompt` handling `op`, splits it there (`Vec::split_off`),
-  packages the upper slice as a *composable* continuation `resume`, and jumps
-  into the handler's clause with `(v, resume)`. `resume` is a `Kont` that
-  *prepends* its slice rather than replacing the stack — the one
-  generalization of today's whole-stack jump, and the stack-as-data substrate
-  already represents both. This subsumes and makes ergonomic the
-  `Request`-enum codata a provider answers by hand today (`connectives.sl`),
-  adding the delimited resumption that pattern cannot express.
-
-  *The real work is the type system.* A function's type carries an effect
-  **row** — `fn foo() -> A / {State}` — pure functions having the empty row.
-  `perform op` requires `op`'s effect in the ambient row; `handle` discharges
-  one from it; higher-order functions forward rows by row polymorphism
-  (`map<E>(f: A -> B / E, …) -> … / E`). Row unification and discharge are the
-  substantial addition, dual to the trait checker's constraint set.
-
-  *Linearity.* A handler's `resume` is unrestricted — it may be dropped
-  (exception) or duplicated (nondeterminism) — unlike a `mu`-captured
-  continuation, which must be consumed. That relaxation is the delicate
-  soundness point and belongs in the effect's type: a handler declares
-  whether it is one-shot or multi-shot.
-
-  *Showcase.* Nondeterminism (`choose()`, resume twice, collect both) and
-  exceptions (`throw()`, resume zero times, abort) — the two extremes that
-  exhibit what the resumable machine uniquely enables, neither needing a
-  parameterized handler.
-
-  *Staging.* (1) `effect`/`handle`/`perform` syntax, AST, effect-row types;
-  (2) the machine's `Prompt` frame, `perform` split, `handle` delimiter,
-  composable `resume`; (3) effect rows in the checker — unification,
-  discharge, row polymorphism; (4) `resume` linearity; (5) the nondeterminism
-  and exception examples.
-
-  *Deferred.* Parameterized (stateful) handlers, named/scoped handlers,
-  effect-inference ergonomics, and tail-resumption as an optimization.
+Nothing is outstanding. New work goes here as it is planned.
