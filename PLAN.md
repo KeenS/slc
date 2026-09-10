@@ -117,4 +117,7 @@ it is remembered.
   Trait` is the existential package `∃T. (↓T ⊗ Show<T>)`, so it waits on the
   `∀`/`∃` quantifiers already sketched in the shifts discussion. Traits give
   the constraint machinery; the quantifiers give it a first-class dynamic
-  form.
+  form. Further out, the dual of a trait is an **effect**: a dictionary of
+  functions a value *provides* becomes a dictionary of continuations a
+  computation *demands* — algebraic effects and handlers as the negative
+  mirror of type classes, on the same dictionary machinery.
