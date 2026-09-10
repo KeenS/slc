@@ -8,7 +8,6 @@
 
 use crate::value::{Env, Value};
 use slc_core::command::Command;
-use slc_core::coterm::CoTerm;
 use slc_core::term::Term;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -341,6 +340,7 @@ pub(crate) fn run_builtin_function(name: &str, args: Vec<Value>) -> Result<Value
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slc_core::coterm::CoTerm;
 
     #[test]
     fn eval_int_literal() {
