@@ -76,23 +76,39 @@ machine the redesign already built.
   (`examples/effects.sl`). Application's `__call` was already framewise (the
   arg-shortcut ignores it).
 
-  *Stage 2 — persistent continuation + indexed environments (cheap capture,
-  faster lookup).* **Persistent continuation done:** the stack is a shared
-  cons (`machine::Kont`) with the top at the head, so `mu`'s `Value::Kont`
-  and a handler's `resume` capture by cloning one `Rc` — O(1) however deep,
-  and a pushed frame never disturbs a stack already captured, so a resumed
-  continuation walks its own copy (the multi-shot property now holds by
-  construction, not by `Vec` cloning). **Remaining:** compile variable
-  access to de Bruijn indices over a flat environment instead of `HashMap`
-  lookups with per-frame `Env` clones — this rides on the Stage 3 core-IR
-  pass, which is where names are resolved once.
+  *Stage 2 — persistent continuation + indexed environments. **Done.***
+  The continuation is a shared cons (`machine::Kont`) with the top at the
+  head, so `mu`'s `Value::Kont` and a handler's `resume` capture by cloning
+  one `Rc` — O(1) however deep, and a pushed frame never disturbs a stack
+  already captured, so a resumed continuation walks its own copy (multi-shot
+  now holds by construction, not by `Vec` cloning). The environment is
+  likewise a cons — O(1) to clone per step — and variable access is a de
+  Bruijn index into its positional chain, no `HashMap` walk (see Stage 3).
 
-  *Stage 3 — compile the core to a closed IR (the raw speedup, and the home
-  for deferred work).* Replace per-step `Rc<Term>` walking and cloning with a
-  one-time compilation to a closure-converted, de-Bruijn instruction stream.
-  That pass is also where the deferred **static dictionary passing for
-  traits** lands (zero-cost dispatch, retiring the runtime type-key lookup),
-  and where effect operations compile to efficient prompt instructions.
+  *Stage 3 — compile the core to a closed IR. **Core done; two follow-ons
+  remain.*** The machine no longer walks the named core: a compile pass
+  (`slc-runtime/src/compile.rs`) resolves every lexical binder once to a de
+  Bruijn index, producing a closed IR (`ir.rs`) the machine runs. Variable
+  and co-variable references are `Local`/`CoLocal` indices into one
+  positional environment (they share it — a co-variable binds to a consumer
+  value); globals, literals, and `match` pattern variables stay `Dynamic`
+  names, the last injected into a by-name overlay that leaves the indices
+  stable. `Value`'s code-bearing variants carry IR and dropped their binder
+  names.
+
+  Remaining:
+  - **Static dictionary passing for traits** — resolve a trait-method call
+    to its impl at compile time (zero-cost dispatch, retiring the runtime
+    `type_key` lookup in `Value::Method`). This needs type information at
+    compile time, so it is the checker→lowering handoff, not the
+    type-unaware runtime compiler: the checker knows each call's receiver
+    type (or its `<T: Trait>` dictionary parameter) and must thread that
+    through. The largest remaining piece, and the most invasive.
+  - **Linearize the IR to a flat instruction stream** (`Op::Local(u16)`,
+    `Op::CallDict`, `Op::Prompt`, …) run by an explicit instruction pointer
+    instead of the tree-walk. Mostly mechanical on top of the closed IR; the
+    headline wins (no name resolution, O(1) env/continuation capture) are
+    already banked, so this is a smaller, later speedup.
 
   The shape is the one the calculus already describes: the machine state is
   `⟨ term-closure ∥ coterm-closure ⟩`, and the coterm side *is* the

@@ -915,11 +915,28 @@ constructs, so lowering never has to guess.
 The evaluator is an abstract machine in the shape the calculus suggests: a
 state is what is being evaluated together with an explicit stack of frames —
 the continuation, held as data rather than as host stack. A cut pushes the
-co-term side as a frame; `μ` captures by cloning the stack into a value; a
-captured continuation is activated by reinstating its stack, which is why it
-outlives its `mu` and can be used more than once. `select` branches stay
-unevaluated until activation chooses one, and a fuel bound turns divergence
-into an error.
+co-term side as a frame; `μ` captures the stack into a value; a captured
+continuation is activated by reinstating its stack, which is why it outlives
+its `mu` and can be used more than once. `select` branches stay unevaluated
+until activation chooses one, and a fuel bound turns divergence into an
+error.
+
+The machine does not walk the named core. The core is first compiled to a
+closed intermediate representation in which every lexical binder is resolved,
+once, to a de Bruijn index, so a variable reference is a count into a
+positional environment rather than a walk comparing names. What a compiler
+cannot resolve lexically — a global, a literal, or a `match` arm's pattern
+variables, which the pattern engine injects at run time — stays a name,
+found in a by-name overlay and then the globals table. Keeping pattern
+injections in their own overlay is what lets the indices be stable: an
+injected binding never shifts the positional chain, yet, being part of the
+environment, it is still captured by a closure that escapes the arm.
+
+The continuation and all three environment layers are persistent `Rc` conses
+with their most recent entry at the head, so capturing the continuation
+(`mu`, or a handler's `resume`) or cloning the environment (which the machine
+does on nearly every step) bumps refcounts rather than copying — O(1)
+regardless of depth, and a push never disturbs a handle captured earlier.
 
 ### Printed form
 
