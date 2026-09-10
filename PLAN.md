@@ -69,9 +69,12 @@ it is remembered.
   no change.
 
   *Surface.* `trait`, `impl … for …`, `Self`, and bounds on declaration type
-  parameters. No receiver syntax: a method is called as a free function,
-  `show(x)`, overloaded on the argument's type — Slant has no `.method()`
-  and reads struct fields by `match`, so UFCS is the natural fit.
+  parameters. A method is a free function, called `show(x)` and overloaded on
+  the argument's type — **never** `x.show()`. This is settled, not a default:
+  Slant has no receiver anywhere (it reads struct fields by `match`, not
+  `x.field`), and a method is only a function whose meaning depends on an
+  argument's type, so it should look like the function it is. `.` stays out
+  of the value language entirely.
 
   *Where the work is — the checker.* Unlike module resolution, this cannot
   run before checking: the impl to pass is chosen from a type, so it is
