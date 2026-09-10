@@ -161,10 +161,7 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         "__index" => 2,
         "map_len" => 1,
         "map_insert" => 3,
-        "set_contains" => 2,
         "close_file" => 1,
-        "set_insert" => 2,
-        "set_len" => 1,
         "path_join" => 2,
         "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"

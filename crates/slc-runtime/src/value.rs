@@ -163,8 +163,6 @@ pub enum Value {
     List(Vec<Value>),
     /// A map value.
     Map(Vec<(Value, Value)>),
-    /// A set value.
-    Set(Vec<Value>),
 }
 
 impl PartialEq for Value {
@@ -188,7 +186,6 @@ impl PartialEq for Value {
             }
             (Value::List(a), Value::List(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
-            (Value::Set(a), Value::Set(b)) => a == b,
             (Value::Tagged(a, pa), Value::Tagged(b, pb)) => a == b && pa == pb,
             _ => false,
         }
@@ -215,9 +212,6 @@ impl Value {
             }
             Value::Map(entries) => {
                 Type::List(Box::new(entries.first().map(|(k, _)| k.type_of()).unwrap_or(Type::One)))
-            }
-            Value::Set(items) => {
-                Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
             Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
             Value::Tagged(label, _) => Type::Named(
@@ -258,10 +252,6 @@ impl Value {
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k.display(), v.display()))
                     .collect();
-                format!("{{{}}}", inner.join(", "))
-            }
-            Value::Set(items) => {
-                let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
                 format!("{{{}}}", inner.join(", "))
             }
             Value::Tagged(label, payload) => match payload.as_ref() {
@@ -317,10 +307,6 @@ pub fn install_stdlib(env: &mut Env) {
         "map_insert",
         "map_get",
         "map_len",
-        "set_new",
-        "set_insert",
-        "set_contains",
-        "set_len",
         "path_join",
         "path_basename",
         "path_dirname",

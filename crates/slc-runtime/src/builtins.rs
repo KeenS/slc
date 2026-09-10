@@ -314,25 +314,6 @@ pub fn apply_builtin(
             Some(Value::Map(entries)) => Ok(Value::Int(entries.len() as i64)),
             _ => Err(BuiltinError::TypeMismatch("map_len expects a Map".into())),
         },
-        "set_new" => Ok(Value::Set(vec![])),
-        "set_insert" => match (args.first(), args.get(1)) {
-            (Some(Value::Set(items)), Some(v)) => {
-                let mut new_items = items.clone();
-                if !new_items.contains(v) {
-                    new_items.push(v.clone());
-                }
-                Ok(Value::Set(new_items))
-            }
-            _ => Err(BuiltinError::TypeMismatch("set_insert expects (Set, value)".into())),
-        },
-        "set_contains" => match (args.first(), args.get(1)) {
-            (Some(Value::Set(items)), Some(v)) => Ok(Value::Bool(items.contains(v))),
-            _ => Err(BuiltinError::TypeMismatch("set_contains expects (Set, value)".into())),
-        },
-        "set_len" => match args.first() {
-            Some(Value::Set(items)) => Ok(Value::Int(items.len() as i64)),
-            _ => Err(BuiltinError::TypeMismatch("set_len expects a Set".into())),
-        },
         "path_join" => match (args.first(), args.get(1)) {
             (Some(Value::Str(a)), Some(Value::Str(b))) => {
                 let joined = std::path::Path::new(a).join(b);
@@ -479,18 +460,6 @@ mod tests {
         assert_eq!(v, Value::Int(1));
         let n = apply_builtin("map_len", &[m2], &mut buf).unwrap();
         assert_eq!(n, Value::Int(2));
-    }
-
-    #[test]
-    fn set_operations() {
-        let mut buf: Vec<u8> = Vec::new();
-        let s0 = apply_builtin("set_new", &[], &mut buf).unwrap();
-        let s1 = apply_builtin("set_insert", &[s0, Value::Int(1)], &mut buf).unwrap();
-        let s2 = apply_builtin("set_insert", &[s1, Value::Int(1)], &mut buf).unwrap();
-        let n = apply_builtin("set_len", std::slice::from_ref(&s2), &mut buf).unwrap();
-        assert_eq!(n, Value::Int(1)); // duplicate not added
-        let c = apply_builtin("set_contains", &[s2, Value::Int(1)], &mut buf).unwrap();
-        assert_eq!(c, Value::Bool(true));
     }
 
     #[test]
