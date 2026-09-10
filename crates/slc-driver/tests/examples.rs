@@ -115,6 +115,25 @@ fn repository_example_suite_has_expected_results() {
             Expected { success: true, stdout: &["Hello, world!", "H", "world"], stderr: &[] },
         ),
         (
+            "tree_search.sl",
+            Expected {
+                success: true,
+                // The first search never visits 4: the hit jumps out.
+                stdout: &[
+                    "visiting 3",
+                    "visiting 1",
+                    "visiting 2",
+                    "found: 2",
+                    "visiting 3",
+                    "visiting 1",
+                    "visiting 2",
+                    "visiting 4",
+                    "missing: -1",
+                ],
+                stderr: &[],
+            },
+        ),
+        (
             "two_styles.sl",
             Expected {
                 success: true,

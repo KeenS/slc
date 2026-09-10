@@ -175,6 +175,12 @@ impl Unification {
             (Type::Var(_), _) | (_, Type::Var(_)) => {
                 Err(TypeError::Mismatch { expected: expected.clone(), actual: actual.clone() })
             }
+            // `1` and `+unit` are one type written twice: `()` is the only
+            // value of either.
+            (Type::One, Type::Pos(crate::types::Base::Unit))
+            | (Type::Pos(crate::types::Base::Unit), Type::One) => Ok(Type::One),
+            (Type::Bottom, Type::Neg(crate::types::Base::Unit))
+            | (Type::Neg(crate::types::Base::Unit), Type::Bottom) => Ok(Type::Bottom),
             (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
             // `X` meets `dual(B)`.
@@ -593,6 +599,15 @@ mod tests {
         // `A → B` is `-A ⅋ B`, and `dual` is semantic: the wrapped variable
         // meets `-bool` by becoming `+bool` — the argument itself.
         assert_eq!(u.apply(&a), Type::Pos(Base::Bool));
+    }
+
+    #[test]
+    fn the_two_spellings_of_unit_are_one_type() {
+        // `()` is `1`, and the written type `unit` is `+unit`; a value of
+        // one is a value of the other.
+        let mut u = Unification::new();
+        assert!(u.unify(&Type::One, &Type::Pos(Base::Unit)).is_ok());
+        assert!(u.unify(&Type::Neg(Base::Unit), &Type::Bottom).is_ok());
     }
 
     #[test]
