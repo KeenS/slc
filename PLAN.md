@@ -13,12 +13,14 @@ else belongs.
 
 ## Status
 
-The language is complete and the acceptance suite is green. Two substantial
-features are planned and specified below; both build on machinery already in
-place, and they are ordered — traits first, effects second — because the
-constraint handling traits introduce is the positive half of what effects
-then mirror, and effects additionally reuse the resumable-continuation
-machine the redesign already built.
+The language is complete and the acceptance suite is green. Traits (ad-hoc
+polymorphism) and algebraic effects with handlers are both shipped and
+specified in `DESIGN.md`, and the execution model has been rebuilt around
+them: the evaluator is an abstract machine over a closed, flat, de-Bruijn
+instruction stream, its continuation first-class data (`DESIGN.md` §11). So
+effect handlers are multi-shot, captured continuations are cheap and
+reusable, and trait dispatch is resolved entirely at compile time. No large
+feature is mid-flight; what remains open is below.
 
 ## Known limits
 
@@ -45,83 +47,26 @@ machine the redesign already built.
 
 ## Deferred, with no accepted replacement
 
-- **Static dictionary passing for traits.** Traits are implemented by
-  dynamic dispatch on the argument's runtime type, checked total, rather than
-  the static dictionary passing the plan first sketched: threading dictionaries
-  through the unifier was too large a change to land safely, and runtime
-  dispatch makes generic impls fall out for free. The zero-cost monomorphic
-  version, and trait objects (`dyn`, the existential package), remain open.
+- **Trait objects (`dyn`).** Dispatch is static — a concrete call goes direct,
+  a bounded call through a dictionary — with no runtime method value, so there
+  is no existential package that hides a value's type behind its trait. `dyn`
+  (a value carried together with its dictionary) remains open.
+
 - **The interaction-net backend.** An unwired experiment: `slc-core::net`
   and its bridge were reachable only from their own tests, never from the
-  pipeline. Removed as dead code; git history has it, and an abstract
-  machine (see the continuations limit) is the likelier evaluator future.
+  pipeline. Removed as dead code; git history has it, and the abstract
+  machine the redesign built is the evaluator now.
 
 ## Next
 
-- **Evolve the execution model: one continuation, then compile to it.** The
-  machine reifies the continuation two ways at once — control (match, the
-  effect `Prompt`) lives in the frame stack, but application, `let`, and
-  blocks lower to `μk. ⟨… ∥ k⟩`, which the machine turns into a
-  stack-*replacing* `Value::Kont`. That split is the root cause of the
-  tail-resumptive effect limit: the continuation between a `perform` and its
-  handler is part frames, part escaping `Kont`. Healing it addresses all
-  three goals at once.
+No large feature is queued. The two readiest steps both close a known limit
+above:
 
-  *Stage 1 — unify the continuation. **Done.*** `let`, blocks, and `if`
-  routed their result through a μ-captured covariable that the machine turned
-  into a stack-replacing `Kont`; they now route to an unbound covar the
-  machine delivers to the current frame stack. A handler's `resume` is a
-  first-class slice of that one stack, so it composes and repeats freely —
-  multi-shot handlers (nondeterminism) work, and the restriction is gone
-  (`examples/effects.sl`). Application's `__call` was already framewise (the
-  arg-shortcut ignores it).
+- **Row-polymorphic effects.** Infer a function's effect row and let a
+  higher-order function forward an argument's effects, so `map(f, xs)` can say
+  it performs whatever `f` does — retiring the monomorphic-rows limit.
 
-  *Stage 2 — persistent continuation + indexed environments. **Done.***
-  The continuation is a shared cons (`machine::Kont`) with the top at the
-  head, so `mu`'s `Value::Kont` and a handler's `resume` capture by cloning
-  one `Rc` — O(1) however deep, and a pushed frame never disturbs a stack
-  already captured, so a resumed continuation walks its own copy (multi-shot
-  now holds by construction, not by `Vec` cloning). The environment is
-  likewise a cons — O(1) to clone per step — and variable access is a de
-  Bruijn index into its positional chain, no `HashMap` walk (see Stage 3).
-
-  *Stage 3 — compile the core to a closed IR. **Done.*** The machine no
-  longer walks the named core: a compile pass
-  (`slc-runtime/src/compile.rs`) resolves every lexical binder once to a de
-  Bruijn index, producing a closed IR the machine runs. Variable
-  and co-variable references are `Local`/`CoLocal` indices into one
-  positional environment (they share it — a co-variable binds to a consumer
-  value); globals, literals, and `match` pattern variables stay `Dynamic`
-  names, the last injected into a by-name overlay that leaves the indices
-  stable. `Value`'s code-bearing variants carry IR and dropped their binder
-  names.
-
-  **Static dictionary passing — done; `Value::Method` retired.** The checker
-  (`check_program_resolving`) resolves every trait-method call: a concrete
-  receiver to a direct impl call, a bounded `<T: Trait>` receiver to a
-  projection from a dictionary. A bounded function takes its dictionaries as
-  hidden leading parameters (lowering adds them), a call supplies them — the
-  global dictionary of a concrete type, or the caller's own forwarded
-  dictionary parameter — and a single-method trait's dictionary is simply its
-  impl. Because every accepted call resolves one way or the other, there is no
-  runtime method value at all: `Value::Method` and the runtime `type_key` are
-  gone (`examples/dictionaries.sl`).
-
-  **Linearized to a flat instruction stream. Done.** The whole program
-  compiles to one `Chunk` — a single `Vec<Node>` — and every sub-expression
-  is a `NodeId` index into it; the machine's instruction pointer is that
-  index, resolved with `chunk::node`, so stepping into a child is an integer,
-  not a pointer chase through `Rc`-linked nodes. Values (closures, consumers,
-  continuations) hold `NodeId`s into the one installed chunk. Term, co-term,
-  and command forms share the node vector, with position fixing the sort.
-
-  Stage 3 is complete: a closed, flat, de-Bruijn instruction stream with
-  static trait dispatch, no runtime name resolution on the hot path, and O(1)
-  continuation and environment capture.
-
-  The shape is the one the calculus already describes: the machine state is
-  `⟨ term-closure ∥ coterm-closure ⟩`, and the coterm side *is* the
-  continuation — one object. Completing that is simultaneously the
-  correctness unlock (Stage 1), the cheap-capture change (Stage 2), and what
-  a bytecode compiles against (Stage 3). The `fuel` counter stays — it is the
-  divergence backstop the soundness story leans on.
+- **Value linearity for `+File`.** Teach the linearity checker to spend a
+  handle exactly once, by `close_file` or by being handed on, so an unclosed
+  handle is a type error rather than a leak — retiring the file-handle limit
+  and the shadow-`exit` idiom it forces.

@@ -492,20 +492,17 @@ impl Show for bool { fn show(self: +bool) -> String { if self { "t" } else { "f"
 fn labelled<T: Show>(x: +T) -> String { "= " + show(x) }
 ```
 
-Dispatch is on the runtime type of the argument, and the checker makes the
-dispatch total: coherence allows one `impl` per trait and type, and a method
-call is accepted only when the type has an impl — a ground type directly, a
-bounded type parameter through its bound, and an unbounded one not at all.
-Because dispatch is on the value that actually arrives, a generic `impl` needs
-no machinery: `impl Show for [T]` may `show` each element, each resolved at
-its own type.
+The checker makes dispatch total: coherence allows one `impl` per trait and
+type, and a method call is accepted only when the type has an impl — a ground
+type directly, a bounded type parameter through its bound, and an unbounded
+one not at all.
 
-Dispatch is resolved entirely at compile time, with no runtime method value.
-A call on a concrete type compiles to a direct call to its impl. A call on a
-bound type parameter `<T: Show>` projects the method from a *dictionary* — the
-trait's impls for `T`, passed to the bounded function as a hidden argument;
-the function forwards it to any bounded call it makes, so the impl is chosen
-once, by whoever supplied the concrete type. A single-method trait's
+Dispatch is then resolved entirely at compile time, with no runtime method
+value. A call on a concrete type compiles to a direct call to its impl. A call
+on a bound type parameter `<T: Show>` projects the method from a *dictionary* —
+the trait's impls for `T`, passed to the bounded function as a hidden
+argument; the function forwards it to any bounded call it makes, so the impl
+is chosen once, by whoever supplied the concrete type. A single-method trait's
 dictionary is just its impl.
 
 A method may be a `command`, taking continuations like any other; the
