@@ -201,7 +201,7 @@ k(v)        // old
 v @ k       // new
 
 EXIT(0)     // old
-0 @ EXIT    // new
+0 @ EXIT    // later — and `EXIT` itself is now gone, see below
 ```
 
 `@` binds more loosely than every operator, so `a + b @ k` sends the sum, and
@@ -214,6 +214,21 @@ consumers. `deliver(ok, err)` still reads as it did.
 
 A cut has type `⊥`, so a branch that ends in one leaves the type of an `if` to
 the other branch, and code after a cut in a block is unreachable.
+
+## The top-level `EXIT` is gone
+
+Ending the program is a right a helper is handed, never one it takes: `exit`
+reaches helpers as a continuation parameter or inside a consumer built where
+it is in scope.
+
+```sl
+fn die(m: +String) -> ⊥ { println(m); 1 @ EXIT }        // old
+
+command main | (exit: -i32) {                            // new
+    let die = select { m <= { println(m); 1 @ exit } };
+    …
+}
+```
 
 ## The entry point is a `command`
 

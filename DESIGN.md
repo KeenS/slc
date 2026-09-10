@@ -558,24 +558,10 @@ same thing — halves that progress independently — and both need either a sen
 that returns or concurrency. A cut does not return, and the language has no
 concurrency, so a `⅋` is supplied whole.
 
-## 9. Top-level exit
+## 9. Entry point and exit
 
-`EXIT` is the top-level continuation. Its type is `-i32`, so it is activated
-by a cut like any other consumer:
-
-```sl
-0 @ EXIT
-```
-
-The cut terminates the program with the supplied exit code. It is the same
-continuation the runtime hands to `main`, so `0 @ exit` inside `main` and
-`0 @ EXIT` anywhere else end the program the same way. Inside `main`, use the
-parameter: a `command` must consume the continuation it was given.
-
-## Entry point
-
-A program is a command, so its entry point is a `command`. It takes no values and
-exactly one continuation — the exit status:
+A program is a command, so its entry point is a `command`. It takes no values
+and exactly one continuation — the exit status:
 
 ```sl
 command main | (exit: -i32) {
@@ -584,10 +570,21 @@ command main | (exit: -i32) {
 }
 ```
 
-The runtime supplies that continuation, and it is `EXIT`: the two names denote
-the same thing, so a helper that ends the program can cut against `EXIT`
-directly while `main` uses the name it was given. The cut that reaches it is
-what ends the program, and the integer it carries is the process exit status.
+The runtime supplies that continuation; the cut that reaches it is what ends
+the program, and the integer it carries is the process exit status.
+
+`exit` is a parameter, and it is the *only* door out. There is no global exit
+consumer: ending the program is a right a helper is handed — as a continuation
+parameter, or captured into a consumer built where `exit` is in scope — never
+one it takes for itself. (An earlier design had a top-level `EXIT`; it let any
+function end the program behind `main`'s back, and it is gone.)
+
+```sl
+command main | (exit: -i32) {
+    let complain = select { message <= { println(message); 1 @ exit } };
+    read_file("input.txt", select { text <= { print(text); 0 @ exit } }, complain)
+}
+```
 
 Because a `command` must consume its continuation, **every terminating path of a
 program leaves through `exit`** — a `main` that falls off the end is rejected
@@ -668,7 +665,7 @@ A cut is well typed exactly when its two sides are dual. Which side is
 written negatively is not itself the question: `v @ k` sends `v` to something
 that consumes it, and for a function that something is a call stack.
 
-An integer literal takes the integer type its port requires — `0 @ EXIT`
+An integer literal takes the integer type its port requires — `0 @ exit`
 sends an `i32` — and is `+i64` when nothing constrains it. Every other value
 must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
@@ -919,7 +916,8 @@ space — `e? name` — the `?` is bare and `name` is a separate expression.
 ## 12. Migration summary
 
 - `k(v)` (activating a continuation) → `v @ k`
-- `EXIT(0)` → `0 @ EXIT`
+- `EXIT(0)` → `0 @ EXIT` → gone: end the program through a continuation
+  parameter, the way `main` does with `exit`
 - `select T { c => p }` → `select T { p <= c }` — the shape comes first, as
   in a `match`, and `<=` points back at the command
 - `select T { V <= k(v) }` → `select T { V <= v @ k }`

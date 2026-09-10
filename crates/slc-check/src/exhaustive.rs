@@ -543,9 +543,9 @@ mod tests {
                 "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= EXIT(0),
-                     Green <= EXIT(1),
-                     Blue <= EXIT(2),
+                     Red <= 0 @ out,
+                     Green <= 1 @ out,
+                     Blue <= 2 @ out,
                  };
                  cont(Color::Red)
              }"
@@ -560,8 +560,8 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= EXIT(0),
-                     Green <= EXIT(1),
+                     Red <= 0 @ out,
+                     Green <= 1 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -576,9 +576,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= EXIT(0),
-                     Red <= EXIT(1),
-                     Blue <= EXIT(2),
+                     Red <= 0 @ out,
+                     Red <= 1 @ out,
+                     Blue <= 2 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -593,9 +593,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= EXIT(0),
-                     Green <= EXIT(1),
-                     Purple <= EXIT(2),
+                     Red <= 0 @ out,
+                     Green <= 1 @ out,
+                     Purple <= 2 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -630,9 +630,9 @@ mod tests {
         let r = check(
             "fn main() -> i32 {
                  let cont = select Color {
-                     Red <= EXIT(0),
-                     Green <= EXIT(1),
-                     Blue <= EXIT(2),
+                     Red <= 0 @ out,
+                     Green <= 1 @ out,
+                     Blue <= 2 @ out,
                  };
                  cont(Color::Red)
              }",

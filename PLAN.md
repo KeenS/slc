@@ -54,8 +54,7 @@ and where the two disagree, `DESIGN.md` is right.
   function, `<-` for a negative one. Either may take continuation parameters.
 - Application and cut are distinct: `f(a)` applies at either polarity, and
   `v @ k` is the cut — a command of type `⊥` that does not return. Calling a
-  continuation is rejected, `EXIT` is a consumer (`0 @ EXIT`), and `select`
-  arms are cuts.
+  continuation is rejected, and `select` arms are cuts.
 - `match` takes any positive value apart, and `select` builds the consumer of
   any positive type, with arms `pattern <= command`: one arm per variant of an
   `enum` (the negative additive), exactly one for a `struct` or tuple, binding
@@ -80,7 +79,9 @@ and where the two disagree, `DESIGN.md` is right.
 - The entry point is `command main | (exit: -i32)`: a program is a command, its
   status is the value it cuts against `exit`, and linearity makes every
   terminating path leave through it. There is no final-result value; output is
-  what the program prints.
+  what the program prints. There is no global `EXIT` either — ending the
+  program is a right a helper is handed, as a continuation, never one it
+  takes.
 - The standard library follows the declaration rule: `parse_int`, `read_file`,
   `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
   continuation per outcome and activate exactly one. Operator failures (`s[i]`,
@@ -189,18 +190,6 @@ example suite.
 
 ## Next
 
-- **Drop the top-level `EXIT`.** `main` receives `exit`, so a global consumer
-  is a second spelling of the same continuation — and one that lets any
-  helper end the program without being handed the right to. Ending the
-  program should reach a helper the way everything else does: as a
-  continuation parameter. Touches the checker's constant table, the runtime's
-  `EXIT` dispatch, the helpers in `classical.sl` and scratch idioms built on
-  `1 @ EXIT`, and DESIGN §9.
-- **Shifts do not shorten `two_styles.sl` — investigated, resolved as no.**
-  The continuation-first half nests because nothing returns, which is a fact
-  about control, not about how consumers travel; `↓`/`↑` only box a consumer
-  as data. What flattens the pipeline is the `mu` capture, and the example
-  keeps the nesting deliberately, to show what the style costs. No change.
 - **`open_file` and `close_file`.** Builtin commands over a file handle, so
   reading stops being whole-file-or-nothing: `open_file(path)` offers the
   handle to one continuation and a message to the other; `read_line(handle)`

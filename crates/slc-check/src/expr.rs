@@ -196,10 +196,7 @@ impl<'a> Env<'a> {
 }
 
 fn constant_types(p: &Program) -> HashMap<String, Type> {
-    // `EXIT` is the top-level continuation, so it is a binding of negative
-    // type rather than a function: it is activated with a cut.
     let mut out: HashMap<String, Type> = HashMap::new();
-    out.insert("EXIT".into(), Type::Neg(Base::I32));
     out.extend(constant_declarations(p));
     out
 }
@@ -709,7 +706,7 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
 /// Does a value written as `expr`, inferred as `actual`, fit a port that
 /// requires `expected`?
 ///
-/// An integer literal takes the integer type its port requires — `0 @ EXIT`
+/// An integer literal takes the integer type its port requires — `0 @ exit`
 /// sends an `i32` — and is `+i64` only when nothing constrains it. Every
 /// other value must match its port exactly.
 /// The expression a body's value comes from: the tail of a block, through a
@@ -1019,6 +1016,17 @@ fn check_expr_unapplied(
         Expr::Ident(name) => {
             if let Some(ty) = env.lookup(name) {
                 return Some(ty);
+            }
+            // The global consumer is gone: ending the program is a right a
+            // helper is handed, not one it takes.
+            if name == "EXIT" {
+                diags.push(Diagnostic {
+                    message: "the top-level `EXIT` no longer exists; end the program through \
+                              a continuation parameter, the way `main` does with `exit`"
+                        .into(),
+                    span: e.span,
+                });
+                return None;
             }
             if enums.declarations.contains(name) {
                 diags.push(Diagnostic {
@@ -1932,12 +1940,12 @@ mod tests {
 
     #[test]
     fn exit_is_a_continuation() {
-        let diags = check("fn main() -> i32 { EXIT(0) }").unwrap_err();
+        let diags = check("command f | (out: -i32) { out(0) }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("`EXIT` is a consumer of type -i32")),
+            diags.iter().any(|d| d.message.contains("`out` is a consumer of type -i32")),
             "{diags:?}"
         );
-        assert!(check("fn main() -> i32 { 0 @ EXIT }").is_ok());
+        assert!(check("command f | (out: -i32) { 0 @ out }").is_ok());
     }
 
     #[test]
@@ -2405,11 +2413,11 @@ mod tests {
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) {
+                 let complain = select { m <= { println(m); 1 @ exit } };
                  let text = mu(k) { read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 @ exit
-             }
-             fn complain(m: +String) -> ⊥ { println(m); 1 @ EXIT }",
+             }",
         )
         .unwrap_err();
         assert!(
