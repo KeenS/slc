@@ -35,6 +35,8 @@ impl std::fmt::Display for Type {
             Type::Sum(a, b) => write!(f, "({a} + {b})"),
             Type::Bang(t) => write!(f, "!{t}"),
             Type::List(t) => write!(f, "[{t}]"),
+            Type::Down(t) => write!(f, "↓{t}"),
+            Type::Up(t) => write!(f, "↑{t}"),
             Type::Named(name) => write!(f, "{name}"),
         }
     }

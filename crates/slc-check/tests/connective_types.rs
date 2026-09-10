@@ -58,6 +58,12 @@ fn explicit_connectives_parse_and_lower() {
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
         ("command f | (k: -⊥) { k(0) }", Type::Bottom),
+        // The shifts: `↓` boxes a negative type as data, `↑` is its dual.
+        ("fn f(b: ↓-i64) -> i64 { 0 }", Type::Down(Box::new(Type::Neg(Base::I64)))),
+        (
+            "fn f(r: ↓↑i64) -> i64 { 0 }",
+            Type::Down(Box::new(Type::Up(Box::new(Type::Pos(Base::I64))))),
+        ),
     ];
 
     for (source, expected) in cases {
@@ -137,6 +143,18 @@ fn connective_polarity_is_enforced_by_position() {
         diags.iter().any(|d| d.message.contains("expected positive (+) polarity")),
         "a bottom-typed value parameter should be rejected: {diags:?}"
     );
+}
+
+#[test]
+fn shifts_are_dual_and_never_cancel() {
+    // dual(↓B) = ↑dual(B): the involution goes through the box without
+    // erasing it, which is what keeps `¬¬A` a different type from `A`.
+    let boxed = lower_type(&parameter_type("fn f(b: ↓-i64) -> i64 { 0 }")).unwrap();
+    assert_eq!(boxed.dual(), Type::Up(Box::new(Type::Pos(Base::I64))));
+    assert_eq!(boxed.dual().dual(), boxed);
+    assert!(boxed.is_positive());
+    assert!(boxed.dual().is_negative());
+    assert_ne!(boxed.dual(), Type::Pos(Base::I64));
 }
 
 #[test]

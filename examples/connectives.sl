@@ -75,14 +75,14 @@ fn code(out: -i64) <- Colour {
 // that wants the answer — `dual(-i64 ⊕ -String)` is `+i64 & +String`.
 
 enum Request {
-    Retries(-i64),
-    Name(-String),
+    Retries(↓-i64),
+    Name(↓-String),
 }
 
 fn config() <- Request {
     select Request {
-        Retries(k) <= 3 @ k,
-        Name(k) <= "slant" @ k,
+        Retries(k) <= 3 @ ↑k,
+        Name(k) <= "slant" @ ↑k,
     }
 }
 
@@ -116,7 +116,7 @@ command main | (exit: -i32) {
 
     // codata: ask the provider for one field. The other is never computed.
     println(mu ask(answer: -i64) {
-        Request::Retries(answer) @ config
+        Request::Retries(↓answer) @ config
     });
 
     // 1 and ⊥.

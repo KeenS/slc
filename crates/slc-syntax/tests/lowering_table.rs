@@ -78,6 +78,12 @@ const ROWS: &[Row] = &[
         core: "co(μ̃[Color::Red(). ⟨$int_0 ∥ return⟩])",
     },
     Row {
+        id: "expr.shift",
+        // The box erases: the core sees the consumer itself.
+        source: "fn f(k: -i64) <- i64 { g(↓k) }",
+        core: "⟨g ∥ λ̄__f. ⟨k ∥ __call⟩⟩",
+    },
+    Row {
         id: "expr.errorprop.named",
         source: "command f(x: +i32) | (err: -i32) { g(x)?err }",
         core: "⟨err ∥ __call⟩",

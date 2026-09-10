@@ -5,34 +5,33 @@
 // the expression it stands in and hands it to someone else.
 //
 // Negation is a consumer: `¬A` is `-A`, because `A → ⊥` and `-A` are one
-// type. `¬¬A` is then the dual of `-A`, and `dual` is an involution — so
-// `¬¬A` *is* `A`, and there is nothing to eliminate at the level of types.
-// The computation remains, and it is not trivial: given something that
-// consumes a consumer of `A`, produce an `A`.
+// type. A consumer is not data, though — it travels only in a box, `↓-A` —
+// so negating again goes through the shift: a refuter consumes `↓-i64`, its
+// own type is `dual(↓-i64) = ↑i64`, and boxed as an argument it is `↓↑i64`.
+// The shifts never cancel, so `¬¬i64` is not `i64`: double negation
+// elimination is a program, not a definition.
 
-// Capture this call's continuation and send it to the refuter. Whatever the
-// refuter puts there is what the call returns.
-//
-// `refuter` consumes a `-i64`, so its type is `dual(-i64)` — which the
-// involution writes as `+i64`.
-fn dne(refuter: +i64) -> i64 {
+// Capture this call's continuation, box it, and send it to the refuter.
+// Whatever the refuter puts in the box is what the call returns.
+fn dne(refuter: ↓↑i64) -> i64 {
     mu(k) {
-        k @ refuter
+        ↓k @ ↑refuter
     }
 }
 
-// A refuter is a consumer of consumers: give it somewhere to put an `i64`,
-// and it puts one there.
-fn any_refuter() -> i64 {
-    select +(-i64) {
-        k <= 42 @ k,
+// A refuter: hand it a boxed consumer of `i64`, and it fills it with 42.
+fn any_refuter() -> ↓↑i64 {
+    ↓select ↓-i64 {
+        boxed <= 42 @ ↑boxed,
     }
 }
 
 // `A ⊕ ¬A`, as data: either the value, or something that refutes it.
 enum Choice {
     Holds(i64),
-    Refutes(-i64),
+    // A consumer is not data until it is boxed: `↓-i64`. The box is what
+    // keeps `¬¬A` from collapsing to `A`.
+    Refutes(↓-i64),
 }
 
 // The classical move: answer `Refutes`, holding a consumer that — if anyone
@@ -41,7 +40,7 @@ enum Choice {
 // consumer of `i64`.
 fn lem() -> Choice {
     mu(k) {
-        Choice::Refutes(select +i64 { a <= Choice::Holds(a) @ k }) @ k
+        Choice::Refutes(↓select +i64 { a <= Choice::Holds(a) @ k }) @ k
     }
 }
 

@@ -86,6 +86,13 @@ and where the two disagree, `DESIGN.md` is right.
   `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
   continuation per outcome and activate exactly one. Operator failures (`s[i]`,
   division by zero) stay fatal.
+- The shifts `↓`/`↑` box a negative type as data and dualize through each
+  other without cancelling, and the same glyphs are the (erased) expression
+  coercions. Data positions, the left of `@`, and `select`'s type are
+  positive, so a consumer travels only in a box — which is what makes `¬¬A`
+  the distinct type `↓↑A` and rejects `dne(42)`. Ordinary value arguments are
+  checked against their declared parameter types, which they previously were
+  not at all.
 - Outcomes are a continuation row, not an `enum` sent to one continuation: a
   consumer of `A ⊕ B` is a consumer of `A` together with a consumer of `B`, so
   the enum wraps what the row already says — and the row additionally says
@@ -114,14 +121,12 @@ and where the two disagree, `DESIGN.md` is right.
 
 ## Known limits
 
-- **`¬¬A` is `A` as a type.** `dual` is an involution and the surface has no
-  polarity shifts, so a value and a consumer-of-consumers share one type while
-  differing at run time: `dne(42)` type-checks and misbehaves. Shifts (`⇑`/`⇓`)
-  are the standard fix and are not designed.
 - **Captured continuations escape rather than resume.** The evaluator unwinds
   to the `mu` that captured a continuation, so one used after its `mu` has
-  answered fails with `escaped to a continuation`. `examples/classical.sl`
-  stays inside that limit deliberately.
+  answered fails, saying so. Lifting this needs the evaluator to hold the
+  context as data — an abstract machine with an explicit, re-instatable
+  continuation stack — rather than as Rust stack frames.
+  `examples/classical.sl` stays inside the limit deliberately.
 
 ## Deferred, with no accepted replacement
 

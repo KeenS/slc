@@ -172,11 +172,30 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
 }
 
 fn format_span(source: &str, span: slc_syntax::token::Span) -> String {
-    let before = &source[..span.start.min(source.len())];
+    // Spans are byte offsets, and the surface has multi-byte glyphs — `↓`,
+    // `⊗`, `⊥` — so an offset may land inside one. Slicing there panics, so
+    // move to the boundary rather than trusting the offset.
+    let start = char_boundary(source, span.start, false);
+    let end = char_boundary(source, span.end.max(span.start), true);
+    let before = &source[..start];
     let line = before.matches('\n').count() + 1;
-    let column = before.rfind('\n').map(|i| span.start - i).unwrap_or(span.start + 1);
-    format!(
-        "{line}:{column} `{}`",
-        &source[span.start.min(source.len())..span.end.min(source.len())]
-    )
+    let column = before
+        .rfind('\n')
+        .map(|i| before[i..].chars().count())
+        .unwrap_or(before.chars().count() + 1);
+    format!("{line}:{column} `{}`", &source[start..end])
+}
+
+/// The nearest char boundary at or before `offset` (or after it, when
+/// `forward`), clamped to the source.
+fn char_boundary(source: &str, offset: usize, forward: bool) -> usize {
+    let mut offset = offset.min(source.len());
+    while !source.is_char_boundary(offset) {
+        if forward {
+            offset += 1;
+        } else {
+            offset -= 1;
+        }
+    }
+    offset
 }

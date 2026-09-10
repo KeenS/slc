@@ -213,8 +213,8 @@ A `command` declaration is the form that takes **both** values and
 continuations: value parameters and continuation parameters appear in separate
 parenthesized groups, and the body is a command — hence the name. A
 declaration that consumes values and consumes a continuation is a `command`; a
-positive `fn` may still receive a consumer as ordinary data it forwards, but
-it returns a value rather than ending in a cut.
+positive `fn` may still receive a consumer as data it forwards — in a box,
+`↓-String` — but it returns a value rather than ending in a cut.
 
 ```sl
 command route(x: +i32) | (k: -i32) {
@@ -478,17 +478,52 @@ of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
 
+### Shifts
+
+`↓B` boxes a negative type as data, and `↑P` is its dual — the computation
+that returns a positive one:
+
+```text
+↓B   positive: a consumer, boxed as data      dual(↓B) = ↑dual(B)
+↑P   negative: the computation returning P    dual(↑P) = ↓dual(P)
+```
+
+The same two glyphs are the expression forms: `↓e` boxes a consumer, `↑e`
+opens the box. Both erase at lowering — a boxed consumer and the consumer are
+the same value at run time; the type is what the box is for.
+
+Three rules make the boxes load-bearing:
+
+- a data position — an enum payload, a struct field, a `fn` value parameter —
+  holds a **positive** type, so a consumer goes in boxed: `Refutes(↓-i64)`;
+- the left of `@` is data, so a consumer is sent boxed: `↓k @ ↑refuter`;
+- `select` consumes data, so consuming a consumer means `select ↓B`.
+
+The payoff is that the involution stops collapsing double negation. `¬i64` is
+`-i64`; negating *that* goes through a box, so a refuter consumes `↓-i64` and
+has type `↑i64`, and `¬¬i64`, boxed as an argument, is `↓↑i64` — a type an
+`i64` does not have. The shifts never cancel: `dual` passes through them
+without erasing them.
+
+```sl
+fn dne(refuter: ↓↑i64) -> i64 {
+    mu(k) { ↓k @ ↑refuter }
+}
+
+dne(42)   // rejected: argument 1 of `dne` has type +i64; the declaration says ↓↑+i64
+```
+
 ### What may be left unwritten
 
 A declaration is an interface, so its parameters carry types. Everything
 inside one may leave a type out when something else already says it:
 
-| written | may be omitted when |
-|---|---|
-| a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used |
-| a `mu`'s name: `mu(k) { … }` | always — nothing refers to it |
-| a `mu`'s parameter type: `mu(k) { … }` | the body hands it to a slot whose type is declared, or cuts a value against it |
-| a `select`'s type: `select { … }` | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
+| written                                         | may be omitted when                                                                     |
+|-------------------------------------------------|-----------------------------------------------------------------------------------------|
+| a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used                             |
+| a `mu`'s name: `mu(k) { … }`                   | always — nothing refers to it                                                          |
+| a `mu`'s parameter type: `mu(k) { … }`         | the body hands it to a slot whose type is declared, or cuts a value against it          |
+| a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
 
 ```sl
 // `k` goes to a slot `read_file` declares, so it is `-String`, and this
@@ -772,6 +807,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `expr.errorprop.named` | `e?k` | `⟦e⟧(k)` |
 | `expr.errorprop.bare` | `e?` | `⟦e⟧(k₀)`, where `k₀` is the current error continuation |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
@@ -827,17 +863,13 @@ fn lem() -> Choice {
 }
 ```
 
-`examples/classical.sl` runs both. Two limits are worth knowing:
+`examples/classical.sl` runs both. The types above go through the shifts of
+§8 — `¬¬i64` is `↓↑i64`, not `i64`, so `dne(42)` is rejected at the call.
 
-- **`dual` is an involution with no shift**, so `¬¬A` *is* `A` as a type —
-  `dne`'s parameter is written `+i64`. The values differ, though: one is an
-  integer and the other consumes a consumer. The checker cannot tell them
-  apart, so `dne(42)` type-checks and misbehaves at run time. Distinguishing
-  them needs polarity shifts, which the surface does not have.
-- **A captured continuation escapes; it does not resume.** The evaluator
-  unwinds to the `mu` that captured it, so a refutation is good only while
-  its `mu` is still running. Used after that `mu` has answered, it fails with
-  `escaped to a continuation`.
+One limit is worth knowing: **a captured continuation escapes; it does not
+resume.** The evaluator unwinds to the `mu` that captured it, so a refutation
+is good only while its `mu` is still running. Used after that `mu` has
+answered, it fails, saying so.
 
 ## 11. Error continuations
 

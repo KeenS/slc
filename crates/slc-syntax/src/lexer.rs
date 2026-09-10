@@ -229,6 +229,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '>' => TokenKind::Gt,
             '=' => TokenKind::Assign,
             '⊗' => TokenKind::Tensor,
+            '↓' => TokenKind::Down,
+            '↑' => TokenKind::Up,
             '⅋' => TokenKind::Par,
             '⊥' => TokenKind::Bot,
             other => {

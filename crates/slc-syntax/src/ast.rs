@@ -66,6 +66,12 @@ pub enum Expr {
         op: UnOp,
         body: Box<Node<Expr>>,
     },
+    /// `↓e` boxes a negative expression as data; `↑e` opens the box. Both
+    /// are erased at lowering — the check is what they are for.
+    Shift {
+        down: bool,
+        expr: Box<Node<Expr>>,
+    },
     /// A cut: `v @ k` sends the value `v` to the consumer `k`.
     ///
     /// A cut is a command, not an application: it has no result and control
@@ -131,7 +137,7 @@ impl Expr {
                 .collect(),
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
-            Expr::ErrorProp { expr, .. } => vec![expr],
+            Expr::ErrorProp { expr, .. } | Expr::Shift { expr, .. } => vec![expr],
             Expr::Index { value, index } => vec![value, index],
             Expr::Slice { value, start, end } => std::iter::once(&**value)
                 .chain(start.iter().map(|e| &**e))
@@ -161,6 +167,11 @@ pub enum TypeExpr {
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     List(Box<Node<TypeExpr>>),
     Dual(Box<Node<TypeExpr>>),
+    /// `↓A` — a negative type boxed as data, and `↑A` — the computation that
+    /// returns a positive one. Duals of each other, and neither is the
+    /// identity: they are what stops `¬¬A` collapsing to `A`.
+    Down(Box<Node<TypeExpr>>),
+    Up(Box<Node<TypeExpr>>),
     Unit,
     Bottom,
 }

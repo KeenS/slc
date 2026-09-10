@@ -511,6 +511,14 @@ impl Parser {
                 let inner = self.parse_type()?;
                 TypeExpr::Negative(Box::new(inner))
             }
+            Some(TokenKind::Down) => {
+                self.pos += 1;
+                TypeExpr::Down(Box::new(self.parse_type()?))
+            }
+            Some(TokenKind::Up) => {
+                self.pos += 1;
+                TypeExpr::Up(Box::new(self.parse_type()?))
+            }
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 let left = self.parse_type()?;
@@ -656,6 +664,20 @@ impl Parser {
             return Ok(Node {
                 span: Span { start, end },
                 kind: Expr::UnOp { op: UnOp::Neg, body: Box::new(body) },
+            });
+        }
+        // `↓e` boxes a consumer as data, `↑e` opens the box. They bind as
+        // tightly as the other prefixes, and they are written the way their
+        // types are.
+        if matches!(self.peek_kind(), Some(TokenKind::Down) | Some(TokenKind::Up)) {
+            let start = self.span_start();
+            let down = self.peek_kind() == Some(&TokenKind::Down);
+            self.pos += 1;
+            let expr = self.parse_unary()?;
+            let end = self.span_end();
+            return Ok(Node {
+                span: Span { start, end },
+                kind: Expr::Shift { down, expr: Box::new(expr) },
             });
         }
         self.parse_postfix()

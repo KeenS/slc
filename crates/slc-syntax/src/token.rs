@@ -72,6 +72,8 @@ pub enum TokenKind {
     // Unicode
     Tensor, // ⊗
     Par,    // ⅋
+    Down,   // ↓
+    Up,     // ↑
     Bot,    // ⊥
 }
 
@@ -138,6 +140,8 @@ impl std::fmt::Display for TokenKind {
             TokenKind::PipePipe => write!(f, "`||`"),
             TokenKind::Bang => write!(f, "`!`"),
             TokenKind::Tensor => write!(f, "`⊗`"),
+            TokenKind::Down => write!(f, "`↓`"),
+            TokenKind::Up => write!(f, "`↑`"),
             TokenKind::Par => write!(f, "`⅋`"),
             TokenKind::Bot => write!(f, "`⊥`"),
         }

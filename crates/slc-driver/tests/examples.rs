@@ -102,7 +102,7 @@ fn repository_example_suite_has_expected_results() {
                 stdout: &[],
                 stderr: &[
                     "polarity:",
-                    "parameter `x` has explicitly negative type",
+                    "parameter `x` is a consumer of type -i32",
                     "parameter `j` has explicitly positive type",
                 ],
             },

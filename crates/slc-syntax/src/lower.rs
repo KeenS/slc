@@ -71,6 +71,8 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a
         // declaration's name stays wrapped: it is opaque to the core.
         TypeExpr::Dual(inner) => Ok(lower_type(&inner.kind)?.dual()),
+        TypeExpr::Down(inner) => Ok(Type::Down(Box::new(lower_type(&inner.kind)?))),
+        TypeExpr::Up(inner) => Ok(Type::Up(Box::new(lower_type(&inner.kind)?))),
         TypeExpr::Unit => Ok(Type::One),
         TypeExpr::Bottom => Ok(Type::Bottom),
     }
@@ -304,6 +306,9 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             }
             Ok(term)
         }
+        // A shift is a coercion the checker cares about and the core does
+        // not: a boxed consumer and the consumer are the same value.
+        Expr::Shift { expr, .. } => lower_expr(expr, continuations),
         Expr::ErrorProp { expr, continuation } => {
             let selected = continuation.clone().or_else(|| continuations.last().cloned());
             if let Some(name) = selected {

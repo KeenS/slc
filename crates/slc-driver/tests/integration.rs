@@ -474,7 +474,7 @@ fn json_selected_error_continuation_reports_parse_error() {
     let dir = std::env::temp_dir().join("slc_test_json_selected_error.sl");
     std::fs::write(
         &dir,
-        r#"fn parse_json(input: +String, ok: -String, err: -String) -> i64 {
+        r#"command parse_json(input: +String) | (ok: -String, err: -String) {
             let start = skip_ws(input, 0);
             if start < str_len(input) {
                 match input[start] {

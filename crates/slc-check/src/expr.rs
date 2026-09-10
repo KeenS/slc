@@ -71,6 +71,8 @@ impl Declarations {
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
             TypeExpr::Dual(inner) => self.resolve(&inner.kind)?.dual(),
+            TypeExpr::Down(inner) => Type::Down(Box::new(self.resolve(&inner.kind)?)),
+            TypeExpr::Up(inner) => Type::Up(Box::new(self.resolve(&inner.kind)?)),
             other => return lower_type(other).ok(),
         };
         Some(resolved)
@@ -674,8 +676,10 @@ fn is_comparable(ty: &Type) -> bool {
 /// continuation supplied for a row position must have exactly the declared
 /// type, and no position may be added, dropped, or reordered. Each
 /// continuation is consumed exactly once, so a row that differs in width or
-/// order is a different linear behavior, not a compatible one.
-fn check_continuation_row(
+/// order is a different linear behavior, not a compatible one. Value
+/// arguments are checked against their declared types the same way —
+/// builtins excepted, whose arguments the builtin table already checks.
+fn check_call_arguments(
     name: &str,
     signature: &FunctionSignature,
     args: &[Node<Expr>],
@@ -684,10 +688,7 @@ fn check_continuation_row(
     diags: &mut Vec<Diagnostic>,
 ) {
     let row_width = signature.continuations.iter().filter(|is_cont| **is_cont).count();
-    if row_width == 0 {
-        return;
-    }
-    if args.len() > signature.params.len() {
+    if row_width > 0 && args.len() > signature.params.len() {
         diags.push(Diagnostic {
             message: format!(
                 "`{name}` declares {} parameters including a continuation row of {row_width}; \
@@ -700,25 +701,33 @@ fn check_continuation_row(
         return;
     }
     for (index, arg) in args.iter().enumerate() {
-        if signature.continuations.get(index) != Some(&true) {
+        let in_row = signature.continuations.get(index) == Some(&true);
+        if !in_row && is_builtin(name) {
             continue;
         }
-        let expected = &signature.params[index];
+        let Some(expected) = signature.params.get(index) else {
+            continue;
+        };
         let Some(actual) = check_expr(arg, enums, env, diags) else {
             continue;
         };
         // `Type::One` is this checker's "not determined" placeholder — an
-        // unannotated `let` binding, for instance. A row mismatch is only
+        // unannotated `let` binding, for instance. A mismatch is only
         // reported for an argument whose type is actually known.
         if !fits(expected, &actual, &arg.kind) {
-            diags.push(Diagnostic {
-                message: format!(
+            let message = if in_row {
+                format!(
                     "continuation row mismatch: argument {} of `{name}` has type {actual}; \
                      the row declares {expected} at that position",
                     index + 1
-                ),
-                span: arg.span,
-            });
+                )
+            } else {
+                format!(
+                    "argument {} of `{name}` has type {actual}; the declaration says {expected}",
+                    index + 1
+                )
+            };
+            diags.push(Diagnostic { message, span: arg.span });
         }
     }
 }
@@ -1005,7 +1014,7 @@ fn check_expr(
                         }
                     }
                 }
-                check_continuation_row(name, signature, args, enums, env, diags);
+                check_call_arguments(name, signature, args, enums, env, diags);
                 return signature.result.clone();
             }
             None
@@ -1300,6 +1309,16 @@ fn check_expr(
                 });
                 return None;
             };
+            if resolved.is_negative() {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`select` consumes data, and {resolved} is a consumer; a consumer is \
+                         consumed in a box: `select ↓{resolved}`"
+                    ),
+                    span: e.span,
+                });
+                return None;
+            }
             for arm in arms {
                 env.push();
                 bind_select_arm(&resolved, &arm.pattern, enums, env, e.span, diags);
@@ -1318,6 +1337,33 @@ fn check_expr(
                 env.pop();
             }
             Some(resolved.dual())
+        }
+        // `↓e` boxes a consumer as data; `↑e` opens the box. Neither does
+        // anything at run time — they are here so that a value and a
+        // suspended computation are not the same type.
+        Expr::Shift { down: true, expr } => {
+            let inner = check_expr(expr, enums, env, diags)?;
+            if !inner.is_negative() {
+                diags.push(Diagnostic {
+                    message: format!("`↓` boxes a consumer; this has type {inner}"),
+                    span: e.span,
+                });
+                return None;
+            }
+            Some(Type::Down(Box::new(inner)))
+        }
+        Expr::Shift { down: false, expr } => {
+            let inner = check_expr(expr, enums, env, diags)?;
+            match inner {
+                Type::Down(boxed) => Some(*boxed),
+                other => {
+                    diags.push(Diagnostic {
+                        message: format!("`↑` opens a `↓` box; this has type {other}"),
+                        span: e.span,
+                    });
+                    None
+                }
+            }
         }
         Expr::Pair(items) if items.is_empty() => Some(Type::One),
         Expr::Pair(items) => items
@@ -1373,6 +1419,22 @@ fn check_expr(
             // side is written negatively is not itself the question.
             let value_ty = check_expr(value, enums, env, diags);
             let consumer_ty = check_expr(consumer, enums, env, diags);
+            // The value side carries data. A consumer travels only in a box:
+            // `↓k @ …`, never `k @ …` — without this rule, `dual` being an
+            // involution would let a consumer of consumers pass for the data
+            // it consumes.
+            if let Some(value_ty) = &value_ty
+                && value_ty.is_negative()
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "the left of `@` is data, and this has type {value_ty}; a consumer is \
+                         sent in a box: `↓v @ …`"
+                    ),
+                    span: value.span,
+                });
+                return Some(Type::Bottom);
+            }
             if let (Some(value_ty), Some(consumer_ty)) = (&value_ty, &consumer_ty)
                 && value_ty != &Type::One
                 && consumer_ty != &Type::One
@@ -1920,6 +1982,55 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn shifts_box_and_unbox_consumers() {
+        // `↓e` boxes a consumer; boxing data is refused.
+        assert!(check("fn f(k: -i64) <- i64 { g(↓k) }").is_ok());
+        let diags = check("fn f(x: +i64) -> i64 { g(↓x) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`↓` boxes a consumer")), "{diags:?}");
+
+        // `↑e` opens a box; there has to be one.
+        assert!(check("fn f(b: ↓-i64) -> ⊥ { 1 @ ↑b }").is_ok());
+        let diags = check("fn f(x: +i64) -> ⊥ { 1 @ ↑x }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`↑` opens a `↓` box")), "{diags:?}");
+    }
+
+    #[test]
+    fn the_left_of_a_cut_is_data() {
+        // Sending a bare consumer would let `¬¬A` pass for `A`.
+        let diags = check("fn f(k: -i64, target: ↓↑i64) -> ⊥ { k @ ↑target }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the left of `@` is data")), "{diags:?}");
+        assert!(check("fn f(k: -i64, target: ↓↑i64) -> ⊥ { ↓k @ ↑target }").is_ok());
+    }
+
+    #[test]
+    fn double_negation_does_not_collapse() {
+        // `¬¬i64` is `↓↑i64`, and an `i64` is not one: `dne(42)` is the
+        // program the shifts exist to reject.
+        let diags = check(
+            "fn dne(refuter: ↓↑i64) -> i64 { mu(k) { ↓k @ ↑refuter } }
+             command main | (exit: -i32) { println(dne(42)); 0 @ exit }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("has type +i64; the declaration says ↓↑+i64")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn value_arguments_are_checked_against_the_declaration() {
+        let diags = check(
+            "fn f(x: +String) -> i64 { 0 }
+             command main | (exit: -i32) { println(f(42)); 0 @ exit }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("the declaration says +String")),
+            "{diags:?}"
+        );
     }
 
     #[test]

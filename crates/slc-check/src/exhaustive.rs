@@ -223,7 +223,7 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
                 check_expr(end, enums, diags);
             }
         }
-        Expr::ErrorProp { expr: body, .. } => {
+        Expr::ErrorProp { expr: body, .. } | Expr::Shift { expr: body, .. } => {
             check_expr(body, enums, diags);
         }
         Expr::Cut { value, consumer } => {

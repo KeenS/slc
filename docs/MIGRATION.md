@@ -335,6 +335,29 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
+## Consumers travel in boxes
+
+A data position — an enum payload, a struct field, a `fn` value parameter —
+holds a positive type. A consumer goes into one boxed, with the downshift
+`↓`; the same glyph boxes the value, and `↑` opens the box.
+
+```sl
+enum Choice { Refutes(-i64) }      // old
+enum Choice { Refutes(↓-i64) }     // new
+
+Choice::Refutes(k)                 // old
+Choice::Refutes(↓k)                // new
+
+Refutes(r) => 42 @ r               // old
+Refutes(r) => 42 @ ↑r              // new: open the box, then cut
+
+fn describe(note: -String) -> ⊥ { "…" @ note }     // old
+fn describe(note: ↓-String) -> ⊥ { "…" @ ↑note }   // new
+```
+
+The boxes are erased after checking; they exist so that `¬¬A` — a consumer of
+consumers, `↓↑A` once boxed — is not the same type as `A`.
+
 ## Additive control
 
 ### `select`

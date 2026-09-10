@@ -40,6 +40,13 @@ pub enum Type {
     Bang(Box<Type>),
     /// List sugar.
     List(Box<Type>),
+    /// Downshift: `↓A`, the positive type of a boxed negative one — data
+    /// holding a computation.
+    Down(Box<Type>),
+    /// Upshift: `↑A`, the negative type of a positive one — the computation
+    /// that returns it. `↓` and `↑` are dual, and neither is the identity:
+    /// they are what keeps `¬¬A` from collapsing to `A`.
+    Up(Box<Type>),
     /// A named positive declaration, such as `struct` or `enum`. Named types
     /// are opaque to core unification; declaration-specific fields and
     /// variants are checked by the surface checker.
@@ -78,6 +85,8 @@ impl Type {
             Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
             Type::Bang(t) => Type::Bang(Box::new(t.dual())),
             Type::List(t) => Type::List(Box::new(t.dual())),
+            Type::Down(t) => Type::Up(Box::new(t.dual())),
+            Type::Up(t) => Type::Down(Box::new(t.dual())),
             Type::Named(name) => Type::Dual(Box::new(Type::Named(name.clone()))),
         }
     }
@@ -96,6 +105,7 @@ impl Type {
                     | Type::Sum(..)
                     | Type::Bang(_)
                     | Type::List(_)
+                    | Type::Down(_)
                     | Type::Named(_)
             ),
         }
@@ -108,7 +118,12 @@ impl Type {
             Type::Dual(inner) => inner.is_positive(),
             other => matches!(
                 other,
-                Type::Var(_) | Type::Neg(_) | Type::Par(..) | Type::Bottom | Type::With(..)
+                Type::Var(_)
+                    | Type::Neg(_)
+                    | Type::Par(..)
+                    | Type::Bottom
+                    | Type::With(..)
+                    | Type::Up(_)
             ),
         }
     }

@@ -34,6 +34,8 @@ fn resolve(ty: &TypeExpr, declared: &std::collections::HashSet<String>) -> Optio
             resolve(&inner.kind, declared)?.dual()
         }
         TypeExpr::Dual(inner) => resolve(&inner.kind, declared)?.dual(),
+        TypeExpr::Down(inner) => Type::Down(Box::new(resolve(&inner.kind, declared)?)),
+        TypeExpr::Up(inner) => Type::Up(Box::new(resolve(&inner.kind, declared)?)),
         TypeExpr::Tensor(a, b) => Type::Tensor(
             Box::new(resolve(&a.kind, declared)?),
             Box::new(resolve(&b.kind, declared)?),
@@ -82,7 +84,6 @@ fn check_decl(
                 check_param_polarity(
                     p,
                     *polarity == FunctionPolarity::Negative,
-                    matches!(p.ty, Some(TypeExpr::Negative(_))),
                     &generics,
                     declared,
                     d.span,
@@ -92,10 +93,10 @@ fn check_decl(
         }
         Decl::Command { value_params, continuation_params, .. } => {
             for p in value_params {
-                check_param_polarity(p, false, false, &Default::default(), declared, d.span, diags);
+                check_param_polarity(p, false, &Default::default(), declared, d.span, diags);
             }
             for p in continuation_params {
-                check_param_polarity(p, true, false, &Default::default(), declared, d.span, diags);
+                check_param_polarity(p, true, &Default::default(), declared, d.span, diags);
             }
         }
         Decl::Struct { fields, .. } => {
@@ -104,7 +105,7 @@ fn check_decl(
                     && !is_usable_as_field(&core_ty)
                 {
                     diags.push(Diagnostic {
-                        message: format!("struct field type {core_ty} is not a valid field type"),
+                        message: field_message("struct field", &core_ty),
                         span: d.span,
                     });
                 }
@@ -117,7 +118,7 @@ fn check_decl(
                         && !is_usable_as_field(&core_ty)
                     {
                         diags.push(Diagnostic {
-                            message: format!("enum field type {core_ty} is not a valid field type"),
+                            message: field_message("variant payload", &core_ty),
                             span: d.span,
                         });
                     }
@@ -140,7 +141,6 @@ fn check_decl(
 fn check_param_polarity(
     p: &Param,
     is_cont: bool,
-    allow_negative_value_parameter: bool,
     generics: &std::collections::HashSet<&str>,
     declared: &std::collections::HashSet<String>,
     span: slc_syntax::token::Span,
@@ -159,13 +159,10 @@ fn check_param_polarity(
     {
         return;
     }
-    // A written `-` lets a value parameter be a consumer — but only when the
-    // type is one. `dual` is an involution, so `-(-A)` is `+A`, and a
-    // parameter written that way is ordinary data.
+    // A value parameter holds data, and a consumer is data only once boxed:
+    // `↓-String`, never `-String`.
     let resolved = resolve(param_type, declared);
-    let written_consumer =
-        allow_negative_value_parameter && resolved.as_ref().is_some_and(is_negative_type);
-    let requires_negative = written_consumer || is_cont || p.is_continuation;
+    let requires_negative = is_cont || p.is_continuation;
     if requires_negative {
         if let TypeExpr::Positive(_) = param_type {
             diags.push(Diagnostic {
@@ -185,7 +182,12 @@ fn check_param_polarity(
                 "parameter `{}` is written negative but has type {ty}: dual is an involution",
                 p.name
             ),
-            _ => format!(
+            Some(ty) => format!(
+                "parameter `{}` is a consumer of type {ty}, and a value parameter holds data; \
+                 box it as ↓{ty}",
+                p.name
+            ),
+            None => format!(
                 "parameter `{}` has explicitly negative type; expected positive (+) polarity",
                 p.name
             ),
@@ -223,9 +225,18 @@ fn is_negative_type(t: &Type) -> bool {
     t.is_negative()
 }
 
+/// A field holds data. A consumer is not data until it is boxed: `↓-i64`,
+/// not `-i64`.
 fn is_usable_as_field(t: &Type) -> bool {
-    // Fields can be positive (data) or the dual of positive
-    t.is_positive() || t.is_negative()
+    t.is_positive()
+}
+
+fn field_message(what: &str, ty: &Type) -> String {
+    if ty.is_negative() {
+        format!("{what} of type {ty} is a consumer, not data; box it as ↓{ty}")
+    } else {
+        format!("{what} of type {ty} is not data")
+    }
 }
 
 /// Check expression polarity: mu binders must be negative. Used on an
@@ -257,7 +268,7 @@ fn check_expr(
         }
         Expr::Mu { continuation_params, body, .. } => {
             for p in continuation_params {
-                check_param_polarity(p, true, false, &Default::default(), declared, e.span, diags);
+                check_param_polarity(p, true, &Default::default(), declared, e.span, diags);
             }
             check_expr(body, declared, diags);
         }
@@ -341,13 +352,13 @@ mod tests {
         let diags = check("fn f(x: -(-i64)) -> i64 { 0 }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("dual is an involution")), "{diags:?}");
 
-        // A `fn` may still take a genuine consumer as data it forwards.
-        assert!(check("fn f(x: -i64) -> i64 { 0 }").is_ok());
-
-        // A `command`'s value group may not, and keeps the ordinary
-        // diagnostic.
+        // A consumer is not data until it is boxed: a bare `-i64` value
+        // parameter asks for the box, and the boxed form is accepted.
+        let diags = check("fn f(x: -i64) -> i64 { 0 }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("box it as ↓-i64")), "{diags:?}");
+        assert!(check("fn f(x: ↓-i64) -> i64 { 0 }").is_ok());
         let diags = check("command f(x: -i32) | (k: -i32) { 0 @ k }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("explicitly negative type")), "{diags:?}");
+        assert!(diags.iter().any(|d| d.message.contains("box it as ↓-i32")), "{diags:?}");
     }
 
     #[test]

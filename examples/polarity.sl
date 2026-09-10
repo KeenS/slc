@@ -13,19 +13,19 @@
 // A request enum: each variant carries the continuation that wants the
 // answer. Its dual is codata — a provider that answers one request.
 enum Request {
-    Retries(-i64),
-    Name(-String),
+    Retries(↓-i64),
+    Name(↓-String),
 }
 
 // (1) POSITIVE TYPE, ARGUMENT POSITION — `label` is data the function reads.
-// (2) NEGATIVE TYPE, ARGUMENT POSITION — `note` is a consumer, received as
-//     data. A positive `fn` returns rather than ending in a cut, so it makes
-//     no promise to consume one; it may forward it, as this one does.
-fn describe(label: +i64, note: -String) -> ⊥ {
+// (2) NEGATIVE TYPE, ARGUMENT POSITION — `note` is a consumer received as
+//     data, which takes a box: the parameter is `↓-String`, the caller
+//     writes `↓note`, and using it means opening the box, `↑note`.
+fn describe(label: +i64, note: ↓-String) -> ⊥ {
     if label > 0 {
-        "positive" @ note
+        "positive" @ ↑note
     } else {
-        "not positive" @ note
+        "not positive" @ ↑note
     }
 }
 
@@ -35,8 +35,8 @@ fn describe(label: +i64, note: -String) -> ⊥ {
 //     written here is positive while the thing produced is negative.
 fn config() <- Request {
     select Request {
-        Retries(k) <= 3 @ k,
-        Name(k) <= "slant" @ k,
+        Retries(k) <= 3 @ ↑k,
+        Name(k) <= "slant" @ ↑k,
     }
 }
 
@@ -46,7 +46,7 @@ fn config() <- Request {
 command retries | (provider: -Request, answer: -i64) {
     // Consuming codata is the dual of consuming data: the provider is on the
     // consumer side of the cut, and the *positive* request drives it.
-    Request::Retries(answer) @ provider
+    Request::Retries(↓answer) @ provider
 }
 
 command main | (exit: -i32) {
@@ -54,7 +54,7 @@ command main | (exit: -i32) {
         retries(config, answer)
     });
     println(mu report(note: -String) {
-        describe(1, note)
+        describe(1, ↓note)
     });
     0 @ exit
 }

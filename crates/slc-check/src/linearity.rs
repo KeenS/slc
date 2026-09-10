@@ -68,9 +68,9 @@ fn is_continuation_name(name: &str) -> bool {
 fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
     match &e.kind {
         Expr::Ident(x) if x == name => Some(e.span),
-        Expr::Lambda { body, .. } | Expr::ErrorProp { expr: body, .. } => {
-            find_ident_span(body, name)
-        }
+        Expr::Lambda { body, .. }
+        | Expr::ErrorProp { expr: body, .. }
+        | Expr::Shift { expr: body, .. } => find_ident_span(body, name),
         Expr::Call { callee, args } => find_ident_span(callee, name)
             .or_else(|| args.iter().find_map(|a| find_ident_span(a, name))),
         Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
@@ -441,6 +441,8 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
             go(value, m);
             go(consumer, m);
         }
+        // A shift is a coercion: what it wraps is used exactly as it is.
+        Expr::Shift { expr, .. } => go(expr, m),
         Expr::ErrorProp { expr, continuation } => {
             go(expr, m);
             if let Some(name) = continuation {
