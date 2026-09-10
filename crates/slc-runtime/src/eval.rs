@@ -64,7 +64,13 @@ impl std::fmt::Display for EvalError {
             EvalError::TypeMismatch(m) => write!(f, "type mismatch: {m}"),
             EvalError::Diverged => write!(f, "evaluation diverged (fuel exhausted)"),
             EvalError::NoReduction => write!(f, "no applicable reduction"),
-            EvalError::Escape(_, _) => write!(f, "escaped to a continuation"),
+            // Reaching the top means no `mu` was left to catch it: the one
+            // that captured this continuation has already answered.
+            EvalError::Escape(_, _) => write!(
+                f,
+                "a continuation was activated after the `mu` that captured it had answered; \
+                 continuations escape here, they do not resume"
+            ),
             EvalError::Exit(code) => write!(f, "exit({code})"),
         }
     }
