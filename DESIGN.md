@@ -179,10 +179,19 @@ not count occurrences: a cut does not return, so of several mentions of the
 same continuation at most one can actually run, and the others are
 unreachable. A parser may therefore forward its error consumer to a sub-parser
 and also cut against it in the continuation that follows — exactly one of the
-two runs. A *value* is linear in both directions, because nothing stops a
-program from copying one: using a structural value twice is still an error. A call therefore supplies
-each row position a continuation of exactly the declared type, and supplying
-more arguments than the declaration has parameters is rejected.
+two runs.
+
+Linearity is **selective**, keyed on the written type: a **continuation** (any
+negative type) and an **anonymous multiplicative product** (a type written
+with `⊗`) are linear — a continuation consumed on every path, a `⊗` value used
+exactly once. Everything else is **unrestricted** (freely copied and dropped):
+base scalars, and — because the checker reads the written type and a named
+type is just a base name — a `struct` or `enum` referred to by its name. So a
+value used twice is an error only when its type is written `⊗`, not for named
+data; the weight of the discipline is on continuations, which is where control
+would otherwise silently vanish. A call supplies each row position a
+continuation of exactly the declared type, and supplying more arguments than
+the declaration has parameters is rejected.
 
 An argument whose type the checker cannot determine — an unannotated `let`
 binding, for instance — is not rejected; a row mismatch is reported only for
