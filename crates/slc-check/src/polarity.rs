@@ -1,5 +1,6 @@
 //! Polarity checking for surface programs.
 
+use crate::declarations::{Declarations, enum_types};
 use slc_core::types::Type;
 use slc_syntax::ast::{Decl, Expr, FunctionPolarity, Node, Param, Program, TypeExpr};
 use slc_syntax::lower::LowerError;
@@ -23,47 +24,10 @@ impl From<LowerError> for CheckError {
     }
 }
 
-/// Lower a written type, resolving declaration names. `lower_type` knows only
-/// the built-in types, so without this a parameter typed by a `struct` or an
-/// `enum` would skip its polarity check entirely.
-fn resolve(ty: &TypeExpr, declared: &std::collections::HashSet<String>) -> Option<Type> {
-    let resolved = match ty {
-        TypeExpr::Base(name) if declared.contains(name) => Type::Named(name.clone()),
-        TypeExpr::Positive(inner) => resolve(&inner.kind, declared)?,
-        TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
-            resolve(&inner.kind, declared)?.dual()
-        }
-        TypeExpr::Dual(inner) => resolve(&inner.kind, declared)?.dual(),
-        TypeExpr::Down(inner) => Type::Down(Box::new(resolve(&inner.kind, declared)?)),
-        TypeExpr::Up(inner) => Type::Up(Box::new(resolve(&inner.kind, declared)?)),
-        TypeExpr::Tensor(a, b) => Type::Tensor(
-            Box::new(resolve(&a.kind, declared)?),
-            Box::new(resolve(&b.kind, declared)?),
-        ),
-        TypeExpr::Par(a, b) => {
-            Type::Par(Box::new(resolve(&a.kind, declared)?), Box::new(resolve(&b.kind, declared)?))
-        }
-        // `A → B` is `-A ⅋ B`.
-        TypeExpr::Fun(a, b) => {
-            Type::arrow(resolve(&a.kind, declared)?, resolve(&b.kind, declared)?)
-        }
-        TypeExpr::List(inner) => Type::List(Box::new(resolve(&inner.kind, declared)?)),
-        other => return lower_type(other).ok(),
-    };
-    Some(resolved)
-}
-
 /// Check that fn parameters are positive, command value parameters positive,
 /// and continuation parameters negative.
 pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
-    let declared: std::collections::HashSet<String> = polarity_p
-        .decls
-        .iter()
-        .filter_map(|d| match &d.kind {
-            Decl::Struct { name, .. } | Decl::Enum { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect();
+    let declared = enum_types(polarity_p);
     let mut diags = Vec::new();
     for d in &polarity_p.decls {
         check_decl(d, &declared, &mut diags);
@@ -71,11 +35,7 @@ pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_decl(
-    d: &Node<Decl>,
-    declared: &std::collections::HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { params, polarity, type_params, .. } => {
             let generics: std::collections::HashSet<&str> =
@@ -144,7 +104,7 @@ fn check_param_polarity(
     p: &Param,
     is_cont: bool,
     generics: &std::collections::HashSet<&str>,
-    declared: &std::collections::HashSet<String>,
+    declared: &Declarations,
     span: slc_syntax::token::Span,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -163,7 +123,7 @@ fn check_param_polarity(
     }
     // A value parameter holds data, and a consumer is data only once boxed:
     // `↓-String`, never `-String`.
-    let resolved = resolve(param_type, declared);
+    let resolved = declared.resolve(param_type);
     let requires_negative = is_cont || p.is_continuation;
     if requires_negative {
         if let TypeExpr::Positive(_) = param_type {
@@ -249,11 +209,7 @@ pub fn check_expr_polarity(e: &Node<Expr>) -> Result<(), Vec<Diagnostic>> {
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_expr(
-    e: &Node<Expr>,
-    declared: &std::collections::HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &e.kind {
         Expr::Lambda { param_type: Some(ty), .. } => {
             if let Ok(core_ty) = lower_type(ty)

@@ -55,6 +55,25 @@ impl Declarations {
         Some(resolved)
     }
 
+    /// The variant names of a declared enum, in declaration order.
+    pub(crate) fn variants_of(&self, name: &str) -> Option<&Vec<String>> {
+        self.variants.get(name)
+    }
+
+    /// Every enum, with its variant names.
+    pub(crate) fn enums(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
+        self.variants.iter()
+    }
+
+    /// The payload arity of a variant path or unambiguous variant name.
+    pub(crate) fn payload_arity(&self, name: &str) -> Option<usize> {
+        if let Some((_, payload)) = self.signatures.get(name) {
+            return Some(payload.len());
+        }
+        let label = self.unqualified.get(name)?.as_ref()?;
+        self.signatures.get(label).map(|(_, payload)| payload.len())
+    }
+
     /// The field types of a declared struct, in declaration order.
     pub(crate) fn fields(&self, name: &str) -> Option<Vec<Type>> {
         Some(self.structs.get(name)?.iter().map(|(_, ty)| ty.clone()).collect())

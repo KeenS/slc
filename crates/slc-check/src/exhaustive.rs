@@ -1,6 +1,7 @@
 //! Match exhaustiveness checking: verify that all enum constructors
 //! are covered by the match arms.
 
+use crate::declarations::{Declarations, enum_types};
 use slc_syntax::ast::{Decl, Expr, MatchArm, Named, Node, Pattern, Program};
 use slc_syntax::token::Span;
 use std::collections::HashSet;
@@ -11,60 +12,9 @@ pub struct Diagnostic {
     pub span: Span,
 }
 
-/// The `enum` declarations of a program: their variants, and how many payload
-/// values each variant carries.
-#[derive(Debug, Default)]
-pub struct EnumInfo {
-    /// Every declared type name, so a `select` over an undeclared one is
-    /// distinguishable from one over a product.
-    declared: std::collections::HashSet<String>,
-    variants: std::collections::HashMap<String, Vec<String>>,
-    /// Fully qualified label → payload arity.
-    arity: std::collections::HashMap<String, usize>,
-    /// Unqualified variant name → its label, when only one enum declares it.
-    unqualified: std::collections::HashMap<String, Option<String>>,
-}
-
-impl EnumInfo {
-    fn get(&self, name: &str) -> Option<&Vec<String>> {
-        self.variants.get(name)
-    }
-
-    fn iter(&self) -> impl Iterator<Item = (&String, &Vec<String>)> {
-        self.variants.iter()
-    }
-
-    /// The payload arity of a variant path or unambiguous variant name.
-    fn payload_arity(&self, name: &str) -> Option<usize> {
-        if let Some(arity) = self.arity.get(name) {
-            return Some(*arity);
-        }
-        let label = self.unqualified.get(name)?.as_ref()?;
-        self.arity.get(label).copied()
-    }
-}
-
 /// Check all match expressions in a program for exhaustiveness.
 pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
-    let mut enums = EnumInfo::default();
-    for d in &p.decls {
-        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } = &d.kind {
-            enums.declared.insert(name.clone());
-        }
-        if let Decl::Enum { name, variants } = &d.kind {
-            enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
-            for (variant, payload) in variants {
-                let label = format!("{name}::{variant}");
-                enums.arity.insert(label.clone(), payload.len());
-                enums
-                    .unqualified
-                    .entry(variant.clone())
-                    .and_modify(|existing| *existing = None)
-                    .or_insert(Some(label));
-            }
-        }
-    }
-
+    let enums = enum_types(p);
     let mut diags = Vec::new();
     for d in &p.decls {
         check_node_decl(d, &enums, &mut diags);
@@ -72,7 +22,7 @@ pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
     if diags.is_empty() { Ok(()) } else { Err(diags) }
 }
 
-fn check_node_decl(d: &Node<Decl>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
+fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Command { body, .. } => check_expr(body, enums, diags),
@@ -81,7 +31,7 @@ fn check_node_decl(d: &Node<Decl>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>
     }
 }
 
-fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
+fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &e.kind {
         Expr::Match { scrutinee, arms } => {
             check_match(scrutinee, arms, enums, e.span, diags);
@@ -103,14 +53,14 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
                 None => arms.iter().find_map(|arm| match arm.pattern.names()? {
                     Named::Declaration(name) => Some(name.to_string()),
                     Named::Variant(name) => enums
-                        .iter()
+                        .enums()
                         .find(|(_, variants)| variants.contains(&name.to_string()))
                         .map(|(declaration, _)| declaration.clone()),
                 }),
             };
             match written {
-                Some(name) if enums.get(&name).is_some() => {
-                    let variants = enums.get(&name).cloned().unwrap_or_default();
+                Some(name) if enums.variants_of(&name).is_some() => {
+                    let variants = enums.variants_of(&name).cloned().unwrap_or_default();
                     let mut seen: HashSet<String> = HashSet::new();
                     for arm in arms {
                         let Some(variant) = arm_variant(&arm.pattern) else {
@@ -153,7 +103,7 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
                 // A bare name that is neither declared nor built in is not
                 // a type.
                 Some(name)
-                    if !enums.declared.contains(&name)
+                    if !enums.declares(&name)
                         && ty
                             .as_ref()
                             .is_none_or(|ty| slc_syntax::lower::lower_type(&ty.kind).is_err()) =>
@@ -241,7 +191,7 @@ fn check_expr(e: &Node<Expr>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>) {
 
 /// Does this pattern match every value of its type? A sum needs one arm per
 /// variant, but a product has a single shape, so one arm covers it.
-fn is_irrefutable(pattern: &Pattern, enums: &EnumInfo) -> bool {
+fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
     match pattern {
         Pattern::Wildcard => true,
         // A name that is not a variant is a binding, so it matches anything.
@@ -249,8 +199,7 @@ fn is_irrefutable(pattern: &Pattern, enums: &EnumInfo) -> bool {
         Pattern::Binding { pattern, .. } => is_irrefutable(pattern, enums),
         Pattern::Tuple(items) => items.iter().all(|item| is_irrefutable(item, enums)),
         Pattern::Struct { name, fields } => {
-            enums.declared.contains(name)
-                && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
+            enums.declares(name) && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
         }
         _ => false,
     }
@@ -279,7 +228,7 @@ fn arm_variant(pattern: &Pattern) -> Option<String> {
 /// A variant pattern must bind exactly the payload its variant declares.
 fn check_pattern_arity(
     pattern: &Pattern,
-    enums: &EnumInfo,
+    enums: &Declarations,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -330,7 +279,7 @@ fn check_pattern_arity(
 fn check_match(
     _scrutinee: &Node<Expr>,
     arms: &[MatchArm],
-    enums: &EnumInfo,
+    enums: &Declarations,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -377,7 +326,7 @@ fn check_match(
             // enum, that enum is what the match is over.
             None => {
                 let declaring: Option<&String> =
-                    enums.iter().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
+                    enums.enums().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
                 if let Some(enum_name) = declaring {
                     if scrutinee_type.is_none() {
                         scrutinee_type = Some(enum_name);
@@ -390,7 +339,7 @@ fn check_match(
 
     // If we know the enum type, check coverage.
     if let Some(enum_name) = scrutinee_type
-        && let Some(variants) = enums.get(enum_name)
+        && let Some(variants) = enums.variants_of(enum_name)
     {
         let missing: Vec<&String> = variants.iter().filter(|v| !covered.contains(*v)).collect();
         if !missing.is_empty() {
