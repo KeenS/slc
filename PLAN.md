@@ -54,4 +54,14 @@ it is remembered.
 
 ## Next
 
-Nothing is outstanding. New work goes here as it is planned.
+- **ML polymorphism, under the value restriction.** A `let` whose right-hand
+  side is a syntactic value — a literal, a `fn`, a `select`, a constructor or
+  box of values, a plain name — generalizes the type variables the
+  environment does not claim; every use instantiates them afresh. Anything
+  that computes stays monomorphic, `mu(k)` above all: generalizing a capture
+  is the Harper–Lillibridge unsoundness, and the machine now executes it
+  reliably, so the counterexample must land as a must-reject test. The
+  by-name alternative (re-run the binding per instantiation) is available
+  explicitly by eta-expanding — `fn(u) { mu(k) { … } }` is a value — and is
+  not implicit. Rigid variables of an enclosing generic declaration never
+  generalize; instantiation reuses the signature freshening machinery.
