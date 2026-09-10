@@ -272,16 +272,17 @@ This is how a fallible operation is written. Rather than returning a result
 that a caller inspects, it takes the continuations its outcomes belong to:
 
 ```sl
-command parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) {
+command parse_value(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     match at(input, pos) {
-        QUOTE => parse_string(input, pos, ok, report),
-        _ => ParseResult::Failed("expected JSON value") @ report,
+        QUOTE => parse_string(input, pos, ok, failed),
+        _ => "expected JSON value" @ failed,
     }
 }
 ```
 
 Each path ends in a cut: either forwarding both continuations to another
-command, or sending an outcome to one of them. A helper that only computes
+command, or sending an outcome to one of them. One continuation per outcome
+*is* the outcome type — see §11. A helper that only computes
 with values — `at` above — stays an ordinary positive `fn`.
 
 ## 7. Additive data
@@ -342,17 +343,17 @@ An arm may bind the payload of its variant and pass it to the consumer, which
 is how a value reaches the continuation the variant selects:
 
 ```sl
-enum ParseResult { Parsed(String), Failed(String) }
+enum Reading { Measured(i64), Missing }
 
-fn deliver(ok: -String, err: -String) <- ParseResult {
-    select ParseResult {
-        Parsed(text) <= text @ ok,
-        Failed(message) <= message @ err,
+fn report(value: -i64, absent: -i64) <- Reading {
+    select Reading {
+        Measured(measurement) <= measurement @ value,
+        Missing <= -1 @ absent,
     }
 }
 ```
 
-`Parsed(text)` binds the payload of `Parsed` as `text` for that arm only. A
+`Measured(measurement)` binds the payload of `Measured` for that arm only. A
 variant that carries a payload must bind it; a variant that carries none must
 not.
 
@@ -812,17 +813,23 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-parse_json(source, select ParseResult {
-    Parsed(value) <= { println("parsed: " + value); 0 @ exit },
-    Failed(message) <= { println("error: " + message); 1 @ exit },
-})
+let parsed = select +String { value <= { println("parsed: " + value); 0 @ exit } };
+let failed = select +String { message <= { println("error: " + message); 1 @ exit } };
+parse_json(source, parsed, failed)
 ```
 
-Both outcomes meet in one consumer, built by `select` over the enum that names
-them, and each parser sends its outcome to it with a cut. No result wrapper is
-needed, and nothing carries a success value alongside an error value: the
-variant that arrives *is* the outcome. `examples/json_parser.sl` is written
-this way throughout.
+No result wrapper is needed, and nothing carries a success value alongside an
+error value: the continuation that is activated *is* the outcome.
+
+**A row of continuations is already the outcome type.** The consumer of
+`A ⊕ B` is a consumer of `A` together with a consumer of `B`, so declaring an
+`enum` of outcomes and sending it to a single continuation adds a wrapper
+without adding information — and it costs something, because the row can say
+what a single continuation cannot: which outcomes each operation actually has.
+In `examples/json_parser.sl` every parser takes `failed`, but only the
+top-level one takes `parsed`, so no inner parser can report success by
+mistake. Keep an `enum` for data that a program *holds*; outcomes that a
+program *reaches* are a row.
 
 ### Error propagation `?`
 

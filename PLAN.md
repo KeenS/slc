@@ -86,6 +86,11 @@ and where the two disagree, `DESIGN.md` is right.
   `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
   continuation per outcome and activate exactly one. Operator failures (`s[i]`,
   division by zero) stay fatal.
+- Outcomes are a continuation row, not an `enum` sent to one continuation: a
+  consumer of `A ⊕ B` is a consumer of `A` together with a consumer of `B`, so
+  the enum wraps what the row already says — and the row additionally says
+  which outcomes each operation has. An `enum` stays the way to write data a
+  program holds.
 
 ### Checking
 

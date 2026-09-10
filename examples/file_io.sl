@@ -3,9 +3,11 @@
 // Reading a file has two outcomes, so `read_file` does not return one: it
 // takes the continuation each outcome belongs to and activates exactly one.
 //
-// Both consumers here are built by `select`, in the two shapes it takes: over
-// an atom, whose single arm binds the value that arrives, and over an `enum`,
-// whose arms are one per outcome.
+// One continuation per outcome is the whole outcome type: a consumer of
+// `A ⊕ B` is a consumer of `A` and a consumer of `B`, so naming the outcomes
+// as an `enum` and sending it to a single continuation would only wrap what
+// the row already says. Each consumer here is built by `select` over the type
+// it receives.
 
 command main | (exit: -i32) {
     // `select` over an atom is a consumer literal: the arm names what arrives
@@ -29,31 +31,22 @@ command main | (exit: -i32) {
     };
     print(source);
 
-    // The same two outcomes, named rather than passed side by side: `read`
-    // sends one `Read`, and one `select` over the enum answers both.
-    read("examples/missing.sl", select Read {
-        Contents(text) <= {
-            println("unexpectedly read " + text);
-            1 @ exit
-        },
-        Failed(message) <= {
-            println("cannot read: " + message);
-            0 @ exit
-        },
-    })
-}
-
-enum Read {
-    Contents(String),
-    Failed(String),
-}
-
-// Two continuations become one send by tagging: each atom consumer labels what
-// it receives and forwards it to `out`. Exactly one of them ever runs.
-command read(path: +String) | (out: -Read) {
+    // This read fails, so control leaves through the second consumer and
+    // nothing after this call runs — the two are alternatives, and exactly
+    // one of them is activated.
     read_file(
-        path,
-        select +String { text <= Read::Contents(text) @ out },
-        select +String { message <= Read::Failed(message) @ out },
+        "examples/missing.sl",
+        select +String {
+            text <= {
+                println("unexpectedly read " + text);
+                1 @ exit
+            },
+        },
+        select +String {
+            message <= {
+                println("cannot read: " + message);
+                0 @ exit
+            },
+        },
     )
 }
