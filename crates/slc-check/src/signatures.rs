@@ -48,8 +48,6 @@ fn builtin_functions() -> Vec<Builtin> {
     // relates two slots of one call and promises nothing across calls.
     let same = Type::Var(0);
     let element = Type::Var(0);
-    let key = Type::Var(1);
-    let value = Type::Var(2);
 
     // An ordinary function: every parameter is a value.
     let function = |name, params: Vec<Type>, result| Builtin {
@@ -121,11 +119,6 @@ fn builtin_functions() -> Vec<Builtin> {
             "list_get",
             vec![Type::List(Box::new(element.clone())), i64.clone()],
             vec![Type::Dual(Box::new(element.clone())), Type::Neg(Str)],
-        ),
-        offers(
-            "map_get",
-            vec![Type::Var(3), key],
-            vec![Type::Dual(Box::new(value)), Type::Neg(Str)],
         ),
         offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
     ]

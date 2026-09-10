@@ -159,10 +159,7 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "neg"
         | "file_exists" => 1,
         "__index" => 2,
-        "map_len" => 1,
-        "map_insert" => 3,
         "close_file" => 1,
-        "path_join" => 2,
         "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
@@ -170,7 +167,7 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
         "read_file" | "open_file" | "read_line" => 3,
-        "char_at" | "list_get" | "map_get" | "write_file" | "parse_int" => 4,
+        "char_at" | "list_get" | "write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__if_dispatch" => 3,
         "__handle" => 2,
@@ -287,16 +284,6 @@ pub(crate) fn run_offering_builtin(
                         items.len()
                     )),
                 ),
-            })
-        }
-        "map_get" => {
-            let (found, missing) = (value(2), value(3));
-            let (Value::Map(entries), key) = (value(0), value(1)) else {
-                return Err(EvalError::TypeMismatch("map_get expects (map, key)".into()));
-            };
-            wrap(match entries.iter().find(|(k, _)| k == &key) {
-                Some((_, v)) => activate(found, v.clone()),
-                None => activate(missing, message(format!("no entry for {}", key.display()))),
             })
         }
         "find_char" => {

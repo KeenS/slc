@@ -289,65 +289,6 @@ pub fn apply_builtin(
                 .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range"))),
             _ => Err(BuiltinError::TypeMismatch("list_get expects (List, i64)".into())),
         },
-        "map_new" => Ok(Value::Map(vec![])),
-        "map_insert" => match (args.first(), args.get(1), args.get(2)) {
-            (Some(Value::Map(entries)), Some(k), Some(v)) => {
-                let mut new_entries = entries.clone();
-                if let Some(entry) = new_entries.iter_mut().find(|(ek, _)| ek == k) {
-                    entry.1 = v.clone();
-                } else {
-                    new_entries.push((k.clone(), v.clone()));
-                }
-                Ok(Value::Map(new_entries))
-            }
-            _ => Err(BuiltinError::TypeMismatch("map_insert expects (Map, key, value)".into())),
-        },
-        "map_get" => match (args.first(), args.get(1)) {
-            (Some(Value::Map(entries)), Some(k)) => Ok(entries
-                .iter()
-                .find(|(ek, _)| ek == k)
-                .map(|(_, v)| v.clone())
-                .unwrap_or(Value::Unit)),
-            _ => Err(BuiltinError::TypeMismatch("map_get expects (Map, key)".into())),
-        },
-        "map_len" => match args.first() {
-            Some(Value::Map(entries)) => Ok(Value::Int(entries.len() as i64)),
-            _ => Err(BuiltinError::TypeMismatch("map_len expects a Map".into())),
-        },
-        "path_join" => match (args.first(), args.get(1)) {
-            (Some(Value::Str(a)), Some(Value::Str(b))) => {
-                let joined = std::path::Path::new(a).join(b);
-                Ok(Value::Str(joined.to_string_lossy().into_owned()))
-            }
-            _ => Err(BuiltinError::TypeMismatch("path_join expects two Strings".into())),
-        },
-        "path_basename" => match args.first() {
-            Some(Value::Str(p)) => Ok(Value::Str(
-                std::path::Path::new(p)
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            )),
-            _ => Err(BuiltinError::TypeMismatch("path_basename expects a String".into())),
-        },
-        "path_dirname" => match args.first() {
-            Some(Value::Str(p)) => Ok(Value::Str(
-                std::path::Path::new(p)
-                    .parent()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            )),
-            _ => Err(BuiltinError::TypeMismatch("path_dirname expects a String".into())),
-        },
-        "path_extension" => match args.first() {
-            Some(Value::Str(p)) => Ok(Value::Str(
-                std::path::Path::new(p)
-                    .extension()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            )),
-            _ => Err(BuiltinError::TypeMismatch("path_extension expects a String".into())),
-        },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
 }
@@ -444,43 +385,6 @@ mod tests {
         assert_eq!(n, Value::Int(2));
         let item = apply_builtin("list_get", &[l2, Value::Int(1)], &mut buf).unwrap();
         assert_eq!(item, Value::Int(2));
-    }
-
-    #[test]
-    fn map_operations() {
-        let mut buf: Vec<u8> = Vec::new();
-        let m0 = apply_builtin("map_new", &[], &mut buf).unwrap();
-        let m1 =
-            apply_builtin("map_insert", &[m0, Value::Str("a".into()), Value::Int(1)], &mut buf)
-                .unwrap();
-        let m2 =
-            apply_builtin("map_insert", &[m1, Value::Str("b".into()), Value::Int(2)], &mut buf)
-                .unwrap();
-        let v = apply_builtin("map_get", &[m2.clone(), Value::Str("a".into())], &mut buf).unwrap();
-        assert_eq!(v, Value::Int(1));
-        let n = apply_builtin("map_len", &[m2], &mut buf).unwrap();
-        assert_eq!(n, Value::Int(2));
-    }
-
-    #[test]
-    fn path_operations() {
-        let mut buf: Vec<u8> = Vec::new();
-        let joined = apply_builtin(
-            "path_join",
-            &[Value::Str("a/b".into()), Value::Str("c.sl".into())],
-            &mut buf,
-        )
-        .unwrap();
-        assert_eq!(joined, Value::Str("a/b/c.sl".into()));
-        let base =
-            apply_builtin("path_basename", &[Value::Str("a/b/c.sl".into())], &mut buf).unwrap();
-        assert_eq!(base, Value::Str("c.sl".into()));
-        let dir =
-            apply_builtin("path_dirname", &[Value::Str("a/b/c.sl".into())], &mut buf).unwrap();
-        assert_eq!(dir, Value::Str("a/b".into()));
-        let ext =
-            apply_builtin("path_extension", &[Value::Str("a/b/c.sl".into())], &mut buf).unwrap();
-        assert_eq!(ext, Value::Str("sl".into()));
     }
 }
 

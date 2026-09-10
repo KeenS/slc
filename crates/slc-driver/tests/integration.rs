@@ -652,12 +652,7 @@ fn lookup_builtins_offer_both_outcomes() {
                     report("unexpectedly found something")
                 }, fn(message: +String) -> ⊥ {
                     println(message);
-                    map_get(map_insert(map_new(), 1, "one"), 2, fn(found: +String) -> ⊥ {
-                        report("unexpectedly found " + found)
-                    }, fn(message: +String) -> ⊥ {
-                        println(message);
-                        0 @ exit
-                    })
+                    0 @ exit
                 })
             }, fn(message: +String) -> ⊥ { report(message) })
         }"#,
@@ -667,7 +662,6 @@ fn lookup_builtins_offer_both_outcomes() {
     assert!(ok, "stderr: {stderr}");
     assert!(stdout.contains("20"), "stdout: {stdout}");
     assert!(stdout.contains("index 7 is out of range for a list of length 2"), "stdout: {stdout}");
-    assert!(stdout.contains("no entry for 2"), "stdout: {stdout}");
 }
 
 #[test]
