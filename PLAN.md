@@ -53,6 +53,10 @@ it is remembered.
   acceptable unless renamed separately.
 - **`Result` and `Option` in the prelude.** Removed: error handling is
   continuation-based, so neither is canonical any more.
+- **The interaction-net backend.** An unwired experiment: `slc-core::net`
+  and its bridge were reachable only from their own tests, never from the
+  pipeline. Removed as dead code; git history has it, and an abstract
+  machine (see the continuations limit) is the likelier evaluator future.
 
 ## Next
 
