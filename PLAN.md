@@ -54,16 +54,6 @@ machine the redesign already built.
 
 ## Deferred, with no accepted replacement
 
-- **Negative partial application.** The partial-agent forms
-  (`agent.consume(k, h)`, `fn.partial(a)`) are removed and nothing replaces
-  them; a future design needs its own lowering and tests.
-- **`choose T { Variant }`.** Removed along with its lowering, checking, and
-  tests while its design is deferred.
-- **The internal name `Command`.** The core types and evaluator still use it as
-  a Rust type name. That is internal naming, not surface syntax, and is
-  acceptable unless renamed separately.
-- **`Result` and `Option` in the prelude.** Removed: error handling is
-  continuation-based, so neither is canonical any more.
 - **Static dictionary passing for traits.** Traits are implemented by
   dynamic dispatch on the argument's runtime type, checked total, rather than
   the static dictionary passing the plan first sketched: threading dictionaries
@@ -77,4 +67,40 @@ machine the redesign already built.
 
 ## Next
 
-Nothing is outstanding. New work goes here as it is planned.
+- **Evolve the execution model: one continuation, then compile to it.** The
+  machine reifies the continuation two ways at once — control (match, the
+  effect `Prompt`) lives in the frame stack, but application, `let`, and
+  blocks lower to `μk. ⟨… ∥ k⟩`, which the machine turns into a
+  stack-*replacing* `Value::Kont`. That split is the root cause of the
+  tail-resumptive effect limit: the continuation between a `perform` and its
+  handler is part frames, part escaping `Kont`. Healing it addresses all
+  three goals at once.
+
+  *Stage 1 — unify the continuation (unlocks multi-shot/non-tail effects).*
+  Re-lower application, `let`, and blocks so a body's result flows through
+  frames, not through a captured covariable that replaces the stack. Then
+  `mu` (undelimited capture) and a handler `Prompt` (delimited capture) are
+  two cases of one mechanism, both slicing the one frame stack; multi-shot
+  and non-tail `resume` fall out, and the tail-position restriction is
+  retired — with the nondeterminism example (`resume` twice) as the test
+  that proves it.
+
+  *Stage 2 — persistent continuation + indexed environments (cheap capture,
+  faster lookup).* Represent the stack as a shared persistent cons so capture
+  and `resume` are O(1) instead of cloning `Vec<Frame>`; compile variable
+  access to de Bruijn indices over a flat environment instead of `HashMap`
+  lookups with per-frame `Env` clones.
+
+  *Stage 3 — compile the core to a closed IR (the raw speedup, and the home
+  for deferred work).* Replace per-step `Rc<Term>` walking and cloning with a
+  one-time compilation to a closure-converted, de-Bruijn instruction stream.
+  That pass is also where the deferred **static dictionary passing for
+  traits** lands (zero-cost dispatch, retiring the runtime type-key lookup),
+  and where effect operations compile to efficient prompt instructions.
+
+  The shape is the one the calculus already describes: the machine state is
+  `⟨ term-closure ∥ coterm-closure ⟩`, and the coterm side *is* the
+  continuation — one object. Completing that is simultaneously the
+  correctness unlock (Stage 1), the cheap-capture change (Stage 2), and what
+  a bytecode compiles against (Stage 3). The `fuel` counter stays — it is the
+  divergence backstop the soundness story leans on.
