@@ -500,6 +500,11 @@ Because dispatch is on the value that actually arrives, a generic `impl` needs
 no machinery: `impl Show for [T]` may `show` each element, each resolved at
 its own type.
 
+Where the receiver type is concrete at the call site, the impl is known at
+compile time, so the call compiles to a direct call to that impl and the
+runtime type check is skipped; only a call on a bounded type parameter, whose
+type is not yet known, dispatches at runtime.
+
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and
