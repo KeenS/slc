@@ -187,6 +187,68 @@ fn infer_param_type(
     body.kind.children().into_iter().find_map(|child| infer_param_type(name, child, enums, env))
 }
 
+/// Whether `resume` is called anywhere that is not a tail position of the
+/// clause body. A tail position is the body itself, the tail of a block, a
+/// branch of an `if`, a `match` arm, or a `let` body; everything else —
+/// operands, arguments, conditions, non-final block statements — is not.
+fn resume_in_nontail_position(e: &Expr, resume: &str) -> bool {
+    // A resume call in a non-tail subexpression is the violation; a resume
+    // call that *is* the tail is fine.
+    fn nontail(e: &Expr, resume: &str) -> bool {
+        // Any resume occurrence here (this expression is in non-tail context).
+        mentions_resume(e, resume)
+    }
+    fn tail(e: &Expr, resume: &str) -> bool {
+        match e {
+            // A resume call in tail position is allowed; its arguments are not
+            // themselves tail, so check them.
+            Expr::Call { callee, args } => {
+                if matches!(&callee.kind, Expr::Ident(n) if n == resume) {
+                    return args.iter().any(|a| nontail(&a.kind, resume));
+                }
+                nontail(e, resume)
+            }
+            Expr::Block(items) => {
+                let (last, rest) = match items.split_last() {
+                    Some(x) => x,
+                    None => return false,
+                };
+                rest.iter().any(|s| nontail(&s.kind, resume)) || tail(&last.kind, resume)
+            }
+            Expr::If { cond, then, otherwise } => {
+                nontail(&cond.kind, resume)
+                    || tail(&then.kind, resume)
+                    || otherwise.as_ref().is_some_and(|o| tail(&o.kind, resume))
+            }
+            Expr::Match { scrutinee, arms } => {
+                nontail(&scrutinee.kind, resume)
+                    || arms.iter().any(|a| {
+                        a.guard.as_ref().is_some_and(|g| nontail(&g.kind, resume))
+                            || tail(&a.body.kind, resume)
+                    })
+            }
+            Expr::Let { value, body, .. } => {
+                nontail(&value.kind, resume) || body.as_ref().is_some_and(|b| tail(&b.kind, resume))
+            }
+            other => nontail(other, resume),
+        }
+    }
+    tail(e, resume)
+}
+
+fn mentions_resume(e: &Expr, resume: &str) -> bool {
+    if let Expr::Call { callee, .. } = e
+        && matches!(&callee.kind, Expr::Ident(n) if n == resume)
+    {
+        return true;
+    }
+    if let Expr::Ident(n) = e {
+        return n == resume;
+    }
+    let node = Node { kind: e.clone(), span: Span { start: 0, end: 0 } };
+    node.kind.children().iter().any(|c| mentions_resume(&c.kind, resume))
+}
+
 /// Resolve a declared type, substituting a rigid variable for each type
 /// parameter even under a sign or a shift: `+T` and `↓-T` find `T` too.
 fn resolve_rigid(
@@ -1440,6 +1502,51 @@ fn check_expr_unapplied(
                     });
                     None
                 }
+            }
+        }
+        Expr::Handle { body, clauses, ret, .. } => {
+            // The body runs under the handler; its normal value feeds the
+            // return clause, whose body is the handle's type. (Effect rows
+            // are not yet checked — see PLAN.)
+            let body_ty =
+                check_expr(body, enums, env, diags).unwrap_or_else(|| env.uni.fresh_var());
+            for clause in clauses {
+                // `resume` may be used only in tail position, at most on each
+                // path: the evaluator runs it as a delimited continuation that
+                // replaces the rest of the clause, so work sequenced after a
+                // `resume` — or a second `resume` — would silently escape the
+                // handler. Exceptions (no `resume`) and tail-resumptive
+                // handlers (one `resume`, in tail position) are supported;
+                // multi-shot is not (see PLAN).
+                if resume_in_nontail_position(&clause.body.kind, &clause.resume) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`{}` may only be used in tail position of a handler clause; work                              after it, or a second use, would escape the handler (multi-shot                              handlers are not yet supported)",
+                            clause.resume
+                        ),
+                        span: clause.body.span,
+                    });
+                }
+                env.push();
+                for p in &clause.params {
+                    let v = env.uni.fresh_var();
+                    env.define(p, v);
+                }
+                let resume_in = env.uni.fresh_var();
+                let resume_out = env.uni.fresh_var();
+                env.define(&clause.resume, Type::arrow(resume_in, resume_out));
+                check_expr(&clause.body, enums, env, diags);
+                env.pop();
+            }
+            match ret {
+                Some((binder, rbody)) => {
+                    env.push();
+                    env.define(binder, body_ty);
+                    let ty = check_expr(rbody, enums, env, diags);
+                    env.pop();
+                    ty
+                }
+                None => Some(body_ty),
             }
         }
         Expr::Pair(items) if items.is_empty() => Some(Type::One),

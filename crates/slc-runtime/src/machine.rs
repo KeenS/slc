@@ -51,6 +51,17 @@ pub enum Frame {
     ActivateArg(Rc<Term>, Env),
     /// `k(v)`: the consumer is known; the value is being evaluated.
     ActivateWith(Value),
+    /// A handler delimiter: the `return` clause, and the operation clauses
+    /// of one effect. Sits on the stack under the body it handles.
+    Prompt {
+        effect: String,
+        clauses: std::rc::Rc<std::collections::HashMap<String, Value>>,
+        ret: Value,
+    },
+    /// `resume(v)` then apply the produced closure to this value: a handler
+    /// clause is `λarg. λresume. body`, so after `clause(arg)` we apply the
+    /// result to `resume`.
+    ApplyTo(Value),
     /// A match in progress: the guard of a candidate arm is being evaluated.
     MatchGuard {
         scrutinee: Value,
@@ -86,7 +97,7 @@ fn run(start: State, kont: Vec<Frame>, fuel: &mut usize) -> Result<Value, EvalEr
         state = match state {
             State::Term(t, env) => step_term(&t, env, &mut kont)?,
             State::Command(c, env) => step_command(&c, env, &mut kont)?,
-            State::Apply { callee, arg } => step_apply(callee, arg, &mut kont)?,
+            State::Apply { callee, arg } => step_apply(callee, arg, &mut kont, fuel)?,
             State::Return(v) => match kont.pop() {
                 None => return Ok(v),
                 Some(frame) => step_frame(frame, v, &mut kont)?,
@@ -186,6 +197,11 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Vec<Frame>) -> Result<State, Ev
             State::Term(value_term, env)
         }
         Frame::ActivateWith(consumer) => State::Apply { callee: consumer, arg: v },
+        Frame::Prompt { ret, .. } => {
+            // The handled body returned normally: its value goes to `return`.
+            State::Apply { callee: ret, arg: v }
+        }
+        Frame::ApplyTo(arg) => State::Apply { callee: v, arg },
         Frame::MatchGuard { scrutinee, thunk, bindings, remaining } => {
             if v == Value::Bool(true) {
                 run_match_thunk(&thunk, &bindings)?
@@ -241,7 +257,12 @@ fn step_consume(v: Value, e: &CoTerm, env: Env, kont: &mut Vec<Frame>) -> Result
 }
 
 /// One application step: a cut against something that consumes.
-fn step_apply(callee: Value, arg: Value, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn step_apply(
+    callee: Value,
+    arg: Value,
+    kont: &mut Vec<Frame>,
+    fuel: &mut usize,
+) -> Result<State, EvalError> {
     Ok(match callee {
         Value::Closure { param, body, env } => {
             let mut call_env = env;
@@ -296,6 +317,39 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Vec<Frame>) -> Result<State,
                     )));
                 }
             }
+        }
+        // Performing an operation: find the nearest handler, capture the
+        // delimited continuation, and run the matching clause with `resume`.
+        Value::Operation { effect, op } => {
+            let prompt = kont.iter().rposition(|f| {
+                matches!(f, Frame::Prompt { effect: e, clauses, .. }
+                    if *e == effect && clauses.contains_key(&op))
+            });
+            let Some(p) = prompt else {
+                return Err(EvalError::TypeMismatch(format!(
+                    "no handler for operation `{op}` of effect `{effect}`"
+                )));
+            };
+            // Split at the handler: captured includes the Prompt, so resuming
+            // re-installs it (a deep handler). The clause runs below it.
+            let captured = kont.split_off(p);
+            let clause = match &captured[0] {
+                Frame::Prompt { clauses, .. } => clauses.get(&op).cloned().expect("found above"),
+                _ => unreachable!("split at a Prompt"),
+            };
+            let resume = Value::Resume(Rc::new(captured));
+            // clause is `λarg. λresume. body`: apply to arg, then to resume.
+            kont.push(Frame::ApplyTo(resume));
+            State::Apply { callee: clause, arg }
+        }
+        // Resuming a delimited continuation: prepend its frames and deliver.
+        // A delimited continuation behaves as a function: run the captured
+        // work (with its reinstated handler) to a value and deliver that. A
+        // nested run is what lets the clause compose `resume(a) + resume(b)`
+        // and resume more than once.
+        Value::Resume(frames) => {
+            let result = run(State::Return(arg), (*frames).clone(), fuel)?;
+            State::Return(result)
         }
         Value::Builtin(name) => {
             let mut args = Vec::new();
@@ -352,6 +406,38 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Vec<Frame>) -> Result<S
             Value::Closure { .. } => State::Apply { callee: chosen, arg: Value::Unit },
             other => State::Return(other),
         });
+    }
+    if name == "__handle" {
+        // args: [Str(effect), clauses, body_thunk]. Decode the clause tree
+        // into the operation map and the return closure, push the prompt,
+        // and force the body.
+        let mut it = args.into_iter();
+        let effect = match it.next() {
+            Some(Value::Str(s)) => s,
+            _ => return Err(EvalError::TypeMismatch("__handle effect name".into())),
+        };
+        let clauses_value = match it.next() {
+            Some(Value::Inl(inner)) => *inner,
+            other => other.unwrap_or(Value::Unit),
+        };
+        let body_thunk = it.next().unwrap_or(Value::Unit);
+        let mut clauses = std::collections::HashMap::new();
+        let mut ret = Value::Unit;
+        let mut rest = clauses_value;
+        while let Value::Pair(head, tail) = rest {
+            if let Value::Pair(op, closure) = *head
+                && let Value::Str(op) = *op
+            {
+                if op == "return" {
+                    ret = *closure;
+                } else {
+                    clauses.insert(op, *closure);
+                }
+            }
+            rest = *tail;
+        }
+        kont.push(Frame::Prompt { effect, clauses: Rc::new(clauses), ret });
+        return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
     }
     if name == "__match_dispatch" {
         let mut it = args.into_iter();

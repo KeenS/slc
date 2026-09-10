@@ -40,6 +40,7 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
+        ("effects.sl", Expected { success: true, stdout: &["-1", "5", "70"], stderr: &[] }),
         (
             "file_io.sl",
             Expected {

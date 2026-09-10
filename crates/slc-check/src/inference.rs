@@ -236,7 +236,7 @@ fn infer_decl(
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
         }
         // Resolved away before inference runs.
-        Decl::Mod { name, .. } | Decl::Trait { name, .. } => {
+        Decl::Mod { name, .. } | Decl::Trait { name, .. } | Decl::Effect { name, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: Type::One })
         }
         Decl::Use { .. } | Decl::Impl { .. } => {

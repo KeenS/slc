@@ -104,6 +104,16 @@ pub enum Value {
         method: String,
         impls: Rc<HashMap<String, Value>>,
     },
+    /// An effect operation: applying it performs the effect, capturing the
+    /// continuation up to the nearest handler for `effect`.
+    Operation {
+        effect: String,
+        op: String,
+    },
+    /// A delimited, composable continuation — a handler's `resume`. Applying
+    /// it prepends its captured frames onto the current stack, so control
+    /// runs the captured work and then re-enters the handler.
+    Resume(Rc<Vec<crate::machine::Frame>>),
     /// An `enum` value: a variant label and its payload.
     Tagged(String, Box<Value>),
     /// A negative additive consumer (`select`): the branches of a core
@@ -151,6 +161,8 @@ impl PartialEq for Value {
             | (Value::NoArguments, Value::NoArguments) => true,
             (Value::File(a), Value::File(b)) => a == b,
             (Value::Method { method: a, .. }, Value::Method { method: b, .. }) => a == b,
+            (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
+            (Value::Resume(a), Value::Resume(b)) => Rc::ptr_eq(a, b),
             (Value::Kont(a), Value::Kont(b)) => Rc::ptr_eq(a, b),
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
@@ -176,7 +188,8 @@ impl Value {
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
-            Value::Method { .. } => Type::One,
+            Value::Method { .. } | Value::Operation { .. } => Type::One,
+            Value::Resume(_) => Type::Bottom,
             Value::Unit | Value::Never | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
@@ -213,6 +226,8 @@ impl Value {
             Value::NoArguments => "<no arguments>".to_string(),
             Value::File(id) => format!("<file@{id}>"),
             Value::Method { method, .. } => format!("<method {method}>"),
+            Value::Operation { op, .. } => format!("<operation {op}>"),
+            Value::Resume(_) => "<resume>".to_string(),
             Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
             Value::Inl(a) => format!("inl({})", a.display()),
             Value::Inr(a) => format!("inr({})", a.display()),
@@ -307,6 +322,7 @@ pub fn install_stdlib(env: &mut Env) {
         "file_exists",
         "__if_dispatch",
         "__match_dispatch",
+        "__handle",
         "char_at",
         "list_new",
         "list_len",

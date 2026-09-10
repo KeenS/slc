@@ -4,15 +4,15 @@
 // result: every operation takes one continuation per outcome and activates
 // exactly one — the outcome type is the row itself.
 //
-// A file can be read whole with `read_file`, or through a *handle*:
-// `open_file` offers the handle or a failure, `read_line` offers the next
-// line or the end of the file, and `close_file` spends the handle. A handle
+// A file can be read whole with `read_file`, or through a *file*:
+// `open_file` offers the file or a failure, `read_line` offers the next
+// line or the end of the file, and `close_file` spends the file. A file
 // is a value of its own type, `+File` — an integer cannot close a file, and
-// reading through a closed handle fails.
+// reading through a closed file fails.
 //
 // Once a file is open, no path may leave it behind. That is not discipline
 // at every cut — it is composition at the only door out: shadow `exit` with
-// a consumer that closes the handle and then leaves, and every later
+// a consumer that closes the file and then leaves, and every later
 // `@ exit` goes through the close, unhappy paths included.
 
 command main | (exit: -i32) {
@@ -30,8 +30,8 @@ command main | (exit: -i32) {
     };
     print(source);
 
-    // Line reading, through a handle.
-    let handle = mu(k) {
+    // Line reading, through a file.
+    let file = mu(k) {
         open_file("examples/hello.sl", k, complain)
     };
 
@@ -40,13 +40,13 @@ command main | (exit: -i32) {
     // door. No path past this line can end the program with the file open.
     let exit = select +i32 {
         status <= {
-            close_file(handle);
+            close_file(file);
             status @ exit
         },
     };
 
     let first = mu(k) {
-        read_line(handle, k, select +unit { end <= { println("empty file"); 1 @ exit } })
+        read_line(file, k, select +unit { end <= { println("empty file"); 1 @ exit } })
     };
     println("first line: " + first);
 

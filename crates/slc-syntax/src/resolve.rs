@@ -67,6 +67,12 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Trait { name, .. } => {
                 scope.declares.insert(name.clone());
             }
+            Decl::Effect { name, operations } => {
+                scope.declares.insert(name.clone());
+                for op in operations {
+                    scope.declares.insert(op.name.clone());
+                }
+            }
             Decl::Impl { .. } => {}
             Decl::Use { path } => {
                 let target = path.join("::");
@@ -202,6 +208,17 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_type(for_type, stack);
             for method in methods {
                 resolve_decl(&mut method.kind, stack, locals);
+            }
+        }
+        Decl::Effect { name, operations } => {
+            *name = scope.qualify(name);
+            for op in operations {
+                for p in op.params.iter_mut() {
+                    resolve_param(p, stack);
+                }
+                if let Some(ty) = &mut op.return_type {
+                    resolve_type(ty, stack);
+                }
             }
         }
         Decl::Mod { .. } | Decl::Use { .. } => {}
@@ -350,6 +367,21 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut consumer.kind, stack, locals);
         }
         Expr::ErrorProp { expr, .. } => resolve_expr(&mut expr.kind, stack, locals),
+        Expr::Handle { body, clauses, ret, .. } => {
+            resolve_expr(&mut body.kind, stack, locals);
+            for c in clauses.iter_mut() {
+                let mut bound: HashSet<String> = c.params.iter().cloned().collect();
+                bound.insert(c.resume.clone());
+                locals.push(bound);
+                resolve_expr(&mut c.body.kind, stack, locals);
+                locals.pop();
+            }
+            if let Some((binder, rbody)) = ret {
+                locals.push(HashSet::from([binder.clone()]));
+                resolve_expr(&mut rbody.kind, stack, locals);
+                locals.pop();
+            }
+        }
         Expr::Index { value, index } => {
             resolve_expr(&mut value.kind, stack, locals);
             resolve_expr(&mut index.kind, stack, locals);

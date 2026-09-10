@@ -123,6 +123,17 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     // resolve each other at call time regardless of definition order.
     // Enum constructors are also injected as string-valued globals.
     for d in &program.decls {
+        if let slc_syntax::ast::Decl::Effect { name, operations } = &d.kind {
+            for op in operations {
+                env.define_global(
+                    op.name.clone(),
+                    slc_runtime::value::Value::Operation {
+                        effect: name.clone(),
+                        op: op.name.clone(),
+                    },
+                );
+            }
+        }
         if let slc_syntax::ast::Decl::Enum { name, variants } = &d.kind {
             for (v, _) in variants {
                 env.define_global(

@@ -230,6 +230,27 @@ pub(crate) fn function_types(
                     },
                 );
             }
+            Decl::Effect { operations, .. } => {
+                for op in operations {
+                    let mut next_template = 0;
+                    let params = op
+                        .params
+                        .iter()
+                        .map(|p| signature_type(p.ty.as_ref(), &[], enums, &mut next_template))
+                        .collect();
+                    let result =
+                        signature_type(op.return_type.as_ref(), &[], enums, &mut next_template);
+                    out.insert(
+                        op.name.clone(),
+                        FunctionSignature {
+                            params,
+                            continuations: op.params.iter().map(|_| false).collect(),
+                            result: Some(result),
+                            bounds: Vec::new(),
+                        },
+                    );
+                }
+            }
             _ => {}
         }
     }

@@ -954,10 +954,10 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
         format!(
             r#"command main | (exit: -i32) {{
                 let fail = select +String {{ m <= {{ println(m); 1 @ exit }} }};
-                let handle = mu(k) {{ open_file("{}", k, fail) }};
-                close_file(handle);
+                let fh = mu(k) {{ open_file("{}", k, fail) }};
+                close_file(fh);
                 let line = mu(k) {{
-                    read_line(handle, k, select +unit {{ e <= {{ println("eof"); 1 @ exit }} }})
+                    read_line(fh, k, select +unit {{ e <= {{ println("eof"); 1 @ exit }} }})
                 }};
                 println(line);
                 0 @ exit

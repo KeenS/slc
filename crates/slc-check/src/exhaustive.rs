@@ -28,7 +28,8 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
         | Decl::Mod { .. }
         | Decl::Use { .. }
         | Decl::Trait { .. }
-        | Decl::Impl { .. } => {}
+        | Decl::Impl { .. }
+        | Decl::Effect { .. } => {}
     }
 }
 
@@ -172,6 +173,15 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
             }
             if let Some(end) = end {
                 check_expr(end, enums, diags);
+            }
+        }
+        Expr::Handle { body, clauses, ret, .. } => {
+            check_expr(body, enums, diags);
+            for c in clauses {
+                check_expr(&c.body, enums, diags);
+            }
+            if let Some((_, rbody)) = ret {
+                check_expr(rbody, enums, diags);
             }
         }
         Expr::ErrorProp { expr: body, .. } | Expr::Shift { expr: body, .. } => {

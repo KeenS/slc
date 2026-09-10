@@ -310,6 +310,52 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // A shift is a coercion the checker cares about and the core does
         // not: a boxed consumer and the consumer are the same value.
         Expr::Shift { expr, .. } => lower_expr(expr, continuations),
+        // `handle` lowers to a `__handle` call the runtime special-cases: the
+        // effect name, a value encoding the clauses, and a thunk of the body.
+        Expr::Handle { body, effect, clauses, ret } => {
+            // Each clause → ($str_op ⊗ λarg. λresume. body); the arg binds the
+            // operation's single parameter (or is ignored for a nullary op).
+            let mut encoded = Term::Var("$unit".into());
+            for clause in clauses.iter().rev() {
+                let mut body_scope = continuations.to_vec();
+                body_scope.push(clause.resume.clone());
+                body_scope.extend(clause.params.iter().cloned());
+                let inner = lower_expr(&clause.body, &body_scope)?;
+                let arg_binder =
+                    clause.params.first().cloned().unwrap_or_else(|| "__op_arg".into());
+                let closure = Term::Lam(
+                    arg_binder,
+                    Box::new(Term::Lam(clause.resume.clone(), Box::new(inner))),
+                );
+                let pair = Term::Pair(
+                    Box::new(Term::Var(format!("$str_\"{}\"", clause.op))),
+                    Box::new(closure),
+                );
+                encoded = Term::Pair(Box::new(pair), Box::new(encoded));
+            }
+            // The return clause, or the identity.
+            let ret_closure = match ret {
+                Some((binder, rbody)) => {
+                    Term::Lam(binder.clone(), Box::new(lower_expr(rbody, continuations)?))
+                }
+                None => Term::Lam("__ret".into(), Box::new(Term::Var("__ret".into()))),
+            };
+            let ret_pair =
+                Term::Pair(Box::new(Term::Var("$str_\"return\"".into())), Box::new(ret_closure));
+            encoded = Term::Pair(Box::new(ret_pair), Box::new(encoded));
+            let body_thunk =
+                Term::Lam("__handle_thunk".into(), Box::new(lower_expr(body, continuations)?));
+            // The clause tree is wrapped so the runtime's argument collection,
+            // which flattens pairs, passes it as one value.
+            Ok(call_curried(
+                Term::Var("__handle".into()),
+                vec![
+                    Term::Var(format!("$str_\"{effect}\"")),
+                    Term::Inl(Box::new(encoded)),
+                    body_thunk,
+                ],
+            ))
+        }
         Expr::ErrorProp { expr, continuation } => {
             let selected = continuation.clone().or_else(|| continuations.last().cloned());
             if let Some(name) = selected {
@@ -578,7 +624,11 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             }
             // Modules are flattened by resolution before lowering; one that
             // reaches here unresolved has nothing to lower.
-            Decl::Mod { .. } | Decl::Use { .. } | Decl::Trait { .. } | Decl::Impl { .. } => {}
+            Decl::Mod { .. }
+            | Decl::Use { .. }
+            | Decl::Trait { .. }
+            | Decl::Impl { .. }
+            | Decl::Effect { .. } => {}
             Decl::Struct { .. } | Decl::Enum { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }

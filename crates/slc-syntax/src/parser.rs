@@ -181,6 +181,7 @@ impl Parser {
             Some(TokenKind::Use) => self.parse_use_decl(),
             Some(TokenKind::Trait) => self.parse_trait_decl(),
             Some(TokenKind::Impl) => self.parse_impl_decl(),
+            Some(TokenKind::Effect) => self.parse_effect_decl(),
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
@@ -433,6 +434,29 @@ impl Parser {
         }
         let _ = self.eat(&TokenKind::Semicolon);
         Ok(Node { span: t.span, kind: Decl::Use { path } })
+    }
+
+    fn parse_effect_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Effect, "`effect`")?;
+        let name = self.expect_ident("effect name")?;
+        self.expect(TokenKind::LBrace, "`{` after the effect name")?;
+        let mut operations = Vec::new();
+        while !self.eat(&TokenKind::RBrace) {
+            if self.peek().is_none() {
+                return Err(ParseError {
+                    message: format!("effect `{name}` is missing its closing `}}`"),
+                    span: t.span,
+                });
+            }
+            self.expect(TokenKind::Fn, "`fn` for an operation")?;
+            let op = self.expect_ident("operation name")?;
+            let params = self.parse_params()?;
+            let return_type =
+                if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
+            self.expect(TokenKind::Semicolon, "`;` after an operation")?;
+            operations.push(EffectOp { name: op, params, return_type });
+        }
+        Ok(Node { span: t.span, kind: Decl::Effect { name, operations } })
     }
 
     fn parse_trait_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -1094,6 +1118,51 @@ impl Parser {
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
                     kind: Expr::Lambda { param, param_type, return_type, body: Box::new(body) },
+                })
+            }
+            Some(TokenKind::Handle) => {
+                self.pos += 1;
+                let body = self.parse_scrutinee()?;
+                self.expect(TokenKind::With, "`with` in a handler")?;
+                let effect = self.expect_ident("the handled effect")?;
+                self.expect(TokenKind::LBrace, "`{` after the effect")?;
+                let mut clauses = Vec::new();
+                let mut ret = None;
+                loop {
+                    if self.eat(&TokenKind::RBrace) {
+                        break;
+                    }
+                    // `return(x) => body` or `op(params) resume => body`.
+                    if self.peek_kind() == Some(&TokenKind::Return) {
+                        self.pos += 1;
+                        self.expect(TokenKind::LParen, "`(` after `return`")?;
+                        let binder = self.expect_ident("the return binder")?;
+                        self.expect(TokenKind::RParen, "`)`")?;
+                        self.expect(TokenKind::FatArrow, "`=>` in a return clause")?;
+                        ret = Some((binder, Box::new(self.parse_expr()?)));
+                    } else {
+                        let op = self.expect_ident("an operation name")?;
+                        self.expect(TokenKind::LParen, "`(` after the operation")?;
+                        let mut params = Vec::new();
+                        if !self.eat(&TokenKind::RParen) {
+                            loop {
+                                params.push(self.expect_ident("an operation parameter")?);
+                                if !self.eat(&TokenKind::Comma) {
+                                    self.expect(TokenKind::RParen, "`)`")?;
+                                    break;
+                                }
+                            }
+                        }
+                        let resume = self.expect_ident("the resume binder")?;
+                        self.expect(TokenKind::FatArrow, "`=>` in a handler clause")?;
+                        let body = self.parse_expr()?;
+                        clauses.push(HandleClause { op, params, resume, body });
+                    }
+                    self.eat(&TokenKind::Comma);
+                }
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Handle { body: Box::new(body), effect, clauses, ret },
                 })
             }
             Some(TokenKind::Match) => {

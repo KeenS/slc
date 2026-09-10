@@ -219,7 +219,8 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
         | Decl::Mod { .. }
         | Decl::Use { .. }
         | Decl::Trait { .. }
-        | Decl::Impl { .. } => {}
+        | Decl::Impl { .. }
+        | Decl::Effect { .. } => {}
     }
 }
 
@@ -444,6 +445,15 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
         }
         // A shift is a coercion: what it wraps is used exactly as it is.
         Expr::Shift { expr, .. } => go(expr, m),
+        Expr::Handle { body, clauses, ret, .. } => {
+            go(body, m);
+            for c in clauses {
+                go(&c.body, m);
+            }
+            if let Some((_, rbody)) = ret {
+                go(rbody, m);
+            }
+        }
         Expr::ErrorProp { expr, continuation } => {
             go(expr, m);
             if let Some(name) = continuation {

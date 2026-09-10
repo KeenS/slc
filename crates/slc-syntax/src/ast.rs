@@ -94,6 +94,16 @@ pub enum Expr {
         expr: Box<Node<Expr>>,
         continuation: Option<String>,
     },
+    /// `handle body with E { op(p) resume => b, …, return(x) => r }`: run
+    /// `body`, answering each performed operation of effect `E` with its
+    /// clause, and its normal result with the `return` clause.
+    Handle {
+        body: Box<Node<Expr>>,
+        effect: String,
+        clauses: Vec<HandleClause>,
+        /// The `return(x) => r` clause: its binder and body.
+        ret: Option<(String, Box<Node<Expr>>)>,
+    },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
     Index {
@@ -138,6 +148,10 @@ impl Expr {
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
             Expr::ErrorProp { expr, .. } | Expr::Shift { expr, .. } => vec![expr],
+            Expr::Handle { body, clauses, ret, .. } => std::iter::once(&**body)
+                .chain(clauses.iter().map(|c| &c.body))
+                .chain(ret.iter().map(|(_, b)| &**b))
+                .collect(),
             Expr::Index { value, index } => vec![value, index],
             Expr::Slice { value, start, end } => std::iter::once(&**value)
                 .chain(start.iter().map(|e| &**e))
@@ -145,6 +159,15 @@ impl Expr {
                 .collect(),
         }
     }
+}
+
+/// One operation clause of a handler: `op(params) resume => body`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HandleClause {
+    pub op: String,
+    pub params: Vec<String>,
+    pub resume: String,
+    pub body: Node<Expr>,
 }
 
 /// The polarity of a function declaration.
@@ -333,6 +356,19 @@ pub enum Decl {
         for_type: TypeExpr,
         methods: Vec<Node<Decl>>,
     },
+    /// An effect: a named set of operations a computation may perform.
+    Effect {
+        name: String,
+        operations: Vec<EffectOp>,
+    },
+}
+
+/// One operation of an effect: a value-returning signature. `choose() -> bool`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectOp {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub return_type: Option<TypeExpr>,
 }
 
 /// One method signature in a trait, headed like a `fn` or a `command` but
