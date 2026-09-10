@@ -5,6 +5,20 @@ use crate::coterm::CoTerm;
 use crate::substitution::subst_command;
 use crate::term::Term;
 
+/// The `index`-th component of a right-nested product: walk `index` tails,
+/// then take the head, or the whole remainder when it is the bare last.
+fn project_term(product: &Term, index: usize) -> Option<Term> {
+    let mut current = product;
+    for _ in 0..index {
+        let Term::Pair(_, tail) = current else { return None };
+        current = tail;
+    }
+    match current {
+        Term::Pair(head, _) => Some((**head).clone()),
+        last => Some(last.clone()),
+    }
+}
+
 /// A single reduction step result.
 pub enum Step {
     /// The command reduced to a new command.
@@ -53,14 +67,14 @@ pub fn step(c: &Command) -> Step {
         // co-β-rule: ⟨ t ∥ λ̄x.c ⟩ → c[t/x]
         Command::Cut(t, CoTerm::CoLam(x, c2)) => Step::Reduced(subst_command(x, t, c2)),
 
-        // Tensor projection: ⟨ (t1, t2) ∥ fst ⟩ → t1
-        Command::Cut(Term::Pair(t1, _), CoTerm::Fst) => {
-            Step::Reduced(Command::Cut((**t1).clone(), CoTerm::Covar("□".into())))
-        }
-
-        // Tensor projection: ⟨ (t1, t2) ∥ snd ⟩ → t1
-        Command::Cut(Term::Pair(_, t2), CoTerm::Snd) => {
-            Step::Reduced(Command::Cut((**t2).clone(), CoTerm::Covar("□".into())))
+        // Projection: ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩ → tᵢ. Walk `i` tails along the
+        // right-nested spine, then take the head — or the whole remainder
+        // when it is the bare last component.
+        Command::Cut(product @ Term::Pair(..), CoTerm::Prj(index)) => {
+            match project_term(product, *index) {
+                Some(t) => Step::Reduced(Command::Cut(t, CoTerm::Covar("□".into()))),
+                None => Step::Normal,
+            }
         }
 
         // Activate: k(v) is already a command form
@@ -140,14 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn tensor_fst() {
+    fn tensor_projection() {
         let pair = Term::Pair(Box::new(Term::Var("a".into())), Box::new(Term::Var("b".into())));
-        let cut = Command::Cut(pair, CoTerm::Fst);
-        match step(&cut) {
-            Step::Reduced(c) => {
-                assert!(matches!(c, Command::Cut(Term::Var(_), _)));
-            }
-            Step::Normal => panic!("expected reduction"),
+        match step(&Command::Cut(pair.clone(), CoTerm::Prj(0))) {
+            Step::Reduced(Command::Cut(Term::Var(v), _)) => assert_eq!(v, "a"),
+            _ => panic!("expected projection to `a`"),
+        }
+        match step(&Command::Cut(pair, CoTerm::Prj(1))) {
+            Step::Reduced(Command::Cut(Term::Var(v), _)) => assert_eq!(v, "b"),
+            _ => panic!("expected projection to `b`"),
         }
     }
 

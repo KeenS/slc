@@ -964,13 +964,30 @@ impl Parser {
                         };
                         continue;
                     }
-                    if let Some(TokenKind::Ident(_)) = field_name {
-                        let end = self.pos + 1;
-                        return Err(ParseError {
-                            message: "field projection is not accepted language syntax; its design is deferred"
-                                .into(),
-                            span: Span { start: e.span.start, end },
-                        });
+                    // `base.0` — positional projection of a tuple.
+                    if let Some(TokenKind::Int(n)) = field_name {
+                        self.pos += 1;
+                        let end = self.span_end();
+                        let start = e.span.start;
+                        e = Node {
+                            span: Span { start, end },
+                            kind: Expr::Project {
+                                base: Box::new(e),
+                                key: ProjKey::Index(n as usize),
+                            },
+                        };
+                        continue;
+                    }
+                    // `base.field` — projection of a struct field by name.
+                    if matches!(field_name, Some(TokenKind::Ident(_)) | Some(TokenKind::Return)) {
+                        let name = self.expect_name("field name")?;
+                        let end = self.span_end();
+                        let start = e.span.start;
+                        e = Node {
+                            span: Span { start, end },
+                            kind: Expr::Project { base: Box::new(e), key: ProjKey::Field(name) },
+                        };
+                        continue;
                     }
                 }
                 Some(TokenKind::LBracket) => {

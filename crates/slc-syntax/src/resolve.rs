@@ -359,7 +359,9 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut lhs.kind, stack, locals);
             resolve_expr(&mut rhs.kind, stack, locals);
         }
-        Expr::UnOp { body, .. } | Expr::Shift { expr: body, .. } => {
+        Expr::UnOp { body, .. }
+        | Expr::Shift { expr: body, .. }
+        | Expr::Project { base: body, .. } => {
             resolve_expr(&mut body.kind, stack, locals);
         }
         Expr::Cut { value, consumer } => {

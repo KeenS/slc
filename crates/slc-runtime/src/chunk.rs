@@ -52,8 +52,8 @@ pub enum Node {
     /// `μ̃. c` — binds one positional slot; child is the command.
     MuTilde(NodeId),
     Par(NodeId, NodeId),
-    Fst,
-    Snd,
+    /// Projection of the `index`-th spine component of a right-nested product.
+    Prj(usize),
     /// A labelled consumer: its branches.
     CoCase(Rc<Vec<Branch>>),
     /// A product consumer binding `arity` slots; child is the command.

@@ -66,8 +66,7 @@ impl std::fmt::Display for CoTerm {
             CoTerm::CoLam(x, c) => write!(f, "λ̄{x}. {c}"),
             CoTerm::MuTilde(x, c) => write!(f, "μ̃{x}. {c}"),
             CoTerm::Par(e1, e2) => write!(f, "({e1} ⅋ {e2})"),
-            CoTerm::Fst => write!(f, "fst"),
-            CoTerm::Snd => write!(f, "snd"),
+            CoTerm::Prj(index) => write!(f, "prj:{index}"),
             CoTerm::MuTildeTensor(binders, c) => write!(f, "μ̃({}). {c}", binders.join(", ")),
             CoTerm::CoCase(branches) => {
                 write!(f, "μ̃[")?;

@@ -407,6 +407,15 @@ positive product of its field types, associated to the right. `struct
 Direction { left: i32, right: i32 }` describes `+i32 ⊗ +i32`, and the surface
 tuple `(a, b)` is the same connective written anonymously.
 
+A product is taken apart by `match`/`select`, which binds every component, or
+by **projection** for a single one: `t.0`, `t.1`, … reads a tuple component,
+and `s.field` reads a struct field. Because the product is right-nested with
+its last component stored bare, projection is resolved against the value's
+type — the checker turns `.i` and `.field` into the component index — and then
+walks the spine to it. A nested tuple and a flat one of the same shape are the
+same value, so `(a, (b, c)).1` is `b`, not `(b, c)`: projection sees the flat
+spine. `examples/projection.sl` uses both forms.
+
 ### Explicit connective types
 
 Both multiplicative connectives are available as explicit *type* syntax, and
@@ -896,7 +905,7 @@ CoTerm    e ::= α                     co-variable
               | λ̄x. c                 co-abstraction (application)
               | μ̃x. c                 value abstraction
               | e ⅋ e                 par
-              | fst | snd             tensor projections
+              | prj:i                  projection of the i-th component
               | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, struct)
               | μ̃(x₁, …, xₙ). c       product consumer
 
@@ -962,8 +971,7 @@ re-parsed without loss.
 ⟨ μα. c ∥ e ⟩                → c[e/α]              μ
 ⟨ v ∥ μ̃x. c ⟩                → c[v/x]              μ̃ — the binder
 ⟨ t ∥ λ̄x. c ⟩                → c[t/x]              co-β — application
-⟨ t₁ ⊗ t₂ ∥ fst ⟩            → t₁                  projection
-⟨ t₁ ⊗ t₂ ∥ snd ⟩            → t₂                  projection
+⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[… L(x…). c …] ⟩ → c[vᵢ/xᵢ]          labelled
 ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩     → c[v₁/x, v₂/y]      product
 ```
@@ -1036,7 +1044,7 @@ continuation parameter becomes a Λ binder.
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |
-| `fst` / `snd` | not surface-visible; `match` destructuring recovers components |
+| `prj:i` | `base.i` (tuple) and `base.field` (struct), the field resolved to its index from the base type |
 | `κx. t` | not surface-visible; the internal command abstraction |
 | `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |
 

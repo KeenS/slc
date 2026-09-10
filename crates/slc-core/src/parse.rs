@@ -277,11 +277,14 @@ impl Parser {
             }
             Some(_) => {
                 let name = self.name()?;
-                Ok(match name.as_str() {
-                    "fst" => CoTerm::Fst,
-                    "snd" => CoTerm::Snd,
-                    _ => CoTerm::Covar(name),
-                })
+                // A projection prints as one token `prj:index`.
+                if let Some(rest) = name.strip_prefix("prj:") {
+                    return rest
+                        .parse()
+                        .map(CoTerm::Prj)
+                        .map_err(|_| self.error("malformed projection co-term"));
+                }
+                Ok(CoTerm::Covar(name))
             }
             None => Err(self.error("expected a co-term")),
         }

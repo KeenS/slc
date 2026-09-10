@@ -258,7 +258,9 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
             check_expr(lhs, declared, diags);
             check_expr(rhs, declared, diags);
         }
-        Expr::UnOp { body, .. } => check_expr(body, declared, diags),
+        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
+            check_expr(body, declared, diags)
+        }
         Expr::Index { value, index } => {
             check_expr(value, declared, diags);
             check_expr(index, declared, diags);

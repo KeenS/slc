@@ -112,8 +112,7 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             let b = compile_coterm(b, scope, chunk);
             Node::Par(a, b)
         }
-        CoTerm::Fst => Node::Fst,
-        CoTerm::Snd => Node::Snd,
+        CoTerm::Prj(index) => Node::Prj(*index),
         CoTerm::CoCase(branches) => {
             let branches = branches.iter().map(|b| compile_branch(b, scope, chunk)).collect();
             Node::CoCase(Rc::new(branches))

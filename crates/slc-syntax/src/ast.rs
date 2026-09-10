@@ -8,6 +8,14 @@ pub struct Node<T> {
     pub span: Span,
 }
 
+/// What a `base.key` projection selects: a tuple position, or a struct field
+/// by name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjKey {
+    Index(usize),
+    Field(String),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
@@ -71,6 +79,14 @@ pub enum Expr {
     Shift {
         down: bool,
         expr: Box<Node<Expr>>,
+    },
+    /// `base.0` / `base.field`: project one component of a product. The
+    /// component's index and the product's arity are resolved from `base`'s
+    /// type in the checker (the right-nested encoding needs the arity), so the
+    /// key here is only what was written.
+    Project {
+        base: Box<Node<Expr>>,
+        key: ProjKey,
     },
     /// A cut: `v @ k` sends the value `v` to the consumer `k`.
     ///
@@ -145,6 +161,7 @@ impl Expr {
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
             Expr::Shift { expr, .. } => vec![expr],
+            Expr::Project { base, .. } => vec![base],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))

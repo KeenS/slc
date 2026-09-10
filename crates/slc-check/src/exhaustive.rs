@@ -161,7 +161,9 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
             check_expr(lhs, enums, diags);
             check_expr(rhs, enums, diags);
         }
-        Expr::UnOp { body, .. } => check_expr(body, enums, diags),
+        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
+            check_expr(body, enums, diags)
+        }
         Expr::Index { value, index } => {
             check_expr(value, enums, diags);
             check_expr(index, enums, diags);

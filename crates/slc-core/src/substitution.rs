@@ -79,7 +79,7 @@ fn go_coterm(e: &CoTerm, out: &mut HashSet<String>) {
             go_coterm(e1, out);
             go_coterm(e2, out);
         }
-        CoTerm::Fst | CoTerm::Snd => {}
+        CoTerm::Prj(_) => {}
         CoTerm::CoCase(branches) => {
             for branch in branches {
                 let mut inner = HashSet::new();
@@ -205,7 +205,7 @@ fn alpha_coterm(a: &CoTerm, b: &CoTerm, xs: &mut Vec<String>, ys: &mut Vec<Strin
             ys.truncate(ys.len() - b2.len());
             eq
         }
-        (CoTerm::Fst, CoTerm::Fst) | (CoTerm::Snd, CoTerm::Snd) => true,
+        (CoTerm::Prj(i), CoTerm::Prj(j)) => i == j,
         (CoTerm::CoCase(b1), CoTerm::CoCase(b2)) => {
             b1.len() == b2.len()
                 && b1.iter().zip(b2).all(|(l, r)| {
@@ -328,7 +328,7 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
             Box::new(subst_coterm(x, replacement, e1)),
             Box::new(subst_coterm(x, replacement, e2)),
         ),
-        CoTerm::Fst | CoTerm::Snd => e.clone(),
+        CoTerm::Prj(_) => e.clone(),
         CoTerm::CoCase(branches) => CoTerm::CoCase(
             branches
                 .iter()

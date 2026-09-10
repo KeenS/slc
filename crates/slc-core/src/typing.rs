@@ -416,8 +416,7 @@ pub fn infer_coterm(
                 .unwrap_or(Type::One))
         }
 
-        CoTerm::Fst => Ok(Type::arrow(Type::One, Type::One)),
-        CoTerm::Snd => Ok(Type::arrow(Type::One, Type::One)),
+        CoTerm::Prj(_) => Ok(Type::arrow(Type::One, Type::One)),
     }
 }
 

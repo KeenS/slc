@@ -897,6 +897,20 @@ fn check_expr(
     found.map(|ty| env.uni.apply(&ty))
 }
 
+/// The components of a right-nested product, flattened along the spine, so
+/// `A ⊗ (B ⊗ C)` is `[A, B, C]` — matching the runtime projection walk. A
+/// non-product is a single component.
+fn tensor_spine(ty: &Type) -> Vec<Type> {
+    let mut out = Vec::new();
+    let mut current = ty.clone();
+    while let Type::Tensor(a, b) = current {
+        out.push(*a);
+        current = *b;
+    }
+    out.push(current);
+    out
+}
+
 fn check_expr_unapplied(
     e: &Node<Expr>,
     enums: &Declarations,
@@ -1521,6 +1535,65 @@ fn check_expr_unapplied(
                 }
             }
         }
+        Expr::Project { base, key } => {
+            let base_ty = check_expr(base, enums, env, diags)?;
+            let base_ty = env.uni.apply(&base_ty);
+            match key {
+                // `base.i` — the i-th component along the tensor spine.
+                slc_syntax::ast::ProjKey::Index(i) => {
+                    let components = tensor_spine(&base_ty);
+                    match components.get(*i) {
+                        Some(ty) => {
+                            env.dispatch.projections.insert(e.span, *i);
+                            Some(ty.clone())
+                        }
+                        None => {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`.{i}` is out of range for {base_ty}, which has {} \
+                                     component(s)",
+                                    components.len()
+                                ),
+                                span: e.span,
+                            });
+                            None
+                        }
+                    }
+                }
+                // `base.field` — a struct field, resolved to its index.
+                slc_syntax::ast::ProjKey::Field(name) => {
+                    let Type::Named(struct_name) = &base_ty else {
+                        diags.push(Diagnostic {
+                            message: format!("`.{name}` needs a struct; this has type {base_ty}"),
+                            span: e.span,
+                        });
+                        return None;
+                    };
+                    match enums.structs.get(struct_name) {
+                        Some(fields) => match fields.iter().position(|(f, _)| f == name) {
+                            Some(index) => {
+                                env.dispatch.projections.insert(e.span, index);
+                                Some(fields[index].1.clone())
+                            }
+                            None => {
+                                diags.push(Diagnostic {
+                                    message: format!("`{struct_name}` has no field `{name}`"),
+                                    span: e.span,
+                                });
+                                None
+                            }
+                        },
+                        None => {
+                            diags.push(Diagnostic {
+                                message: format!("`{struct_name}` is not a declared struct"),
+                                span: e.span,
+                            });
+                            None
+                        }
+                    }
+                }
+            }
+        }
         Expr::Handle { body, clauses, ret, .. } => {
             // The body runs under the handler; its normal value feeds the
             // return clause, whose body is the handle's type. (Effect rows
@@ -1684,6 +1757,25 @@ mod tests {
             check("command f(x: +i32) | (ok: -i32, err: -i32) { x @ ok }").is_ok(),
             "dropping a continuation should be allowed"
         );
+    }
+
+    #[test]
+    fn projection_resolves_and_range_checks() {
+        // A tuple component and a struct field both check.
+        assert!(
+            check(
+                "struct P { x: +i64, y: +i64 }
+                 fn f(p: +P) -> i64 { p.x + p.y }
+                 fn g(t: (+i64 ⊗ (+i64 ⊗ +i64))) -> i64 { t.0 + t.2 }"
+            )
+            .is_ok()
+        );
+        // Out of range.
+        let diags = check("fn f(t: (+i64 ⊗ +i64)) -> i64 { t.5 }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("out of range")), "{diags:?}");
+        // Unknown field.
+        let diags = check("struct P { x: +i64 } fn f(p: +P) -> i64 { p.y }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("no field `y`")), "{diags:?}");
     }
 
     #[test]

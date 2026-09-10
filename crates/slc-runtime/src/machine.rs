@@ -338,8 +338,34 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
             env2.define_local(v);
             State::Command(c2, env2)
         }
+        // ⟨ v ∥ prj:index ⟩ → the index-th spine component of v. A struct is
+        // a tagged product, so unwrap the tag first; then walk `index` tails
+        // and take the head, or the whole remainder when it is the bare last.
+        Node::Prj(index) => State::Return(project_value(v, index)?),
         _ => State::Return(v),
     })
+}
+
+/// The `index`-th spine component of a right-nested product value. A struct
+/// is a tagged product, so its tag is unwrapped first.
+fn project_value(value: Value, index: usize) -> Result<Value, EvalError> {
+    let mut current = match value {
+        Value::Tagged(_, payload) => *payload,
+        other => other,
+    };
+    for _ in 0..index {
+        let Value::Pair(_, tail) = current else {
+            return Err(EvalError::TypeMismatch(format!(
+                "projection of component {index} ran off a {}",
+                current.display()
+            )));
+        };
+        current = *tail;
+    }
+    match current {
+        Value::Pair(head, _) => Ok(*head),
+        last => Ok(last),
+    }
 }
 
 /// One application step: a cut against something that consumes.

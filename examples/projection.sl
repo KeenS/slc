@@ -1,0 +1,18 @@
+// Projection: `.i` reads a tuple component, `.field` reads a struct field.
+//
+// A product is right-nested with its last component bare, so projection
+// walks the spine to the i-th element — resolved from the value's type, so
+// `t.2` and `p.z` know which component they name.
+
+struct Point { x: +i64, y: +i64, z: +i64 }
+
+fn manhattan(p: +Point) -> i64 {
+    p.x + p.y + p.z
+}
+
+command main | (exit: -i32) {
+    let t = (10, 20, 30);
+    println(t.0 + t.1 + t.2);            // 60
+    println(manhattan(Point { x: 1, y: 2, z: 3 }));   // 6
+    0 @ exit
+}

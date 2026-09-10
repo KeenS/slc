@@ -25,10 +25,9 @@ pub enum CoTerm {
     MuTilde(String, Box<Command>),
     /// Par: `e1 ⅋ e2`.
     Par(Box<CoTerm>, Box<CoTerm>),
-    /// First projection.
-    Fst,
-    /// Second projection.
-    Snd,
+    /// Projection of the `index`-th component of a right-nested product,
+    /// counted along the spine (the last component is stored bare).
+    Prj(usize),
     /// Labelled consumer: `μ̃[L₁(x…). c₁ | … | Lₙ(x…). cₙ]`.
     ///
     /// The dual of a labelled positive type: one branch per shape the value

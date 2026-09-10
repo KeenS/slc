@@ -21,6 +21,9 @@ thread_local! {
     /// Call-to-bounded-function span → the dictionary arguments to pass
     /// (variable names), in the order the function's bounds are declared.
     static CALLS: RefCell<HashMap<Span, Vec<String>>> = RefCell::new(HashMap::new());
+    /// Projection span → the component index the checker resolved (`.i`, or a
+    /// struct field's position).
+    static PROJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -40,6 +43,9 @@ pub enum MethodDispatch {
 pub struct DispatchInfo {
     pub methods: HashMap<Span, MethodDispatch>,
     pub calls: HashMap<Span, Vec<String>>,
+    /// Projection span → the resolved component index (`.i`, or a struct
+    /// field's position).
+    pub projections: HashMap<Span, usize>,
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -102,6 +108,11 @@ fn call_dicts(span: Span) -> Option<Vec<String>> {
     CALLS.with(|cell| cell.borrow().get(&span).cloned())
 }
 
+/// The component index the checker resolved for a projection at `span`.
+fn projection(span: Span) -> Option<usize> {
+    PROJECTIONS.with(|cell| cell.borrow().get(&span).copied())
+}
+
 /// Lower a program with the checker's dispatch resolution in force, so that
 /// trait-method calls become direct calls or dictionary projections and
 /// bounded functions take and forward their dictionaries.
@@ -111,9 +122,11 @@ pub fn lower_program_resolving(
 ) -> Result<Vec<(String, Term)>, LowerError> {
     METHODS.with(|cell| *cell.borrow_mut() = dispatch.methods.clone());
     CALLS.with(|cell| *cell.borrow_mut() = dispatch.calls.clone());
+    PROJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.projections.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
+    PROJECTIONS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -423,6 +436,17 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // A shift is a coercion the checker cares about and the core does
         // not: a boxed consumer and the consumer are the same value.
         Expr::Shift { expr, .. } => lower_expr(expr, continuations),
+        // `base.i` / `base.field` → μ. ⟨ ⟦base⟧ ∥ prj:index ⟩. The checker
+        // resolved the component index from the base's type; the μ binder is
+        // vestigial — the projected component returns to the ambient
+        // continuation, as a match dispatch does.
+        Expr::Project { base, .. } => {
+            let index = projection(e.span).ok_or_else(|| {
+                LowerError::Unsupported("a projection was not resolved by the checker".into())
+            })?;
+            let base = lower_expr(base, continuations)?;
+            Ok(Term::Mu("__prj".into(), Box::new(Command::Cut(base, CoTerm::Prj(index)))))
+        }
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
         Expr::Handle { body, clauses, ret } => {
