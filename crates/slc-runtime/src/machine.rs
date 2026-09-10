@@ -394,7 +394,6 @@ fn step_apply(
             call_env.define_local(arg);
             State::Term(body, call_env)
         }
-        Value::Continuation(cont) => State::Command(cont.command, cont.env.clone()),
         // The jump: reinstate the captured stack and deliver the value.
         Value::Kont(frames) => {
             *kont = frames;

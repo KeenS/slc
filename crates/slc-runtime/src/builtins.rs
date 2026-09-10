@@ -60,15 +60,6 @@ pub fn apply_builtin(
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
         },
-        "unquote" => match args.first() {
-            Some(v @ Value::Closure { .. }) => {
-                // Force the thunk: apply it to unit.
-                crate::eval::apply_value(v.clone(), Value::Unit, &mut 1_000_000)
-                    .map_err(|e| BuiltinError::TypeMismatch(e.to_string()))
-            }
-            Some(v) => Ok(v.clone()),
-            None => Ok(Value::Unit),
-        },
         "add" | "sub" | "mul" | "div" | "rem" => {
             if name == "add"
                 && let (Some(Value::Str(a)), Some(Value::Str(b))) = (args.first(), args.get(1))

@@ -99,19 +99,6 @@ impl Default for Env {
     }
 }
 
-/// A continuation value: what to do with a result.
-#[derive(Clone)]
-pub struct Cont {
-    pub env: Env,
-    pub command: crate::chunk::NodeId,
-}
-
-impl std::fmt::Debug for Cont {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Cont(<command>)")
-    }
-}
-
 /// Runtime value.
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -125,7 +112,6 @@ pub enum Value {
         body: crate::chunk::NodeId,
         env: Env,
     },
-    Continuation(Cont),
     /// A captured continuation: the machine's frame stack, reified. It can
     /// be reinstated any number of times, at any time — activating it
     /// replaces the current stack, which is what makes the jump.
@@ -179,7 +165,6 @@ pub enum Value {
     Map(Vec<(Value, Value)>),
     /// A set value.
     Set(Vec<Value>),
-    Never,
 }
 
 impl PartialEq for Value {
@@ -190,9 +175,7 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Char(a), Value::Char(b)) => a == b,
-            (Value::Unit, Value::Unit)
-            | (Value::Never, Value::Never)
-            | (Value::NoArguments, Value::NoArguments) => true,
+            (Value::Unit, Value::Unit) | (Value::NoArguments, Value::NoArguments) => true,
             (Value::File(a), Value::File(b)) => a == b,
             (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
             (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
@@ -223,7 +206,7 @@ impl Value {
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
             Value::Operation { .. } => Type::One,
             Value::Resume(_) => Type::Bottom,
-            Value::Unit | Value::Never | Value::NoArguments => Type::One,
+            Value::Unit | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
             Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
@@ -236,10 +219,7 @@ impl Value {
             Value::Set(items) => {
                 Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
-            Value::Closure { .. }
-            | Value::Continuation(_)
-            | Value::Builtin(_)
-            | Value::PartialBuiltin(..) => Type::Bottom,
+            Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
             ),
@@ -265,7 +245,6 @@ impl Value {
             Value::Inr(a) => format!("inr({})", a.display()),
             Value::Closure { .. } => "<closure>".to_string(),
             Value::Kont(_) => "<continuation>".to_string(),
-            Value::Continuation(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
@@ -285,7 +264,6 @@ impl Value {
                 let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
                 format!("{{{}}}", inner.join(", "))
             }
-            Value::Never => "<never>".to_string(),
             Value::Tagged(label, payload) => match payload.as_ref() {
                 Value::Unit => label.clone(),
                 payload => format!("{label}({})", payload.display()),

@@ -133,7 +133,6 @@ pub(crate) fn is_applicable(v: &Value) -> bool {
             | Value::CoCase { .. }
             | Value::CoTensor { .. }
             | Value::CoAbs { .. }
-            | Value::Continuation(_)
             | Value::Kont(_)
             | Value::Operation { .. }
             | Value::Resume(_)
