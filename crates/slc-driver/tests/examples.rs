@@ -101,6 +101,14 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         ("nested_calls.sl", Expected { success: true, stdout: &["\"320\""], stderr: &[] }),
+        (
+            "multi.sl",
+            Expected {
+                success: true,
+                stdout: &["42, yes", "n (4 digits)", "50", "-1"],
+                stderr: &[],
+            },
+        ),
         ("namespaces.sl", Expected { success: true, stdout: &["75", "420", "0"], stderr: &[] }),
         ("pair.sl", Expected { success: true, stdout: &["30"], stderr: &[] }),
         ("polarity.sl", Expected { success: true, stdout: &["3", "positive"], stderr: &[] }),
