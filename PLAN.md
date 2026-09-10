@@ -68,6 +68,12 @@ and where the two disagree, `DESIGN.md` is right.
   is an enum-value expression; a struct literal is an ordinary expression and
   a struct pattern binds its fields, a struct value being the labelled product
   an `enum` variant already was.
+- Modules are named scopes and nothing more: resolution, immediately after
+  parsing, flattens `mod m { … }` into `m::`-qualified declarations and
+  rewrites every reference, so the checker, lowering, and runtime never see a
+  module. `use` brings one name into scope, locals shadow it, unclaimed names
+  stay bare (builtins), and `main` lives at the root. Single-file, all
+  public, for now.
 - A `mu` expression is `call/cc`: it abstracts over the continuation it is cut
   against and over nothing else — a value parameter would make it a lambda,
   which is what `fn` is. Its type is what the captured continuation receives,
@@ -198,8 +204,4 @@ example suite.
 
 ## Next
 
-- **Rust-style namespaces.** `mod` blocks, `use`, and `::` paths beyond enum
-  variants — `Color::Red` is already path-shaped. A module system decides
-  what a bare name means, so it touches every lookup the checker keeps
-  (declarations, functions, constants), the lowering's name scheme, and how
-  builtins are addressed (`std::io::read_file` against today's flat names).
+Nothing is outstanding. New work goes here as it is planned.

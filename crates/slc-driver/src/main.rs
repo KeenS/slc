@@ -56,6 +56,15 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         errors.iter().map(|e| format!("parse error: {}", e.message)).collect::<Vec<_>>().join("\n")
     })?;
 
+    // Modules flatten into qualified names before anything else looks.
+    let program = slc_syntax::resolve::resolve_program(&program).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| format!("resolve: {} (at {})", e.message, format_span(&source, e.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+
     // Type, polarity, linearity, and exhaustiveness checking
     slc_check::expr::check_program(&program).map_err(|diags| {
         diags

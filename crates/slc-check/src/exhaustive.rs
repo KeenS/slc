@@ -77,7 +77,7 @@ fn check_node_decl(d: &Node<Decl>, enums: &EnumInfo, diags: &mut Vec<Diagnostic>
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Command { body, .. } => check_expr(body, enums, diags),
         Decl::Const { value, .. } => check_expr(value, enums, diags),
-        Decl::Struct { .. } | Decl::Enum { .. } => {}
+        Decl::Struct { .. } | Decl::Enum { .. } | Decl::Mod { .. } | Decl::Use { .. } => {}
     }
 }
 

@@ -239,6 +239,9 @@ fn infer_decl(
         Decl::Const { name, ty, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
         }
+        // Resolved away before inference runs.
+        Decl::Mod { name, .. } => Ok(DeclarationType { name: name.clone(), ty: Type::One }),
+        Decl::Use { .. } => Ok(DeclarationType { name: String::new(), ty: Type::One }),
     }
 }
 

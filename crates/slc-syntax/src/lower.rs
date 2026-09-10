@@ -576,6 +576,9 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             Decl::Const { name, ty: _, value } => {
                 out.push((name.clone(), lower_expr(value, &[])?));
             }
+            // Modules are flattened by resolution before lowering; one that
+            // reaches here unresolved has nothing to lower.
+            Decl::Mod { .. } | Decl::Use { .. } => {}
             Decl::Struct { .. } | Decl::Enum { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }

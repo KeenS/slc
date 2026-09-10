@@ -218,7 +218,7 @@ fn check_decl(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
             check_dangling_continuations(body, diags);
         }
         Decl::Const { .. } => {}
-        Decl::Struct { .. } | Decl::Enum { .. } => {}
+        Decl::Struct { .. } | Decl::Enum { .. } | Decl::Mod { .. } | Decl::Use { .. } => {}
     }
 }
 

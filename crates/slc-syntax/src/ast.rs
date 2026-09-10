@@ -298,6 +298,17 @@ pub enum Decl {
         return_type: Option<TypeExpr>,
         body: Node<Expr>,
     },
+    /// A module: a named scope of declarations. Resolution flattens it,
+    /// qualifying each declaration as `module::name`.
+    Mod {
+        name: String,
+        decls: Vec<Node<Decl>>,
+    },
+    /// `use a::b::name;` — brings `name` into scope for the enclosing
+    /// module.
+    Use {
+        path: Vec<String>,
+    },
     Const {
         name: String,
         ty: TypeExpr,

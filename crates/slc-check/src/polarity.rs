@@ -125,6 +125,8 @@ fn check_decl(
                 }
             }
         }
+        // Resolved away before this check runs.
+        Decl::Mod { .. } | Decl::Use { .. } => {}
         Decl::Const { ty, .. } => {
             if let Ok(core_ty) = lower_type(ty)
                 && !is_positive_type(&core_ty)

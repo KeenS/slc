@@ -65,6 +65,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "fn" => TokenKind::Fn,
                 "mu" => TokenKind::Mu,
                 "command" => TokenKind::Command,
+                "mod" => TokenKind::Mod,
+                "use" => TokenKind::Use,
                 "match" => TokenKind::Match,
                 "select" => TokenKind::Select,
                 "let" => TokenKind::Let,

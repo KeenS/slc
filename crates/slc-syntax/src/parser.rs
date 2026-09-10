@@ -173,6 +173,8 @@ impl Parser {
                 })
             }
             Some(TokenKind::Const) => self.parse_const_decl(),
+            Some(TokenKind::Mod) => self.parse_mod_decl(),
+            Some(TokenKind::Use) => self.parse_use_decl(),
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
@@ -373,6 +375,39 @@ impl Parser {
             });
         }
         Ok(params)
+    }
+
+    fn parse_mod_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Mod, "`mod`")?;
+        let name = self.expect_ident("module name")?;
+        self.expect(TokenKind::LBrace, "`{` after the module name")?;
+        let mut decls = Vec::new();
+        while !self.eat(&TokenKind::RBrace) {
+            if self.peek().is_none() {
+                return Err(ParseError {
+                    message: format!("module `{name}` is missing its closing `}}`"),
+                    span: t.span,
+                });
+            }
+            decls.push(self.parse_decl()?);
+        }
+        Ok(Node { span: t.span, kind: Decl::Mod { name, decls } })
+    }
+
+    fn parse_use_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Use, "`use`")?;
+        let mut path = vec![self.expect_ident("a path to use")?];
+        while self.eat(&TokenKind::ColonColon) {
+            path.push(self.expect_ident("a path segment")?);
+        }
+        if path.len() < 2 {
+            return Err(ParseError {
+                message: "`use` takes a path with at least two segments, `module::name`".into(),
+                span: t.span,
+            });
+        }
+        let _ = self.eat(&TokenKind::Semicolon);
+        Ok(Node { span: t.span, kind: Decl::Use { path } })
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -576,6 +611,12 @@ impl Parser {
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
+                let mut s = s;
+                while self.peek_kind() == Some(&TokenKind::ColonColon) {
+                    self.pos += 1;
+                    let segment = self.expect_ident("a path segment")?;
+                    s = format!("{s}::{segment}");
+                }
                 TypeExpr::Base(s)
             }
             other => {
@@ -850,13 +891,11 @@ impl Parser {
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
-                if self.peek_kind() == Some(&TokenKind::ColonColon) {
+                let mut s = s;
+                while self.peek_kind() == Some(&TokenKind::ColonColon) {
                     self.pos += 1;
-                    let variant = self.expect_ident("enum variant name")?;
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: Expr::Ident(format!("{s}::{variant}")),
-                    });
+                    let segment = self.expect_ident("a path segment")?;
+                    s = format!("{s}::{segment}");
                 }
                 // `S { field: value }` is a struct literal wherever a `{`
                 // here cannot be a block.
@@ -1183,24 +1222,35 @@ impl Parser {
                 if s == "_" {
                     return Ok(Pattern::Wildcard);
                 }
-                // Path pattern: Enum::Variant or Enum::Variant(fields)
+                // Path pattern: Enum::Variant or Enum::Variant(fields),
+                // with the enum itself possibly module-qualified — or a
+                // qualified struct name, when a `{` follows the path.
+                let mut s = s;
                 if self.peek_kind() == Some(&TokenKind::ColonColon) {
-                    self.pos += 1;
-                    let variant = self.expect_ident("variant name")?;
-                    let mut fields = Vec::new();
-                    if self.eat(&TokenKind::LParen) {
-                        loop {
-                            if self.eat(&TokenKind::RParen) {
-                                break;
-                            }
-                            fields.push(self.parse_pattern()?);
-                            if !self.eat(&TokenKind::Comma) {
-                                self.expect(TokenKind::RParen, "`)`")?;
-                                break;
+                    let mut segments = vec![s.clone()];
+                    while self.eat(&TokenKind::ColonColon) {
+                        segments.push(self.expect_ident("a path segment")?);
+                    }
+                    if self.peek_kind() == Some(&TokenKind::LBrace) {
+                        s = segments.join("::");
+                    } else {
+                        let variant = segments.pop().expect("at least two segments");
+                        let s = segments.join("::");
+                        let mut fields = Vec::new();
+                        if self.eat(&TokenKind::LParen) {
+                            loop {
+                                if self.eat(&TokenKind::RParen) {
+                                    break;
+                                }
+                                fields.push(self.parse_pattern()?);
+                                if !self.eat(&TokenKind::Comma) {
+                                    self.expect(TokenKind::RParen, "`)`")?;
+                                    break;
+                                }
                             }
                         }
+                        return Ok(Pattern::Enum { name: s, variant, fields });
                     }
-                    return Ok(Pattern::Enum { name: s, variant, fields });
                 }
                 // Struct pattern with field shorthand: Point { x, y: pat }
                 if self.peek_kind() == Some(&TokenKind::LBrace) {

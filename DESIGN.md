@@ -714,7 +714,46 @@ include `line:column` positions and source excerpts.
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
 
-## 10. Core calculus
+## 10. Modules
+
+A `mod` is a named scope of declarations, `::` reaches into it, and `use`
+brings one name into scope:
+
+```sl
+mod geometry {
+    enum Shape { Circle(i64), Rect(i64, i64) }
+
+    fn area(s: Shape) -> i64 { … }     // its own names are bare here
+}
+
+use geometry::area;
+
+command main | (exit: -i32) {
+    println(area(geometry::Shape::Circle(5)));
+    0 @ exit
+}
+```
+
+Modules exist only to resolution, which runs right after parsing: every
+declaration inside `mod m` is renamed `m::name`, every reference is rewritten
+to the qualified name it resolves to, and the `mod` and `use` declarations
+disappear. The checker, the lowering, and the runtime never see them — they
+work on flat names, which always contained `::`, because an enum variant is a
+path already.
+
+A name resolves in scope order: a local binding shadows everything and is
+left alone; then the enclosing module's `use` aliases; then its own
+declarations; then each ancestor's, out to the root. A path resolves by its
+first segment and keeps the rest, so `inner::deep()` works from a sibling and
+`geometry::Shape::Circle` from anywhere. A name nothing claims is left bare
+for later passes — that is how builtins stay global. Two `use` declarations
+bringing in the same name are an error.
+
+Modules are single-file, everything is public, and `main` must be declared at
+the root — a `main` inside a module is `m::main`, which the entry point does
+not accept.
+
+## 11. Core calculus
 
 ### Grammar
 
@@ -877,7 +916,7 @@ resume.** The evaluator unwinds to the `mu` that captured it, so a refutation
 is good only while its `mu` is still running. Used after that `mu` has
 answered, it fails, saying so.
 
-## 11. Error continuations
+## 12. Error continuations
 
 Fallible operations receive their result continuations directly. For example,
 a parse operation receives both a success continuation and an error
@@ -922,7 +961,7 @@ selected continuation. Any name the language accepts as a continuation
 parameter is accepted there, including the reserved word `return`. With a
 space — `e? name` — the `?` is bare and `name` is a separate expression.
 
-## 12. Migration summary
+## 13. Migration summary
 
 - `k(v)` (activating a continuation) → `v @ k`
 - `EXIT(0)` → `0 @ EXIT` → gone: end the program through a continuation
