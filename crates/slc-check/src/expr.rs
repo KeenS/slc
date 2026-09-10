@@ -422,22 +422,51 @@ fn infer_param_type(
 
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { params, body, polarity, return_type, .. } => {
+        Decl::Fn { name, params, body, polarity, return_type, type_params, .. } => {
             env.push();
+            // A type parameter is rigid inside the body: `T` is some type the
+            // caller chose, not a licence to treat the value as any type.
+            let rigid = |ty: &TypeExpr| match ty {
+                TypeExpr::Base(written) => type_params
+                    .iter()
+                    .position(|tp| tp == written)
+                    .map(Type::Var)
+                    .or_else(|| enums.resolve(ty)),
+                other => enums.resolve(other),
+            };
             for p in params {
-                if let Some(ty) = p.ty.as_ref().and_then(|ty| enums.resolve(ty)) {
+                if let Some(ty) = p.ty.as_ref().and_then(&rigid) {
                     env.define(&p.name, ty);
                 }
             }
             // A negative function produces the consumer of what follows its
             // `<-`, so that is what a `select` in its body consumes.
             let outer = env.consumed.take();
+            let declared = return_type.as_ref().and_then(&rigid);
             env.consumed = (*polarity == slc_syntax::ast::FunctionPolarity::Negative)
-                .then(|| return_type.as_ref().and_then(|ty| enums.resolve(ty)))
+                .then(|| declared.clone())
                 .flatten();
-            check_expr(body, enums, env, diags);
+            let body_type = check_expr(body, enums, env, diags);
             env.consumed = outer;
             env.pop();
+            // The body produces what the declaration promises: the return
+            // type for `->`, its consumer for `<-`. A body that ends in a
+            // cut produces nothing and promises nothing.
+            let promised = match polarity {
+                slc_syntax::ast::FunctionPolarity::Positive => declared,
+                slc_syntax::ast::FunctionPolarity::Negative => declared.map(|ty| ty.dual()),
+            };
+            if let (Some(promised), Some(actual)) = (&promised, &body_type)
+                && actual != &Type::Bottom
+                && !fits(promised, actual, tail_expr(&body.kind))
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "the body of `{name}` has type {actual}; the declaration says {promised}"
+                    ),
+                    span: body.span,
+                });
+            }
         }
         Decl::Command { value_params, continuation_params, body, .. } => {
             env.push();
@@ -644,6 +673,16 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
 /// An integer literal takes the integer type its port requires — `0 @ EXIT`
 /// sends an `i32` — and is `+i64` only when nothing constrains it. Every
 /// other value must match its port exactly.
+/// The expression a body's value comes from: the tail of a block, through a
+/// trailing `let` — where an integer literal earns its adaptation.
+fn tail_expr(e: &Expr) -> &Expr {
+    match e {
+        Expr::Block(items) => items.last().map(|n| tail_expr(&n.kind)).unwrap_or(e),
+        Expr::Let { body: Some(body), .. } => tail_expr(&body.kind),
+        _ => e,
+    }
+}
+
 fn fits(expected: &Type, actual: &Type, expr: &Expr) -> bool {
     if expected == actual || expected == &Type::One || actual == &Type::One {
         return true;
@@ -1982,6 +2021,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must cover a shape of")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_body_produces_what_the_declaration_promises() {
+        let diags = check("fn f() -> i64 { \"not an i64\" }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the declaration says +i64")), "{diags:?}");
+        // An integer literal still adapts to the declared width.
+        assert!(check("fn f() -> i32 { 0 }").is_ok());
+        // A body that ends in a cut produces nothing, and promises nothing.
+        assert!(check("fn f(k: -i64) <- i64 { 1 @ k }").is_ok());
+    }
+
+    #[test]
+    fn a_type_parameter_is_rigid_inside_the_body() {
+        // `T` is whatever the caller chose, so the body may not treat it as
+        // a number…
+        let diags = check("fn sneaky<T>(x: T) -> T { x + 1 }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("arithmetic operands")), "{diags:?}");
+
+        // …or hand back some other parameter's type.
+        let diags = check("fn swap<T, U>(x: T, y: U) -> T { y }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
+
+        assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
     }
 
     #[test]

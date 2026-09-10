@@ -121,6 +121,16 @@ and where the two disagree, `DESIGN.md` is right.
 
 ## Known limits
 
+- **The checker is a bug-catcher, not a soundness proof.** Well-typed programs
+  can still fail in the evaluator, which is the actual safety net: unknown
+  types (`Type::One`) fit everything in both directions, unannotated lambda
+  results flow as unknown, and there is no subject-reduction argument tying
+  the checker's judgments to the reduction rules. Closing this means one
+  typed account of the core that both the checker and the evaluator answer
+  to. Recently closed instances: bodies are now checked against declared
+  return types, type parameters are rigid inside their bodies, and value
+  arguments are checked at calls.
+
 - **Captured continuations escape rather than resume.** The evaluator unwinds
   to the `mu` that captured a continuation, so one used after its `mu` has
   answered fails, saying so. Lifting this needs the evaluator to hold the
