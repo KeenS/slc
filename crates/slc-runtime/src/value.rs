@@ -5,33 +5,42 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// A persistent environment: chain of frames.
+/// A persistent environment: a shared globals table under a cons chain of
+/// local bindings. Each binding links to the one it shadows, so cloning the
+/// environment — which the machine does on nearly every step, to carry a
+/// sub-term's scope — bumps two `Rc`s rather than copying a `Vec<HashMap>`.
+/// Defining a binding extends only this handle's chain; a clone taken
+/// earlier keeps its own view.
 #[derive(Debug, Clone)]
 pub struct Env {
-    /// Shared global definitions, visible in every frame.
+    /// Shared global definitions, visible under every local chain.
     globals: Rc<RefCell<HashMap<String, Value>>>,
-    frames: Vec<HashMap<String, Value>>,
+    locals: Option<Rc<Scope>>,
+}
+
+#[derive(Debug)]
+struct Scope {
+    name: String,
+    value: Value,
+    parent: Option<Rc<Scope>>,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Self { globals: Rc::new(RefCell::new(HashMap::new())), frames: vec![] }
+        Self { globals: Rc::new(RefCell::new(HashMap::new())), locals: None }
     }
 
-    pub fn push(&mut self) {
-        self.frames.push(HashMap::new());
-    }
+    /// A frame boundary. Bindings link individually, so opening a frame is
+    /// nothing to do — the method stays for the push/define call shape.
+    pub fn push(&mut self) {}
 
-    pub fn pop(&mut self) {
-        self.frames.pop();
-    }
+    /// Kept for API symmetry; the machine never unwinds a frame in place —
+    /// each state carries its own environment — so this is a no-op.
+    pub fn pop(&mut self) {}
 
     pub fn define(&mut self, name: impl Into<String>, v: Value) {
-        if let Some(frame) = self.frames.last_mut() {
-            frame.insert(name.into(), v);
-        } else {
-            self.globals.borrow_mut().insert(name.into(), v);
-        }
+        self.locals =
+            Some(Rc::new(Scope { name: name.into(), value: v, parent: self.locals.take() }));
     }
 
     /// Define a global (top-level) binding, visible from every env
@@ -41,10 +50,12 @@ impl Env {
     }
 
     pub fn lookup(&self, name: &str) -> Option<Value> {
-        for frame in self.frames.iter().rev() {
-            if let Some(v) = frame.get(name) {
-                return Some(v.clone());
+        let mut scope = self.locals.as_deref();
+        while let Some(s) = scope {
+            if s.name == name {
+                return Some(s.value.clone());
             }
+            scope = s.parent.as_deref();
         }
         self.globals.borrow().get(name).cloned()
     }
