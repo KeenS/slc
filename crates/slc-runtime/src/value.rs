@@ -103,7 +103,7 @@ impl Default for Env {
 #[derive(Clone)]
 pub struct Cont {
     pub env: Env,
-    pub command: Rc<crate::ir::ICommand>,
+    pub command: crate::chunk::NodeId,
 }
 
 impl std::fmt::Debug for Cont {
@@ -122,7 +122,7 @@ pub enum Value {
     Char(char),
     Unit,
     Closure {
-        body: Rc<crate::ir::Ir>,
+        body: crate::chunk::NodeId,
         env: Env,
     },
     Continuation(Cont),
@@ -156,20 +156,19 @@ pub enum Value {
     /// `μ̃[…]` co-term together with the environment they closed over.
     /// Branch bodies are held unevaluated; activation runs exactly one.
     CoCase {
-        branches: Rc<Vec<crate::ir::IBranch>>,
+        co: crate::chunk::NodeId,
         env: Env,
     },
     /// A consumer of a product (`μ̃(x, y). c`): it binds every component of
     /// the value it is given, `arity` of them.
     CoTensor {
-        arity: usize,
-        body: Rc<crate::ir::ICommand>,
+        co: crate::chunk::NodeId,
         env: Env,
     },
     /// A negative function (`Λα. t`) waiting for its continuation argument.
     /// Applying it binds that argument to the positional slot the body reads.
     CoAbs {
-        body: Rc<crate::ir::Ir>,
+        body: crate::chunk::NodeId,
         env: Env,
     },
     /// A builtin that has already received some arguments.
@@ -291,12 +290,8 @@ impl Value {
                 Value::Unit => label.clone(),
                 payload => format!("{label}({})", payload.display()),
             },
-            Value::CoCase { branches, .. } => {
-                let inner: Vec<String> =
-                    branches.iter().map(|branch| branch.label.to_string()).collect();
-                format!("select {{{}}}", inner.join(" | "))
-            }
-            Value::CoTensor { arity, .. } => format!("consumer/{arity}"),
+            Value::CoCase { .. } => "<select>".to_string(),
+            Value::CoTensor { .. } => "<consumer>".to_string(),
             Value::CoAbs { .. } => "<continuation>".to_string(),
         }
     }

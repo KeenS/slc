@@ -1,14 +1,14 @@
-//! Compile core λ̄μμ̃ to the closed IR: resolve each lexical (co-)variable to
-//! a de Bruijn index, once.
+//! Compile core λ̄μμ̃ to the flat `Chunk`: resolve each lexical (co-)variable
+//! to a de Bruijn index, and lay every node out in one vector.
 //!
 //! The compiler carries a scope — the binders in force, innermost last, term
 //! and co-variables together, since they share one run-time environment. A
 //! reference resolves to `Local`/`CoLocal` when its name is in scope, and to
 //! `Dynamic`/`CoDynamic` otherwise (a literal, a global, or a pattern
-//! variable the match engine injects at run time). A binder contributes its
-//! names to the scope of its body only.
+//! variable the match engine injects at run time). Each node is appended to
+//! the chunk and referred to by its id.
 
-use crate::ir::{IBranch, ICoTerm, ICommand, Ir};
+use crate::chunk::{Branch, Chunk, Node, NodeId};
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::term::Term;
@@ -33,73 +33,118 @@ impl Scope {
     }
 }
 
-/// Compile a core term with no binders in scope.
-pub(crate) fn compile_term(t: &Term) -> Rc<Ir> {
-    compile_ir(t, &Scope::default())
+/// Compile a single core term into its own chunk, returning the chunk and the
+/// root node.
+pub(crate) fn compile_term(t: &Term) -> (Rc<Chunk>, NodeId) {
+    let mut chunk = Chunk::new();
+    let root = compile_ir(t, &Scope::default(), &mut chunk);
+    (Rc::new(chunk), root)
 }
 
-/// Compile a core command with no binders in scope.
-pub(crate) fn compile_command(c: &Command) -> Rc<ICommand> {
-    compile_cmd(c, &Scope::default())
+/// Compile a single core command into its own chunk.
+pub(crate) fn compile_command(c: &Command) -> (Rc<Chunk>, NodeId) {
+    let mut chunk = Chunk::new();
+    let root = compile_cmd(c, &Scope::default(), &mut chunk);
+    (Rc::new(chunk), root)
 }
 
-fn compile_ir(t: &Term, scope: &Scope) -> Rc<Ir> {
-    Rc::new(match t {
+/// Compile every top-level definition into one shared chunk, returning it and
+/// each definition's root node. A closure built from any of them indexes this
+/// chunk, so they must share it.
+pub fn compile_program(defs: &[(String, Term)]) -> (Rc<Chunk>, Vec<(String, NodeId)>) {
+    let mut chunk = Chunk::new();
+    let roots = defs
+        .iter()
+        .map(|(name, term)| (name.clone(), compile_ir(term, &Scope::default(), &mut chunk)))
+        .collect();
+    (Rc::new(chunk), roots)
+}
+
+fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
+    let node = match t {
         Term::Var(x) => match scope.index(x) {
-            Some(i) => Ir::Local(i),
-            None => Ir::Dynamic(Rc::from(x.as_str())),
+            Some(i) => Node::Local(i),
+            None => Node::Dynamic(Rc::from(x.as_str())),
         },
-        Term::Lam(x, body) => Ir::Lam(compile_ir_under(body, scope, std::slice::from_ref(x))),
-        Term::Mu(a, c) => Ir::Mu(compile_cmd(c, &scope.with(std::slice::from_ref(a)))),
-        Term::Pair(a, b) => Ir::Pair(compile_ir(a, scope), compile_ir(b, scope)),
-        Term::Inl(t) => Ir::Inl(compile_ir(t, scope)),
-        Term::Inr(t) => Ir::Inr(compile_ir(t, scope)),
-        Term::Tag(label, payload) => Ir::Tag(Rc::from(label.as_str()), compile_ir(payload, scope)),
-        Term::CoAbs(a, body) => Ir::CoAbs(compile_ir_under(body, scope, std::slice::from_ref(a))),
-        Term::Co(e) => Ir::Co(compile_coterm(e, scope)),
-    })
-}
-
-/// Compile a term whose enclosing binder adds `extra` names to its scope.
-fn compile_ir_under(t: &Term, scope: &Scope, extra: &[String]) -> Rc<Ir> {
-    compile_ir(t, &scope.with(extra))
-}
-
-fn compile_coterm(e: &CoTerm, scope: &Scope) -> Rc<ICoTerm> {
-    Rc::new(match e {
-        CoTerm::Covar(a) => match scope.index(a) {
-            Some(i) => ICoTerm::CoLocal(i),
-            None => ICoTerm::CoDynamic(Rc::from(a.as_str())),
-        },
-        CoTerm::CoLam(x, c) => ICoTerm::CoLam(compile_cmd(c, &scope.with(std::slice::from_ref(x)))),
-        CoTerm::MuTilde(x, c) => {
-            ICoTerm::MuTilde(compile_cmd(c, &scope.with(std::slice::from_ref(x))))
+        Term::Lam(x, body) => {
+            let body = compile_ir(body, &scope.with(std::slice::from_ref(x)), chunk);
+            Node::Lam(body)
         }
-        CoTerm::Par(a, b) => ICoTerm::Par(compile_coterm(a, scope), compile_coterm(b, scope)),
-        CoTerm::Fst => ICoTerm::Fst,
-        CoTerm::Snd => ICoTerm::Snd,
+        Term::Mu(a, c) => {
+            let body = compile_cmd(c, &scope.with(std::slice::from_ref(a)), chunk);
+            Node::Mu(body)
+        }
+        Term::Pair(a, b) => {
+            let a = compile_ir(a, scope, chunk);
+            let b = compile_ir(b, scope, chunk);
+            Node::Pair(a, b)
+        }
+        Term::Inl(t) => Node::Inl(compile_ir(t, scope, chunk)),
+        Term::Inr(t) => Node::Inr(compile_ir(t, scope, chunk)),
+        Term::Tag(label, payload) => {
+            Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
+        }
+        Term::CoAbs(a, body) => {
+            let body = compile_ir(body, &scope.with(std::slice::from_ref(a)), chunk);
+            Node::CoAbs(body)
+        }
+        Term::Co(e) => Node::Co(compile_coterm(e, scope, chunk)),
+    };
+    chunk.push(node)
+}
+
+fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
+    let node = match e {
+        CoTerm::Covar(a) => match scope.index(a) {
+            Some(i) => Node::CoLocal(i),
+            None => Node::CoDynamic(Rc::from(a.as_str())),
+        },
+        CoTerm::CoLam(x, c) => {
+            let body = compile_cmd(c, &scope.with(std::slice::from_ref(x)), chunk);
+            Node::CoLam(body)
+        }
+        CoTerm::MuTilde(x, c) => {
+            let body = compile_cmd(c, &scope.with(std::slice::from_ref(x)), chunk);
+            Node::MuTilde(body)
+        }
+        CoTerm::Par(a, b) => {
+            let a = compile_coterm(a, scope, chunk);
+            let b = compile_coterm(b, scope, chunk);
+            Node::Par(a, b)
+        }
+        CoTerm::Fst => Node::Fst,
+        CoTerm::Snd => Node::Snd,
         CoTerm::CoCase(branches) => {
-            ICoTerm::CoCase(branches.iter().map(|b| compile_branch(b, scope)).collect())
+            let branches = branches.iter().map(|b| compile_branch(b, scope, chunk)).collect();
+            Node::CoCase(Rc::new(branches))
         }
         CoTerm::MuTildeTensor(binders, c) => {
-            ICoTerm::MuTildeTensor(binders.len(), compile_cmd(c, &scope.with(binders)))
+            let body = compile_cmd(c, &scope.with(binders), chunk);
+            Node::MuTildeTensor(binders.len(), body)
         }
-    })
+    };
+    chunk.push(node)
 }
 
-fn compile_branch(b: &CoCaseBranch, scope: &Scope) -> IBranch {
-    IBranch {
-        label: Rc::from(b.label.as_str()),
-        arity: b.binders.len(),
-        body: compile_cmd(&b.body, &scope.with(&b.binders)),
-    }
+fn compile_branch(b: &CoCaseBranch, scope: &Scope, chunk: &mut Chunk) -> Branch {
+    let body = compile_cmd(&b.body, &scope.with(&b.binders), chunk);
+    Branch { label: Rc::from(b.label.as_str()), arity: b.binders.len(), body }
 }
 
-fn compile_cmd(c: &Command, scope: &Scope) -> Rc<ICommand> {
-    Rc::new(match c {
-        Command::Cut(t, e) => ICommand::Cut(compile_ir(t, scope), compile_coterm(e, scope)),
+fn compile_cmd(c: &Command, scope: &Scope, chunk: &mut Chunk) -> NodeId {
+    let node = match c {
+        Command::Cut(t, e) => {
+            let t = compile_ir(t, scope, chunk);
+            let e = compile_coterm(e, scope, chunk);
+            Node::Cut(t, e)
+        }
         // `Command(x, t)` binds nothing at run time; `x` is vestigial.
-        Command::Command(_, t) => ICommand::Command(compile_ir(t, scope)),
-        Command::Activate(k, v) => ICommand::Activate(compile_ir(k, scope), compile_ir(v, scope)),
-    })
+        Command::Command(_, t) => Node::CmdTerm(compile_ir(t, scope, chunk)),
+        Command::Activate(k, v) => {
+            let k = compile_ir(k, scope, chunk);
+            let v = compile_ir(v, scope, chunk);
+            Node::Activate(k, v)
+        }
+    };
+    chunk.push(node)
 }

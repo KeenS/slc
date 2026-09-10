@@ -107,12 +107,17 @@ machine the redesign already built.
   runtime method value at all: `Value::Method` and the runtime `type_key` are
   gone (`examples/dictionaries.sl`).
 
-  Remaining:
-  - **Linearize the IR to a flat instruction stream** (`Op::Local(u16)`,
-    `Op::CallDict`, `Op::Prompt`, …) run by an explicit instruction pointer
-    instead of the tree-walk. Mostly mechanical on top of the closed IR; the
-    headline wins (no name resolution, O(1) env/continuation capture, static
-    dispatch) are already banked, so this is a smaller, later speedup.
+  **Linearized to a flat instruction stream. Done.** The whole program
+  compiles to one `Chunk` — a single `Vec<Node>` — and every sub-expression
+  is a `NodeId` index into it; the machine's instruction pointer is that
+  index, resolved with `chunk::node`, so stepping into a child is an integer,
+  not a pointer chase through `Rc`-linked nodes. Values (closures, consumers,
+  continuations) hold `NodeId`s into the one installed chunk. Term, co-term,
+  and command forms share the node vector, with position fixing the sort.
+
+  Stage 3 is complete: a closed, flat, de-Bruijn instruction stream with
+  static trait dispatch, no runtime name resolution on the hot path, and O(1)
+  continuation and environment capture.
 
   The shape is the one the calculus already describes: the machine state is
   `⟨ term-closure ∥ coterm-closure ⟩`, and the coterm side *is* the

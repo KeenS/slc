@@ -118,17 +118,33 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
 
     let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
         .map_err(|e| format!("lowering: {e}"))?;
+    // The whole program compiles to one flat chunk: every definition's
+    // closures index it, so they must share it, and it stays installed for
+    // the setup and the run.
+    let (chunk, roots) = slc_runtime::compile::compile_program(&defs);
     drop(_compile_guard);
     drop(compile_span);
 
     validate_main(&program)?;
-    let main = defs
+    let main_root = roots
         .iter()
         .find(|(name, _)| name == "main")
+        .map(|(_, root)| *root)
         .ok_or("no `main`: define `command main | (exit: -i32) { ... }`")?;
     let eval_span = slc_core::span!("eval");
     let _eval_guard = eval_span.enter();
 
+    slc_runtime::chunk::with_chunk(chunk, || run_program(&program, &traits, &roots, main_root))
+}
+
+/// Run a compiled program: install its globals, then run `main` through its
+/// exit continuation. Runs with the program's chunk already installed.
+fn run_program(
+    program: &slc_syntax::ast::Program,
+    traits: &slc_syntax::traits::TraitInfo,
+    roots: &[(String, slc_runtime::chunk::NodeId)],
+    main_root: slc_runtime::chunk::NodeId,
+) -> Result<RunOutcome, String> {
     let mut env = slc_runtime::value::Env::new();
     slc_runtime::value::install_stdlib(&mut env);
     // Functions are installed into the shared globals frame, so closures
@@ -158,12 +174,13 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             }
         }
     }
-    for (name, term) in &defs {
+    for (name, root) in roots {
         if name == "main" {
             continue;
         }
         let mut fuel = 1_000_000;
-        let v = slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| e.to_string())?;
+        let v =
+            slc_runtime::eval::run_node(*root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
         env.define_global(name, v);
     }
     // Trait methods need no runtime method value: every accepted call was
@@ -202,7 +219,8 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     // The program's exit continuation is `EXIT`: supplying it to `main` runs
     // the program, and the cut that reaches it is what ends it.
     let mut fuel = 1_000_000;
-    let entry = slc_runtime::eval::eval(&main.1, &mut env, &mut fuel).map_err(|e| e.to_string())?;
+    let entry =
+        slc_runtime::eval::run_node(main_root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
     match slc_runtime::eval::apply_value(
         entry,
         slc_runtime::value::Value::Builtin("EXIT".into()),

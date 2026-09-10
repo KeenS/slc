@@ -34,23 +34,36 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-/// Evaluate a term to a value. The core term is compiled to the closed IR —
-/// its lexical binders resolved to de Bruijn indices — and then run.
+/// Evaluate a term to a value. The core term is compiled to a flat chunk —
+/// its lexical binders resolved to de Bruijn indices — which is installed for
+/// the run and then executed from its root node.
 pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    let ir = crate::compile::compile_term(t);
-    crate::machine::run_term(ir, env, fuel)
+    let (chunk, root) = crate::compile::compile_term(t);
+    crate::chunk::with_chunk(chunk, || crate::machine::run_term(root, env, fuel))
 }
 
 /// Evaluate a command.
 pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    let ic = crate::compile::compile_command(c);
-    crate::machine::run_command(ic, env, fuel)
+    let (chunk, root) = crate::compile::compile_command(c);
+    crate::chunk::with_chunk(chunk, || crate::machine::run_command(root, env, fuel))
 }
 
 /// Apply a value to one argument. Ordinary application and continuation
 /// activation are the same operation: a cut against something that consumes.
+/// A chunk must already be installed (`chunk::with_chunk`).
 pub fn apply_value(value: Value, arg: Value, fuel: &mut usize) -> Result<Value, EvalError> {
     crate::machine::run_apply(value, arg, fuel)
+}
+
+/// Run the node at `root` of the already-installed chunk. The driver compiles
+/// the whole program into one chunk (`compile::compile_program`), installs it,
+/// and runs each definition and `main` through here so they share it.
+pub fn run_node(
+    root: crate::chunk::NodeId,
+    env: &mut Env,
+    fuel: &mut usize,
+) -> Result<Value, EvalError> {
+    crate::machine::run_term(root, env, fuel)
 }
 
 /// A variable is a lowered literal, a builtin constant, or a binding.
