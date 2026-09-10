@@ -34,14 +34,17 @@ impl std::fmt::Display for EvalError {
 
 impl std::error::Error for EvalError {}
 
-/// Evaluate a term to a value.
+/// Evaluate a term to a value. The core term is compiled to the closed IR —
+/// its lexical binders resolved to de Bruijn indices — and then run.
 pub fn eval(t: &Term, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    crate::machine::run_term(t, env, fuel)
+    let ir = crate::compile::compile_term(t);
+    crate::machine::run_term(ir, env, fuel)
 }
 
 /// Evaluate a command.
 pub fn eval_command(c: &Command, env: &mut Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    crate::machine::run_command(c, env, fuel)
+    let ic = crate::compile::compile_command(c);
+    crate::machine::run_command(ic, env, fuel)
 }
 
 /// Apply a value to one argument. Ordinary application and continuation
@@ -86,28 +89,24 @@ pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> 
     env.lookup(x).ok_or_else(|| EvalError::Unbound(x.to_string()))
 }
 
-/// Bind the components of a right-nested product to a list of binders. The
-/// last binder takes whatever remains, so `n` binders split a product into
-/// exactly `n` parts.
-pub(crate) fn bind_components(
-    binders: &[String],
-    value: Value,
-    env: &mut Env,
-) -> Result<(), EvalError> {
+/// Bind the components of a right-nested product onto the positional chain,
+/// `arity` of them. The first component is pushed first (deepest) and the
+/// last takes whatever remains and sits innermost, matching the order the
+/// compiler assigned the consumer's binders.
+pub(crate) fn bind_components(arity: usize, value: Value, env: &mut Env) -> Result<(), EvalError> {
     let mut rest = value;
-    for (index, binder) in binders.iter().enumerate() {
-        if index + 1 == binders.len() {
-            env.define(binder.clone(), rest);
+    for index in 0..arity {
+        if index + 1 == arity {
+            env.define_local(rest);
             return Ok(());
         }
         let Value::Pair(head, tail) = rest else {
             return Err(EvalError::TypeMismatch(format!(
-                "a consumer of {} components received {}",
-                binders.len(),
+                "a consumer of {arity} components received {}",
                 rest.display()
             )));
         };
-        env.define(binder.clone(), *head);
+        env.define_local(*head);
         rest = *tail;
     }
     Ok(())

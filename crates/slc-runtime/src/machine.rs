@@ -2,10 +2,14 @@
 //!
 //! λ̄μμ̃ is a machine calculus — a command ⟨t ∥ e⟩ is a state with the
 //! control on the left and the continuation on the right — and this module
-//! finally runs it that way. The interpreter used to hold "the rest of the
-//! computation" as Rust stack frames, which made a captured continuation an
-//! escape marker: one shot, upward only, dead once its `mu` returned. Here
-//! the rest of the computation is the `Kont` stack, a value like any other:
+//! runs it that way, over the closed IR (`crate::ir`): the lexical binders
+//! are already de Bruijn indices, so a variable reference is a walk of the
+//! positional environment by count, not by name.
+//!
+//! The continuation used to be Rust stack frames, which made a captured
+//! continuation an escape marker: one shot, upward only, dead once its `mu`
+//! returned. Here the rest of the computation is the `Kont` stack, a value
+//! like any other:
 //!
 //! - `mu(k)` captures the frame stack into `Value::Kont`;
 //! - activating a `Kont` *replaces* the frame stack and delivers the value —
@@ -20,19 +24,17 @@
 use crate::eval::{
     EvalError, bind_components, builtin_arity, collect_args, is_applicable, run_builtin_function,
 };
+use crate::ir::{ICoTerm, ICommand, Ir};
 use crate::matching::{
     Descriptor, parse_runtime_pattern, pattern_matches, split_match_payload, unwrap_match_arm,
 };
 use crate::value::{Env, Value};
-use slc_core::command::Command;
-use slc_core::coterm::CoTerm;
-use slc_core::term::Term;
 use std::rc::Rc;
 
 /// What the machine is doing right now.
 pub(crate) enum State {
-    Term(Rc<Term>, Env),
-    Command(Rc<Command>, Env),
+    Term(Rc<Ir>, Env),
+    Command(Rc<ICommand>, Env),
     Apply { callee: Value, arg: Value },
     Return(Value),
 }
@@ -42,18 +44,18 @@ pub(crate) enum State {
 #[derive(Debug, Clone)]
 pub enum Frame {
     /// `(v ⊗ _)` — the first component is done; evaluate the second.
-    PairRight(Rc<Term>, Env),
+    PairRight(Rc<Ir>, Env),
     /// `(v1 ⊗ v2)` — both components done; build the pair.
     PairDone(Value),
     WrapInl,
     WrapInr,
     WrapTag(String),
     /// `⟨ _ ∥ e ⟩` — the term side is being evaluated; consume with `e`.
-    Consume(Rc<CoTerm>, Env),
+    Consume(Rc<ICoTerm>, Env),
     /// The callee is evaluated; the argument is being computed.
     ApplyCallee(Value),
     /// `k(v)`: the consumer is being evaluated; `v` comes next.
-    ActivateArg(Rc<Term>, Env),
+    ActivateArg(Rc<Ir>, Env),
     /// `k(v)`: the consumer is known; the value is being evaluated.
     ActivateWith(Value),
     /// A handler delimiter: the `return` clause, and the operation clauses
@@ -156,14 +158,18 @@ impl Kont {
     }
 }
 
-/// Run a term to a value with an empty continuation.
-pub(crate) fn run_term(t: &Term, env: &Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    run(State::Term(Rc::new(t.clone()), env.clone()), Kont::empty(), fuel)
+/// Run a compiled term to a value with an empty continuation.
+pub(crate) fn run_term(ir: Rc<Ir>, env: &Env, fuel: &mut usize) -> Result<Value, EvalError> {
+    run(State::Term(ir, env.clone()), Kont::empty(), fuel)
 }
 
-/// Run a command to a value with an empty continuation.
-pub(crate) fn run_command(c: &Command, env: &Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    run(State::Command(Rc::new(c.clone()), env.clone()), Kont::empty(), fuel)
+/// Run a compiled command to a value with an empty continuation.
+pub(crate) fn run_command(
+    c: Rc<ICommand>,
+    env: &Env,
+    fuel: &mut usize,
+) -> Result<Value, EvalError> {
+    run(State::Command(c, env.clone()), Kont::empty(), fuel)
 }
 
 /// Apply a value to an argument with an empty continuation.
@@ -191,76 +197,67 @@ fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
     }
 }
 
-fn step_term(t: &Term, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
+fn step_term(t: &Ir, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match t {
-        Term::Var(x) => State::Return(crate::eval::literal_or_lookup(x, &env)?),
-        Term::Lam(param, body) => State::Return(Value::Closure {
-            param: param.clone(),
-            body: Rc::new((**body).clone()),
-            env,
-        }),
-        Term::Mu(a, command) => {
-            // The μ: bind the co-variable to the continuation itself. The
-            // clone is the capture.
+        Ir::Local(i) => State::Return(
+            env.local(*i).ok_or_else(|| EvalError::Unbound(format!("de Bruijn local #{i}")))?,
+        ),
+        Ir::Dynamic(name) => State::Return(crate::eval::literal_or_lookup(name, &env)?),
+        Ir::Lam(body) => State::Return(Value::Closure { body: body.clone(), env }),
+        Ir::Mu(command) => {
+            // The μ: bind the co-variable (positional slot 0) to the
+            // continuation itself. Capturing the stack is one `Rc` bump.
             let mut env2 = env;
-            env2.push();
-            env2.define(a, Value::Kont(kont.clone()));
-            State::Command(Rc::new((**command).clone()), env2)
+            env2.define_local(Value::Kont(kont.clone()));
+            State::Command(command.clone(), env2)
         }
-        Term::Pair(t1, t2) => {
-            kont.push(Frame::PairRight(Rc::new((**t2).clone()), env.clone()));
-            State::Term(Rc::new((**t1).clone()), env)
+        Ir::Pair(t1, t2) => {
+            kont.push(Frame::PairRight(t2.clone(), env.clone()));
+            State::Term(t1.clone(), env)
         }
-        Term::Inl(inner) => {
+        Ir::Inl(inner) => {
             kont.push(Frame::WrapInl);
-            State::Term(Rc::new((**inner).clone()), env)
+            State::Term(inner.clone(), env)
         }
-        Term::Inr(inner) => {
+        Ir::Inr(inner) => {
             kont.push(Frame::WrapInr);
-            State::Term(Rc::new((**inner).clone()), env)
+            State::Term(inner.clone(), env)
         }
-        Term::Tag(label, payload) => {
-            kont.push(Frame::WrapTag(label.clone()));
-            State::Term(Rc::new((**payload).clone()), env)
+        Ir::Tag(label, payload) => {
+            kont.push(Frame::WrapTag(label.to_string()));
+            State::Term(payload.clone(), env)
         }
-        Term::CoAbs(covar, body) => State::Return(Value::CoAbs {
-            covar: covar.clone(),
-            body: Rc::new((**body).clone()),
-            env,
-        }),
-        Term::Co(coterm) => State::Return(match coterm.as_ref() {
+        Ir::CoAbs(body) => State::Return(Value::CoAbs { body: body.clone(), env }),
+        Ir::Co(coterm) => State::Return(match coterm.as_ref() {
             // A negative additive consumer closes over its environment. Its
             // branch bodies stay unevaluated: activation runs exactly one.
-            CoTerm::CoCase(branches) => Value::CoCase { branches: Rc::new(branches.clone()), env },
-            CoTerm::MuTildeTensor(binders, body) => Value::CoTensor {
-                binders: Rc::new(binders.clone()),
-                body: Rc::new((**body).clone()),
-                env,
-            },
+            ICoTerm::CoCase(branches) => Value::CoCase { branches: Rc::new(branches.clone()), env },
+            ICoTerm::MuTildeTensor(arity, body) => {
+                Value::CoTensor { arity: *arity, body: body.clone(), env }
+            }
             // `μ̃x. c` binds the whole value: a product consumer of one part.
-            CoTerm::MuTilde(binder, body) => Value::CoTensor {
-                binders: Rc::new(vec![binder.clone()]),
-                body: Rc::new((**body).clone()),
-                env,
-            },
+            ICoTerm::MuTilde(body) => Value::CoTensor { arity: 1, body: body.clone(), env },
             other => Value::Continuation(crate::value::Cont {
                 env,
-                command: Rc::new(Command::Cut(Term::Var("__co_arg".into()), other.clone())),
+                command: Rc::new(ICommand::Cut(
+                    Rc::new(Ir::Dynamic(Rc::from("__co_arg"))),
+                    Rc::new(other.clone()),
+                )),
             }),
         }),
     })
 }
 
-fn step_command(c: &Command, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
+fn step_command(c: &ICommand, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match c {
-        Command::Cut(t, e) => {
-            kont.push(Frame::Consume(Rc::new(e.clone()), env.clone()));
-            State::Term(Rc::new(t.clone()), env)
+        ICommand::Cut(t, e) => {
+            kont.push(Frame::Consume(e.clone(), env.clone()));
+            State::Term(t.clone(), env)
         }
-        Command::Command(_, t) => State::Term(Rc::new(t.clone()), env),
-        Command::Activate(k, v) => {
-            kont.push(Frame::ActivateArg(Rc::new(v.clone()), env.clone()));
-            State::Term(Rc::new(k.clone()), env)
+        ICommand::Command(t) => State::Term(t.clone(), env),
+        ICommand::Activate(k, v) => {
+            kont.push(Frame::ActivateArg(v.clone(), env.clone()));
+            State::Term(k.clone(), env)
         }
     })
 }
@@ -298,44 +295,47 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
 }
 
 /// ⟨ v ∥ e ⟩ with the value in hand.
-fn step_consume(v: Value, e: &CoTerm, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
+fn step_consume(v: Value, e: &ICoTerm, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match e {
-        CoTerm::Covar(a) => {
-            // ⟨v ∥ α⟩ sends v to α. When α is bound to a consumer — a
-            // continuation parameter, a `select` consumer, a captured
-            // continuation — the cut activates it. A co-variable that only
-            // names the ambient continuation, as the lowering of `let`,
-            // blocks, and applications does, delivers the value onward.
-            match env.lookup(a) {
-                Some(consumer) if is_applicable(&consumer) => {
-                    State::Apply { callee: consumer, arg: v }
-                }
-                _ => State::Return(v),
-            }
-        }
+        // ⟨v ∥ α⟩ sends v to α. When α names a consumer — a continuation
+        // parameter, a `select` consumer, a captured continuation — the cut
+        // activates it. A co-variable that only names the ambient
+        // continuation, as the lowering of `let`, blocks, and applications
+        // does, delivers the value onward.
+        ICoTerm::CoLocal(i) => match env.local(*i) {
+            Some(consumer) if is_applicable(&consumer) => State::Apply { callee: consumer, arg: v },
+            _ => State::Return(v),
+        },
+        ICoTerm::CoDynamic(a) => match env.lookup(a) {
+            Some(consumer) if is_applicable(&consumer) => State::Apply { callee: consumer, arg: v },
+            _ => State::Return(v),
+        },
         // ⟨ f ∥ λ̄x. c ⟩ — application: `c` computes the argument.
-        CoTerm::CoLam(x, c2) => {
+        ICoTerm::CoLam(c2) => {
             let mut env2 = env;
-            env2.push();
-            env2.define(x.clone(), v.clone());
+            env2.define_local(v.clone());
             if is_applicable(&v) || matches!(v, Value::PartialBuiltin(..)) {
                 kont.push(Frame::ApplyCallee(v));
-                // The argument command has the form ⟨ arg ∥ __call ⟩.
+                // The argument command has the form ⟨ arg ∥ __call ⟩: the
+                // co-variable there is the onward continuation, ignored here.
                 match c2.as_ref() {
-                    Command::Cut(t, CoTerm::Covar(_)) => State::Term(Rc::new(t.clone()), env2),
-                    other => State::Command(Rc::new(other.clone()), env2),
+                    ICommand::Cut(t, co)
+                        if matches!(co.as_ref(), ICoTerm::CoLocal(_) | ICoTerm::CoDynamic(_)) =>
+                    {
+                        State::Term(t.clone(), env2)
+                    }
+                    _ => State::Command(c2.clone(), env2),
                 }
             } else {
-                State::Command(Rc::new((**c2).clone()), env2)
+                State::Command(c2.clone(), env2)
             }
         }
         // ⟨ v ∥ μ̃x. c ⟩ → c[v/x] — a binder: `let`, a discarded block
         // expression, or any other form that names a value.
-        CoTerm::MuTilde(x, c2) => {
+        ICoTerm::MuTilde(c2) => {
             let mut env2 = env;
-            env2.push();
-            env2.define(x.clone(), v);
-            State::Command(Rc::new((**c2).clone()), env2)
+            env2.define_local(v);
+            State::Command(c2.clone(), env2)
         }
         _ => State::Return(v),
     })
@@ -349,10 +349,9 @@ fn step_apply(
     fuel: &mut usize,
 ) -> Result<State, EvalError> {
     Ok(match callee {
-        Value::Closure { param, body, env } => {
+        Value::Closure { body, env } => {
             let mut call_env = env;
-            call_env.push();
-            call_env.define(param, arg);
+            call_env.define_local(arg);
             State::Term(body, call_env)
         }
         // Activating a labelled consumer runs exactly one branch.
@@ -363,26 +362,23 @@ fn step_apply(
                     arg.display()
                 )));
             };
-            let Some(branch) = branches.iter().find(|b| b.label == label) else {
+            let Some(branch) = branches.iter().find(|b| *b.label == label) else {
                 return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in select")));
             };
             let mut branch_env = env;
-            branch_env.push();
-            bind_components(&branch.binders, *payload, &mut branch_env)?;
-            State::Command(Rc::new(branch.body.as_ref().clone()), branch_env)
+            bind_components(branch.arity, *payload, &mut branch_env)?;
+            State::Command(branch.body.clone(), branch_env)
         }
         // Activating a product consumer binds every component.
-        Value::CoTensor { binders, body, env } => {
+        Value::CoTensor { arity, body, env } => {
             let mut branch_env = env;
-            branch_env.push();
-            bind_components(&binders, arg, &mut branch_env)?;
+            bind_components(arity, arg, &mut branch_env)?;
             State::Command(body, branch_env)
         }
-        // Applying a co-abstraction binds its continuation parameter.
-        Value::CoAbs { covar, body, env } => {
+        // Applying a negative function binds its continuation argument.
+        Value::CoAbs { body, env } => {
             let mut call_env = env;
-            call_env.push();
-            call_env.define(covar, arg);
+            call_env.define_local(arg);
             State::Term(body, call_env)
         }
         Value::Continuation(cont) => State::Command(cont.command.clone(), cont.env.clone()),
@@ -417,11 +413,10 @@ fn step_apply(
             kont.push(Frame::ApplyTo(resume));
             State::Apply { callee: clause, arg }
         }
-        // Resuming a delimited continuation: prepend its frames and deliver.
-        // A delimited continuation behaves as a function: run the captured
-        // work (with its reinstated handler) to a value and deliver that. A
-        // nested run is what lets the clause compose `resume(a) + resume(b)`
-        // and resume more than once.
+        // Resuming a delimited continuation: run the captured work (with its
+        // reinstated handler) to a value and deliver that. A nested run is
+        // what lets the clause compose `resume(a) + resume(b)` and resume
+        // more than once.
         Value::Resume(frames) => {
             let result = run(State::Return(arg), frames, fuel)?;
             State::Return(result)
@@ -559,14 +554,14 @@ fn next_match_arm(
         {
             continue;
         }
-        // The pattern matches; the guard decides.
-        if let Value::Closure { param, body, env } = &guard {
+        // The pattern matches; the guard decides. Pattern variables are
+        // injected by name (the overlay), leaving de Bruijn slots untouched.
+        if let Value::Closure { body, env } = &guard {
             let mut guard_env = env.clone();
-            guard_env.push();
             for (name, value) in &bindings {
-                guard_env.define(name.clone(), value.clone());
+                guard_env.define_named(name.clone(), value.clone());
             }
-            guard_env.define(param, Value::Unit);
+            guard_env.define_local(Value::Unit);
             kont.push(Frame::MatchGuard { scrutinee, thunk, bindings, remaining: arms });
             return Ok(State::Term(body.clone(), guard_env));
         }
@@ -578,16 +573,18 @@ fn next_match_arm(
     Err(EvalError::TypeMismatch("non-exhaustive match".into()))
 }
 
-/// The chosen arm's body, with the pattern's bindings in scope.
+/// The chosen arm's body, with the pattern's bindings in scope. The bindings
+/// go in the named overlay (the compiler left pattern variables as
+/// `Dynamic`); the thunk's own `__match_arg` parameter is the positional
+/// slot the body's de Bruijn indices are relative to.
 fn run_match_thunk(thunk: &Value, bindings: &[(String, Value)]) -> Result<State, EvalError> {
-    let Value::Closure { param, body, env } = thunk else {
+    let Value::Closure { body, env } = thunk else {
         return Err(EvalError::TypeMismatch("match arm body must be a thunk".into()));
     };
     let mut call_env = env.clone();
-    call_env.push();
     for (name, value) in bindings {
-        call_env.define(name.clone(), value.clone());
+        call_env.define_named(name.clone(), value.clone());
     }
-    call_env.define(param, Value::Unit);
+    call_env.define_local(Value::Unit);
     Ok(State::Term(body.clone(), call_env))
 }

@@ -5,52 +5,84 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// A persistent environment: a shared globals table under a cons chain of
-/// local bindings. Each binding links to the one it shadows, so cloning the
-/// environment — which the machine does on nearly every step, to carry a
-/// sub-term's scope — bumps two `Rc`s rather than copying a `Vec<HashMap>`.
-/// Defining a binding extends only this handle's chain; a clone taken
-/// earlier keeps its own view.
+/// A persistent environment in three layers.
+///
+/// The compiler resolves every lexical binder to a de Bruijn index, so those
+/// bindings live in the **positional** chain (`locals`), reached by counting
+/// from the head — the innermost binder is index 0. What the compiler could
+/// not resolve — a global, a literal, or a `match` arm's pattern variables,
+/// which the pattern engine injects at run time — is reached by name: the
+/// named **overlay** (`overlay`) first, then the shared **globals** table.
+///
+/// Keeping pattern injections in their own by-name overlay is what lets de
+/// Bruijn indices be stable: an injected binding never shifts the positional
+/// chain, yet, being part of the environment, it is still captured by a
+/// closure that escapes the arm. Every layer is a cons of `Rc` links, so
+/// cloning the environment — which the machine does on nearly every step —
+/// bumps refcounts rather than copying, and extending one chain leaves a
+/// clone taken earlier with its own view.
 #[derive(Debug, Clone)]
 pub struct Env {
-    /// Shared global definitions, visible under every local chain.
     globals: Rc<RefCell<HashMap<String, Value>>>,
-    locals: Option<Rc<Scope>>,
+    locals: Option<Rc<Slot>>,
+    overlay: Option<Rc<Named>>,
 }
 
 #[derive(Debug)]
-struct Scope {
+struct Slot {
+    value: Value,
+    parent: Option<Rc<Slot>>,
+}
+
+#[derive(Debug)]
+struct Named {
     name: String,
     value: Value,
-    parent: Option<Rc<Scope>>,
+    parent: Option<Rc<Named>>,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Self { globals: Rc::new(RefCell::new(HashMap::new())), locals: None }
+        Self { globals: Rc::new(RefCell::new(HashMap::new())), locals: None, overlay: None }
     }
 
-    /// A frame boundary. Bindings link individually, so opening a frame is
-    /// nothing to do — the method stays for the push/define call shape.
+    /// Kept for the existing push/define call shape; bindings link
+    /// individually, so a frame boundary is nothing to open or unwind.
     pub fn push(&mut self) {}
-
-    /// Kept for API symmetry; the machine never unwinds a frame in place —
-    /// each state carries its own environment — so this is a no-op.
     pub fn pop(&mut self) {}
 
-    pub fn define(&mut self, name: impl Into<String>, v: Value) {
-        self.locals =
-            Some(Rc::new(Scope { name: name.into(), value: v, parent: self.locals.take() }));
+    /// Push a lexical binding onto the positional chain. It becomes de Bruijn
+    /// index 0 for the scope that follows.
+    pub fn define_local(&mut self, v: Value) {
+        self.locals = Some(Rc::new(Slot { value: v, parent: self.locals.take() }));
     }
 
-    /// Define a global (top-level) binding, visible from every env
-    /// derived from this one via clone.
+    /// The value at de Bruijn index `i` (0 = innermost), if the chain is that
+    /// deep.
+    pub fn local(&self, i: usize) -> Option<Value> {
+        let mut slot = self.locals.as_deref();
+        for _ in 0..i {
+            slot = slot?.parent.as_deref();
+        }
+        slot.map(|s| s.value.clone())
+    }
+
+    /// Inject a binding reachable by name (a `match` arm's pattern variable).
+    pub fn define_named(&mut self, name: impl Into<String>, v: Value) {
+        self.overlay =
+            Some(Rc::new(Named { name: name.into(), value: v, parent: self.overlay.take() }));
+    }
+
+    /// Define a global (top-level) binding, visible from every env derived
+    /// from this one via clone.
     pub fn define_global(&mut self, name: impl Into<String>, v: Value) {
         self.globals.borrow_mut().insert(name.into(), v);
     }
 
+    /// Resolve a name: the overlay first, then the globals table. The
+    /// positional chain is never consulted by name.
     pub fn lookup(&self, name: &str) -> Option<Value> {
-        let mut scope = self.locals.as_deref();
+        let mut scope = self.overlay.as_deref();
         while let Some(s) = scope {
             if s.name == name {
                 return Some(s.value.clone());
@@ -71,7 +103,7 @@ impl Default for Env {
 #[derive(Clone)]
 pub struct Cont {
     pub env: Env,
-    pub command: Rc<slc_core::command::Command>,
+    pub command: Rc<crate::ir::ICommand>,
 }
 
 impl std::fmt::Debug for Cont {
@@ -90,8 +122,7 @@ pub enum Value {
     Char(char),
     Unit,
     Closure {
-        param: String,
-        body: Rc<slc_core::term::Term>,
+        body: Rc<crate::ir::Ir>,
         env: Env,
     },
     Continuation(Cont),
@@ -131,21 +162,20 @@ pub enum Value {
     /// `μ̃[…]` co-term together with the environment they closed over.
     /// Branch bodies are held unevaluated; activation runs exactly one.
     CoCase {
-        branches: Rc<Vec<slc_core::coterm::CoCaseBranch>>,
+        branches: Rc<Vec<crate::ir::IBranch>>,
         env: Env,
     },
     /// A consumer of a product (`μ̃(x, y). c`): it binds every component of
-    /// the value it is given.
+    /// the value it is given, `arity` of them.
     CoTensor {
-        binders: Rc<Vec<String>>,
-        body: Rc<slc_core::command::Command>,
+        arity: usize,
+        body: Rc<crate::ir::ICommand>,
         env: Env,
     },
-    /// A μ abstraction waiting for the continuation to bind its co-variable.
-    /// Applying it binds the co-variable to the supplied continuation.
+    /// A negative function (`Λα. t`) waiting for its continuation argument.
+    /// Applying it binds that argument to the positional slot the body reads.
     CoAbs {
-        covar: String,
-        body: Rc<slc_core::term::Term>,
+        body: Rc<crate::ir::Ir>,
         env: Env,
     },
     /// A builtin that has already received some arguments.
@@ -271,11 +301,11 @@ impl Value {
             },
             Value::CoCase { branches, .. } => {
                 let inner: Vec<String> =
-                    branches.iter().map(|branch| branch.label.clone()).collect();
+                    branches.iter().map(|branch| branch.label.to_string()).collect();
                 format!("select {{{}}}", inner.join(" | "))
             }
-            Value::CoTensor { binders, .. } => format!("consumer({})", binders.join(", ")),
-            Value::CoAbs { covar, .. } => format!("<continuation μ{covar}>"),
+            Value::CoTensor { arity, .. } => format!("consumer/{arity}"),
+            Value::CoAbs { .. } => "<continuation>".to_string(),
         }
     }
 }
@@ -359,8 +389,7 @@ pub fn install_stdlib(env: &mut Env) {
         "substring",
         "str_eq",
     ];
-    env.push();
     for b in builtins {
-        env.define(b, Value::Builtin(b.to_string()));
+        env.define_global(b, Value::Builtin(b.to_string()));
     }
 }

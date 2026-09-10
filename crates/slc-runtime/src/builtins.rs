@@ -61,11 +61,9 @@ pub fn apply_builtin(
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
         },
         "unquote" => match args.first() {
-            Some(Value::Closure { param, body, env }) => {
-                let mut call_env = env.clone();
-                call_env.push();
-                call_env.define(param.clone(), Value::Unit);
-                crate::eval::eval(body, &mut call_env, &mut 1_000_000)
+            Some(v @ Value::Closure { .. }) => {
+                // Force the thunk: apply it to unit.
+                crate::eval::apply_value(v.clone(), Value::Unit, &mut 1_000_000)
                     .map_err(|e| BuiltinError::TypeMismatch(e.to_string()))
             }
             Some(v) => Ok(v.clone()),
