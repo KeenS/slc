@@ -87,7 +87,7 @@ pub enum Value {
     /// A captured continuation: the machine's frame stack, reified. It can
     /// be reinstated any number of times, at any time — activating it
     /// replaces the current stack, which is what makes the jump.
-    Kont(Rc<Vec<crate::machine::Frame>>),
+    Kont(crate::machine::Kont),
     Pair(Box<Value>, Box<Value>),
     Inl(Box<Value>),
     Inr(Box<Value>),
@@ -113,7 +113,7 @@ pub enum Value {
     /// A delimited, composable continuation — a handler's `resume`. Applying
     /// it prepends its captured frames onto the current stack, so control
     /// runs the captured work and then re-enters the handler.
-    Resume(Rc<Vec<crate::machine::Frame>>),
+    Resume(crate::machine::Kont),
     /// An `enum` value: a variant label and its payload.
     Tagged(String, Box<Value>),
     /// A negative additive consumer (`select`): the branches of a core
@@ -162,8 +162,8 @@ impl PartialEq for Value {
             (Value::File(a), Value::File(b)) => a == b,
             (Value::Method { method: a, .. }, Value::Method { method: b, .. }) => a == b,
             (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
-            (Value::Resume(a), Value::Resume(b)) => Rc::ptr_eq(a, b),
-            (Value::Kont(a), Value::Kont(b)) => Rc::ptr_eq(a, b),
+            (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
+            (Value::Kont(a), Value::Kont(b)) => crate::machine::Kont::ptr_eq(a, b),
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,

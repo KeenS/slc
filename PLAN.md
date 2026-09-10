@@ -77,10 +77,15 @@ machine the redesign already built.
   arg-shortcut ignores it).
 
   *Stage 2 — persistent continuation + indexed environments (cheap capture,
-  faster lookup).* Represent the stack as a shared persistent cons so capture
-  and `resume` are O(1) instead of cloning `Vec<Frame>`; compile variable
+  faster lookup).* **Persistent continuation done:** the stack is a shared
+  cons (`machine::Kont`) with the top at the head, so `mu`'s `Value::Kont`
+  and a handler's `resume` capture by cloning one `Rc` — O(1) however deep,
+  and a pushed frame never disturbs a stack already captured, so a resumed
+  continuation walks its own copy (the multi-shot property now holds by
+  construction, not by `Vec` cloning). **Remaining:** compile variable
   access to de Bruijn indices over a flat environment instead of `HashMap`
-  lookups with per-frame `Env` clones.
+  lookups with per-frame `Env` clones — this rides on the Stage 3 core-IR
+  pass, which is where names are resolved once.
 
   *Stage 3 — compile the core to a closed IR (the raw speedup, and the home
   for deferred work).* Replace per-step `Rc<Term>` walking and cloning with a

@@ -5,12 +5,17 @@
 //! finally runs it that way. The interpreter used to hold "the rest of the
 //! computation" as Rust stack frames, which made a captured continuation an
 //! escape marker: one shot, upward only, dead once its `mu` returned. Here
-//! the rest of the computation is `Vec<Frame>`, a value like any other:
+//! the rest of the computation is the `Kont` stack, a value like any other:
 //!
-//! - `mu(k)` captures by cloning the frame stack into `Value::Kont`;
+//! - `mu(k)` captures the frame stack into `Value::Kont`;
 //! - activating a `Kont` *replaces* the frame stack and delivers the value —
 //!   however deep the machine is, however long ago the capture returned,
 //!   however many times it has been used before.
+//!
+//! The stack is a persistent cons (`Kont`) with the top at the head, so a
+//! capture — `mu`, or a handler's `resume` — clones one `Rc`: O(1), no
+//! matter how deep, and repeatable. Pushing a frame never disturbs a stack
+//! already captured, so a resumed continuation walks its own copy.
 
 use crate::eval::{
     EvalError, bind_components, builtin_arity, collect_args, is_applicable, run_builtin_function,
@@ -70,22 +75,103 @@ pub enum Frame {
     },
 }
 
+/// The continuation as a persistent stack: a shared cons of frames with the
+/// top at the head. Capturing it — `mu`'s `Value::Kont`, or a handler's
+/// `resume` — clones one `Rc`, regardless of depth, and the clone walks
+/// independently of the live stack. That is what makes a jump and a
+/// multi-shot `resume` cheap.
+#[derive(Clone, Debug, Default)]
+pub struct Kont(Option<Rc<KontNode>>);
+
+#[derive(Debug)]
+struct KontNode {
+    frame: Frame,
+    tail: Option<Rc<KontNode>>,
+}
+
+impl Kont {
+    pub(crate) fn empty() -> Self {
+        Kont(None)
+    }
+
+    /// Push a frame onto the top. A stack already captured elsewhere keeps
+    /// its own view — the push only extends this handle.
+    pub(crate) fn push(&mut self, frame: Frame) {
+        let tail = self.0.take();
+        self.0 = Some(Rc::new(KontNode { frame, tail }));
+    }
+
+    /// Pop the top frame. A shared node is cloned out rather than unwrapped,
+    /// so another handle onto the same stack is left intact.
+    pub(crate) fn pop(&mut self) -> Option<Frame> {
+        let node = self.0.take()?;
+        match Rc::try_unwrap(node) {
+            Ok(node) => {
+                self.0 = node.tail;
+                Some(node.frame)
+            }
+            Err(shared) => {
+                self.0 = shared.tail.clone();
+                Some(shared.frame.clone())
+            }
+        }
+    }
+
+    /// Two captured stacks are equal when they are the same node.
+    pub(crate) fn ptr_eq(a: &Kont, b: &Kont) -> bool {
+        match (&a.0, &b.0) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Split at the nearest handler above that handles `op`: hand back its
+    /// clause and the delimited continuation (the work up to and including
+    /// that `Prompt`, which therefore reinstates it on resume), and truncate
+    /// `self` to what lay below the handler. `None` if nothing above handles
+    /// `op`.
+    fn split_at_handler(&mut self, op: &str) -> Option<(Value, Kont)> {
+        let mut prefix: Vec<Frame> = Vec::new();
+        let mut cursor = self.0.clone();
+        loop {
+            let node = cursor?;
+            match &node.frame {
+                Frame::Prompt { clauses, .. } if clauses.contains_key(op) => {
+                    let clause = clauses.get(op).cloned().expect("checked present");
+                    prefix.push(node.frame.clone());
+                    let mut captured = Kont::empty();
+                    for frame in prefix.into_iter().rev() {
+                        captured.push(frame);
+                    }
+                    self.0 = node.tail.clone();
+                    return Some((clause, captured));
+                }
+                _ => {
+                    prefix.push(node.frame.clone());
+                    cursor = node.tail.clone();
+                }
+            }
+        }
+    }
+}
+
 /// Run a term to a value with an empty continuation.
 pub(crate) fn run_term(t: &Term, env: &Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    run(State::Term(Rc::new(t.clone()), env.clone()), Vec::new(), fuel)
+    run(State::Term(Rc::new(t.clone()), env.clone()), Kont::empty(), fuel)
 }
 
 /// Run a command to a value with an empty continuation.
 pub(crate) fn run_command(c: &Command, env: &Env, fuel: &mut usize) -> Result<Value, EvalError> {
-    run(State::Command(Rc::new(c.clone()), env.clone()), Vec::new(), fuel)
+    run(State::Command(Rc::new(c.clone()), env.clone()), Kont::empty(), fuel)
 }
 
 /// Apply a value to an argument with an empty continuation.
 pub(crate) fn run_apply(callee: Value, arg: Value, fuel: &mut usize) -> Result<Value, EvalError> {
-    run(State::Apply { callee, arg }, Vec::new(), fuel)
+    run(State::Apply { callee, arg }, Kont::empty(), fuel)
 }
 
-fn run(start: State, kont: Vec<Frame>, fuel: &mut usize) -> Result<Value, EvalError> {
+fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
     let mut state = start;
     let mut kont = kont;
     loop {
@@ -105,7 +191,7 @@ fn run(start: State, kont: Vec<Frame>, fuel: &mut usize) -> Result<Value, EvalEr
     }
 }
 
-fn step_term(t: &Term, env: Env, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn step_term(t: &Term, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match t {
         Term::Var(x) => State::Return(crate::eval::literal_or_lookup(x, &env)?),
         Term::Lam(param, body) => State::Return(Value::Closure {
@@ -118,7 +204,7 @@ fn step_term(t: &Term, env: Env, kont: &mut Vec<Frame>) -> Result<State, EvalErr
             // clone is the capture.
             let mut env2 = env;
             env2.push();
-            env2.define(a, Value::Kont(Rc::new(kont.clone())));
+            env2.define(a, Value::Kont(kont.clone()));
             State::Command(Rc::new((**command).clone()), env2)
         }
         Term::Pair(t1, t2) => {
@@ -165,7 +251,7 @@ fn step_term(t: &Term, env: Env, kont: &mut Vec<Frame>) -> Result<State, EvalErr
     })
 }
 
-fn step_command(c: &Command, env: Env, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn step_command(c: &Command, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match c {
         Command::Cut(t, e) => {
             kont.push(Frame::Consume(Rc::new(e.clone()), env.clone()));
@@ -179,7 +265,7 @@ fn step_command(c: &Command, env: Env, kont: &mut Vec<Frame>) -> Result<State, E
     })
 }
 
-fn step_frame(frame: Frame, v: Value, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match frame {
         Frame::PairRight(t2, env) => {
             kont.push(Frame::PairDone(v));
@@ -212,7 +298,7 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Vec<Frame>) -> Result<State, Ev
 }
 
 /// ⟨ v ∥ e ⟩ with the value in hand.
-fn step_consume(v: Value, e: &CoTerm, env: Env, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn step_consume(v: Value, e: &CoTerm, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match e {
         CoTerm::Covar(a) => {
             // ⟨v ∥ α⟩ sends v to α. When α is bound to a consumer — a
@@ -259,7 +345,7 @@ fn step_consume(v: Value, e: &CoTerm, env: Env, kont: &mut Vec<Frame>) -> Result
 fn step_apply(
     callee: Value,
     arg: Value,
-    kont: &mut Vec<Frame>,
+    kont: &mut Kont,
     fuel: &mut usize,
 ) -> Result<State, EvalError> {
     Ok(match callee {
@@ -302,7 +388,7 @@ fn step_apply(
         Value::Continuation(cont) => State::Command(cont.command.clone(), cont.env.clone()),
         // The jump: reinstate the captured stack and deliver the value.
         Value::Kont(frames) => {
-            *kont = (*frames).clone();
+            *kont = frames;
             State::Return(arg)
         }
         // A trait method dispatches on the runtime type of its argument.
@@ -320,20 +406,13 @@ fn step_apply(
         // Performing an operation: find the nearest handler, capture the
         // delimited continuation, and run the matching clause with `resume`.
         Value::Operation { op, .. } => {
-            let prompt = kont.iter().rposition(
-                |f| matches!(f, Frame::Prompt { clauses, .. } if clauses.contains_key(&op)),
-            );
-            let Some(p) = prompt else {
+            // Split at the handler: the captured continuation includes the
+            // Prompt, so resuming re-installs it (a deep handler); the clause
+            // runs below it.
+            let Some((clause, captured)) = kont.split_at_handler(&op) else {
                 return Err(EvalError::TypeMismatch(format!("no handler for operation `{op}`")));
             };
-            // Split at the handler: captured includes the Prompt, so resuming
-            // re-installs it (a deep handler). The clause runs below it.
-            let captured = kont.split_off(p);
-            let clause = match &captured[0] {
-                Frame::Prompt { clauses, .. } => clauses.get(&op).cloned().expect("found above"),
-                _ => unreachable!("split at a Prompt"),
-            };
-            let resume = Value::Resume(Rc::new(captured));
+            let resume = Value::Resume(captured);
             // clause is `λarg. λresume. body`: apply to arg, then to resume.
             kont.push(Frame::ApplyTo(resume));
             State::Apply { callee: clause, arg }
@@ -344,7 +423,7 @@ fn step_apply(
         // nested run is what lets the clause compose `resume(a) + resume(b)`
         // and resume more than once.
         Value::Resume(frames) => {
-            let result = run(State::Return(arg), (*frames).clone(), fuel)?;
+            let result = run(State::Return(arg), frames, fuel)?;
             State::Return(result)
         }
         Value::Builtin(name) => {
@@ -377,7 +456,7 @@ fn step_apply(
 }
 
 /// Run a builtin once its arguments are in — or wait for more.
-fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Vec<Frame>) -> Result<State, EvalError> {
+fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, EvalError> {
     let arity = builtin_arity(name);
     if args.len() < arity && name != "__match_dispatch" {
         return Ok(State::Return(Value::PartialBuiltin(name.to_string(), args)));
@@ -454,7 +533,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Vec<Frame>) -> Result<S
 fn next_match_arm(
     scrutinee: Value,
     mut arms: Vec<Value>,
-    kont: &mut Vec<Frame>,
+    kont: &mut Kont,
 ) -> Result<State, EvalError> {
     while !arms.is_empty() {
         let arm = unwrap_match_arm(&arms.remove(0));
