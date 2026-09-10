@@ -1,0 +1,255 @@
+//! Function signatures: what a call site must supply, for declarations and
+//! builtins alike, with template variables instantiated afresh per call.
+
+use crate::declarations::Declarations;
+use slc_core::types::{Base, Type};
+use slc_core::typing::Unification;
+use slc_syntax::ast::{Decl, Program, TypeExpr};
+use std::collections::HashMap;
+
+#[derive(Debug)]
+pub struct FunctionSignature {
+    pub params: Vec<Type>,
+    /// Which declared parameters are continuations, positionally. This is the
+    /// declaration's continuation row.
+    pub continuations: Vec<bool>,
+    pub result: Option<Type>,
+}
+
+pub(crate) fn is_builtin(name: &str) -> bool {
+    builtin_functions().iter().any(|builtin| builtin.name == name)
+}
+
+/// The standard library.
+///
+/// A builtin whose outcome is a single value is an ordinary function. A
+/// builtin whose outcome is not — it can fail, or find nothing — takes
+/// continuations instead and denotes a command: the value arguments come
+/// first, then one continuation per outcome, and exactly one is activated.
+/// `continuations` marks which parameters are the continuation row.
+struct Builtin {
+    name: &'static str,
+    params: Vec<Type>,
+    continuations: Vec<bool>,
+    result: Option<Type>,
+}
+
+fn builtin_functions() -> Vec<Builtin> {
+    use Base::*;
+    let i64 = Type::Pos(I64);
+    let string = Type::Pos(Str);
+    let bool_ = Type::Pos(Bool);
+    let char_ = Type::Pos(Char);
+    // Template variables: instantiated afresh at every call, so `same`
+    // relates two slots of one call and promises nothing across calls.
+    let same = Type::Var(0);
+    let element = Type::Var(0);
+    let key = Type::Var(1);
+    let value = Type::Var(2);
+
+    // An ordinary function: every parameter is a value.
+    let function = |name, params: Vec<Type>, result| Builtin {
+        name,
+        continuations: vec![false; params.len()],
+        params,
+        result,
+    };
+    // A command: `values` first, then a continuation per outcome.
+    let offers = |name, values: Vec<Type>, outcomes: Vec<Type>| {
+        let mut continuations = vec![false; values.len()];
+        continuations.extend(std::iter::repeat_n(true, outcomes.len()));
+        let mut params = values;
+        params.extend(outcomes);
+        Builtin { name, params, continuations, result: Some(Type::Bottom) }
+    };
+
+    vec![
+        function("println", vec![], Some(Type::One)),
+        function("print", vec![], Some(Type::One)),
+        function("add", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("sub", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("div", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("rem", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("eq", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("ne", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("lt", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("gt", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("le", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("ge", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        function("str_len", vec![string.clone()], Some(i64.clone())),
+        function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
+        function("int_to_str", vec![i64.clone()], Some(string.clone())),
+        function("str_eq", vec![string.clone(), string.clone()], Some(bool_.clone())),
+        function("is_digit", vec![char_.clone()], Some(bool_.clone())),
+        function("is_ws", vec![char_.clone()], Some(bool_.clone())),
+        function("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
+        function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
+        function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
+        function("file_exists", vec![string.clone()], Some(bool_.clone())),
+        function("list_new", vec![], Some(Type::List(Box::new(element.clone())))),
+        function("list_len", vec![Type::List(Box::new(element.clone()))], Some(i64.clone())),
+        function(
+            "list_push",
+            vec![Type::List(Box::new(element.clone())), element.clone()],
+            Some(Type::List(Box::new(element.clone()))),
+        ),
+        // Parsing, input/output, and lookup can fail or find nothing, so they
+        // offer their outcomes to continuations.
+        offers(
+            "parse_int",
+            vec![string.clone()],
+            vec![Type::Neg(I64), Type::Neg(Str), Type::Neg(Str)],
+        ),
+        offers("read_file", vec![string.clone()], vec![Type::Neg(Str), Type::Neg(Str)]),
+        // A file handle: opened to one continuation, read line by line, and
+        // spent by `close_file`.
+        offers("open_file", vec![string.clone()], vec![Type::Neg(File), Type::Neg(Str)]),
+        offers("read_line", vec![Type::Pos(File)], vec![Type::Neg(Str), Type::Neg(Unit)]),
+        function("close_file", vec![Type::Pos(File)], Some(Type::One)),
+        offers(
+            "write_file",
+            vec![string.clone(), string.clone()],
+            vec![Type::Neg(Unit), Type::Neg(Str)],
+        ),
+        offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
+        offers(
+            "list_get",
+            vec![Type::List(Box::new(element.clone())), i64.clone()],
+            vec![Type::Dual(Box::new(element.clone())), Type::Neg(Str)],
+        ),
+        offers(
+            "map_get",
+            vec![Type::Var(3), key],
+            vec![Type::Dual(Box::new(value)), Type::Neg(Str)],
+        ),
+        offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
+    ]
+}
+
+/// A written type as a signature sees it: declaration names resolved, and a
+/// generic name a template variable, instantiated afresh at every call. A
+/// type that resolves to nothing gets its own template variable — unknown to
+/// the caller, but one thing, not anything.
+fn signature_type(
+    ty: Option<&TypeExpr>,
+    generics: &[String],
+    enums: &Declarations,
+    next_template: &mut usize,
+) -> Type {
+    let generic = |written: &TypeExpr| match written {
+        TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) => match &inner.kind {
+            TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
+            _ => None,
+        },
+        _ => None,
+    };
+    ty.and_then(|ty| generic(ty).or_else(|| enums.resolve(ty))).unwrap_or_else(|| {
+        let v = Type::Var(generics.len() + *next_template);
+        *next_template += 1;
+        v
+    })
+}
+
+pub(crate) fn function_types(
+    p: &Program,
+    enums: &Declarations,
+) -> HashMap<String, FunctionSignature> {
+    let mut out = builtin_functions()
+        .into_iter()
+        .map(|builtin| {
+            (
+                builtin.name.to_string(),
+                FunctionSignature {
+                    params: builtin.params,
+                    continuations: builtin.continuations,
+                    result: builtin.result,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    for d in &p.decls {
+        match &d.kind {
+            Decl::Fn { name, params, return_type, polarity, type_params, .. } => {
+                let mut next_template = 0;
+                let resolved: Vec<Type> = params
+                    .iter()
+                    .map(|p| signature_type(p.ty.as_ref(), type_params, enums, &mut next_template))
+                    .collect();
+                // A negative function produces the *consumer* of the type
+                // written after `<-`.
+                let result =
+                    signature_type(return_type.as_ref(), type_params, enums, &mut next_template);
+                let result = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
+                    result.dual()
+                } else {
+                    result
+                };
+                out.insert(
+                    name.clone(),
+                    FunctionSignature {
+                        params: resolved,
+                        continuations: params.iter().map(|p| p.is_continuation).collect(),
+                        result: Some(result),
+                    },
+                );
+            }
+            Decl::Command { name, value_params, continuation_params, .. } => {
+                let mut next_template = 0;
+                let declared: Vec<_> =
+                    value_params.iter().chain(continuation_params.iter()).collect();
+                let params = declared
+                    .iter()
+                    .map(|p| signature_type(p.ty.as_ref(), &[], enums, &mut next_template))
+                    .collect();
+                let continuations = declared.iter().map(|p| p.is_continuation).collect();
+                out.insert(
+                    name.clone(),
+                    FunctionSignature { params, continuations, result: Some(Type::Bottom) },
+                );
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A signature's template variables are instantiated afresh at each call:
+/// one template maps to one fresh variable within the call, and calls never
+/// share them.
+pub(crate) fn instantiate(
+    signature: &FunctionSignature,
+    uni: &mut Unification,
+) -> FunctionSignature {
+    let mut seen: HashMap<usize, Type> = HashMap::new();
+    FunctionSignature {
+        params: signature.params.iter().map(|ty| freshen(ty, &mut seen, uni)).collect(),
+        continuations: signature.continuations.clone(),
+        result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
+    }
+}
+
+fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) -> Type {
+    match ty {
+        Type::Var(v) => seen.entry(*v).or_insert_with(|| uni.fresh_var()).clone(),
+        Type::Tensor(a, b) => {
+            Type::Tensor(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Par(a, b) => {
+            Type::Par(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::With(a, b) => {
+            Type::With(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Sum(a, b) => {
+            Type::Sum(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
+        }
+        Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
+        Type::Bang(t) => Type::Bang(Box::new(freshen(t, seen, uni))),
+        Type::List(t) => Type::List(Box::new(freshen(t, seen, uni))),
+        Type::Down(t) => Type::Down(Box::new(freshen(t, seen, uni))),
+        Type::Up(t) => Type::Up(Box::new(freshen(t, seen, uni))),
+        atom => atom.clone(),
+    }
+}
