@@ -88,6 +88,24 @@ it is remembered.
   a value, so passing one runs nothing and the value restriction is
   untouched; coherence makes the checker's chosen impl the one that runs.
 
+  *Continuations and linearity.* A method may be negative — a `command` or a
+  `fn … <- …` that takes continuations — with no new machinery: a dictionary
+  holds method *values*, and a negative function is a closure like any other,
+  so a `Parse`- or `Emit`-style trait whose methods talk to continuations
+  just works. The one real constraint is linearity. A bounded generic may
+  call a method any number of times or none, so a dictionary must be
+  duplicable: it is an **exponential**, `!Show<T>` — the linear-logic reading
+  of a type class — and rides the value group as an unrestricted parameter
+  (`Type::Bang`, and the checker's `is_unrestricted`, both already exist). A
+  method's *continuation arguments* stay linear per call; the dictionary that
+  supplies the method does not. And because impls are resolved globally and
+  coherently, the dictionary a captured continuation closes over is fixed:
+  reinstating that continuation re-uses the same impl, so there is none of the
+  dynamic-scope hazard that implicit or dynamically-scoped instances would
+  carry across a jump. Bounds are on positive type variables only in v1;
+  bounding a negative variable — a trait describing what a *provider* of
+  codata must offer — is the dual and is deferred with the rest.
+
   *Staging.* (1) syntax + AST; (2) impl table + coherence; (3) constraints in
   inference with ground resolution; (4) elaboration to dictionary structs,
   params, and projections; (5) generic impls, resolved recursively; (6)
