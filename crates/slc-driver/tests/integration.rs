@@ -133,9 +133,9 @@ fn checker_diagnostics_include_source_locations() {
             ["polarity:", "1:1", "`command`"],
         ),
         (
-            "slc_test_location_linearity.sl",
+            "slc_test_location_bottom.sl",
             "command bad(x: +i32) | (k: -i32) { x }",
-            ["linearity:", "1:34", "`{ x }`"],
+            ["type:", "1:34", "`{ x }`"],
         ),
     ];
 
@@ -169,12 +169,14 @@ fn earlier_diagnostic_phases_take_precedence_over_later_phases() {
 }
 
 #[test]
-fn linearity_error() {
-    let dir = std::env::temp_dir().join("slc_test_lin.sl");
+fn a_command_body_must_reach_a_continuation() {
+    // A command whose body is a bare value reaches no continuation: its body
+    // is not `⊥`, so it is rejected by the type checker.
+    let dir = std::env::temp_dir().join("slc_test_bottom.sl");
     std::fs::write(&dir, "command bad(x: +i32) | (k: -i32) { x }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
-    assert!(stderr.contains("linearity"));
+    assert!(stderr.contains("must reach a continuation"), "stderr: {stderr}");
 }
 
 #[test]

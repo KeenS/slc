@@ -30,8 +30,9 @@ returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
    denote continuations/refutations.
 4. **Explicit control** — a continuation is activated by a cut, `v @ k`,
    which is a command and not a call.
-5. **Linear continuations** — continuation ports must be consumed exactly once
-   on every terminating path.
+5. **Total control** — every terminating path reaches a continuation: a
+   `command` body must be `⊥`. The core is classical, so *which* continuation
+   (and how many times) is up to the program.
 
 ## 2. Core model
 
@@ -170,28 +171,24 @@ compared **positionally and invariantly**:
   positions are different rows.
 - There is no depth subtyping: a position accepts exactly its declared type.
 
-The reason is linearity. Every continuation in a row is consumed exactly once
-on every terminating path, so a row of a different width or order describes a
-different linear behavior — not a compatible one.
+The reason is the calling convention, not linearity. A row is a fixed
+positional interface: a caller supplies exactly one continuation per position,
+of exactly the declared type, so a wider, narrower, or reordered row is a
+different interface — not a compatible one.
 
-What that obligation checks is that a continuation is not **dropped**. It does
-not count occurrences: a cut does not return, so of several mentions of the
-same continuation at most one can actually run, and the others are
-unreachable. A parser may therefore forward its error consumer to a sub-parser
-and also cut against it in the continuation that follows — exactly one of the
-two runs.
+The core is **classical**, so continuations are not linear. A row position may
+go unused — a `command` that reaches one continuation and ignores the rest is
+well-formed — and a continuation may be mentioned several times, since a cut
+does not return, so at most one actually runs (a parser can forward its error
+consumer to a sub-parser *and* cut against it in the continuation that
+follows). Data is unrestricted too: values are freely copied and dropped.
 
-Linearity is **selective**, keyed on the written type: a **continuation** (any
-negative type) and an **anonymous multiplicative product** (a type written
-with `⊗`) are linear — a continuation consumed on every path, a `⊗` value used
-exactly once. Everything else is **unrestricted** (freely copied and dropped):
-base scalars, and — because the checker reads the written type and a named
-type is just a base name — a `struct` or `enum` referred to by its name. So a
-value used twice is an error only when its type is written `⊗`, not for named
-data; the weight of the discipline is on continuations, which is where control
-would otherwise silently vanish. A call supplies each row position a
-continuation of exactly the declared type, and supplying more arguments than
-the declaration has parameters is rejected.
+What *is* enforced is that control is **total**: a `command` body must be `⊥`
+— it reaches a continuation on every path — so a body that falls off the end
+(a bare value) or dangles (an `if` with no `else`, whose false path yields
+unit) is rejected by the type checker, not by any linearity pass. A call
+supplies each row position a continuation of exactly the declared type, and
+supplying more arguments than the declaration has parameters is rejected.
 
 An argument whose type the checker cannot determine — an unannotated `let`
 binding, for instance — is not rejected; a row mismatch is reported only for
@@ -704,9 +701,9 @@ command main | (exit: -i32) {
 }
 ```
 
-Because a `command` must consume its continuation, **every terminating path of a
-program leaves through `exit`** — a `main` that falls off the end is rejected
-by the linearity check, not by a runtime convention.
+Because a `command` body must be `⊥`, **every terminating path of a program
+leaves through `exit`** — a `main` that falls off the end is rejected by the
+type checker, not by a runtime convention.
 
 There is no final-result value. A program's output is exactly what it prints;
 its status is what it sends to `exit`. A `fn main`, a `main` with value
@@ -757,11 +754,11 @@ which spends a handle so a later read through it fails; and the
 
 A handle is a value of its own base type, `+File`, produced only by
 `open_file` — so nothing else closes a file or reads a line. Closing on every
-terminating path is not yet enforced by the linearity checker; today an
+terminating path is not checked; today an
 unclosed handle merely leaks until the program ends, and a read after
 `close_file` is a runtime error.
 
-Until the checker watches it, the program can make the leak impossible by
+Until a resource check watches it, the program can make the leak impossible by
 construction: compose the close onto the only door out, by shadowing `exit`
 where the handle comes into scope.
 
@@ -822,7 +819,6 @@ Compiler failures are categorized by the phase that produces them:
 | `parse`          | the source is not a valid surface program                                            |
 | `type`           | a term has the wrong type or an inference rule cannot apply                          |
 | `polarity`       | a value or continuation is used with the wrong polarity                              |
-| `linearity`      | a linear variable or continuation is not used exactly once on every terminating path |
 | `exhaustiveness` | a `match` or `select` does not cover its alternatives exactly once                   |
 | `lowering`       | an otherwise accepted surface construct cannot be translated to the core calculus    |
 
@@ -831,13 +827,12 @@ The compiler applies these phases in order:
 1. `parse`
 2. `type`
 3. `polarity`
-4. `linearity`
-5. `exhaustiveness`
-6. `lowering`
+4. `exhaustiveness`
+5. `lowering`
 
 A phase stops before later phases once it reports a diagnostic. Consequently,
 `parse` diagnostics take precedence over all checker diagnostics; `type`
-diagnostics take precedence over polarity, linearity, and exhaustiveness; and
+diagnostics take precedence over polarity and exhaustiveness; and
 so on. Within one phase, diagnostics are source-ordered. Checker diagnostics
 include `line:column` positions and source excerpts.
 

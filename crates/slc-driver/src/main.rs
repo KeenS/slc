@@ -75,7 +75,7 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    // Type, polarity, linearity, and exhaustiveness checking. Checking also
+    // Type, polarity, and exhaustiveness checking. Checking also
     // resolves each monomorphic trait-method call to its impl, for static
     // dispatch in lowering.
     let resolved =
@@ -90,13 +90,6 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         diags
             .iter()
             .map(|d| format!("polarity: {} (at {})", d.message, format_span(&source, d.span)))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
-    slc_check::linearity::check_linearity(&program).map_err(|diags| {
-        diags
-            .iter()
-            .map(|d| format!("linearity: {} (at {})", d.message, format_span(&source, d.span)))
             .collect::<Vec<_>>()
             .join("\n")
     })?;

@@ -1,4 +1,4 @@
-//! The surface checkers: types, polarity, linearity, exhaustiveness, and
+//! The surface checkers: types, polarity, exhaustiveness, and
 //! declaration inference, all reporting the same kind of diagnostic.
 
 mod declarations;
@@ -7,7 +7,6 @@ mod env;
 pub mod exhaustive;
 pub mod expr;
 pub mod inference;
-pub mod linearity;
 pub mod polarity;
 mod signatures;
 

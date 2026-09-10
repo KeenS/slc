@@ -90,11 +90,11 @@ fn repository_example_suite_has_expected_results() {
         ),
         ("lambda.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
-            "linearity_error.sl",
+            "command_falls_through.sl",
             Expected {
                 success: false,
                 stdout: &[],
-                stderr: &["linearity:", "continuation `k` is never used"],
+                stderr: &["type:", "must reach a continuation"],
             },
         ),
         ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),

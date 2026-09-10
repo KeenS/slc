@@ -12,9 +12,10 @@ command bad_value(x: -i32) | (k: -i32) {
 }
 
 // ...and a value cannot be a continuation parameter: control cannot leave
-// through something that is not a consumer.
-command bad_continuation | (j: +i32) {
-    0
+// through something that is not a consumer. (`k` gives the body a real
+// continuation to reach, so the error left is the one about `j`.)
+command bad_continuation | (j: +i32, k: -i32) {
+    0 @ k
 }
 
 command main | (exit: -i32) {

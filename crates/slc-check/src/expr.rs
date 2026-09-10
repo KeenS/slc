@@ -318,7 +318,25 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     env.define(&p.name, ty);
                 }
             }
-            check_expr(body, enums, env, diags);
+            let body_type = check_expr(body, enums, env, diags);
+            // A `command` consumes: every terminating path must reach a
+            // continuation, so the body is `⊥`. A body that produces a value
+            // (a bare value, or an `if` that falls through with no `else`)
+            // does not, and is rejected. Which continuation, or how many, is
+            // not constrained — the core is classical. A body whose type the
+            // checker cannot pin down is left alone.
+            if let Some(actual) = body_type {
+                let actual = env.uni.apply(&actual);
+                if actual != Type::Bottom && !matches!(actual, Type::Var(_)) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "a `command` body must reach a continuation on every path (type `⊥`); \
+                             this one has type {actual}"
+                        ),
+                        span: body.span,
+                    });
+                }
+            }
             env.bounds = outer_bounds;
             env.pop();
         }
@@ -609,11 +627,11 @@ fn is_comparable(ty: &Type) -> bool {
 
 /// A declaration's continuation row is positional and invariant: the
 /// continuation supplied for a row position must have exactly the declared
-/// type, and no position may be added, dropped, or reordered. Each
-/// continuation is consumed exactly once, so a row that differs in width or
-/// order is a different linear behavior, not a compatible one. Value
-/// arguments are checked against their declared types the same way —
-/// builtins excepted, whose arguments the builtin table already checks.
+/// type, and no position may be added, dropped, or reordered. A row is a
+/// fixed calling interface, so one that differs in width or order is a
+/// different interface, not a compatible one. Value arguments are checked
+/// against their declared types the same way — builtins excepted, whose
+/// arguments the builtin table already checks.
 fn check_call_arguments(
     name: &str,
     signature: &FunctionSignature,
@@ -1138,7 +1156,10 @@ fn check_expr_unapplied(
             }
             let then_ty = check_expr(then, enums, env, diags);
             let Some(otherwise) = otherwise else {
-                return then_ty;
+                // No `else`: the then-branch's value is discarded and the
+                // false path yields unit, so the `if` is a unit statement —
+                // never `⊥`, even when the then-branch ends in a cut.
+                return Some(Type::One);
             };
             let else_ty = check_expr(otherwise, enums, env, diags);
             // A branch that ends in a cut never returns, so it constrains
@@ -1642,6 +1663,27 @@ mod tests {
         let prog = parse(toks).unwrap();
         let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
         check_program(&prog, &traits)
+    }
+
+    #[test]
+    fn a_command_body_must_be_bottom() {
+        // A bare value reaches no continuation.
+        let diags = check("command bad(x: +i32) | (k: -i32) { x }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
+        // An `if` with no `else` falls through on the false path.
+        let diags =
+            check("command bad(x: +i32) | (k: -i32) { if eq(x, 0) { x @ k } }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_command_may_leave_a_continuation_unused() {
+        // The core is classical: reaching one continuation is enough, so a
+        // declared continuation the body never triggers is not an error.
+        assert!(
+            check("command f(x: +i32) | (ok: -i32, err: -i32) { x @ ok }").is_ok(),
+            "dropping a continuation should be allowed"
+        );
     }
 
     #[test]
