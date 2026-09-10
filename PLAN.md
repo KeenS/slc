@@ -77,12 +77,11 @@ and where the two disagree, `DESIGN.md` is right.
 - An integer literal takes the integer type its port requires, `()` is the
   unit value, and a call with no arguments applies its callee to a marker that
   carries none — so `f()` and `f(())` are no longer the same thing.
-- The entry point is `mu main(exit: -i32)`: a program is a command, its
+- The entry point is `command main | (exit: -i32)`: a program is a command, its
   status is the value it cuts against `exit`, and linearity makes every
   terminating path leave through it. There is no final-result value; output is
   what the program prints.
-- A declaration that takes both values and continuations is a `command`, and the
-  standard library follows the same rule: `parse_int`, `read_file`,
+- The standard library follows the declaration rule: `parse_int`, `read_file`,
   `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
   continuation per outcome and activate exactly one. Operator failures (`s[i]`,
   division by zero) stay fatal.
@@ -90,9 +89,7 @@ and where the two disagree, `DESIGN.md` is right.
   other without cancelling, and the same glyphs are the (erased) expression
   coercions. Data positions, the left of `@`, and `select`'s type are
   positive, so a consumer travels only in a box — which is what makes `¬¬A`
-  the distinct type `↓↑A` and rejects `dne(42)`. Ordinary value arguments are
-  checked against their declared parameter types, which they previously were
-  not at all.
+  the distinct type `↓↑A` and rejects `dne(42)`.
 - Outcomes are a continuation row, not an `enum` sent to one continuation: a
   consumer of `A ⊕ B` is a consumer of `A` together with a consumer of `B`, so
   the enum wraps what the row already says — and the row additionally says
@@ -111,6 +108,12 @@ and where the two disagree, `DESIGN.md` is right.
   pattern covers the type, so a single-shape type needs no `_`.
 - Surface AST spans are source byte offsets, so a diagnostic quotes the text it
   is about.
+- The expression checker runs on the core's unifier: an unannotated binder,
+  a closure's parameter, a generic instantiated at its call, a builtin's
+  element type are variables solved by use, and nothing fits everything —
+  `1` is the unit type and only that. A body is checked against what its
+  declaration promises, a call's arguments against what it declares, and a
+  type parameter is rigid inside its own body.
 - A type is written where nothing else says it. A declaration's parameters
   always carry one; inside a declaration, a lambda's parameter and result, a
   local `mu`'s name and parameter types, and a `select`'s type may be left out
@@ -121,15 +124,11 @@ and where the two disagree, `DESIGN.md` is right.
 
 ## Known limits
 
-- **Soundness is enforced by inference, argued informally.** The checker
-  runs on unification: everything it cannot read off an annotation is a
-  variable solved by use — an unannotated binder, a closure's parameter, a
-  generic instantiated afresh at each call, a list's element type — and
-  nothing fits everything (`1` is the unit type and only that). What remains
-  short of a proof: there is no mechanized subject-reduction argument tying
-  the checker to the reduction rules, comparing two values nothing else
-  constrains stays unchecked, type variables carry no polarity kind, and the
-  untyped evaluator remains the backstop for whatever that gap hides.
+- **Soundness is enforced by inference, argued informally.** What remains
+  short of a proof: no mechanized subject-reduction argument ties the checker
+  to the reduction rules, comparing two values nothing else constrains stays
+  unchecked, type variables carry no polarity kind, and the untyped evaluator
+  remains the backstop for whatever that gap hides.
 
 - **Captured continuations escape rather than resume.** The evaluator unwinds
   to the `mu` that captured a continuation, so one used after its `mu` has
@@ -190,4 +189,27 @@ example suite.
 
 ## Next
 
-Nothing is outstanding. New work goes here as it is planned.
+- **Drop the top-level `EXIT`.** `main` receives `exit`, so a global consumer
+  is a second spelling of the same continuation — and one that lets any
+  helper end the program without being handed the right to. Ending the
+  program should reach a helper the way everything else does: as a
+  continuation parameter. Touches the checker's constant table, the runtime's
+  `EXIT` dispatch, the helpers in `classical.sl` and scratch idioms built on
+  `1 @ EXIT`, and DESIGN §9.
+- **Shifts do not shorten `two_styles.sl` — investigated, resolved as no.**
+  The continuation-first half nests because nothing returns, which is a fact
+  about control, not about how consumers travel; `↓`/`↑` only box a consumer
+  as data. What flattens the pipeline is the `mu` capture, and the example
+  keeps the nesting deliberately, to show what the style costs. No change.
+- **`open_file` and `close_file`.** Builtin commands over a file handle, so
+  reading stops being whole-file-or-nothing: `open_file(path)` offers the
+  handle to one continuation and a message to the other; `read_line(handle)`
+  or similar reads through it; `close_file(handle)` consumes it. A handle is
+  a positive value that should be closed on every terminating path — the
+  first resource whose lifetime the linearity checker can watch. Rewrite
+  `examples/file_io.sl` around them.
+- **Rust-style namespaces.** `mod` blocks, `use`, and `::` paths beyond enum
+  variants — `Color::Red` is already path-shaped. A module system decides
+  what a bare name means, so it touches every lookup the checker keeps
+  (declarations, functions, constants), the lowering's name scheme, and how
+  builtins are addressed (`std::io::read_file` against today's flat names).
