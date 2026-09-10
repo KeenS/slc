@@ -96,14 +96,19 @@ machine the redesign already built.
   stable. `Value`'s code-bearing variants carry IR and dropped their binder
   names.
 
+  **Static dispatch — monomorphic calls done.** The checker resolves each
+  trait-method call whose receiver type is concrete to its impl
+  (`check_program_resolving` returns a span→impl map), and lowering turns
+  that call into a direct call to the impl — no runtime `type_key` lookup.
+  A call whose receiver is a rigid `<T: Trait>` parameter stays dynamic
+  (the `Value::Method` path).
+
   Remaining:
-  - **Static dictionary passing for traits** — resolve a trait-method call
-    to its impl at compile time (zero-cost dispatch, retiring the runtime
-    `type_key` lookup in `Value::Method`). This needs type information at
-    compile time, so it is the checker→lowering handoff, not the
-    type-unaware runtime compiler: the checker knows each call's receiver
-    type (or its `<T: Trait>` dictionary parameter) and must thread that
-    through. The largest remaining piece, and the most invasive.
+  - **Dictionary passing for the polymorphic case** — so a bounded function
+    `fn f<T: Trait>(…)` receives its trait dictionary as a hidden argument
+    and dispatches statically inside too, retiring `Value::Method` entirely.
+    Larger: it adds dictionary parameters in lowering and threads them from
+    every call site.
   - **Linearize the IR to a flat instruction stream** (`Op::Local(u16)`,
     `Op::CallDict`, `Op::Prompt`, …) run by an explicit instruction pointer
     instead of the tree-walk. Mostly mechanical on top of the closed IR; the

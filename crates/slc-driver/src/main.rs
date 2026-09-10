@@ -75,14 +75,17 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    // Type, polarity, linearity, and exhaustiveness checking
-    slc_check::expr::check_program(&program, &traits).map_err(|diags| {
-        diags
-            .iter()
-            .map(|d| format!("type: {} (at {})", d.message, format_span(&source, d.span)))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    // Type, polarity, linearity, and exhaustiveness checking. Checking also
+    // resolves each monomorphic trait-method call to its impl, for static
+    // dispatch in lowering.
+    let resolved =
+        slc_check::expr::check_program_resolving(&program, &traits).map_err(|diags| {
+            diags
+                .iter()
+                .map(|d| format!("type: {} (at {})", d.message, format_span(&source, d.span)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
     slc_check::polarity::check_program(&program).map_err(|diags| {
         diags
             .iter()
@@ -113,7 +116,8 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    let defs = slc_syntax::lower::lower_program(&program).map_err(|e| format!("lowering: {e}"))?;
+    let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
+        .map_err(|e| format!("lowering: {e}"))?;
     drop(_compile_guard);
     drop(compile_span);
 

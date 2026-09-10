@@ -20,6 +20,16 @@ use std::collections::HashMap;
 pub use crate::Diagnostic;
 
 pub fn check_program(p: &Program, traits: &TraitInfo) -> Result<(), Vec<Diagnostic>> {
+    check_program_resolving(p, traits).map(|_| ())
+}
+
+/// Type-check the program and, on success, return the static-dispatch map:
+/// each trait-method call whose receiver type was concrete, keyed by span
+/// and resolved to its impl. Lowering uses it to call impls directly.
+pub fn check_program_resolving(
+    p: &Program,
+    traits: &TraitInfo,
+) -> Result<std::collections::HashMap<Span, String>, Vec<Diagnostic>> {
     let constants = constant_types(p);
     let enums = enum_types(p);
     let functions = function_types(p, &enums);
@@ -28,7 +38,7 @@ pub fn check_program(p: &Program, traits: &TraitInfo) -> Result<(), Vec<Diagnost
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
-    if diags.is_empty() { Ok(()) } else { Err(diags) }
+    if diags.is_empty() { Ok(std::mem::take(&mut env.resolved)) } else { Err(diags) }
 }
 
 /// The type key a resolved type dispatches on — matching the runtime's key
@@ -114,6 +124,15 @@ fn check_trait_method_call(
     // Discharge `Self: Trait` against what the first argument fixed it to.
     let target = env.uni.apply(&self_ty);
     discharge_bound(&trait_name, &target, method, span, env, diags);
+    // If the receiver type is concrete here, the impl is known: record it so
+    // lowering can dispatch this call directly, with no runtime type-key
+    // lookup. A still-unsolved or rigid `Self` stays a dynamic dispatch.
+    if let Some(key) = type_key(&target)
+        && let Some(mangled) = env.traits.method_impls.get(method).and_then(|m| m.get(&key))
+    {
+        let mangled = mangled.clone();
+        env.resolved.insert(span, mangled);
+    }
     // A command method returns bottom; a fn method returns its (Self-subst)
     // result type.
     if sig.is_command {
@@ -2155,6 +2174,38 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_monomorphic_method_call_resolves_for_static_dispatch() {
+        // `show(1)` has a concrete receiver, so it resolves to the i64 impl;
+        // `show(x)` under `<T: Show>` stays dynamic (the map does not name it).
+        let resolve = |s: &str| {
+            let toks = lex(s).unwrap();
+            let prog = parse(toks).unwrap();
+            let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
+            check_program_resolving(&prog, &traits).expect("checks")
+        };
+        let resolved = resolve(
+            "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+             command main | (exit: -i32) { println(show(1)); 0 @ exit }",
+        );
+        assert_eq!(resolved.len(), 1, "one monomorphic call should resolve: {resolved:?}");
+        assert!(
+            resolved.values().any(|mangled| mangled.contains("show")),
+            "resolves to the show impl: {resolved:?}"
+        );
+
+        let polymorphic = resolve(
+            "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+             fn label<T: Show>(x: +T) -> String { show(x) }
+             command main | (exit: -i32) { println(label(1)); 0 @ exit }",
+        );
+        // `show(x)` inside `label` is polymorphic — unresolved; only the
+        // nothing-to-dispatch `label(1)` call (not a trait method) remains.
+        assert!(polymorphic.is_empty(), "a polymorphic method call stays dynamic: {polymorphic:?}");
     }
 
     #[test]

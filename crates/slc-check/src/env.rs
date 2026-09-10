@@ -36,6 +36,11 @@ pub(crate) struct Env<'a> {
     /// Bounds in scope: a rigid type-variable index with the trait it is
     /// known to satisfy, from the enclosing declaration's `<T: Trait>`.
     pub(crate) bounds: Vec<(usize, String)>,
+    /// Trait-method calls whose receiver type was concrete at the call site,
+    /// keyed by the call's span and resolved to the mangled impl function.
+    /// Lowering reads this to dispatch statically — a direct call to the
+    /// impl — instead of through the runtime type-key lookup.
+    pub(crate) resolved: std::collections::HashMap<slc_syntax::token::Span, String>,
 }
 
 impl<'a> Env<'a> {
@@ -52,6 +57,7 @@ impl<'a> Env<'a> {
             consumed: None,
             traits,
             bounds: Vec::new(),
+            resolved: std::collections::HashMap::new(),
         }
     }
 

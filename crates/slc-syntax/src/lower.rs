@@ -14,12 +14,34 @@ thread_local! {
     /// Variant name → fully qualified label, for every declared enum. An
     /// unqualified variant name is recorded only when it is unambiguous.
     static VARIANTS: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    /// Call span → mangled impl, for trait-method calls the checker resolved
+    /// to a concrete impl. A call recorded here lowers to a direct call to
+    /// that impl — static dispatch — rather than through the method value.
+    static DISPATCH: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
 }
 
 /// The fully qualified label a variant path or unambiguous variant name
 /// denotes, if it names a declared enum variant.
 fn lookup_variant(name: &str) -> Option<String> {
     VARIANTS.with(|cell| cell.borrow().get(name).cloned().flatten())
+}
+
+/// The impl a trait-method call at `span` was resolved to, if the checker
+/// found the receiver type concrete there.
+fn static_dispatch(span: Span) -> Option<String> {
+    DISPATCH.with(|cell| cell.borrow().get(&span).cloned())
+}
+
+/// Lower a program with the checker's static-dispatch map in force, so that
+/// resolved trait-method calls become direct calls to their impls.
+pub fn lower_program_resolving(
+    p: &Program,
+    resolved: &HashMap<Span, String>,
+) -> Result<Vec<(String, Term)>, LowerError> {
+    DISPATCH.with(|cell| *cell.borrow_mut() = resolved.clone());
+    let result = lower_program(p);
+    DISPATCH.with(|cell| cell.borrow_mut().clear());
+    result
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +147,15 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // f(a, b) lowers to nested single-argument applications:
             //   f(a) applied to (b)
             // Multi-arg functions are curried: fn f(x, y) → λx. λy. body.
-            let mut result = lower_expr(callee, continuations)?;
+            // A trait-method call the checker resolved to a concrete impl is
+            // a direct call to that impl — no runtime dispatch.
+            let mut result = match &callee.kind {
+                Expr::Ident(_) => match static_dispatch(e.span) {
+                    Some(mangled) => Term::Var(mangled),
+                    None => lower_expr(callee, continuations)?,
+                },
+                _ => lower_expr(callee, continuations)?,
+            };
             let args = if args.is_empty() {
                 // A call with no arguments still applies its callee, to the
                 // marker that carries none.
