@@ -85,10 +85,10 @@ machine the redesign already built.
   likewise a cons — O(1) to clone per step — and variable access is a de
   Bruijn index into its positional chain, no `HashMap` walk (see Stage 3).
 
-  *Stage 3 — compile the core to a closed IR. **Core done; two follow-ons
-  remain.*** The machine no longer walks the named core: a compile pass
+  *Stage 3 — compile the core to a closed IR. **Done.*** The machine no
+  longer walks the named core: a compile pass
   (`slc-runtime/src/compile.rs`) resolves every lexical binder once to a de
-  Bruijn index, producing a closed IR (`ir.rs`) the machine runs. Variable
+  Bruijn index, producing a closed IR the machine runs. Variable
   and co-variable references are `Local`/`CoLocal` indices into one
   positional environment (they share it — a co-variable binds to a consumer
   value); globals, literals, and `match` pattern variables stay `Dynamic`
