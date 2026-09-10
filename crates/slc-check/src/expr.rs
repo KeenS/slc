@@ -14,20 +14,134 @@ use slc_core::typing::contains_var;
 use slc_syntax::ast::{Decl, Expr, Named, Node, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
+use slc_syntax::traits::TraitInfo;
 use std::collections::HashMap;
 
 pub use crate::Diagnostic;
 
-pub fn check_program(p: &Program) -> Result<(), Vec<Diagnostic>> {
+pub fn check_program(p: &Program, traits: &TraitInfo) -> Result<(), Vec<Diagnostic>> {
     let constants = constant_types(p);
     let enums = enum_types(p);
     let functions = function_types(p, &enums);
     let mut diags = Vec::new();
-    let mut env = Env::root(&constants, &functions);
+    let mut env = Env::root(&constants, &functions, traits);
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
     if diags.is_empty() { Ok(()) } else { Err(diags) }
+}
+
+/// The type key a resolved type dispatches on — matching the runtime's key
+/// and `slc_syntax::traits::type_key`.
+fn type_key(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
+        Type::Named(n) => Some(n.clone()),
+        Type::List(_) => Some("list".into()),
+        Type::Down(t) | Type::Up(t) | Type::Dual(t) => type_key(t),
+        _ => None,
+    }
+}
+
+/// Check that `target` satisfies `trait_name`: a ground type must have an
+/// impl; a bound rigid variable is covered by the enclosing declaration; an
+/// unsolved variable at a monomorphic call cannot be discharged.
+fn discharge_bound(
+    trait_name: &str,
+    target: &Type,
+    callee: &str,
+    span: Span,
+    env: &Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if let Type::Var(v) = target {
+        if env.bounds.iter().any(|(bv, bt)| bv == v && bt == trait_name) {
+            return;
+        }
+        diags.push(Diagnostic {
+            message: format!(
+                "`{callee}` needs `{trait_name}` for a type parameter, but the caller's type is                  not known to satisfy it"
+            ),
+            span,
+        });
+        return;
+    }
+    match type_key(target) {
+        Some(key) if env.traits.has_impl(trait_name, &key) => {}
+        Some(key) => {
+            diags.push(Diagnostic { message: format!("no `impl {trait_name} for {key}`"), span })
+        }
+        None => diags.push(Diagnostic {
+            message: format!("`{trait_name}` cannot be required of {target}"),
+            span,
+        }),
+    }
+}
+
+/// Type a trait-method call. `Self` becomes a fresh variable unified with the
+/// first argument; the method's declared parameter and result types, with
+/// `Self` substituted, type the rest; the bound is then discharged.
+fn check_trait_method_call(
+    method: &str,
+    args: &[Node<Expr>],
+    span: Span,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let sig = env.traits.method_sig(method)?.clone();
+    let trait_name = env.traits.method_owner.get(method)?.clone();
+    let self_ty = env.uni.fresh_var();
+    let params: Vec<&slc_syntax::ast::Param> =
+        sig.value_params.iter().chain(sig.continuation_params.iter()).collect();
+    for (arg, param) in args.iter().zip(params.iter()) {
+        let Some(expected) =
+            param.ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+        else {
+            check_expr(arg, enums, env, diags);
+            continue;
+        };
+        if let Some(actual) = check_expr(arg, enums, env, diags)
+            && !fits(env, &expected, &actual, &arg.kind)
+        {
+            let expected = env.uni.apply(&expected);
+            diags.push(Diagnostic {
+                message: format!("argument to `{method}` has type {actual}; expected {expected}"),
+                span: arg.span,
+            });
+        }
+    }
+    // Discharge `Self: Trait` against what the first argument fixed it to.
+    let target = env.uni.apply(&self_ty);
+    discharge_bound(&trait_name, &target, method, span, env, diags);
+    // A command method returns bottom; a fn method returns its (Self-subst)
+    // result type.
+    if sig.is_command {
+        return Some(Type::Bottom);
+    }
+    match &sig.return_type {
+        Some(ty) => resolve_with_self(ty, &self_ty, enums).map(|t| env.uni.apply(&t)),
+        None => Some(Type::One),
+    }
+}
+
+/// Resolve a method's written type, mapping `Self` to the call's Self
+/// variable and everything else through the ordinary declaration resolver.
+fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Option<Type> {
+    use slc_syntax::ast::TypeExpr as T;
+    match ty {
+        T::Base(name) if name == "Self" => Some(self_ty.clone()),
+        T::Positive(inner) => resolve_with_self(&inner.kind, self_ty, enums),
+        T::Negative(inner) if !matches!(inner.kind, T::Bottom) => {
+            Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
+        }
+        T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
+        T::Down(inner) => {
+            Some(Type::Down(Box::new(resolve_with_self(&inner.kind, self_ty, enums)?)))
+        }
+        T::Up(inner) => Some(Type::Up(Box::new(resolve_with_self(&inner.kind, self_ty, enums)?))),
+        _ => enums.resolve(ty),
+    }
 }
 
 /// The type a `select`'s arms name, when one of them does: a struct pattern
@@ -73,20 +187,55 @@ fn infer_param_type(
     body.kind.children().into_iter().find_map(|child| infer_param_type(name, child, enums, env))
 }
 
+/// Resolve a declared type, substituting a rigid variable for each type
+/// parameter even under a sign or a shift: `+T` and `↓-T` find `T` too.
+fn resolve_rigid(
+    ty: &TypeExpr,
+    rigid_vars: &HashMap<&str, Type>,
+    enums: &Declarations,
+) -> Option<Type> {
+    use slc_syntax::ast::TypeExpr as T;
+    match ty {
+        T::Base(name) => rigid_vars.get(name.as_str()).cloned().or_else(|| enums.resolve(ty)),
+        T::Positive(inner) => resolve_rigid(&inner.kind, rigid_vars, enums),
+        T::Negative(inner) if !matches!(inner.kind, T::Bottom) => {
+            Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual())
+        }
+        T::Dual(inner) => Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual()),
+        T::Down(inner) => {
+            Some(Type::Down(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
+        }
+        T::Up(inner) => Some(Type::Up(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?))),
+        other => enums.resolve(other),
+    }
+}
+
+/// Put a declaration's bounds in scope for its body, as (rigid-variable
+/// index, trait), and return the previous set to restore afterward.
+fn record_bounds(
+    bounds: &[(String, String)],
+    rigid_vars: &HashMap<&str, Type>,
+    env: &mut Env,
+) -> Vec<(usize, String)> {
+    let outer = env.bounds.clone();
+    for (var, trait_name) in bounds {
+        if let Some(Type::Var(v)) = rigid_vars.get(var.as_str()) {
+            env.bounds.push((*v, trait_name.clone()));
+        }
+    }
+    outer
+}
+
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { name, params, body, polarity, return_type, type_params, .. } => {
+        Decl::Fn { name, params, body, polarity, return_type, type_params, bounds, .. } => {
             env.push();
             // A type parameter is rigid inside the body: `T` is some type the
             // caller chose, not a licence to treat the value as any type.
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
-            let rigid = |ty: &TypeExpr| match ty {
-                TypeExpr::Base(written) => {
-                    rigid_vars.get(written.as_str()).cloned().or_else(|| enums.resolve(ty))
-                }
-                other => enums.resolve(other),
-            };
+            let outer_bounds = record_bounds(bounds, &rigid_vars, env);
+            let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
                 if let Some(ty) = p.ty.as_ref().and_then(&rigid) {
                     env.define(&p.name, ty);
@@ -101,6 +250,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 .flatten();
             let body_type = check_expr(body, enums, env, diags);
             env.consumed = outer;
+            env.bounds = outer_bounds;
             env.pop();
             // The body produces what the declaration promises: the return
             // type for `->`, its consumer for `<-`. A body that ends in a
@@ -121,14 +271,19 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 });
             }
         }
-        Decl::Command { value_params, continuation_params, body, .. } => {
+        Decl::Command { value_params, continuation_params, body, type_params, bounds, .. } => {
             env.push();
+            let rigid_vars: HashMap<&str, Type> =
+                type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
+            let outer_bounds = record_bounds(bounds, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
-                if let Some(ty) = p.ty.as_ref().and_then(|ty| enums.resolve(ty)) {
+                if let Some(ty) = p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums))
+                {
                     env.define(&p.name, ty);
                 }
             }
             check_expr(body, enums, env, diags);
+            env.bounds = outer_bounds;
             env.pop();
         }
         Decl::Const { name, ty, value } => {
@@ -509,6 +664,59 @@ fn check_let_binding(
     annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var())
 }
 
+/// Bind a `match` pattern's variables with their declared types, silently
+/// and best-effort: exhaustiveness and shape are checked elsewhere, so this
+/// only needs to get the types right where it can.
+fn bind_match_pattern(
+    pattern: &slc_syntax::ast::Pattern,
+    scrutinee: &Type,
+    enums: &Declarations,
+    env: &mut Env,
+) {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Ident(name) => {
+            // A bare name that is not a payload-less variant binds the value.
+            if enums.variant(name).is_none() {
+                env.define(name, scrutinee.clone());
+            }
+        }
+        Pattern::Binding { name, pattern } => {
+            env.define(name, scrutinee.clone());
+            bind_match_pattern(pattern, scrutinee, enums, env);
+        }
+        Pattern::Enum { name, variant, fields } => {
+            let written =
+                if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
+            let payload = enums.variant(&written).map(|(_, p)| p.clone()).unwrap_or_default();
+            for (field, ty) in fields.iter().zip(payload.iter()) {
+                bind_match_pattern(field, ty, enums, env);
+            }
+        }
+        Pattern::Struct { name, fields } => {
+            let declared = enums.fields(name).unwrap_or_default();
+            for ((_, field), ty) in fields.iter().zip(declared.iter()) {
+                bind_match_pattern(field, ty, enums, env);
+            }
+        }
+        Pattern::Tuple(items) => {
+            let components = flatten_tensor(scrutinee);
+            for (item, ty) in items.iter().zip(components.iter()) {
+                bind_match_pattern(item, ty, enums, env);
+            }
+        }
+        // A variant with no known payload types, or literals/ranges/wildcards
+        // that bind nothing; an `Or` binds the same names in each branch, so
+        // the first suffices.
+        Pattern::Or(branches) => {
+            if let Some(first) = branches.first() {
+                bind_match_pattern(first, scrutinee, enums, env);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Bind an arm's components and check that its pattern is a shape of the type
 /// the `select` consumes.
 fn bind_select_arm(
@@ -769,11 +977,18 @@ fn check_expr_unapplied(
                 }
                 return Some(Type::Bottom);
             }
+            // A trait method dispatches on its first argument; type it
+            // against the method signature and discharge the bound.
+            if let Expr::Ident(name) = &callee.kind
+                && env.traits.is_method(name)
+            {
+                return check_trait_method_call(name, args, e.span, enums, env, diags);
+            }
             let callee_ty = check_expr(callee, enums, env, diags);
             if let Expr::Ident(name) = &callee.kind
                 && let Some(signature) = env.functions.get(name)
             {
-                let signature = instantiate(signature, &mut env.uni);
+                let (signature, seen) = instantiate(signature, &mut env.uni);
                 if is_builtin(name) {
                     for ((arg, param), is_continuation) in
                         args.iter().zip(signature.params.iter()).zip(&signature.continuations)
@@ -795,6 +1010,14 @@ fn check_expr_unapplied(
                     }
                 }
                 check_call_arguments(name, &signature, args, enums, env, diags);
+                // Discharge each bound against what its type parameter
+                // resolved to, now that the arguments have constrained it.
+                for (param_index, trait_name) in &signature.bounds {
+                    if let Some(var) = seen.get(param_index) {
+                        let target = env.uni.apply(var);
+                        discharge_bound(trait_name, &target, name, e.span, env, diags);
+                    }
+                }
                 return signature.result.map(|ty| env.uni.apply(&ty));
             }
             // A local callee: a closure, or a binder whose type its uses
@@ -1064,6 +1287,12 @@ fn check_expr_unapplied(
                 }
             }
             for arm in arms {
+                env.push();
+                // Bind the arm's pattern variables with their declared types,
+                // so the body sees `h: i64` for `Cons(h, _)`.
+                if let Some(scrutinee_ty) = &scrutinee_ty {
+                    bind_match_pattern(&arm.pattern, scrutinee_ty, enums, env);
+                }
                 if let Some(guard) = &arm.guard {
                     let guard_ty = check_expr(guard, enums, env, diags);
                     if guard_ty != Some(Type::Pos(Base::Bool)) {
@@ -1079,6 +1308,7 @@ fn check_expr_unapplied(
                     }
                 }
                 check_expr(&arm.body, enums, env, diags);
+                env.pop();
             }
             None
         }
@@ -1345,7 +1575,8 @@ mod tests {
     fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
-        check_program(&prog)
+        let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
+        check_program(&prog, &traits)
     }
 
     #[test]
@@ -1846,6 +2077,41 @@ mod tests {
             diags.iter().any(|d| d.message.contains("has type 1")),
             "unit fit everything once: {diags:?}"
         );
+    }
+
+    #[test]
+    fn a_trait_method_dispatches_and_bounds_discharge() {
+        assert!(
+            check(
+                "trait Show { fn show(self: +Self) -> String; }
+                 impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+                 fn label<T: Show>(x: +T) -> String { show(x) }
+                 command main | (exit: -i32) { println(label(1)); 0 @ exit }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_method_with_no_impl_is_rejected() {
+        let diags = check(
+            "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+             command main | (exit: -i32) { println(show(true)); 0 @ exit }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("no `impl Show for bool`")), "{diags:?}");
+    }
+
+    #[test]
+    fn an_unbounded_generic_cannot_call_a_method() {
+        let diags = check(
+            "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+             fn bad<T>(x: +T) -> String { show(x) }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
     }
 
     #[test]

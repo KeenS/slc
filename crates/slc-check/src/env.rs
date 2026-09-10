@@ -6,6 +6,7 @@ use slc_core::types::Type;
 use slc_core::typing::Unification;
 use slc_syntax::ast::{Decl, Program};
 use slc_syntax::lower::lower_type;
+use slc_syntax::traits::TraitInfo;
 use std::collections::HashMap;
 
 /// A local binding: its type, and — for a `let` of a value form — the
@@ -30,14 +31,28 @@ pub(crate) struct Env<'a> {
     /// `<-`. A `select` in its body is the consumer of exactly that, so a
     /// `select` there need not repeat it.
     pub(crate) consumed: Option<Type>,
+    /// The program's traits and impls.
+    pub(crate) traits: &'a TraitInfo,
+    /// Bounds in scope: a rigid type-variable index with the trait it is
+    /// known to satisfy, from the enclosing declaration's `<T: Trait>`.
+    pub(crate) bounds: Vec<(usize, String)>,
 }
 
 impl<'a> Env<'a> {
     pub(crate) fn root(
         constants: &'a HashMap<String, Type>,
         functions: &'a HashMap<String, FunctionSignature>,
+        traits: &'a TraitInfo,
     ) -> Self {
-        Self { constants, functions, locals: Vec::new(), uni: Unification::new(), consumed: None }
+        Self {
+            constants,
+            functions,
+            locals: Vec::new(),
+            uni: Unification::new(),
+            consumed: None,
+            traits,
+            bounds: Vec::new(),
+        }
     }
 
     pub(crate) fn push(&mut self) {

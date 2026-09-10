@@ -4,3 +4,4 @@ pub mod lower;
 pub mod parser;
 pub mod resolve;
 pub mod token;
+pub mod traits;

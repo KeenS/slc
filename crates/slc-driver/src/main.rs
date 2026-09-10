@@ -65,8 +65,18 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
+    // Traits elaborate away: impls become mangled functions, and a registry
+    // records method signatures and per-type impls.
+    let (program, traits) = slc_syntax::traits::elaborate(&program).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| format!("trait: {} (at {})", e.message, format_span(&source, e.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
+
     // Type, polarity, linearity, and exhaustiveness checking
-    slc_check::expr::check_program(&program).map_err(|diags| {
+    slc_check::expr::check_program(&program, &traits).map_err(|diags| {
         diags
             .iter()
             .map(|d| format!("type: {} (at {})", d.message, format_span(&source, d.span)))
@@ -133,6 +143,25 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         let v = slc_runtime::eval::eval(term, &mut env, &mut fuel).map_err(|e| e.to_string())?;
         env.define_global(name, v);
     }
+    // Bind each trait method to a value that dispatches on its first
+    // argument's runtime type. The impl functions are already globals; the
+    // method value points at the right one per type key.
+    for (method, per_type) in &traits.method_impls {
+        let mut impls = std::collections::HashMap::new();
+        for (key, mangled) in per_type {
+            if let Some(closure) = env.lookup(mangled) {
+                impls.insert(key.clone(), closure);
+            }
+        }
+        env.define_global(
+            method,
+            slc_runtime::value::Value::Method {
+                method: method.clone(),
+                impls: std::rc::Rc::new(impls),
+            },
+        );
+    }
+
     // The program's exit continuation is `EXIT`: supplying it to `main` runs
     // the program, and the cut that reaches it is what ends it.
     let mut fuel = 1_000_000;

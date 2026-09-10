@@ -327,6 +327,9 @@ pub enum Decl {
     /// `Trait`. Each method is a `Fn` or `Command` declaration with a body.
     Impl {
         trait_name: String,
+        /// `impl<T: Show>` type parameters and bounds, shared by the methods.
+        type_params: Vec<String>,
+        bounds: Vec<(String, String)>,
         for_type: TypeExpr,
         methods: Vec<Node<Decl>>,
     },

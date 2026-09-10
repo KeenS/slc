@@ -14,6 +14,10 @@ pub struct FunctionSignature {
     /// declaration's continuation row.
     pub continuations: Vec<bool>,
     pub result: Option<Type>,
+    /// Trait bounds, as (type-parameter variable index, trait name): the
+    /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
+    /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
+    pub bounds: Vec<(usize, String)>,
 }
 
 pub(crate) fn is_builtin(name: &str) -> bool {
@@ -165,13 +169,22 @@ pub(crate) fn function_types(
                     params: builtin.params,
                     continuations: builtin.continuations,
                     result: builtin.result,
+                    bounds: Vec::new(),
                 },
             )
         })
         .collect::<HashMap<_, _>>();
+    fn resolve_bounds(type_params: &[String], bounds: &[(String, String)]) -> Vec<(usize, String)> {
+        bounds
+            .iter()
+            .filter_map(|(var, tr)| {
+                type_params.iter().position(|p| p == var).map(|i| (i, tr.clone()))
+            })
+            .collect()
+    }
     for d in &p.decls {
         match &d.kind {
-            Decl::Fn { name, params, return_type, polarity, type_params, .. } => {
+            Decl::Fn { name, params, return_type, polarity, type_params, bounds, .. } => {
                 let mut next_template = 0;
                 let resolved: Vec<Type> = params
                     .iter()
@@ -192,21 +205,29 @@ pub(crate) fn function_types(
                         params: resolved,
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
+                        bounds: resolve_bounds(type_params, bounds),
                     },
                 );
             }
-            Decl::Command { name, value_params, continuation_params, .. } => {
+            Decl::Command {
+                name, value_params, continuation_params, type_params, bounds, ..
+            } => {
                 let mut next_template = 0;
                 let declared: Vec<_> =
                     value_params.iter().chain(continuation_params.iter()).collect();
                 let params = declared
                     .iter()
-                    .map(|p| signature_type(p.ty.as_ref(), &[], enums, &mut next_template))
+                    .map(|p| signature_type(p.ty.as_ref(), type_params, enums, &mut next_template))
                     .collect();
                 let continuations = declared.iter().map(|p| p.is_continuation).collect();
                 out.insert(
                     name.clone(),
-                    FunctionSignature { params, continuations, result: Some(Type::Bottom) },
+                    FunctionSignature {
+                        params,
+                        continuations,
+                        result: Some(Type::Bottom),
+                        bounds: resolve_bounds(type_params, bounds),
+                    },
                 );
             }
             _ => {}
@@ -221,13 +242,15 @@ pub(crate) fn function_types(
 pub(crate) fn instantiate(
     signature: &FunctionSignature,
     uni: &mut Unification,
-) -> FunctionSignature {
+) -> (FunctionSignature, HashMap<usize, Type>) {
     let mut seen: HashMap<usize, Type> = HashMap::new();
-    FunctionSignature {
+    let fresh = FunctionSignature {
         params: signature.params.iter().map(|ty| freshen(ty, &mut seen, uni)).collect(),
         continuations: signature.continuations.clone(),
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
-    }
+        bounds: signature.bounds.clone(),
+    };
+    (fresh, seen)
 }
 
 fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) -> Type {

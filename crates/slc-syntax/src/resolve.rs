@@ -197,7 +197,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 }
             }
         }
-        Decl::Impl { trait_name, for_type, methods } => {
+        Decl::Impl { trait_name, for_type, methods, .. } => {
             *trait_name = resolve_name(trait_name, stack);
             resolve_type(for_type, stack);
             for method in methods {

@@ -16,6 +16,9 @@ enum TypeAnnotations {
     Optional,
 }
 
+/// Type parameters with their trait bounds.
+type TypeParams = (Vec<String>, Vec<(String, String)>);
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -296,15 +299,9 @@ impl Parser {
         }
     }
 
-    fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
-        Ok(self.parse_type_params_bounded()?.0)
-    }
-
     /// Type parameters with their bounds: `<T: Show, U>` yields `["T", "U"]`
     /// and `[("T", "Show")]`.
-    fn parse_type_params_bounded(
-        &mut self,
-    ) -> Result<(Vec<String>, Vec<(String, String)>), ParseError> {
+    fn parse_type_params_bounded(&mut self) -> Result<TypeParams, ParseError> {
         let mut params = Vec::new();
         let mut bounds = Vec::new();
         if !self.eat(&TokenKind::Lt) {
@@ -509,7 +506,7 @@ impl Parser {
         let t = self.expect(TokenKind::Impl, "`impl`")?;
         // impl<...> bounds are parsed and kept on the methods, not the header,
         // in v1: a generic impl's methods carry the bound.
-        let _impl_params = self.parse_type_params_bounded()?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
         let trait_name = self.expect_ident("a trait name")?;
         self.expect(TokenKind::For, "`for` in an `impl`")?;
         let for_type = self.parse_type()?.kind;
@@ -524,7 +521,10 @@ impl Parser {
             }
             methods.push(self.parse_decl()?);
         }
-        Ok(Node { span: t.span, kind: Decl::Impl { trait_name, for_type, methods } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Impl { trait_name, type_params, bounds, for_type, methods },
+        })
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
