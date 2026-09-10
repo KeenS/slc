@@ -724,7 +724,6 @@ one of them is activated.
 | `write_file` | `path: +String`, `contents: +String`             | `ok: -unit`, `failed: -String`                      |
 | `char_at`    | `text: +String`, `index: +i64`                   | `ok: -char`, `out_of_range: -String`                |
 | `list_get`   | `list`, `index: +i64`                            | `ok`, `out_of_range: -String`                       |
-| `map_get`    | `map`, `key`                                     | `found`, `missing: -String`                         |
 | `find_char`  | `text: +String`, `from: +i64`, `character: +i64` | `found: -i64`, `absent: -String`                    |
 
 Every failure continuation receives a `+String` describing what happened, so
@@ -745,7 +744,7 @@ Everything else is a function: `println`, `print`, and `format`; arithmetic and
 comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
 `is_digit`, `is_ws`, `skip_ws`, `skip_digits`; `file_exists`; `close_file`,
 which spends a handle so a later read through it fails; and the
-`list_`/`map_`/`set_`/`path_` constructors and totals.
+`list_` constructors and totals (`list_new`, `list_len`, `list_push`).
 
 A handle is a value of its own base type, `+File`, produced only by
 `open_file` — so nothing else closes a file or reads a line. Closing on every
