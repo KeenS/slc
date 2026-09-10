@@ -59,14 +59,36 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-No large feature is queued. The two readiest steps both close a known limit
-above:
+- **Replace linearity with classical `⊥`-typing.** *(active)* The core is
+  classical: continuations are the right-hand context of a sequent, which
+  admits weakening and contraction. Requiring each declared continuation to be
+  used (a *relevant* discipline) is therefore stricter than the semantics and
+  rejects legitimate programs — a `command` that declares an error
+  continuation it never triggers is well-formed classically, but the linearity
+  pass rejects it. What soundness actually needs is only that a `command`
+  reaches a continuation on **every path** — that its body has type `⊥`. Move
+  that guarantee into the type checker and delete the linearity pass entirely,
+  including the `⊗`-value single-use rule (which the classical core does not
+  demand either).
+
+  Stages:
+  1. Type a no-`else` `if` as `unit` (its then-branch value is discarded), so
+     a fall-through path is not `⊥`. Today it takes the then-branch's type,
+     which lets `if c { x @ k }` masquerade as `⊥`.
+  2. Require a `command` body to have type `⊥`; report an error otherwise
+     (`main` included). This catches a body that falls off the end (`{ 42 }`)
+     and a branch that dangles (`if c { x @ k }` with no `else`), while
+     accepting a body that reaches *some* continuation and drops the rest.
+  3. Delete `slc-check/src/linearity.rs`, its driver call, and its diagnostics
+     wiring; drop the `linearity` module and diagnostic category.
+  4. Repurpose `examples/linearity_error.sl` into a `⊥`-error example; update
+     the two integration tests and the example expectation to the new message.
+  5. Docs: retire "linear continuations" (goal 5 → classical control / the
+     `⊥` rule), rewrite the continuation-rows paragraph (rows stay positional
+     for the calling convention, but nothing is dropped-or-copied checked),
+     drop the `linearity` diagnostics row and the `⊗`-value-linearity claims,
+     and reframe the file-handle known limit (no value-linearity to build on).
 
 - **Row-polymorphic effects.** Infer a function's effect row and let a
   higher-order function forward an argument's effects, so `map(f, xs)` can say
   it performs whatever `f` does — retiring the monomorphic-rows limit.
-
-- **Value linearity for `+File`.** Teach the linearity checker to spend a
-  handle exactly once, by `close_file` or by being handed on, so an unclosed
-  handle is a type error rather than a leak — retiring the file-handle limit
-  and the shadow-`exit` idiom it forces.
