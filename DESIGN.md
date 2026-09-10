@@ -502,6 +502,8 @@ Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
 per-use behaviour is wanted, write it: `fn(u) { mu(k) { … } }` is a value,
 generalizes, and visibly re-runs its capture at each use.
+`examples/polymorphism.sl` shows all three: the generic declaration, the
+generalized `let`, and the by-name idiom.
 
 ### Shifts
 
