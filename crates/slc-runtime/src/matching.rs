@@ -4,11 +4,11 @@
 //! this module parses those descriptors back and matches values against
 //! them, binding as it goes.
 
-use crate::eval::{EvalError, collect_args, eval};
+use crate::eval::collect_args;
 use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
-enum RuntimePattern {
+pub(crate) enum RuntimePattern {
     Wildcard,
     Binding(String, Box<RuntimePattern>),
     Literal(Value),
@@ -48,12 +48,12 @@ pub(crate) fn unwrap_match_arm(v: &Value) -> Value {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Descriptor {
+pub(crate) enum Descriptor {
     Pattern(RuntimePattern),
     Rest,
 }
 
-fn parse_runtime_pattern(s: &str) -> Descriptor {
+pub(crate) fn parse_runtime_pattern(s: &str) -> Descriptor {
     if s == ".." {
         return Descriptor::Rest;
     }
@@ -282,63 +282,7 @@ fn take_while<F: Fn(&char) -> bool>(
     out
 }
 
-pub(crate) fn try_match_arm(
-    arm: &Value,
-    scrutinee: &Value,
-    bindings: &mut Vec<(String, Value)>,
-    fuel: &mut usize,
-) -> Result<Option<Value>, EvalError> {
-    // Arm payload is (descriptor, (guard, thunk)).
-    let Value::Pair(a, b) = arm else {
-        return Err(EvalError::TypeMismatch(format!("malformed match arm: {}", arm.display())));
-    };
-    let (descriptor, guard, thunk) = match (a.as_ref(), b.as_ref()) {
-        (Value::Str(descriptor), Value::Pair(guard, thunk)) => {
-            (descriptor.clone(), guard.clone(), thunk.clone())
-        }
-        _ => {
-            return Err(EvalError::TypeMismatch(format!(
-                "malformed match arm payload: {}, {}",
-                a.display(),
-                b.display()
-            )));
-        }
-    };
-    let descriptor = parse_runtime_pattern(&descriptor);
-    if let Descriptor::Pattern(pattern) = &descriptor
-        && !pattern_matches(pattern, scrutinee, bindings)
-    {
-        bindings.clear();
-        return Ok(None);
-    }
-    if let Value::Closure { param, body, env: closure_env } = guard.as_ref() {
-        let mut guard_env = closure_env.clone();
-        guard_env.push();
-        for (name, value) in bindings.iter() {
-            guard_env.define(name.clone(), value.clone());
-        }
-        guard_env.define(param, Value::Unit);
-        if eval(body, &mut guard_env, fuel)? != Value::Bool(true) {
-            bindings.clear();
-            return Ok(None);
-        }
-    } else if guard.as_ref() != &Value::Bool(true) {
-        bindings.clear();
-        return Ok(None);
-    }
-    let Value::Closure { param, body, env: closure_env } = thunk.as_ref() else {
-        return Err(EvalError::TypeMismatch("match arm body must be a thunk".into()));
-    };
-    let mut call_env = closure_env.clone();
-    call_env.push();
-    for (name, value) in bindings.iter() {
-        call_env.define(name.clone(), value.clone());
-    }
-    call_env.define(param, scrutinee.clone());
-    Ok(Some(eval(body, &mut call_env, fuel)?))
-}
-
-fn pattern_matches(
+pub(crate) fn pattern_matches(
     pattern: &RuntimePattern,
     value: &Value,
     bindings: &mut Vec<(String, Value)>,

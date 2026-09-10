@@ -34,12 +34,6 @@ it is remembered.
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
 
-- **Captured continuations escape rather than resume.** The evaluator unwinds
-  to the `mu` that captured a continuation, so one used after its `mu` has
-  answered fails, saying so. Lifting this needs the evaluator to hold the
-  context as data — an abstract machine with an explicit, re-instatable
-  continuation stack — rather than as Rust stack frames.
-  `examples/classical.sl` stays inside the limit deliberately.
 
 ## Deferred, with no accepted replacement
 

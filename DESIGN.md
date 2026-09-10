@@ -806,6 +806,17 @@ supplies the continuation, and that is a `command`'s row. `μα. c` captures the
 *ambient* continuation, and that is the `mu` expression. Two keywords for two
 constructs, so lowering never has to guess.
 
+### Execution
+
+The evaluator is an abstract machine in the shape the calculus suggests: a
+state is what is being evaluated together with an explicit stack of frames —
+the continuation, held as data rather than as host stack. A cut pushes the
+co-term side as a frame; `μ` captures by cloning the stack into a value; a
+captured continuation is activated by reinstating its stack, which is why it
+outlives its `mu` and can be used more than once. `select` branches stay
+unevaluated until activation chooses one, and a fuel bound turns divergence
+into an error.
+
 ### Printed form
 
 The grammar above is also the core's printed form: the compiler prints terms,
@@ -924,10 +935,12 @@ fn lem() -> Choice {
 `examples/classical.sl` runs both. The types above go through the shifts of
 §8 — `¬¬i64` is `↓↑i64`, not `i64`, so `dne(42)` is rejected at the call.
 
-One limit is worth knowing: **a captured continuation escapes; it does not
-resume.** The evaluator unwinds to the `mu` that captured it, so a refutation
-is good only while its `mu` is still running. Used after that `mu` has
-answered, it fails, saying so.
+A captured continuation is a value with no expiry: the evaluator is an
+abstract machine whose continuation is an explicit frame stack, and `mu(k)`
+captures by reifying it. Activating `k` *reinstates* that stack — after the
+`mu` has answered, from however deep, as many times as it is reached — so
+taking `lem()`'s offer re-enters the very `match` that already received
+`Refutes`, which this time holds.
 
 ## 12. Error continuations
 

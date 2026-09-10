@@ -35,26 +35,12 @@ enum Choice {
 }
 
 // The classical move: answer `Refutes`, holding a consumer that — if anyone
-// supplies a value to it — makes this same expression have answered `Holds`
-// instead. The refutation is this call's own continuation, dressed as a
-// consumer of `i64`.
+// ever supplies a value to it, however much later — makes this same
+// expression have answered `Holds` instead. The refutation is this call's
+// own continuation, dressed as a consumer of `i64`.
 fn lem() -> Choice {
     mu(k) {
         Choice::Refutes(↓select +i64 { a <= Choice::Holds(a) @ k }) @ k
-    }
-}
-
-// Taking the offer, inside the extent of the capture: control goes back, and
-// the same `mu` answers `Holds` after all.
-//
-// The refutation `lem` hands out is only good while its `mu` is still
-// running. This evaluator unwinds to a capture rather than reifying it, so a
-// refutation used after its `mu` has answered fails at run time — these
-// continuations escape, they do not resume.
-fn take_the_offer(n: +i64) -> Choice {
-    mu(k) {
-        let refute = select +i64 { a <= Choice::Holds(a) @ k };
-        n @ refute
     }
 }
 
@@ -62,17 +48,22 @@ command main | (exit: -i32) {
     // ¬¬A → A
     println(dne(any_refuter()));
 
-    // A ⊕ ¬A, left alone: the refutation comes back unused.
+    // A ⊕ ¬A. `lem()` answers `Refutes` — and taking the offer sends 42
+    // back through the continuation `lem` captured, re-entering this same
+    // `match` even though the call answered long ago. The second time
+    // around, the same expression has produced `Holds` after all.
+    //
+    // A continuation is the machine's frame stack, held as a value: it can
+    // be reinstated after its `mu` has answered, which is exactly what the
+    // classical reading of ⊕ promises.
     match lem() {
-        Holds(n) => println("holds: " + int_to_str(n)),
-        Refutes(unused) => println("refutes"),
-    };
-
-    // A ⊕ ¬A, taken up: the answer arrives through the continuation.
-    match take_the_offer(7) {
-        Holds(n) => println("holds: " + int_to_str(n)),
-        Refutes(unused) => println("refutes"),
-    };
-
-    0 @ exit
+        Holds(n) => {
+            println("holds: " + int_to_str(n));
+            0 @ exit
+        },
+        Refutes(r) => {
+            println("refuted — taking the offer");
+            42 @ ↑r
+        },
+    }
 }

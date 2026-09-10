@@ -55,7 +55,13 @@ fn repository_example_suite_has_expected_results() {
         ),
         (
             "classical.sl",
-            Expected { success: true, stdout: &["42", "refutes", "holds: 7"], stderr: &[] },
+            Expected {
+                success: true,
+                // The refutation is taken *after* `lem()` answered: the jump
+                // re-enters the match, which then holds.
+                stdout: &["42", "refuted — taking the offer", "holds: 42"],
+                stderr: &[],
+            },
         ),
         ("command.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         ("hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),

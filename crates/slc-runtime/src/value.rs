@@ -84,11 +84,10 @@ pub enum Value {
         env: Env,
     },
     Continuation(Cont),
-    /// A closure returned from a μ command; activating it may escape.
-    EscapedClosure {
-        escape_id: usize,
-        closure: Box<Value>,
-    },
+    /// A captured continuation: the machine's frame stack, reified. It can
+    /// be reinstated any number of times, at any time — activating it
+    /// replaces the current stack, which is what makes the jump.
+    Kont(Rc<Vec<crate::machine::Frame>>),
     Pair(Box<Value>, Box<Value>),
     Inl(Box<Value>),
     Inr(Box<Value>),
@@ -145,6 +144,7 @@ impl PartialEq for Value {
             | (Value::Never, Value::Never)
             | (Value::NoArguments, Value::NoArguments) => true,
             (Value::File(a), Value::File(b)) => a == b,
+            (Value::Kont(a), Value::Kont(b)) => Rc::ptr_eq(a, b),
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
@@ -190,7 +190,7 @@ impl Value {
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
             ),
             Value::CoCase { .. } | Value::CoTensor { .. } | Value::CoAbs { .. } => Type::Bottom,
-            Value::EscapedClosure { .. } => Type::Bottom,
+            Value::Kont(_) => Type::Bottom,
         }
     }
 
@@ -208,7 +208,7 @@ impl Value {
             Value::Inl(a) => format!("inl({})", a.display()),
             Value::Inr(a) => format!("inr({})", a.display()),
             Value::Closure { .. } => "<closure>".to_string(),
-            Value::EscapedClosure { .. } => "<continuation>".to_string(),
+            Value::Kont(_) => "<continuation>".to_string(),
             Value::Continuation(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
