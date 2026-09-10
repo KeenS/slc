@@ -8,8 +8,9 @@
 ## Workflow
 
 1. Design changes go in `docs/design-notes/` first, then `DESIGN.md`.
-2. `PLAN.md` records what the redesign settled and what it left undone; add
-   planned work to its `Next` section and fold the result back in when it lands.
+2. `PLAN.md` holds what is open — limits, deferrals, and the `Next` queue.
+   Add planned work there; when it lands, the decision goes to `DESIGN.md`
+   and the plan entry is removed rather than kept as a record.
 3. Every commit should keep `cargo fmt --check`, `cargo clippy -- -D warnings`,
    and `cargo test` green.
 

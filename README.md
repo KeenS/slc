@@ -19,4 +19,5 @@ cargo test
 
 - `DESIGN.md` — language design
 - `docs/MIGRATION.md` — syntax migration from the pre-redesign language
-- `PLAN.md` — what the redesign settled, what it deferred, and what is planned next
+- `PLAN.md` — known limits, deferrals, and what is planned next
+- `docs/HISTORY.md` — what the λ̄μμ̃ redesign settled
