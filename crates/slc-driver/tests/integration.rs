@@ -450,26 +450,6 @@ fn named_error_propagation_error_path() {
 }
 
 #[test]
-fn error_propagation_inside_nested_fn_is_rejected() {
-    let dir = std::env::temp_dir().join("slc_test_nested_error_prop.sl");
-    std::fs::write(
-        &dir,
-        r#"command parse(input: +String) | (ok: -String, err: -String) {
-            if input == "ok" { "parsed" @ ok } else { "failed" @ err }
-        }
-        fn outer() -> i32 {
-            let inner = fn(ignored: +i32) -> i32 { fail(ignored)? };
-            inner(0)
-        }
-        command main | (exit: -i32) { 0 @ exit }"#,
-    )
-    .unwrap();
-    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
-    assert!(!ok);
-    assert!(stderr.contains("`?` requires a current error continuation"));
-}
-
-#[test]
 fn json_selected_error_continuation_reports_parse_error() {
     let dir = std::env::temp_dir().join("slc_test_json_selected_error.sl");
     std::fs::write(

@@ -1554,28 +1554,6 @@ fn check_expr_unapplied(
             env.pop();
             result
         }
-        Expr::ErrorProp { expr, continuation } => {
-            check_expr(expr, enums, env, diags);
-            match continuation {
-                Some(name) => {
-                    if env.lookup(name).is_none() {
-                        diags.push(Diagnostic {
-                            message: format!("`?{name}` refers to unknown continuation `{name}`"),
-                            span: e.span,
-                        });
-                    }
-                }
-                None => {
-                    if env.current_continuation_names().is_empty() {
-                        diags.push(Diagnostic {
-                            message: "`?` requires a current error continuation".into(),
-                            span: e.span,
-                        });
-                    }
-                }
-            }
-            None
-        }
         Expr::Cut { value, consumer } => {
             // `v @ k` is a command: it sends `v` to the consumer `k` and does
             // not return, so its type is bottom. A cut is well typed when the
@@ -2082,18 +2060,6 @@ mod tests {
     fn const_type_checked() {
         let diags = check("const X: +char = 1;").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("initializer")));
-    }
-
-    #[test]
-    fn error_prop_without_continuation_rejected() {
-        let diags = check("fn f() -> i32 { read_file(\"x\")? }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("`?` requires")));
-    }
-
-    #[test]
-    fn named_error_continuation_checked() {
-        let diags = check("fn f() -> i32 { read_file(\"x\")?missing }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("unknown continuation")));
     }
 
     #[test]

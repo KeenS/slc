@@ -224,7 +224,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             ':' => TokenKind::Colon,
             '.' => TokenKind::Dot,
             '@' => TokenKind::At,
-            '?' => TokenKind::Question,
             '!' => TokenKind::Bang,
             '+' => TokenKind::Plus,
             '-' => TokenKind::Minus,
@@ -335,7 +334,7 @@ mod tests {
 
     #[test]
     fn lex_operators() {
-        let toks = lex("+ - * / % == != <= >= -> :: @ ?").unwrap();
+        let toks = lex("+ - * / % == != <= >= -> :: @").unwrap();
         assert_eq!(toks[0].kind, TokenKind::Plus);
         assert_eq!(toks[3].kind, TokenKind::Slash);
         assert_eq!(toks[5].kind, TokenKind::EqEq);
@@ -343,7 +342,6 @@ mod tests {
         assert_eq!(toks[9].kind, TokenKind::Arrow);
         assert_eq!(toks[10].kind, TokenKind::ColonColon);
         assert_eq!(toks[11].kind, TokenKind::At);
-        assert_eq!(toks[12].kind, TokenKind::Question);
     }
 
     #[test]

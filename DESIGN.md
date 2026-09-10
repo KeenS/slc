@@ -1005,8 +1005,6 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
-| `expr.errorprop.named` | `e?k` | `⟦e⟧(k)` |
-| `expr.errorprop.bare` | `e?` | `⟦e⟧(k₀)`, where `k₀` is the current error continuation |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `Λk. ⟦e⟧` |
 | `decl.mu` | `mu f(x: +A) \| (k: -B) { e }` | `λx. Λk. ⟦e⟧` |
@@ -1031,7 +1029,7 @@ continuation parameter becomes a Λ binder.
 | `co(e)` | `select` |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `λ̄x. c` | application, and nothing else |
-| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition, a bare `?`; written directly as `select +A { x <= c }` |
+| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |
@@ -1094,26 +1092,6 @@ In `examples/json_parser.sl` every parser takes `failed`, but only the
 top-level one takes `parsed`, so no inner parser can report success by
 mistake. Keep an `enum` for data that a program *holds*; outcomes that a
 program *reaches* are a row.
-
-### Error propagation `?`
-
-The expression form `e?` remains supported as explicit selected-continuation
-sugar. It does not hide control flow behind a value: it names which
-continuation receives the failure.
-
-- `e?k` supplies the named continuation `k` to `e`. It lowers to the
-  application `⟦e⟧(k)` — the same core term as writing the call by hand.
-- `e?` supplies the **current error continuation**: the last continuation
-  declared by the innermost enclosing row. Lexical scope decides this, so a
-  nested local `mu` shadows the enclosing row inside its own body, and a
-  lambda body has no row at all — a bare `?` inside one is rejected rather
-  than silently reaching outward.
-- A bare `?` with no continuation in scope is rejected.
-
-A name written **immediately** after `?`, with nothing between them, is the
-selected continuation. Any name the language accepts as a continuation
-parameter is accepted there, including the reserved word `return`. With a
-space — `e? name` — the `?` is bare and `name` is a separate expression.
 
 ## 13. Migration summary
 

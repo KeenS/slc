@@ -90,10 +90,6 @@ pub enum Expr {
         continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
     },
-    ErrorProp {
-        expr: Box<Node<Expr>>,
-        continuation: Option<String>,
-    },
     /// `handle body { op(p) resume => b, …, return(x) => r }`: run `body`,
     /// answering each performed operation with its clause and its normal
     /// result with the `return` clause. The handled effect is determined by
@@ -148,7 +144,7 @@ impl Expr {
                 .collect(),
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
-            Expr::ErrorProp { expr, .. } | Expr::Shift { expr, .. } => vec![expr],
+            Expr::Shift { expr, .. } => vec![expr],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))

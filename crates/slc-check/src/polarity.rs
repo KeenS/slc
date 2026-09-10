@@ -276,7 +276,6 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
             check_expr(value, declared, diags);
             check_expr(consumer, declared, diags);
         }
-        Expr::ErrorProp { expr, .. } => check_expr(expr, declared, diags),
         Expr::Select { arms, .. } => {
             for arm in arms {
                 check_expr(&arm.command, declared, diags);

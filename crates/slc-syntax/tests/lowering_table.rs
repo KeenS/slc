@@ -83,16 +83,6 @@ const ROWS: &[Row] = &[
         source: "fn f(k: -i64) <- i64 { g(↓k) }",
         core: "⟨g ∥ λ̄__f. ⟨k ∥ __call⟩⟩",
     },
-    Row {
-        id: "expr.errorprop.named",
-        source: "command f(x: +i32) | (err: -i32) { g(x)?err }",
-        core: "⟨err ∥ __call⟩",
-    },
-    Row {
-        id: "expr.errorprop.bare",
-        source: "command f(x: +i32) | (err: -i32) { g(x)? }",
-        core: "⟨err ∥ __call⟩",
-    },
     Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
     Row { id: "decl.fn.negative", source: "fn f(k: -i32) <- i32 { k(1) }", core: "Λk." },
     Row { id: "decl.mu", source: "command f(x: +i32) | (k: -i32) { k(x) }", core: "λx. Λk." },

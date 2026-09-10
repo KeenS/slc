@@ -64,9 +64,7 @@ fn is_continuation_name(name: &str) -> bool {
 fn find_ident_span(e: &Node<Expr>, name: &str) -> Option<Span> {
     match &e.kind {
         Expr::Ident(x) if x == name => Some(e.span),
-        Expr::Lambda { body, .. }
-        | Expr::ErrorProp { expr: body, .. }
-        | Expr::Shift { expr: body, .. } => find_ident_span(body, name),
+        Expr::Lambda { body, .. } | Expr::Shift { expr: body, .. } => find_ident_span(body, name),
         Expr::Call { callee, args } => find_ident_span(callee, name)
             .or_else(|| args.iter().find_map(|a| find_ident_span(a, name))),
         Expr::Pair(items) => items.iter().find_map(|i| find_ident_span(i, name)),
@@ -454,12 +452,6 @@ fn go(e: &Node<Expr>, m: &mut UseMap) {
                 go(rbody, m);
             }
         }
-        Expr::ErrorProp { expr, continuation } => {
-            go(expr, m);
-            if let Some(name) = continuation {
-                m.incr(name);
-            }
-        }
         Expr::Block(exprs) => {
             for e in exprs {
                 go(e, m);
@@ -479,17 +471,6 @@ mod tests {
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         check_linearity(&prog)
-    }
-
-    #[test]
-    fn multi_continuation_command_unselected_continuation_is_linear() {
-        let r = check(
-            "command route(x: +i32) | (even: -i32, odd: -i32) {
-                if eq(rem(x, 2), 0) { even(x) } else { odd(x) }
-            }
-            fn main() -> i32 { route(2)?even }",
-        );
-        assert!(r.is_ok());
     }
 
     #[test]
@@ -546,9 +527,9 @@ mod tests {
     }
 
     #[test]
-    fn named_error_prop_counts_as_continuation_use() {
-        // `?err` consumes `err`, so the declaration does not drop it.
-        assert!(check("command bad(x: +i32) | (err: -i32) { fail(x)?err }").is_ok());
+    fn a_command_that_drops_a_continuation_is_rejected() {
+        // A declared continuation must be used on every path; dropping `err`
+        // is a linearity error.
         let r = check("command bad(x: +i32) | (err: -i32) { x }");
         assert!(r.unwrap_err()[0].message.contains("never used"));
     }

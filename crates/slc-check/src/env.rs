@@ -124,23 +124,6 @@ impl<'a> Env<'a> {
         }
         out
     }
-
-    pub(crate) fn current_continuation_names(&self) -> Vec<(String, Type)> {
-        self.locals
-            .iter()
-            .rev()
-            .find_map(|frame| {
-                let names: Vec<_> = frame
-                    .iter()
-                    .filter(|(_, binding)| {
-                        matches!(binding.ty, Type::Neg(_) | Type::Par(..) | Type::Bottom)
-                    })
-                    .map(|(name, binding)| (name.clone(), binding.ty.clone()))
-                    .collect();
-                (!names.is_empty()).then_some(names)
-            })
-            .unwrap_or_default()
-    }
 }
 
 /// Substitute exactly the listed variables — a scheme's own — leaving every

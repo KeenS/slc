@@ -184,7 +184,7 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
                 check_expr(rbody, enums, diags);
             }
         }
-        Expr::ErrorProp { expr: body, .. } | Expr::Shift { expr: body, .. } => {
+        Expr::Shift { expr: body, .. } => {
             check_expr(body, enums, diags);
         }
         Expr::Cut { value, consumer } => {

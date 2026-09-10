@@ -933,30 +933,6 @@ impl Parser {
                         kind: Expr::Call { callee: Box::new(e), args },
                     };
                 }
-                Some(TokenKind::Question) => {
-                    let question = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
-                    self.pos += 1;
-                    // A name written immediately after `?` — with nothing
-                    // between them — selects that error continuation. Any name
-                    // the language accepts as a continuation parameter is
-                    // accepted here, including the reserved word `return`.
-                    // `e? name`, with a space, is bare `?` followed by a
-                    // separate expression.
-                    let selects_name = self.peek().is_some_and(|t| {
-                        matches!(t.kind, TokenKind::Ident(_) | TokenKind::Return)
-                            && t.span.start == question.end
-                    });
-                    let continuation = if selects_name {
-                        Some(self.expect_name("continuation name")?)
-                    } else {
-                        None
-                    };
-                    let end = self.span_end();
-                    e = Node {
-                        span: Span { start: e.span.start, end },
-                        kind: Expr::ErrorProp { expr: Box::new(e), continuation },
-                    };
-                }
                 Some(TokenKind::Dot) => {
                     self.pos += 1;
                     if self.peek_kind() == Some(&TokenKind::ColonColon) {
@@ -1966,34 +1942,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_error_prop_selects_an_adjacent_name_including_return() {
-        // `return` is a reserved word that is still an accepted continuation
-        // parameter name, so it is accepted after `?` like any other name.
-        let p = parse_str("fn f(return: -i32) <- i32 { fail(1)?return }");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
-        let Expr::Block(exprs) = &body.kind else { panic!("expected block: {:?}", body.kind) };
-        assert!(
-            matches!(&exprs[0].kind, Expr::ErrorProp { continuation: Some(name), .. } if name == "return"),
-            "expected `?return` to select `return`: {:?}",
-            exprs[0].kind
-        );
-    }
-
-    #[test]
-    fn parse_error_prop_without_an_adjacent_name_is_bare() {
-        // A space separates the propagation from the next expression, so the
-        // name is not consumed as the selected continuation.
-        let p = parse_str("command f(x: +i32) | (err: -i32) { fail(x)? err(0) }");
-        let Decl::Command { body, .. } = &p.decls[0].kind else { panic!("expected mu") };
-        let Expr::Block(exprs) = &body.kind else { panic!("expected block: {:?}", body.kind) };
-        assert!(
-            matches!(&exprs[0].kind, Expr::ErrorProp { continuation: None, .. }),
-            "expected a bare `?`: {:?}",
-            exprs[0].kind
-        );
-    }
-
-    #[test]
     fn parse_rejects_removed_expression_level_dual() {
         let errors = parse(lex("fn main() -> i32 { dual(42) }").unwrap()).unwrap_err();
         assert!(
@@ -2042,12 +1990,6 @@ mod tests {
     #[test]
     fn parse_call() {
         let p = parse_str("f(1, 2)");
-        assert_eq!(p.decls.len(), 1);
-    }
-
-    #[test]
-    fn parse_error_prop() {
-        let p = parse_str("read_file(path)?");
         assert_eq!(p.decls.len(), 1);
     }
 
@@ -2146,18 +2088,6 @@ mod tests {
             panic!("expected match");
         };
         assert_eq!(arms[0].pattern, Pattern::Int(-3));
-    }
-
-    #[test]
-    fn parse_named_error_propagation() {
-        let p = parse_str("read_file(path)?missing");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(
-            &body.kind,
-            Expr::ErrorProp { continuation: Some(name), .. } if name == "missing"
-        ));
     }
 
     #[test]

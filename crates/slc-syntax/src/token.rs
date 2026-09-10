@@ -54,7 +54,6 @@ pub enum TokenKind {
     ReverseArrow,
     FatArrow,
     At,
-    Question,
     DotDot,
     DotDotEq,
 
@@ -134,7 +133,6 @@ impl std::fmt::Display for TokenKind {
             TokenKind::ReverseArrow => write!(f, "`<-`"),
             TokenKind::FatArrow => write!(f, "`=>`"),
             TokenKind::At => write!(f, "`@`"),
-            TokenKind::Question => write!(f, "`?`"),
             TokenKind::DotDot => write!(f, "`..`"),
             TokenKind::DotDotEq => write!(f, "`..=`"),
             TokenKind::Plus => write!(f, "`+`"),

@@ -465,32 +465,6 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 vec![Term::Inl(Box::new(encoded)), body_thunk],
             ))
         }
-        Expr::ErrorProp { expr, continuation } => {
-            let selected = continuation.clone().or_else(|| continuations.last().cloned());
-            if let Some(name) = selected {
-                // e?err applies e to the named error continuation.
-                let e = lower_expr(expr, continuations)?;
-                return Ok(call_curried(e, vec![Term::Var(name.clone())]));
-            }
-            // e? → μprop. ⟨ e' ∥ λ̄__ok. ⟨ __ok ∥ prop ⟩ ⟩
-            // The value flows to the success continuation; errors escape
-            // via the mu binder (the error continuation).
-            let e = lower_expr(expr, continuations)?;
-            Ok(Term::Mu(
-                "__err".into(),
-                Box::new(Command::Cut(
-                    e,
-                    CoTerm::MuTilde(
-                        "__ok".into(),
-                        Box::new(Command::Cut(
-                            Term::Var("__ok".into()),
-                            CoTerm::Covar("__err".into()),
-                        )),
-                    ),
-                )),
-            ))
-        }
-
         Expr::Match { scrutinee, arms } => {
             // match s { p1 => e1, p2 => e2, ... }
             // → μmatch. ⟨ __match_dispatch(s', arms...) ∥ match ⟩
@@ -1343,70 +1317,8 @@ mod tests {
         assert_eq!(out[0].1, Term::CoAbs("x".into(), Box::new(Term::Var("x".into()))));
     }
 
-    /// The argument of a lowered application `f(a)`.
-    fn applied_argument(term: &Term) -> Option<&Term> {
-        let Term::Mu(call, command) = term else { return None };
-        if call != "__call" {
-            return None;
-        }
-        let Command::Cut(_, CoTerm::CoLam(marker, inner)) = command.as_ref() else {
-            return None;
-        };
-        if marker != "__f" {
-            return None;
-        }
-        let Command::Cut(arg, CoTerm::Covar(_)) = inner.as_ref() else { return None };
-        Some(arg)
-    }
-
-    #[test]
-    fn lower_named_error_prop_applies_the_named_continuation() {
-        // `e?err` supplies `err` to `e` as its error continuation.
-        let out = lower_str("command f(x: +i32) | (ok: -i32, err: -i32) { fail(x)?err }");
-        let Term::Lam(_, body) = &out[0].1 else { panic!("expected a value binder") };
-        let Term::CoAbs(_, body) = body.as_ref() else { panic!("expected `ok` binder") };
-        let Term::CoAbs(_, body) = body.as_ref() else { panic!("expected `err` binder") };
-        assert_eq!(applied_argument(body), Some(&Term::Var("err".into())));
-    }
-
-    #[test]
-    fn lower_bare_error_prop_applies_the_innermost_continuation() {
-        // A bare `?` supplies the current error continuation: the last
-        // continuation declared by the innermost enclosing row.
-        let out = lower_str("command f(x: +i32) | (ok: -i32, err: -i32) { fail(x)? }");
-        let printed = format!("{}", out[0].1);
-        assert!(printed.contains("err"), "bare `?` should select `err`: {printed}");
-
-        // A nested local `mu` extends the row, so its binder wins inside it.
-        let out = lower_str(
-            "command f(x: +i32) | (err: -i32) {
-                mu inner(nested: -i32) { fail(x)? }
-            }",
-        );
-        let printed = format!("{}", out[0].1);
-        assert!(
-            printed.contains("⟨nested ∥ __call⟩"),
-            "nested bare `?` should select the innermost binder: {printed}"
-        );
-    }
-
-    #[test]
-    fn lower_error_prop_uses_current_continuation() {
-        let out = lower_str("command f(x: +i32) | (err: -i32) { fail(x)? }");
-        let term = &out[0].1;
-        let printed = format!("{term}");
-        assert!(printed.contains("err"), "should reference err: {printed}");
-    }
-
     #[test]
     fn lower_uses_explicit_lexical_continuation_scopes() {
-        // A lambda must not inherit the surrounding declaration's
-        // continuation row: bare `?` cannot accidentally select `err`.
-        let out =
-            lower_str("command f(x: +i32) | (err: -i32) { g(fn(y: +i32) -> i32 { fail(y)? }) }");
-        let printed = format!("{}", out[0].1);
-        assert!(!printed.contains("err(y)"), "lambda leaked `err`: {printed}");
-
         // A local mu adds its binder only inside its own body.
         let out = lower_str(
             "fn f(ok: -i32) <- i32 {
@@ -1415,22 +1327,6 @@ mod tests {
         );
         let printed = format!("{}", out[0].1);
         assert!(printed.contains("inner"), "local mu binder missing: {printed}");
-
-        // Named selected propagation resolves through nested mu scopes.
-        let out = lower_str(
-            "command outer(x: +i32) | (err: -i32) {
-                mu inner(inner_err: -i32) { fail(x)?err }
-            }",
-        );
-        let printed = format!("{}", out[0].1);
-        assert!(printed.contains("err"), "outer continuation missing: {printed}");
-    }
-
-    #[test]
-    fn lower_named_error_prop_selects_continuation() {
-        let out = lower_str("fn f() -> i32 { fail(x)?missing }");
-        let printed = format!("{}", out[0].1);
-        assert!(printed.contains("missing"), "should reference missing: {printed}");
     }
 
     #[test]
