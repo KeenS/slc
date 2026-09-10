@@ -63,9 +63,11 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Struct { name, .. }
             | Decl::Enum { name, .. }
             | Decl::Const { name, .. }
-            | Decl::Mod { name, .. } => {
+            | Decl::Mod { name, .. }
+            | Decl::Trait { name, .. } => {
                 scope.declares.insert(name.clone());
             }
+            Decl::Impl { .. } => {}
             Decl::Use { path } => {
                 let target = path.join("::");
                 let name = path.last().expect("a use path has segments").clone();
@@ -151,7 +153,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut body.kind, stack, locals);
             locals.pop();
         }
-        Decl::Command { name, value_params, continuation_params, return_type, body } => {
+        Decl::Command { name, value_params, continuation_params, return_type, body, .. } => {
             *name = scope.qualify(name);
             let mut bound = HashSet::new();
             for p in value_params.iter_mut().chain(continuation_params.iter_mut()) {
@@ -183,6 +185,24 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             *name = scope.qualify(name);
             resolve_type(ty, stack);
             resolve_expr(&mut value.kind, stack, locals);
+        }
+        Decl::Trait { name, methods } => {
+            *name = scope.qualify(name);
+            for m in methods {
+                for p in m.value_params.iter_mut().chain(m.continuation_params.iter_mut()) {
+                    resolve_param(p, stack);
+                }
+                if let Some(ty) = &mut m.return_type {
+                    resolve_type(ty, stack);
+                }
+            }
+        }
+        Decl::Impl { trait_name, for_type, methods } => {
+            *trait_name = resolve_name(trait_name, stack);
+            resolve_type(for_type, stack);
+            for method in methods {
+                resolve_decl(&mut method.kind, stack, locals);
+            }
         }
         Decl::Mod { .. } | Decl::Use { .. } => {}
     }

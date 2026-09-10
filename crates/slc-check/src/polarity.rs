@@ -82,7 +82,7 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
             }
         }
         // Resolved away before this check runs.
-        Decl::Mod { .. } | Decl::Use { .. } => {}
+        Decl::Mod { .. } | Decl::Use { .. } | Decl::Trait { .. } | Decl::Impl { .. } => {}
         Decl::Const { ty, .. } => {
             if let Ok(core_ty) = lower_type(ty)
                 && !is_positive_type(&core_ty)

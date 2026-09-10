@@ -20,7 +20,7 @@ fn names(program: &slc_syntax::ast::Program) -> Vec<String> {
             | Decl::Struct { name, .. }
             | Decl::Enum { name, .. }
             | Decl::Const { name, .. } => name.clone(),
-            Decl::Mod { .. } | Decl::Use { .. } => "UNRESOLVED".into(),
+            _ => "UNRESOLVED".into(),
         })
         .collect()
 }

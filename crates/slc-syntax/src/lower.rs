@@ -578,7 +578,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             }
             // Modules are flattened by resolution before lowering; one that
             // reaches here unresolved has nothing to lower.
-            Decl::Mod { .. } | Decl::Use { .. } => {}
+            Decl::Mod { .. } | Decl::Use { .. } | Decl::Trait { .. } | Decl::Impl { .. } => {}
             Decl::Struct { .. } | Decl::Enum { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }

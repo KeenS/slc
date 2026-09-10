@@ -143,6 +143,7 @@ impl Parser {
                         kind: Decl::Fn {
                             name: "main".into(),
                             type_params: vec![],
+                            bounds: vec![],
                             polarity: FunctionPolarity::Positive,
                             params: vec![],
                             return_type: None,
@@ -175,6 +176,8 @@ impl Parser {
             Some(TokenKind::Const) => self.parse_const_decl(),
             Some(TokenKind::Mod) => self.parse_mod_decl(),
             Some(TokenKind::Use) => self.parse_use_decl(),
+            Some(TokenKind::Trait) => self.parse_trait_decl(),
+            Some(TokenKind::Impl) => self.parse_impl_decl(),
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
@@ -185,6 +188,7 @@ impl Parser {
                     kind: Decl::Fn {
                         name: "main".into(),
                         type_params: vec![],
+                        bounds: vec![],
                         polarity: FunctionPolarity::Positive,
                         params: vec![],
                         return_type: None,
@@ -252,7 +256,7 @@ impl Parser {
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
-        let type_params = self.parse_type_params()?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
         let params = self.parse_params()?;
         let (polarity, return_type) = self.parse_fn_arrow()?;
         let params = match polarity {
@@ -268,7 +272,7 @@ impl Parser {
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
-            kind: Decl::Fn { name, type_params, polarity, params, return_type, body },
+            kind: Decl::Fn { name, type_params, bounds, polarity, params, return_type, body },
         })
     }
 
@@ -293,26 +297,42 @@ impl Parser {
     }
 
     fn parse_type_params(&mut self) -> Result<Vec<String>, ParseError> {
+        Ok(self.parse_type_params_bounded()?.0)
+    }
+
+    /// Type parameters with their bounds: `<T: Show, U>` yields `["T", "U"]`
+    /// and `[("T", "Show")]`.
+    fn parse_type_params_bounded(
+        &mut self,
+    ) -> Result<(Vec<String>, Vec<(String, String)>), ParseError> {
         let mut params = Vec::new();
+        let mut bounds = Vec::new();
         if !self.eat(&TokenKind::Lt) {
-            return Ok(params);
+            return Ok((params, bounds));
         }
         loop {
             if self.eat(&TokenKind::Gt) {
                 break;
             }
-            params.push(self.expect_ident("type parameter")?);
+            let name = self.expect_ident("type parameter")?;
+            // `T: Show` — one bound today; `T: Show + Ord` is deferred.
+            while self.eat(&TokenKind::Colon) {
+                let trait_name = self.expect_ident("a trait bound")?;
+                bounds.push((name.clone(), trait_name));
+            }
+            params.push(name);
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::Gt, "`>` after type parameters")?;
                 break;
             }
         }
-        Ok(params)
+        Ok((params, bounds))
     }
 
     fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Command, "`command`")?;
         let name = self.expect_ident("`command` name")?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
         let (value_params, continuation_params) =
             self.parse_command_params(TypeAnnotations::Required)?;
         let return_type =
@@ -328,7 +348,15 @@ impl Parser {
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
-            kind: Decl::Command { name, value_params, continuation_params, return_type, body },
+            kind: Decl::Command {
+                name,
+                type_params,
+                bounds,
+                value_params,
+                continuation_params,
+                return_type,
+                body,
+            },
         })
     }
 
@@ -408,6 +436,95 @@ impl Parser {
         }
         let _ = self.eat(&TokenKind::Semicolon);
         Ok(Node { span: t.span, kind: Decl::Use { path } })
+    }
+
+    fn parse_trait_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Trait, "`trait`")?;
+        let name = self.expect_ident("trait name")?;
+        self.expect(TokenKind::LBrace, "`{` after the trait name")?;
+        let mut methods = Vec::new();
+        while !self.eat(&TokenKind::RBrace) {
+            if self.peek().is_none() {
+                return Err(ParseError {
+                    message: format!("trait `{name}` is missing its closing `}}`"),
+                    span: t.span,
+                });
+            }
+            methods.push(self.parse_trait_method()?);
+        }
+        Ok(Node { span: t.span, kind: Decl::Trait { name, methods } })
+    }
+
+    /// A method signature: a `fn` or `command` header ending in `;`.
+    fn parse_trait_method(&mut self) -> Result<TraitMethod, ParseError> {
+        match self.peek_kind() {
+            Some(TokenKind::Fn) => {
+                self.pos += 1;
+                let name = self.expect_ident("method name")?;
+                let params = self.parse_params()?;
+                let (polarity, return_type) = self.parse_fn_arrow()?;
+                let value_params = match polarity {
+                    FunctionPolarity::Positive => params,
+                    FunctionPolarity::Negative => params
+                        .into_iter()
+                        .map(|mut p| {
+                            p.is_continuation = true;
+                            p
+                        })
+                        .collect(),
+                };
+                self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
+                Ok(TraitMethod {
+                    name,
+                    is_command: false,
+                    polarity,
+                    value_params,
+                    continuation_params: Vec::new(),
+                    return_type,
+                })
+            }
+            Some(TokenKind::Command) => {
+                self.pos += 1;
+                let name = self.expect_ident("method name")?;
+                let (value_params, continuation_params) =
+                    self.parse_command_params(TypeAnnotations::Required)?;
+                self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
+                Ok(TraitMethod {
+                    name,
+                    is_command: true,
+                    polarity: FunctionPolarity::Positive,
+                    value_params,
+                    continuation_params,
+                    return_type: None,
+                })
+            }
+            _ => Err(ParseError {
+                message: "a trait method is a `fn` or `command` signature".into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            }),
+        }
+    }
+
+    fn parse_impl_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Impl, "`impl`")?;
+        // impl<...> bounds are parsed and kept on the methods, not the header,
+        // in v1: a generic impl's methods carry the bound.
+        let _impl_params = self.parse_type_params_bounded()?;
+        let trait_name = self.expect_ident("a trait name")?;
+        self.expect(TokenKind::For, "`for` in an `impl`")?;
+        let for_type = self.parse_type()?.kind;
+        self.expect(TokenKind::LBrace, "`{` after the impl header")?;
+        let mut methods = Vec::new();
+        while !self.eat(&TokenKind::RBrace) {
+            if self.peek().is_none() {
+                return Err(ParseError {
+                    message: format!("`impl {trait_name}` is missing its closing `}}`"),
+                    span: t.span,
+                });
+            }
+            methods.push(self.parse_decl()?);
+        }
+        Ok(Node { span: t.span, kind: Decl::Impl { trait_name, for_type, methods } })
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {

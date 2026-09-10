@@ -23,7 +23,12 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Command { body, .. } => check_expr(body, enums, diags),
         Decl::Const { value, .. } => check_expr(value, enums, diags),
-        Decl::Struct { .. } | Decl::Enum { .. } | Decl::Mod { .. } | Decl::Use { .. } => {}
+        Decl::Struct { .. }
+        | Decl::Enum { .. }
+        | Decl::Mod { .. }
+        | Decl::Use { .. }
+        | Decl::Trait { .. }
+        | Decl::Impl { .. } => {}
     }
 }
 

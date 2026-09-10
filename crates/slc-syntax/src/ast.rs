@@ -283,6 +283,8 @@ pub enum Decl {
     Fn {
         name: String,
         type_params: Vec<String>,
+        /// Trait bounds on the type parameters: `(T, Show)` for `<T: Show>`.
+        bounds: Vec<(String, String)>,
         polarity: FunctionPolarity,
         params: Vec<Param>,
         return_type: Option<TypeExpr>,
@@ -293,6 +295,8 @@ pub enum Decl {
     /// the current continuation; this abstracts over one instead.
     Command {
         name: String,
+        type_params: Vec<String>,
+        bounds: Vec<(String, String)>,
         value_params: Vec<Param>,
         continuation_params: Vec<Param>,
         return_type: Option<TypeExpr>,
@@ -314,6 +318,32 @@ pub enum Decl {
         ty: TypeExpr,
         value: Node<Expr>,
     },
+    /// A trait: a named set of method signatures over an implicit `Self`.
+    Trait {
+        name: String,
+        methods: Vec<TraitMethod>,
+    },
+    /// An `impl Trait for Type { … }`: the methods that make `Type` satisfy
+    /// `Trait`. Each method is a `Fn` or `Command` declaration with a body.
+    Impl {
+        trait_name: String,
+        for_type: TypeExpr,
+        methods: Vec<Node<Decl>>,
+    },
+}
+
+/// One method signature in a trait, headed like a `fn` or a `command` but
+/// ending in `;` instead of a body. `Self` stands for the implementing type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitMethod {
+    pub name: String,
+    /// `true` for a `command` method (value and continuation groups); `false`
+    /// for a `fn` method (one group, a return type).
+    pub is_command: bool,
+    pub polarity: FunctionPolarity,
+    pub value_params: Vec<Param>,
+    pub continuation_params: Vec<Param>,
+    pub return_type: Option<TypeExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
