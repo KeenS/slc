@@ -147,6 +147,24 @@ mod tests {
     }
 
     #[test]
+    fn a_negative_function_carries_an_effect_row() {
+        // The row sits after the `<-` arrow and is enforced like any other.
+        assert!(
+            check(
+                "effect Log { fn log(m: +String) -> unit; }
+                 fn emit(out: -i64) <- i64 / {Log} { log(\"x\"); 42 @ out }"
+            )
+            .is_ok()
+        );
+        let diags = check(
+            "effect Log { fn log(m: +String) -> unit; }
+             fn emit(out: -i64) <- i64 { log(\"x\"); 42 @ out }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`emit` performs `Log`")), "{diags:?}");
+    }
+
+    #[test]
     fn handle_discharges_the_effect() {
         // `main` performs nothing: the effect is handled, so its row is empty.
         assert!(

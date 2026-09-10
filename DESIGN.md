@@ -550,6 +550,12 @@ nondeterminism) are rejected rather than run, because the continuation is
 only partly reified; the checker says so. Operation names are unique across
 effects.
 
+Bounds and effect rows are independent of a function's polarity: a negative
+function carries them in the same places — `fn emit<T: Show>(out: -String)
+<- i64 / {Log}` — because a bound constrains a type parameter and a row
+describes what the body performs, neither of which depends on whether the
+function returns a value or a consumer.
+
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —

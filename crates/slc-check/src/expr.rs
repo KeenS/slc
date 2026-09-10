@@ -2200,6 +2200,26 @@ mod tests {
     }
 
     #[test]
+    fn a_negative_function_takes_trait_bounds() {
+        // `<T: Show>` works before the params of a `<-` function too.
+        assert!(
+            check(
+                "trait Show { fn show(self: +Self) -> String; }
+                 impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+                 fn emit<T: Show>(out: -String, v: +T) <- i64 { show(v) @ out }"
+            )
+            .is_ok()
+        );
+        let diags = check(
+            "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
+             fn emit<T>(out: -String, v: +T) <- i64 { show(v) @ out }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
+    }
+
+    #[test]
     fn a_method_with_no_impl_is_rejected() {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
