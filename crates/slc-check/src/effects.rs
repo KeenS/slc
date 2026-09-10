@@ -3,7 +3,7 @@
 //! A function declares the effects it may perform — `fn f(…) -> T / {Exn}` —
 //! and a bare arrow is the empty row. A function may perform an operation
 //! only when its effect is in the function's declared row; a call propagates
-//! the callee's row; and `handle e with E` discharges `E` from `e`'s
+//! the callee's row; and `handle e { … }` discharges `E` from `e`'s
 //! requirement. `main` has the empty row, so a well-typed program performs no
 //! unhandled operation.
 //!
@@ -79,12 +79,17 @@ fn collect(
                 collect(arg, op_effect, declared, out);
             }
         }
-        // A handler discharges its effect from the body's requirement; the
-        // clauses and return clause run in the handler's own context.
-        Expr::Handle { body, effect, clauses, ret } => {
+        // A handler discharges, from the body's requirement, the effects of
+        // the operations its clauses answer — inferred from the clause op
+        // names, since each operation belongs to one effect.
+        Expr::Handle { body, clauses, ret } => {
             let mut inner = HashSet::new();
             collect(body, op_effect, declared, &mut inner);
-            inner.remove(effect);
+            for c in clauses {
+                if let Some(effect) = op_effect.get(&c.op) {
+                    inner.remove(effect);
+                }
+            }
             out.extend(inner);
             for c in clauses {
                 collect(&c.body, op_effect, declared, out);
@@ -149,7 +154,7 @@ mod tests {
                 "effect Exn { fn throw(m: +String) -> i64; }
                  fn risky(x: +i64) -> i64 / {Exn} { throw(\"boom\") }
                  command main | (exit: -i32) {
-                     let r = handle risky(1) with Exn { throw(m) resume => 0 - 1, return(n) => n };
+                     let r = handle risky(1) { throw(m) resume => 0 - 1, return(n) => n };
                      println(r); 0 @ exit
                  }"
             )

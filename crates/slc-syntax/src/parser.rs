@@ -1157,9 +1157,7 @@ impl Parser {
             Some(TokenKind::Handle) => {
                 self.pos += 1;
                 let body = self.parse_scrutinee()?;
-                self.expect(TokenKind::With, "`with` in a handler")?;
-                let effect = self.expect_ident("the handled effect")?;
-                self.expect(TokenKind::LBrace, "`{` after the effect")?;
+                self.expect(TokenKind::LBrace, "`{` after the handled expression")?;
                 let mut clauses = Vec::new();
                 let mut ret = None;
                 loop {
@@ -1196,7 +1194,7 @@ impl Parser {
                 }
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Handle { body: Box::new(body), effect, clauses, ret },
+                    kind: Expr::Handle { body: Box::new(body), clauses, ret },
                 })
             }
             Some(TokenKind::Match) => {

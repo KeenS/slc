@@ -165,7 +165,8 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         "read_file" | "open_file" | "read_line" => 3,
         "char_at" | "list_get" | "map_get" | "write_file" | "parse_int" => 4,
         "find_char" => 5,
-        "__if_dispatch" | "__handle" => 3,
+        "__if_dispatch" => 3,
+        "__handle" => 2,
         "list_new" => 0,
         "format" => 0, // variadic: apply immediately
         _ => 0,

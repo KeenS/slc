@@ -517,11 +517,11 @@ effect Exn    { fn throw(message: +String) -> i64; }
 effect Reader { fn config() -> i64; }
 
 command main | (exit: -i32) {
-    let safe = handle checked_div(10, 0) with Exn {
+    let safe = handle checked_div(10, 0) {
         throw(message) resume => 0 - 1,   // never resumes: an exception
         return(n) => n,
     };
-    let scaled = handle x * config() with Reader {
+    let scaled = handle x * config() {
         config() resume => resume(10),    // resumes once, in tail position
         return(n) => n,
     };
@@ -531,14 +531,14 @@ command main | (exit: -i32) {
 
 An operation is a free function, dual to a trait method: a trait hands a value
 the operations it *provides*, an effect hands a computation the answers it
-*demands*. A handler is installed dynamically by `handle`; a trait's impl is
+*demands*. A handler is installed dynamically by `handle` — the effect it handles is inferred from its clause operations, not written; a trait's impl is
 resolved statically.
 
 A function declares the effects it may perform in an **effect row** on its
 arrow — `fn scaled(x: +i64) -> i64 / {Reader}` — and a bare arrow is the
 empty row, a pure function. A function may perform an operation only when its
-effect is in the row; a call propagates the callee's row; and `handle e with
-E` discharges `E`. `main` has the empty row, so a well-typed program performs
+effect is in the row; a call propagates the callee's row; and a handler discharges the effects of
+the operations it answers. `main` has the empty row, so a well-typed program performs
 no unhandled operation. (Rows are explicit in v1: no inference, and no row
 polymorphism — a higher-order function cannot yet forward an argument's
 effects.)

@@ -367,7 +367,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut consumer.kind, stack, locals);
         }
         Expr::ErrorProp { expr, .. } => resolve_expr(&mut expr.kind, stack, locals),
-        Expr::Handle { body, clauses, ret, .. } => {
+        Expr::Handle { body, clauses, ret } => {
             resolve_expr(&mut body.kind, stack, locals);
             for c in clauses.iter_mut() {
                 let mut bound: HashSet<String> = c.params.iter().cloned().collect();

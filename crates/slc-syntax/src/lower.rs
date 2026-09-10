@@ -312,7 +312,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         Expr::Shift { expr, .. } => lower_expr(expr, continuations),
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
-        Expr::Handle { body, effect, clauses, ret } => {
+        Expr::Handle { body, clauses, ret } => {
             // Each clause → ($str_op ⊗ λarg. λresume. body); the arg binds the
             // operation's single parameter (or is ignored for a nullary op).
             let mut encoded = Term::Var("$unit".into());
@@ -349,11 +349,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // which flattens pairs, passes it as one value.
             Ok(call_curried(
                 Term::Var("__handle".into()),
-                vec![
-                    Term::Var(format!("$str_\"{effect}\"")),
-                    Term::Inl(Box::new(encoded)),
-                    body_thunk,
-                ],
+                vec![Term::Inl(Box::new(encoded)), body_thunk],
             ))
         }
         Expr::ErrorProp { expr, continuation } => {

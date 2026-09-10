@@ -72,7 +72,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "for" => TokenKind::For,
                 "effect" => TokenKind::Effect,
                 "handle" => TokenKind::Handle,
-                "with" => TokenKind::With,
                 "match" => TokenKind::Match,
                 "select" => TokenKind::Select,
                 "let" => TokenKind::Let,

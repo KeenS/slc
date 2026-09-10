@@ -94,12 +94,13 @@ pub enum Expr {
         expr: Box<Node<Expr>>,
         continuation: Option<String>,
     },
-    /// `handle body with E { op(p) resume => b, …, return(x) => r }`: run
-    /// `body`, answering each performed operation of effect `E` with its
-    /// clause, and its normal result with the `return` clause.
+    /// `handle body { op(p) resume => b, …, return(x) => r }`: run `body`,
+    /// answering each performed operation with its clause and its normal
+    /// result with the `return` clause. The handled effect is determined by
+    /// the clause operations — operation names are unique across effects — so
+    /// it is not written.
     Handle {
         body: Box<Node<Expr>>,
-        effect: String,
         clauses: Vec<HandleClause>,
         /// The `return(x) => r` clause: its binder and body.
         ret: Option<(String, Box<Node<Expr>>)>,
@@ -148,7 +149,7 @@ impl Expr {
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
             Expr::ErrorProp { expr, .. } | Expr::Shift { expr, .. } => vec![expr],
-            Expr::Handle { body, clauses, ret, .. } => std::iter::once(&**body)
+            Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))
                 .collect(),

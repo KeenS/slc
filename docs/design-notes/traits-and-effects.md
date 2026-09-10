@@ -142,7 +142,7 @@ fn checked_div(a: +i64, b: +i64) -> i64 / {Exn} {
 }
 
 command main | (exit: -i32) {
-    let result = handle checked_div(10, 0) with Exn {
+    let result = handle checked_div(10, 0) {
         // the handler ignores `resume`: the computation is abandoned, and the
         // handler's value replaces it. dropping `resume` is an exception.
         throw(msg) resume => "error: " + msg,
@@ -174,7 +174,7 @@ command main | (exit: -i32) {
     // run `pair` under a handler that takes *both* branches of every choose,
     // by resuming twice and concatenating. The continuation from the first
     // `choose` is entered with `true` and again with `false`.
-    let all = handle pair() with Choose {
+    let all = handle pair() {
         choose() resume => resume(true) + " " + resume(false),
         return(s)       => s,
     };

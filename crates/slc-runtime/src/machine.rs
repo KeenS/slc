@@ -54,7 +54,6 @@ pub enum Frame {
     /// A handler delimiter: the `return` clause, and the operation clauses
     /// of one effect. Sits on the stack under the body it handles.
     Prompt {
-        effect: String,
         clauses: std::rc::Rc<std::collections::HashMap<String, Value>>,
         ret: Value,
     },
@@ -320,15 +319,12 @@ fn step_apply(
         }
         // Performing an operation: find the nearest handler, capture the
         // delimited continuation, and run the matching clause with `resume`.
-        Value::Operation { effect, op } => {
-            let prompt = kont.iter().rposition(|f| {
-                matches!(f, Frame::Prompt { effect: e, clauses, .. }
-                    if *e == effect && clauses.contains_key(&op))
-            });
+        Value::Operation { op, .. } => {
+            let prompt = kont.iter().rposition(
+                |f| matches!(f, Frame::Prompt { clauses, .. } if clauses.contains_key(&op)),
+            );
             let Some(p) = prompt else {
-                return Err(EvalError::TypeMismatch(format!(
-                    "no handler for operation `{op}` of effect `{effect}`"
-                )));
+                return Err(EvalError::TypeMismatch(format!("no handler for operation `{op}`")));
             };
             // Split at the handler: captured includes the Prompt, so resuming
             // re-installs it (a deep handler). The clause runs below it.
@@ -408,14 +404,9 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Vec<Frame>) -> Result<S
         });
     }
     if name == "__handle" {
-        // args: [Str(effect), clauses, body_thunk]. Decode the clause tree
-        // into the operation map and the return closure, push the prompt,
-        // and force the body.
+        // args: [clauses, body_thunk]. Decode the clause tree into the
+        // operation map and the return closure, push the prompt, force body.
         let mut it = args.into_iter();
-        let effect = match it.next() {
-            Some(Value::Str(s)) => s,
-            _ => return Err(EvalError::TypeMismatch("__handle effect name".into())),
-        };
         let clauses_value = match it.next() {
             Some(Value::Inl(inner)) => *inner,
             other => other.unwrap_or(Value::Unit),
@@ -436,7 +427,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Vec<Frame>) -> Result<S
             }
             rest = *tail;
         }
-        kont.push(Frame::Prompt { effect, clauses: Rc::new(clauses), ret });
+        kont.push(Frame::Prompt { clauses: Rc::new(clauses), ret });
         return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
     }
     if name == "__match_dispatch" {

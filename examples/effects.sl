@@ -39,20 +39,20 @@ fn scaled(x: +i64) -> i64 / {Reader} {
 
 command main | (exit: -i32) {
     // The exception is caught; the clause ignores `resume`.
-    let safe = handle checked_div(10, 0) with Exn {
+    let safe = handle checked_div(10, 0) {
         throw(message) resume => 0 - 1,
         return(n) => n,
     };
     println(safe);                      // -1
 
-    let ok = handle checked_div(10, 2) with Exn {
+    let ok = handle checked_div(10, 2) {
         throw(message) resume => 0 - 1,
         return(n) => n,
     };
     println(ok);                        // 5
 
     // The reader resumes with the configured value.
-    let result = handle scaled(7) with Reader {
+    let result = handle scaled(7) {
         config() resume => resume(10),
         return(n) => n,
     };
