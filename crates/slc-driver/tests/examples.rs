@@ -47,7 +47,8 @@ fn repository_example_suite_has_expected_results() {
                 stdout: &[
                     "The simplest Slant program",
                     "Hello, Slant!",
-                    "cannot read: cannot read examples/missing.sl",
+                    "first line: // The simplest Slant program.",
+                    "cannot open: cannot open examples/missing.sl",
                 ],
                 stderr: &[],
             },

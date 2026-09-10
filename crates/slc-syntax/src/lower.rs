@@ -50,6 +50,7 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
             "String" | "str" => Ok(Type::Pos(Base::Str)),
             "char" => Ok(Type::Pos(Base::Char)),
             "unit" => Ok(Type::Pos(Base::Unit)),
+            "File" => Ok(Type::Pos(Base::File)),
             other => Err(LowerError::UnknownType(other.to_string())),
         },
         // `-⊥` is not the dual of `⊥`; bottom is the impossible command

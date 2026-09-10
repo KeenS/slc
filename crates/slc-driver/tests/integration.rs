@@ -934,6 +934,44 @@ fn json_parser_rejects_malformed_input() {
 }
 
 #[test]
+fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
+    // An integer cannot close a file.
+    let dir = std::env::temp_dir().join("slc_test_close_not_a_handle.sl");
+    std::fs::write(&dir, "command main | (exit: -i32) { close_file(42); 0 @ exit }").unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(
+        (stdout.clone() + &stderr).contains("expected +File"),
+        "stdout: {stdout}; stderr: {stderr}"
+    );
+
+    // Reading through a closed handle fails.
+    let data = std::env::temp_dir().join("slc_test_handle_data.txt");
+    std::fs::write(&data, "one line\n").unwrap();
+    let dir = std::env::temp_dir().join("slc_test_use_after_close.sl");
+    std::fs::write(
+        &dir,
+        format!(
+            r#"command main | (exit: -i32) {{
+                let fail = select +String {{ m <= {{ println(m); 1 @ exit }} }};
+                let handle = mu(k) {{ open_file("{}", k, fail) }};
+                close_file(handle);
+                let line = mu(k) {{
+                    read_line(handle, k, select +unit {{ e <= {{ println("eof"); 1 @ exit }} }})
+                }};
+                println(line);
+                0 @ exit
+            }}"#,
+            data.display()
+        ),
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "stdout: {stdout}");
+    assert!((stdout + &stderr).contains("is not open"), "a spent handle must not read: {stderr}");
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

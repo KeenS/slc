@@ -83,9 +83,11 @@ and where the two disagree, `DESIGN.md` is right.
   program is a right a helper is handed, as a continuation, never one it
   takes.
 - The standard library follows the declaration rule: `parse_int`, `read_file`,
-  `write_file`, `char_at`, `list_get`, `map_get`, and `find_char` take a
-  continuation per outcome and activate exactly one. Operator failures (`s[i]`,
-  division by zero) stay fatal.
+  `open_file`, `read_line`, `write_file`, `char_at`, `list_get`, `map_get`,
+  and `find_char` take a continuation per outcome and activate exactly one.
+  Operator failures (`s[i]`, division by zero) stay fatal. A file handle is a
+  value of its own base type `+File`, spent by `close_file`; that it is closed
+  on every terminating path is not yet checked, which stays a known limit.
 - The shifts `↓`/`↑` box a negative type as data and dualize through each
   other without cancelling, and the same glyphs are the (erased) expression
   coercions. Data positions, the left of `@`, and `select`'s type are
@@ -124,6 +126,12 @@ and where the two disagree, `DESIGN.md` is right.
   diagnostic rather than an unchecked hole.
 
 ## Known limits
+
+- **A file handle's close is not enforced.** `+File` is the first resource
+  with a lifetime, and the linearity checker does not yet watch it: an
+  unclosed handle leaks until the program ends, and only a read after
+  `close_file` fails. Watching it means value-linearity for one type —
+  spent exactly once, by `close_file` or by being handed on.
 
 - **Soundness is enforced by inference, argued informally.** What remains
   short of a proof: no mechanized subject-reduction argument ties the checker
@@ -190,13 +198,6 @@ example suite.
 
 ## Next
 
-- **`open_file` and `close_file`.** Builtin commands over a file handle, so
-  reading stops being whole-file-or-nothing: `open_file(path)` offers the
-  handle to one continuation and a message to the other; `read_line(handle)`
-  or similar reads through it; `close_file(handle)` consumes it. A handle is
-  a positive value that should be closed on every terminating path — the
-  first resource whose lifetime the linearity checker can watch. Rewrite
-  `examples/file_io.sl` around them.
 - **Rust-style namespaces.** `mod` blocks, `use`, and `::` paths beyond enum
   variants — `Color::Red` is already path-shaped. A module system decides
   what a bare name means, so it touches every lookup the checker keeps

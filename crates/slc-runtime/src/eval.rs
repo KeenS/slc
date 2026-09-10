@@ -969,6 +969,29 @@ fn dispatch_offering_builtin(
                 Err(e) => apply_value(failed, message(e.to_string()), fuel),
             })
         }
+        "open_file" => {
+            let (opened, failed) = (value(1), value(2));
+            let Value::Str(path) = value(0) else {
+                return Some(Err(EvalError::TypeMismatch("open_file expects a String".into())));
+            };
+            Some(match crate::builtins::open_file(&path) {
+                Ok(handle) => apply_value(opened, handle, fuel),
+                Err(e) => apply_value(failed, message(e.to_string()), fuel),
+            })
+        }
+        "read_line" => {
+            let (line, end) = (value(1), value(2));
+            let Value::File(id) = value(0) else {
+                return Some(Err(EvalError::TypeMismatch(
+                    "read_line expects a file handle".into(),
+                )));
+            };
+            Some(match crate::builtins::read_line(id) {
+                Ok(Some(text)) => apply_value(line, Value::Str(text), fuel),
+                Ok(None) => apply_value(end, Value::Unit, fuel),
+                Err(e) => Err(EvalError::TypeMismatch(e.to_string())),
+            })
+        }
         "write_file" => {
             let (ok, failed) = (value(2), value(3));
             Some(
@@ -1090,7 +1113,7 @@ fn dispatch_builtin(name: &str, args: Vec<Value>, _fuel: &mut usize) -> Result<V
         let v = args.into_iter().next().unwrap_or(Value::Unit);
         return Err(EvalError::Escape(id, v));
     }
-    if matches!(name, "file_exists") {
+    if matches!(name, "file_exists" | "close_file") {
         return crate::builtins::apply_io_builtin(name, &args)
             .map_err(|e| EvalError::TypeMismatch(e.to_string()));
     }
@@ -1122,6 +1145,7 @@ fn builtin_arity(name: &str) -> usize {
         "map_len" => 1,
         "map_insert" => 3,
         "set_contains" => 2,
+        "close_file" => 1,
         "set_insert" => 2,
         "set_len" => 1,
         "path_join" => 2,
@@ -1131,7 +1155,7 @@ fn builtin_arity(name: &str) -> usize {
         "substring" => 3,
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
-        "read_file" => 3,
+        "read_file" | "open_file" | "read_line" => 3,
         "char_at" | "list_get" | "map_get" | "write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__if_dispatch" => 3,

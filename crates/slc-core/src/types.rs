@@ -11,6 +11,9 @@ pub enum Base {
     Str,
     Char,
     Unit,
+    /// An open file handle, produced by `open_file` and consumed by
+    /// `close_file`.
+    File,
 }
 
 /// A type in the λ̄μμ̃ calculus, with explicit positive/negative polarity.

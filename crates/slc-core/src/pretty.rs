@@ -16,6 +16,7 @@ impl std::fmt::Display for Base {
             Base::Str => write!(f, "String"),
             Base::Char => write!(f, "char"),
             Base::Unit => write!(f, "unit"),
+            Base::File => write!(f, "File"),
         }
     }
 }

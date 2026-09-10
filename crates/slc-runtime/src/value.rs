@@ -96,6 +96,9 @@ pub enum Value {
     /// The marker a call with no arguments applies its callee to. It is not
     /// unit: `f()` passes nothing, while `f(())` passes the unit value.
     NoArguments,
+    /// An open file handle: an id into the runtime's handle registry,
+    /// produced by `open_file` and spent by `close_file`.
+    File(u64),
     /// An `enum` value: a variant label and its payload.
     Tagged(String, Box<Value>),
     /// A negative additive consumer (`select`): the branches of a core
@@ -141,6 +144,7 @@ impl PartialEq for Value {
             (Value::Unit, Value::Unit)
             | (Value::Never, Value::Never)
             | (Value::NoArguments, Value::NoArguments) => true,
+            (Value::File(a), Value::File(b)) => a == b,
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
             (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
@@ -164,6 +168,7 @@ impl Value {
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
+            Value::File(_) => Type::Pos(slc_core::types::Base::File),
             Value::Unit | Value::Never | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
@@ -198,6 +203,7 @@ impl Value {
             Value::Char(c) => format!("{c:?}"),
             Value::Unit => "()".to_string(),
             Value::NoArguments => "<no arguments>".to_string(),
+            Value::File(id) => format!("<file@{id}>"),
             Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
             Value::Inl(a) => format!("inl({})", a.display()),
             Value::Inr(a) => format!("inr({})", a.display()),
@@ -264,6 +270,9 @@ pub fn install_stdlib(env: &mut Env) {
         "str_concat",
         "int_to_str",
         "read_file",
+        "open_file",
+        "read_line",
+        "close_file",
         "write_file",
         "file_exists",
         "__if_dispatch",

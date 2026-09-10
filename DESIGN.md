@@ -610,6 +610,8 @@ one of them is activated.
 |--------------|--------------------------------------------------|-----------------------------------------------------|
 | `parse_int`  | `text: +String`                                  | `ok: -i64`, `invalid: -String`, `overflow: -String` |
 | `read_file`  | `path: +String`                                  | `ok: -String`, `failed: -String`                    |
+| `open_file`  | `path: +String`                                  | `opened: -File`, `failed: -String`                  |
+| `read_line`  | `handle: +File`                                  | `line: -String`, `end: -unit`                       |
 | `write_file` | `path: +String`, `contents: +String`             | `ok: -unit`, `failed: -String`                      |
 | `char_at`    | `text: +String`, `index: +i64`                   | `ok: -char`, `out_of_range: -String`                |
 | `list_get`   | `list`, `index: +i64`                            | `ok`, `out_of_range: -String`                       |
@@ -632,8 +634,15 @@ written where it is passed rather than declared elsewhere.
 
 Everything else is a function: `println`, `print`, and `format`; arithmetic and
 comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
-`is_digit`, `is_ws`, `skip_ws`, `skip_digits`; `file_exists`; and the
+`is_digit`, `is_ws`, `skip_ws`, `skip_digits`; `file_exists`; `close_file`,
+which spends a handle so a later read through it fails; and the
 `list_`/`map_`/`set_`/`path_` constructors and totals.
+
+A handle is a value of its own base type, `+File`, produced only by
+`open_file` — so nothing else closes a file or reads a line. Closing on every
+terminating path is not yet enforced by the linearity checker; today an
+unclosed handle merely leaks until the program ends, and a read after
+`close_file` is a runtime error.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range index
 `s[i]` and a division by zero. They are reached through operator syntax, which

@@ -406,6 +406,7 @@ impl Parser {
             "String" => Base::Str,
             "char" => Base::Char,
             "unit" => Base::Unit,
+            "File" => Base::File,
             _ => return Err(self.error(&format!("unknown base type `{name}`"))),
         })
     }

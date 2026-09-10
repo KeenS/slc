@@ -526,6 +526,63 @@ mod tests {
     }
 }
 
+thread_local! {
+    /// Open file handles, by id. A handle value is just the id; the reader
+    /// lives here until `close_file` spends it.
+    static OPEN_FILES: std::cell::RefCell<
+        std::collections::HashMap<u64, std::io::BufReader<std::fs::File>>,
+    > = std::cell::RefCell::new(std::collections::HashMap::new());
+    static NEXT_FILE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+}
+
+/// Open a file for reading and register its handle.
+pub fn open_file(path: &str) -> Result<Value, BuiltinError> {
+    let file = std::fs::File::open(path)
+        .map_err(|e| BuiltinError::Failed(format!("cannot open {path}: {e}")))?;
+    let id = NEXT_FILE_ID.with(|next| {
+        let id = next.get();
+        next.set(id + 1);
+        id
+    });
+    OPEN_FILES.with(|files| files.borrow_mut().insert(id, std::io::BufReader::new(file)));
+    Ok(Value::File(id))
+}
+
+/// Read one line from a handle: `Some(line)` without its newline, or `None`
+/// at the end of the file. A handle that was never opened — or already
+/// closed — is a type error, not an outcome.
+pub fn read_line(id: u64) -> Result<Option<String>, BuiltinError> {
+    OPEN_FILES.with(|files| {
+        let mut files = files.borrow_mut();
+        let reader = files
+            .get_mut(&id)
+            .ok_or_else(|| BuiltinError::Failed(format!("file handle {id} is not open")))?;
+        let mut line = String::new();
+        use std::io::BufRead;
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|e| BuiltinError::Failed(format!("cannot read from handle {id}: {e}")))?;
+        if read == 0 {
+            return Ok(None);
+        }
+        if line.ends_with('\n') {
+            line.pop();
+            if line.ends_with('\r') {
+                line.pop();
+            }
+        }
+        Ok(Some(line))
+    })
+}
+
+/// Close a handle: spend it, so a later read through it fails.
+pub fn close_file(id: u64) -> Result<Value, BuiltinError> {
+    OPEN_FILES.with(|files| match files.borrow_mut().remove(&id) {
+        Some(_) => Ok(Value::Unit),
+        None => Err(BuiltinError::Failed(format!("file handle {id} is not open"))),
+    })
+}
+
 /// Install file I/O builtins (separate from pure builtins for clarity).
 pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinError> {
     match name {
@@ -548,6 +605,12 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
             std::fs::write(path, content)
                 .map_err(|e| BuiltinError::Failed(format!("cannot write {path}: {e}")))?;
             Ok(Value::Unit)
+        }
+        "close_file" => {
+            let Some(Value::File(id)) = args.first() else {
+                return Err(BuiltinError::TypeMismatch("close_file expects a file handle".into()));
+            };
+            close_file(*id)
         }
         "file_exists" => {
             let Some(Value::Str(path)) = args.first() else {
