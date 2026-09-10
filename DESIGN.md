@@ -478,6 +478,31 @@ of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
 
+### Polymorphism
+
+Two forms, one discipline. A declaration may take type parameters —
+`fn id<T>(x: T) -> T` — which are rigid inside their own body and
+instantiated afresh at every call. And a `let` generalizes, under the
+**value restriction**: only when its right-hand side is a syntactic value —
+a literal, a `fn`, a `select`, a constructor, struct, tuple, or box of
+values, a plain name. Every use of such a binding instantiates its variables
+afresh:
+
+```sl
+let f = fn(x) { x };
+println(f(1) + 1);           // a := +i64
+println(str_len(f("s")));    // a := +String
+```
+
+Anything that computes stays monomorphic — `mu(k)` above all, and every
+application. A value ran nothing, so no two instantiations can disagree
+about anything that happened; a computation may have captured its
+continuation, and generalizing that is the classical unsoundness (the
+Harper–Lillibridge counterexample is a `mu` returning a polymorphic
+function; with continuations that resume, it would execute). When the
+per-use behaviour is wanted, write it: `fn(u) { mu(k) { … } }` is a value,
+generalizes, and visibly re-runs its capture at each use.
+
 ### Shifts
 
 `↓B` boxes a negative type as data, and `↑P` is its dual — the computation

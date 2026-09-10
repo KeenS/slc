@@ -157,6 +157,57 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
     }
 }
 
+/// The value restriction: a `let` of a syntactic value ran nothing, so no
+/// two instantiations can disagree about anything that happened —
+/// generalize its own variables. Anything that computes — `mu` above all —
+/// stays monomorphic.
+fn generalize(
+    binding_ty: Type,
+    value: &Expr,
+    enums: &Declarations,
+    env: &mut Env,
+) -> (Type, Vec<usize>) {
+    let binding_ty = env.uni.apply(&binding_ty);
+    if !is_value_form(value, enums) {
+        return (binding_ty, Vec::new());
+    }
+    let claimed = env.free_vars();
+    let mut own = std::collections::HashSet::new();
+    crate::env::collect_vars(&binding_ty, &mut own);
+    let generalized =
+        own.into_iter().filter(|v| !claimed.contains(v) && !env.uni.is_rigid(*v)).collect();
+    (binding_ty, generalized)
+}
+
+/// The value restriction's syntactic class: an expression that evaluates
+/// without running anything. `mu` is the definitive non-member — it captures
+/// — and so is every application, which may run a command or hand back a
+/// value holding a captured continuation.
+fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
+    match e {
+        Expr::Int(_)
+        | Expr::Float(_)
+        | Expr::Str(_)
+        | Expr::Char(_)
+        | Expr::Bool(_)
+        | Expr::Ident(_)
+        | Expr::Lambda { .. }
+        | Expr::Select { .. } => true,
+        Expr::Pair(items) => items.iter().all(|item| is_value_form(&item.kind, enums)),
+        Expr::Struct { fields, .. } => {
+            fields.iter().all(|(_, value)| is_value_form(&value.kind, enums))
+        }
+        // A constructor applied to values builds data; any other call runs.
+        Expr::Call { callee, args } => {
+            matches!(&callee.kind, Expr::Ident(name) if enums.variant(name).is_some())
+                && args.iter().all(|arg| is_value_form(&arg.kind, enums))
+        }
+        // The shifts are erased coercions: a boxed value is a value.
+        Expr::Shift { expr, .. } => is_value_form(&expr.kind, enums),
+        _ => false,
+    }
+}
+
 fn is_constant_initializer(e: &Expr, env: &Env) -> bool {
     match e {
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => true,
@@ -595,6 +646,9 @@ fn check_expr_unapplied(
     }
     match &e.kind {
         Expr::Ident(name) => {
+            if let Some(ty) = env.lookup_instantiated(name) {
+                return Some(ty);
+            }
             if let Some(ty) = env.lookup(name) {
                 return Some(ty);
             }
@@ -828,8 +882,9 @@ fn check_expr_unapplied(
         }
         Expr::Let { name, ty, value, body } => {
             let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
+            let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
             env.push();
-            env.define(name, binding_ty);
+            env.define_scheme(name, binding_ty, generalized);
             let result = body.as_ref().and_then(|body| check_expr(body, enums, env, diags));
             env.pop();
             result
@@ -1173,7 +1228,8 @@ fn check_expr_unapplied(
                     // A bodyless `let` scopes over the rest of the block; the
                     // binding itself is checked exactly as the expression form.
                     let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
-                    env.define(name, binding_ty);
+                    let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
+                    env.define_scheme(name, binding_ty, generalized);
                 } else {
                     result = check_expr(expr, enums, env, diags);
                 }
@@ -1789,6 +1845,73 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("has type 1")),
             "unit fit everything once: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_let_of_a_value_generalizes() {
+        // One binding, three instantiations — through an alias, too: an
+        // identifier is a value form.
+        assert!(
+            check(
+                "command main | (exit: -i32) {
+                     let f = fn(x) { x };
+                     println(f(1) + 1);
+                     println(str_len(f(\"s\")));
+                     let alias = f;
+                     println(alias(true));
+                     0 @ exit
+                 }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn the_value_restriction_keeps_computations_monomorphic() {
+        // The Harper–Lillibridge weapon: a `mu` capture. Generalizing it
+        // would let a continuation captured at one instantiation be re-used
+        // at another, so it stays monomorphic and mixed uses are rejected.
+        let diags = check(
+            "command main | (exit: -i32) {
+                 let g = mu(k) { fn(x) { x } @ k };
+                 println(g(1) + 1);
+                 println(str_len(g(\"s\")));
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
+
+        // An application is not a value either: it may run a command, and
+        // its result may hold a captured continuation.
+        let diags = check(
+            "fn id<T>(x: T) -> T { x }
+             command main | (exit: -i32) {
+                 let h = id(fn(x) { x });
+                 println(h(1) + 1);
+                 println(str_len(h(\"s\")));
+                 0 @ exit
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
+    }
+
+    #[test]
+    fn eta_expansion_recovers_polymorphism_by_name() {
+        // Wrapping the capture in a lambda makes it a value: each use
+        // re-runs the capture at its own instantiation, visibly.
+        assert!(
+            check(
+                "command main | (exit: -i32) {
+                     let fresh = fn(u) { mu(k) { fn(x) { x } @ k } };
+                     println(fresh(())(1) + 1);
+                     println(str_len(fresh(())(\"s\")));
+                     0 @ exit
+                 }"
+            )
+            .is_ok()
         );
     }
 

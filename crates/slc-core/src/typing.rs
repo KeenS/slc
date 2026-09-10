@@ -106,6 +106,12 @@ impl Unification {
         Type::Var(v)
     }
 
+    /// Whether a variable is rigid: a type parameter seen from inside its
+    /// own body, which nothing may generalize or bind.
+    pub fn is_rigid(&self, var: usize) -> bool {
+        self.rigid.contains(&var)
+    }
+
     /// A rigid variable: a type parameter, seen from inside its own body.
     pub fn fresh_rigid(&mut self) -> Type {
         let v = self.next_var;
