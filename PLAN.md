@@ -56,15 +56,36 @@ feature is mid-flight; what remains open is below.
   variants to write, so no surface form. Whether they deserve one is a
   future discussion.
 
-- **Composition syntax.** Composing a function with a continuation is
-  already one binder away in either spelling — `select +A { x => f(x) @ k }`
-  from the consumer side, `fn(x: +A) { f(x) @ k }` from the value side
-  (`A → ⊥` *is* `-A`) — and negative functions compose by plain
-  application. In a sequent calculus composition *is* the cut, so an
-  operator would be a third name for it. Revisit once the stdlib work
-  shows how often the eta-wrap recurs: the first remedy is a prelude
-  function (`then(f, k)`), and surface syntax only if that proves
-  insufficient.
+- **Composition syntax: the pipeline cut.** Composing a function with a
+  continuation is one binder away in either spelling today —
+  `select +A { x => f(x) @ k }` or `fn(x: +A) { f(x) @ k }` — and the
+  prelude has `then(f, ↓k)`. The candidate surface syntax under
+  consideration writes the cut as a pipeline, values flowing left through
+  functions into continuations:
+
+  ```sl
+  <(v1, v2) | f1 | f2 | (k1, k2)>
+  ```
+
+  — a surface spelling of the core's own `⟨ t ∥ e ⟩`, with the composition
+  chain written between the sides. The half-open fragments would then
+  denote the sides themselves:
+
+  ```sl
+  <(v1, v2,) | f1 |        // a producer: values piped through f1,
+                           // awaiting its continuation
+  | f2 | (k1, k2)>         // a consumer: pipe through f2, deliver to
+                           // the row — composition of f2 with k, as syntax
+  ```
+
+  To settle before adopting: the meaning of a middle stage (positive
+  functions apply; negative functions and multi-outcome commands would
+  consume the rest of the pipe as their row), whether `(v1, v2)` packs a
+  tensor or spreads arguments and `(k1, k2)` is a row or a single `⅋`
+  consumer, how the half-open forms type (term and co-term of the same
+  pipeline), and the grammar itself — `<` opens type arguments and `|`
+  separates a `command`'s groups, so both need disambiguation in
+  expression position.
 
 ## Deferred, with no accepted replacement
 
