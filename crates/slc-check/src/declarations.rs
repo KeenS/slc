@@ -20,6 +20,10 @@ pub struct Declarations {
     signatures: HashMap<String, (String, Vec<Type>)>,
     /// Unqualified variant name → its label, when only one enum declares it.
     unqualified: HashMap<String, Option<String>>,
+    /// Unqualified destructor name → its label, when only one menu declares
+    /// it. Demands are always written `.item(k)`, so they live in their own
+    /// namespace: a menu item never shadows a function or a variant.
+    destructors: HashMap<String, Option<String>>,
     /// Declaration name → fields, in declaration order.
     pub(crate) records: HashMap<String, Vec<(String, Type)>>,
     /// Declared `menu` names. A menu's items live in `variants` and
@@ -122,6 +126,17 @@ impl Declarations {
             if matches!(inner.as_ref(), Type::Named(n) if self.is_negative_decl(n)))
     }
 
+    /// Resolve a destructor path, or an unambiguous unqualified destructor
+    /// name, to the menu it belongs to and the continuation its request
+    /// carries.
+    pub(crate) fn destructor(&self, name: &str) -> Option<&(String, Vec<Type>)> {
+        if let Some(signature) = self.signatures.get(name) {
+            return Some(signature);
+        }
+        let label = self.destructors.get(name)?.as_ref()?;
+        self.signatures.get(label)
+    }
+
     pub(crate) fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
         if let Some(signature) = self.signatures.get(name) {
             return Some(signature);
@@ -169,7 +184,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
                 let answer = enums.resolve(answer).unwrap_or(Type::One);
                 enums.signatures.insert(label.clone(), (name.clone(), vec![answer.dual()]));
                 enums
-                    .unqualified
+                    .destructors
                     .entry(item.clone())
                     .and_modify(|existing| *existing = None)
                     .or_insert(Some(label));

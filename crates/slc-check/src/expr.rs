@@ -494,7 +494,7 @@ fn check_pattern(
         }
         // A request shape matches a continuation of its menu type — the
         // positive `Named` that is the menu's dual.
-        Pattern::Dtor { dtor, .. } => match declarations.variant(dtor) {
+        Pattern::Dtor { dtor, .. } => match declarations.destructor(dtor) {
             Some((menu, _)) => {
                 if expected != &Type::Named(menu.clone()) {
                     diags.push(Diagnostic {
@@ -774,7 +774,7 @@ fn bind_match_pattern(
         }
         // A request shape binds the continuation it carries.
         Pattern::Dtor { dtor, binder } => {
-            if let Some(ty) = enums.variant(dtor).and_then(|(_, p)| p.first()) {
+            if let Some(ty) = enums.destructor(dtor).and_then(|(_, p)| p.first()) {
                 env.define(binder, ty.clone());
             }
         }
@@ -1636,7 +1636,7 @@ fn check_expr_unapplied(
         // `.item(k)` — a request: the continuation `k` must consume the
         // item's answer, and the request itself is the dual of the menu.
         Expr::Request { dtor, arg } => {
-            let Some((menu, payload)) = enums.variant(dtor).cloned() else {
+            let Some((menu, payload)) = enums.destructor(dtor).cloned() else {
                 diags.push(Diagnostic {
                     message: format!("`.{dtor}` does not name a declared menu item"),
                     span: e.span,

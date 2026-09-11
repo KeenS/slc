@@ -1,17 +1,23 @@
 // The connectives, in both polarities.
 //
-// A positive type is data: you build a value and take it apart with `match`.
-// A negative type is a consumer: `select` builds one, and a cut hands it a
-// value of the dual type. Two forms cover all four connectives — `match`
-// takes any positive value apart, `select` builds any positive type's
-// consumer — and what distinguishes them is how many shapes the type has: a
-// product has one, a sum has one per variant.
+// There are four, and now there is one declaration for each. They split on
+// two axes: whether something *chooses* (additive) or everything is in play
+// at once (multiplicative), and which side holds the value.
 //
-//   type      a value of it is            it is consumed by
-//   A ⊗ B     every part, at once         a cut against an `A ⅋ B`
-//   A ⊕ B     one tagged variant          a cut against an `A & B`
-//   A ⅋ B     `select` over a product     a cut with an `A ⊗ B`
-//   A & B     `select` over a sum         a cut with an `A ⊕ B`
+//   type    declared   a value of it is              fed by
+//   A ⊗ B   data       every field, at once          —  (it is the data)
+//   A ⊕ B   enum       one tagged variant            —  (it is the data)
+//   A ⅋ B   form       a consumer wanting all        its record   (⊗)
+//   A & B   menu       a value answering one item    its request  (⊕)
+//
+// Two constructs cover all four, and each keeps its role across the mirror.
+// `match` takes a *named* scrutinee apart. `select` is a branch table
+// awaiting its scrutinee: over a positive declaration it builds that type's
+// consumer, and over a negative one it builds the value itself.
+//
+// The negative connectives do not need a declaration — every positive type
+// already has a dual, and `select` builds it. What `form` and `menu` add is
+// a *name* for the negative side, so a signature can speak of it directly.
 
 // ─── A ⊗ B ─── the positive product: a value carries every part.
 
@@ -35,7 +41,21 @@ fn report_sum(out: -i64) <- Pair {
     }
 }
 
-// A bare product needs no declaration; its shape is written as the type.
+// The same connective, declared in its own right. A form's fields name what
+// flows *in*, and the record they describe is what feeds it.
+
+form Total {
+    left: i64,
+    right: i64,
+}
+
+fn total(out: ↓-i64) -> Total {
+    select Total {
+        Total { left, right } <= (left + right) @ ↑out,
+    }
+}
+
+// A bare product needs no declaration either; its shape is written as the type.
 
 fn report_first(out: -i64) <- (+i64 ⊗ +String) {
     select (+i64 ⊗ +String) {
@@ -70,19 +90,21 @@ fn code(out: -i64) <- Colour {
     }
 }
 
-// A `&` whose components are values rather than commands is codata: a
-// provider. Its dual is a sum of *requests*, each carrying the continuation
-// that wants the answer — `dual(-i64 ⊕ -String)` is `+i64 & +String`.
+// Declared in its own right, `&` is codata: a value that answers whichever
+// item is demanded. Its dual is the sum of those demands, each carrying the
+// continuation that wants the answer — `menu Config` below is exactly
+// `dual(enum { Retries(↓-i64), Name(↓-String) })`, which is how this had to
+// be written before the negative side could be declared.
 
-enum Request {
-    Retries(↓-i64),
-    Name(↓-String),
+menu Config {
+    retries: i64,
+    name: String,
 }
 
-fn config() <- Request {
-    select Request {
-        Retries(k) <= 3 @ ↑k,
-        Name(k) <= "slant" @ ↑k,
+fn config() -> Config {
+    select Config {
+        .retries(out) <= 3 @ out,
+        .name(out) <= "slant" @ out,
     }
 }
 
@@ -98,9 +120,13 @@ command main | (exit: -i32) {
     // ⊗ : build every part, then take them apart.
     println(sum(Pair { left: 2, right: 40 }));
 
-    // ⅋ : hand the consumer the whole product.
+    // ⅋ : hand the consumer the whole product — as the dual of a declared
+    // positive, and as a form declared directly. Both are the same cut.
     println(mu ask(answer: -i64) {
         Pair { left: 2, right: 40 } @ report_sum(answer)
+    });
+    println(mu ask(answer: -i64) {
+        Total { left: 2, right: 40 } @ total(↓answer)
     });
     println(mu ask(answer: -i64) {
         (7, "ignored") @ report_first(answer)
@@ -114,10 +140,9 @@ command main | (exit: -i32) {
         Colour::Green @ code(answer)
     });
 
-    // codata: ask the provider for one field. The other is never computed.
-    println(mu ask(answer: -i64) {
-        Request::Retries(↓answer) @ config
-    });
+    // codata: demand one item of the menu. The other is never computed.
+    println(config().retries);
+    println(config().name);
 
     // 1 and ⊥.
     println(mu halt(k: -⊥) { done(k) });
