@@ -45,6 +45,17 @@ feature is mid-flight; what remains open is below.
   and no row polymorphism, so a higher-order function cannot forward an
   argument's effects — `map(f, xs)` cannot say it performs whatever `f` does.
 
+## Deferred, for discussion
+
+- **The dual of effects.** `effect`/`handle` live entirely on the value side:
+  a handled body returns a value, effect rows annotate `->`. What an
+  effectful negative function or a handler on the consumer side means is an
+  open question — to be discussed, not yet designed.
+
+- **The additive units `0` and `⊤`.** Absent on both sides today — no
+  variants to write, so no surface form. Whether they deserve one is a
+  future discussion.
+
 ## Deferred, with no accepted replacement
 
 - **Trait objects (`dyn`).** Dispatch is static — a concrete call goes direct,
@@ -62,3 +73,41 @@ feature is mid-flight; what remains open is below.
 - **Row-polymorphic effects.** Infer a function's effect row and let a
   higher-order function forward an argument's effects, so `map(f, xs)` can say
   it performs whatever `f` does — retiring the monomorphic-rows limit.
+
+The symmetry audit (after `menu` landed) left these queued, in order:
+
+- **Introduce the dual of `struct`.** The declaration square is ¾ complete:
+  `enum` ↔ `menu`, `struct` ↔ nothing. The named ⅋ — a record of
+  continuations supplied all at once — needs a declaration form, a
+  construction form, and per-position access, the way `menu` got them for
+  `&`. Naming to be settled (no anagram this time).
+
+- **Make `mu` a pattern matcher, and enrich the patterns of both `select`
+  and `mu`.** Pattern depth is one-sided: `match` has nesting, literals,
+  guards, or-patterns; everything on the mirror side is flat. `mu` should
+  bind its continuation by pattern the way `select` binds its scrutinee, and
+  both should take the richer pattern forms (nested copatterns like
+  `.tail(.head(out))`, wildcards, guards). Closing this also closes the
+  eliminator gap: a branch table the core can express should lower to
+  `μ̃[…]`/`μ[…]`, not to the `__match_dispatch` builtin.
+
+- **Delete the exponential `!A`.** Linearity was eliminated — the core is
+  classical, weakening and contraction are free — so `!` marks nothing. It
+  also breaks the involution (`dual(!A) = !dual(A)` today, which is not the
+  linear-logic `?dual(A)`, and no `?` exists). Remove the type rather than
+  repair a modality the language no longer needs.
+
+- **Define stdlib functions negatively where that is the simple form.** The
+  prelude and builtins are all value-side. A function whose natural
+  definition is a consumer transformer should be declared `<-`, so the
+  negative half of the language has a standard library too.
+
+- **Delete the builtin `[A]` and define lists in the prelude.** Lists are an
+  ordinary recursive `enum`; the built-in type, literals, and list builtins
+  should reduce to prelude definitions (and streams, their `menu` mirror,
+  already need no builtin — `menu Stream { head: A, tail: Stream }` works
+  today).
+
+- **Test `impl Trait for Menu`.** Trait dispatch was built against positive
+  receivers; codata is where interfaces naturally live, so impls for menu
+  types must be exercised and fixed or rejected with a real diagnostic.
