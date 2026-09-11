@@ -72,15 +72,6 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Make `mu` a pattern matcher, and enrich the patterns of both `select`
-  and `mu`.** Pattern depth is one-sided: `match` has nesting, literals,
-  guards, or-patterns; everything on the mirror side is flat. `mu` should
-  bind its continuation by pattern the way `select` binds its scrutinee, and
-  both should take the richer pattern forms (nested copatterns like
-  `.tail(.head(out))`, wildcards, guards). Closing this also closes the
-  eliminator gap: a branch table the core can express should lower to
-  `μ̃[…]`/`μ[…]`, not to the `__match_dispatch` builtin.
-
 - **Delete the exponential `!A`.** Linearity was eliminated — the core is
   classical, weakening and contraction are free — so `!` marks nothing. It
   also breaks the involution (`dual(!A) = !dual(A)` today, which is not the

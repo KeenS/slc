@@ -554,6 +554,14 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             ))
         }
         Expr::Match { scrutinee, arms } => {
+            // A match the core can express lowers to a genuine cut against
+            // its branch table — μ̃[…], μ̃(x…), or μ̃x — with each arm's value
+            // delivered to the match's own continuation. Guards, literals,
+            // or-patterns, defaults among labelled arms, and everything else
+            // order-sensitive falls through to the dispatch builtin below.
+            if let Some(term) = lower_match_canonical(scrutinee, arms, continuations)? {
+                return Ok(term);
+            }
             // match s { p1 => e1, p2 => e2, ... }
             // → μmatch. ⟨ __match_dispatch(s', arms...) ∥ match ⟩
             // The dispatch builtin evaluates the scrutinee and selects
@@ -986,6 +994,133 @@ fn components<'p>(
         Ok((binders, command))
     }
     nested(patterns, "__s", command)
+}
+
+/// The μ binder a canonical `match` captures: each arm's value is cut
+/// against it, so the whole expression answers with the taken branch.
+const MATCH_COVAR: &str = "__match";
+
+/// Lower a `match` to a genuine cut against its branch table when the core
+/// can express it: every arm is a shape — a variant, a record, a tuple, a
+/// request, or one whole-value binder — with components that are binders or
+/// nested products. `Ok(None)` means the match needs the runtime dispatch
+/// (guards, literals, or-patterns, ordered defaults); errors are real.
+fn lower_match_canonical(
+    scrutinee: &Node<Expr>,
+    arms: &[MatchArm],
+    continuations: &[String],
+) -> Result<Option<Term>, LowerError> {
+    fn canonical_component(pattern: &Pattern) -> bool {
+        match pattern {
+            Pattern::Ident(name) => lookup_constant(name).is_none(),
+            Pattern::Wildcard => true,
+            Pattern::Tuple(items) => items.iter().all(canonical_component),
+            Pattern::Data { fields, .. } => fields.iter().all(|(_, p)| canonical_component(p)),
+            _ => false,
+        }
+    }
+    if arms.iter().any(|arm| arm.guard.is_some()) {
+        return Ok(None);
+    }
+    // One pass over the arms, sorting them into a labelled table, a single
+    // product, or a single whole-value binder. Any mix the core's branch
+    // tables cannot express aborts to the dispatch path.
+    let mut branches: Vec<CoCaseBranch> = Vec::new();
+    let mut atom: Option<CoTerm> = None;
+    let mut product: Option<CoTerm> = None;
+    for arm in arms {
+        let body = lower_match_body(&arm.body, continuations)?;
+        match &arm.pattern {
+            Pattern::Ident(name)
+                if lookup_constant(name).is_none() && lookup_variant(name).is_none() =>
+            {
+                // A whole-value binder: the atom form, alone or not at all —
+                // a default among labelled arms is order-sensitive.
+                if !branches.is_empty() || product.is_some() || atom.is_some() || arms.len() != 1 {
+                    return Ok(None);
+                }
+                atom = Some(CoTerm::MuTilde(name.clone(), Box::new(body)));
+            }
+            Pattern::Wildcard => {
+                if !branches.is_empty() || product.is_some() || atom.is_some() || arms.len() != 1 {
+                    return Ok(None);
+                }
+                atom = Some(CoTerm::MuTilde(UNUSED_BINDER.into(), Box::new(body)));
+            }
+            Pattern::Ident(name) => match lookup_variant(name) {
+                // A constant pattern is a literal; dispatch handles it.
+                _ if lookup_constant(name).is_some() => return Ok(None),
+                Some(label) => {
+                    branches.push(CoCaseBranch { label, binders: Vec::new(), body: Box::new(body) })
+                }
+                None => return Ok(None),
+            },
+            Pattern::Enum { name, variant, fields } => {
+                if !fields.iter().all(canonical_component) {
+                    return Ok(None);
+                }
+                let written =
+                    if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
+                let Some(label) = lookup_variant(&written) else { return Ok(None) };
+                let (binders, body) = components(fields.iter(), body)?;
+                branches.push(CoCaseBranch { label, binders, body: Box::new(body) });
+            }
+            Pattern::Data { name, fields } => {
+                if !fields.iter().all(|(_, p)| canonical_component(p)) || arms.len() != 1 {
+                    return Ok(None);
+                }
+                let (binders, body) = components(fields.iter().map(|(_, p)| p), body)?;
+                branches.push(CoCaseBranch { label: name.clone(), binders, body: Box::new(body) });
+            }
+            Pattern::Tuple(items) => {
+                if !items.iter().all(canonical_component) || arms.len() != 1 {
+                    return Ok(None);
+                }
+                let (binders, body) = components(items.iter(), body)?;
+                product = Some(CoTerm::MuTildeTensor(binders, Box::new(body)));
+            }
+            Pattern::Dtor { dtor, arg } => {
+                // A matched request binds its continuation whole; its label
+                // dispatches like any other.
+                let binder = match arg.as_ref() {
+                    Pattern::Ident(name) => name.clone(),
+                    Pattern::Wildcard => UNUSED_BINDER.to_string(),
+                    _ => return Ok(None),
+                };
+                let Some(label) = lookup_dtor(dtor) else { return Ok(None) };
+                branches.push(CoCaseBranch { label, binders: vec![binder], body: Box::new(body) });
+            }
+            _ => return Ok(None),
+        }
+    }
+    // Duplicate labels are ordered, first-match territory: not a table.
+    let mut seen: Vec<&String> = Vec::new();
+    for branch in &branches {
+        if seen.contains(&&branch.label) {
+            return Ok(None);
+        }
+        seen.push(&branch.label);
+    }
+    let consumer = match (branches.is_empty(), atom, product) {
+        (true, Some(atom), None) => atom,
+        (true, None, Some(product)) => product,
+        (false, None, None) => CoTerm::CoCase(branches),
+        _ => return Ok(None),
+    };
+    let scrutinee = lower_expr(scrutinee, continuations)?;
+    Ok(Some(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(scrutinee, consumer)))))
+}
+
+/// The command a canonical `match` arm runs: its value goes to the match's
+/// own continuation, unless the arm is already a cut against a named
+/// consumer, which stands as written.
+fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Command, LowerError> {
+    if let Expr::Cut { value, consumer } = &body.kind
+        && let Some(name) = named_consumer(&consumer.kind)
+    {
+        return Ok(Command::Cut(lower_expr(value, continuations)?, CoTerm::Covar(name.clone())));
+    }
+    Ok(Command::Cut(lower_expr(body, continuations)?, CoTerm::Covar(MATCH_COVAR.into())))
 }
 
 /// Build a menu from copattern rows, grouping arms by their outer
@@ -1514,6 +1649,40 @@ mod tests {
             "the consumer expression is evaluated: {consumer}"
         );
         assert_eq!(value, &Term::Var("$int_1".into()));
+    }
+
+    #[test]
+    fn a_flat_match_lowers_to_a_branch_table() {
+        // Every arm a shape, no guards: the match is a genuine cut against
+        // μ̃[…], not a call into the dispatch builtin.
+        let out = lower_str(
+            "enum Colour { Red, Green } \
+             fn f(c: Colour) -> i32 { match c { Red => 1, Green(x) => 2 } }",
+        );
+        let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
+        let printed = format!("{}", f.1);
+        assert!(!printed.contains("__match_dispatch"), "canonical, not dispatch: {printed}");
+        assert!(printed.contains("μ̃[Colour::Red()."), "a labelled branch table: {printed}");
+        assert!(printed.contains("∥ __match⟩"), "arm values reach the match: {printed}");
+    }
+
+    #[test]
+    fn a_guarded_match_still_dispatches() {
+        let out = lower_str(
+            "enum Colour { Red, Green } \
+             fn f(c: Colour, n: +i32) -> i32 { match c { Red if n > 0 => 1, _ => 2 } }",
+        );
+        let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
+        let printed = format!("{}", f.1);
+        assert!(printed.contains("__match_dispatch"), "guards are order-sensitive: {printed}");
+    }
+
+    #[test]
+    fn a_literal_match_still_dispatches() {
+        let out = lower_str("fn f(n: +i32) -> i32 { match n { 1 => 1, _ => 0 } }");
+        let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
+        let printed = format!("{}", f.1);
+        assert!(printed.contains("__match_dispatch"), "literals need equality: {printed}");
     }
 
     #[test]
