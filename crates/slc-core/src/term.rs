@@ -8,7 +8,10 @@ use crate::coterm::CoTerm;
 pub enum Term {
     /// Variable reference.
     Var(String),
-    /// λ abstraction: `λx.t`.
+    /// λ abstraction: `λx.t`. A continuation is a value like any other, so a
+    /// declared continuation parameter is an ordinary λ binder too — unlike
+    /// `μα.c`, which captures the ambient continuation instead of receiving
+    /// one from the caller.
     Lam(String, Box<Term>),
     /// μ abstraction: `μα.c`.
     Mu(String, Box<Command>),
@@ -18,12 +21,6 @@ pub enum Term {
     /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.
     Tag(String, Box<Term>),
-    /// Continuation abstraction: `Λα. t`.
-    ///
-    /// This is the negative function: it abstracts a *declared* continuation
-    /// parameter, so the continuation is supplied by the caller. It is not
-    /// `μα.c`, which captures the ambient continuation instead.
-    CoAbs(String, Box<Term>),
     /// A co-term reified as a negative value: `co(e)`.
     ///
     /// The surface language lets a continuation appear where an expression is

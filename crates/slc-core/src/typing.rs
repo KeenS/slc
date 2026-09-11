@@ -295,13 +295,6 @@ pub fn infer_term(
             Ok(Type::Named(owner_of_label(label)?))
         }
 
-        Term::CoAbs(a, body) => {
-            // Λα.t consumes the continuation α and produces t.
-            let at = delta.lookup(a).cloned().ok_or(TypeError::Unbound(format!("(covar) {a}")))?;
-            let bt = infer_term(body, gamma, delta)?;
-            Ok(Type::arrow(at, bt))
-        }
-
         Term::Co(e) => {
             // A reified co-term is a value of the dual of what it refutes.
             Ok(infer_coterm(e, gamma, delta)?.dual())
@@ -488,19 +481,6 @@ mod tests {
         ]);
         d.insert("k".into(), Type::Bottom);
         assert!(matches!(infer_coterm(&mixed, &mut g, &mut d), Err(TypeError::Arity(_))));
-    }
-
-    #[test]
-    fn continuation_abstraction_is_a_negative_function() {
-        let mut g = TermContext::new();
-        let mut d = CoTermContext::new();
-        d.insert("k".into(), Type::Neg(Base::I32));
-        g.insert("v".into(), Type::Pos(Base::Bool));
-        let f = Term::CoAbs("k".into(), Box::new(Term::Var("v".into())));
-        assert_eq!(
-            infer_term(&f, &mut g, &mut d),
-            Ok(Type::arrow(Type::Neg(Base::I32), Type::Pos(Base::Bool)))
-        );
     }
 
     fn pos_i32() -> Type {

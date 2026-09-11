@@ -149,12 +149,6 @@ pub enum Value {
         co: crate::chunk::NodeId,
         env: Env,
     },
-    /// A negative function (`Λα. t`) waiting for its continuation argument.
-    /// Applying it binds that argument to the positional slot the body reads.
-    CoAbs {
-        body: crate::chunk::NodeId,
-        env: Env,
-    },
     /// A builtin that has already received some arguments.
     PartialBuiltin(String, Vec<Value>),
     /// A list value (v0.1: built via list builtins).
@@ -206,7 +200,7 @@ impl Value {
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
             ),
-            Value::CoCase { .. } | Value::CoTensor { .. } | Value::CoAbs { .. } => Type::Bottom,
+            Value::CoCase { .. } | Value::CoTensor { .. } => Type::Bottom,
             Value::Kont(_) => Type::Bottom,
         }
     }
@@ -240,7 +234,6 @@ impl Value {
             },
             Value::CoCase { .. } => "<select>".to_string(),
             Value::CoTensor { .. } => "<consumer>".to_string(),
-            Value::CoAbs { .. } => "<continuation>".to_string(),
         }
     }
 }

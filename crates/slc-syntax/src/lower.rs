@@ -698,9 +698,9 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                     params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
                 let mut term = lower_expr(body, &continuations)?;
                 // Binders are nested in declaration order, so a call supplies
-                // arguments in the order the parameters are written. A value
-                // parameter is a λ binder; a continuation parameter is a Λ
-                // co-abstraction binder, never an ordinary λ.
+                // arguments in the order the parameters are written. Value and
+                // continuation parameters alike are λ binders — a continuation
+                // is a value like any other.
                 for p in params.iter().rev() {
                     term = bind_param(p, term);
                 }
@@ -724,7 +724,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 // `f(values..., continuations...)`, so the continuation
                 // binders are innermost.
                 for p in continuation_params.iter().rev() {
-                    term = Term::CoAbs(p.name.clone(), Box::new(term));
+                    term = Term::Lam(p.name.clone(), Box::new(term));
                 }
                 for p in value_params.iter().rev() {
                     term = Term::Lam(p.name.clone(), Box::new(term));
@@ -781,14 +781,10 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
     )
 }
 
-/// Wrap `body` in the binder a declared parameter introduces: a λ binder for
-/// a value parameter, a Λ co-abstraction binder for a continuation parameter.
+/// Wrap `body` in the λ binder a declared parameter introduces — value and
+/// continuation parameters alike, since a continuation is a value.
 fn bind_param(p: &Param, body: Term) -> Term {
-    if p.is_continuation {
-        Term::CoAbs(p.name.clone(), Box::new(body))
-    } else {
-        Term::Lam(p.name.clone(), Box::new(body))
-    }
+    Term::Lam(p.name.clone(), Box::new(body))
 }
 
 /// The shape a `select` arm covers: the label it answers to, if it has one,
@@ -1073,7 +1069,7 @@ mod tests {
         );
         let printed = format!("{}", out[0].1);
         assert!(
-            printed.starts_with("Λ__seq0."),
+            printed.starts_with("λ__seq0."),
             "user continuation binder should remain distinct: {printed}"
         );
         assert!(
@@ -1122,7 +1118,7 @@ mod tests {
         let k = out.iter().find(|(name, _)| name == "k").unwrap();
 
         // The declaration binds its continuation parameter as a co-abstraction.
-        let Term::CoAbs(covar, body) = &k.1 else {
+        let Term::Lam(covar, body) = &k.1 else {
             panic!("negative function should lower to a co-abstraction: {}", k.1);
         };
         assert_eq!(covar, "return");
@@ -1152,7 +1148,7 @@ mod tests {
                  select (+i64 ⊗ +i64) { (left, right) <= (left + right) @ out }
              }",
         );
-        let Term::CoAbs(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
+        let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
         let Term::Co(coterm) = body.as_ref() else { panic!("expected a reified co-term") };
         let CoTerm::MuTildeTensor(binders, command) = coterm.as_ref() else {
             panic!("expected a product consumer: {coterm}");
@@ -1226,7 +1222,7 @@ mod tests {
         let positive = lower_str("fn f(k: -i32) <- i32 { 1 @ k }");
         assert_eq!(
             positive[0].1,
-            Term::CoAbs(
+            Term::Lam(
                 "k".into(),
                 Box::new(Term::Mu(
                     "__cut".into(),
@@ -1239,7 +1235,7 @@ mod tests {
         let shadowed = lower_str("fn f(__cut: -i32) <- i32 { 1 @ __cut }");
         assert_eq!(
             shadowed[0].1,
-            Term::CoAbs(
+            Term::Lam(
                 "__cut".into(),
                 Box::new(Term::Mu(
                     "__cut_".into(),
@@ -1279,23 +1275,19 @@ mod tests {
     }
 
     #[test]
-    fn lower_negative_fn_uses_co_abstraction_binders_for_continuation_parameters() {
-        // Every parameter of a negative function is a continuation, so every
-        // binder is a co-abstraction, nested in declaration order.
+    fn lower_negative_fn_binds_continuation_parameters_as_lambdas() {
+        // A continuation is a value like any other, so a negative function's
+        // continuation parameters are ordinary λ binders, nested in
+        // declaration order.
         let out = lower_str("fn k(return: -i32, other: -bool) <- bool { return(0) }");
         let term = &out[0].1;
-        let Term::CoAbs(first, rest) = term else {
-            panic!("continuation parameter must be a co-abstraction binder: {term}");
+        let Term::Lam(first, rest) = term else {
+            panic!("continuation parameter must be a λ binder: {term}");
         };
         assert_eq!(first, "return");
         assert!(
-            matches!(rest.as_ref(), Term::CoAbs(second, _) if second == "other"),
-            "second continuation parameter must also be a co-abstraction: {rest}"
-        );
-        let printed = format!("{term}");
-        assert!(
-            !printed.contains("λreturn.") && !printed.contains("λother."),
-            "a continuation parameter must not lower to a λ binder: {printed}"
+            matches!(rest.as_ref(), Term::Lam(second, _) if second == "other"),
+            "second continuation parameter must also be a λ binder: {rest}"
         );
     }
 
@@ -1310,7 +1302,7 @@ mod tests {
         };
         assert_eq!(value, "x");
         assert!(
-            matches!(rest.as_ref(), Term::CoAbs(k, _) if k == "k"),
+            matches!(rest.as_ref(), Term::Lam(k, _) if k == "k"),
             "continuation parameter must be a co-abstraction binder: {rest}"
         );
     }
@@ -1341,7 +1333,7 @@ mod tests {
     #[test]
     fn lower_negative_fn() {
         let out = lower_str("fn k(x: -i32) <- i32 { x }");
-        assert_eq!(out[0].1, Term::CoAbs("x".into(), Box::new(Term::Var("x".into()))));
+        assert_eq!(out[0].1, Term::Lam("x".into(), Box::new(Term::Var("x".into()))));
     }
 
     #[test]
@@ -1366,11 +1358,11 @@ mod tests {
 
         let negative = lower_str("fn k<T>(ok: -T) <- T { ok(0) }")[0].1.clone();
         assert!(
-            matches!(&negative, Term::CoAbs(name, _) if name == "ok"),
+            matches!(&negative, Term::Lam(name, _) if name == "ok"),
             "negative generic continuation parameter should lower as a co-abstraction binder: {negative:?}"
         );
         let printed = format!("{negative}");
-        assert!(printed.starts_with("Λok."), "co-abstraction binder missing: {printed}");
+        assert!(printed.starts_with("λok."), "continuation binder missing: {printed}");
     }
 
     #[test]

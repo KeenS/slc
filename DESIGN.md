@@ -211,7 +211,7 @@ a positive instantiation and `-T` denotes a negative instantiation;
 therefore `+T` is rejected in a continuation row, and `-T` is rejected for a
 positive value parameter. Generic function declarations are type-erased at
 lowering: their ordinary parameters lower to λ binders and their continuation
-parameters lower to Λ co-abstraction binders.
+parameters lower to λ binders as well — a continuation is a value like any other.
 
 ## 5. `command`: consumer abstraction
 
@@ -235,7 +235,7 @@ A group with nothing in it is left out rather than written empty: `command
 main | (exit: -i32)` takes no values, and `command log(message: +String)` takes
 no continuations. An empty `()` is a parse error saying so.
 
-Conceptually, `command f(x: +A) | (k: -B) { E }` lowers to `λx. Λk. E`: the
+Conceptually, `command f(x: +A) | (k: -B) { E }` lowers to `λx. λk. E`: the
 value parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
 continuations. `k` is a *parameter*: the caller passes it.
@@ -895,7 +895,6 @@ not accept.
 Term      t ::= x                     variable
               | λx. t                 value abstraction
               | μα. c                 capture of the ambient continuation
-              | Λα. t                 continuation abstraction (negative function)
               | t ⊗ t                 tensor pair
               | L(t)                  labelled additive injection (enum value)
               | co(e)                 a co-term reified as a negative value
@@ -918,11 +917,12 @@ Type      A ::= +B | -B               positive / negative atom
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
 
-`Λα. t` and `μα. c` both bind a continuation variable, and they are not
-interchangeable. `Λα. t` is a *declared* continuation parameter: the caller
-supplies the continuation, and that is a `command`'s row. `μα. c` captures the
-*ambient* continuation, and that is the `mu` expression. Two keywords for two
-constructs, so lowering never has to guess.
+A declared continuation parameter and `μα. c` both bind a continuation
+variable, and they are not interchangeable. A declared parameter is an
+ordinary `λ` binder — the caller supplies the continuation, since a
+continuation is a value like any other, and that is a `command`'s row.
+`μα. c` captures the *ambient* continuation instead, and that is the `mu`
+expression.
 
 ### Execution
 
@@ -979,13 +979,6 @@ An `enum` has a branch per variant and a `struct` exactly one, so the same
 rule covers the additive and the labelled multiplicative; the product rule is
 its unlabelled counterpart.
 
-Applying a continuation abstraction instantiates its parameter with the
-supplied continuation rather than with the ambient one:
-
-```text
-⟨ Λα. t ∥ λ̄x. ⟨ v ∥ β ⟩ ⟩    → ⟨ t[v/α] ∥ β ⟩       continuation instantiation
-```
-
 ### Lowering table
 
 Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
@@ -1008,29 +1001,28 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
-| `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, with no `Λ` in sight |
+| `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
-| `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `Λk. ⟦e⟧` |
-| `decl.mu` | `mu f(x: +A) \| (k: -B) { e }` | `λx. Λk. ⟦e⟧` |
+| `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
+| `decl.mu` | `mu f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
 | `decl.const` | `const C: +A = v;` | `⟦v⟧` |
 | `decl.enum` | `enum E { V }` | one global per variant: `E::V = E::V(unit)` |
 | `decl.struct` | `struct S { … }` | no term; the declaration is a type |
 
 Binders are nested in declaration order, so a call supplies arguments in the
-order the parameters are written; a value parameter becomes a λ binder and a
-continuation parameter becomes a Λ binder.
+order the parameters are written; value and continuation parameters alike
+become λ binders.
 
 ### Surface-to-core coverage
 
 | Core construct | Surface representation |
 |---|---|
-| `x`, `λx. t` | identifiers, positive functions, lambdas |
+| `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
-| `Λα. t` | a declared continuation parameter of `fn … <- …` or of a `command` |
 | `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `struct` values — a labelled product |
 | `co(e)` | `select` |

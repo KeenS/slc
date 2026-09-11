@@ -35,8 +35,6 @@ pub enum Node {
     Mu(NodeId),
     Pair(NodeId, NodeId),
     Tag(Rc<str>, NodeId),
-    /// `Λ. t` — the negative function; child is the body term.
-    CoAbs(NodeId),
     /// A reified co-term value; child is the co-term node.
     Co(NodeId),
 

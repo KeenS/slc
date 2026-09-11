@@ -82,10 +82,6 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         Term::Tag(label, payload) => {
             Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
         }
-        Term::CoAbs(a, body) => {
-            let body = compile_ir(body, &scope.with(std::slice::from_ref(a)), chunk);
-            Node::CoAbs(body)
-        }
         Term::Co(e) => Node::Co(compile_coterm(e, scope, chunk)),
     };
     chunk.push(node)

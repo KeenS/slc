@@ -22,7 +22,6 @@ fn every_term() -> Vec<Term> {
         var("$str_\"a b\""),
         Term::Lam("x".into(), Box::new(var("x"))),
         Term::Mu("k".into(), Box::new(cut(var("v"), CoTerm::Covar("k".into())))),
-        Term::CoAbs("k".into(), Box::new(var("v"))),
         Term::Pair(Box::new(var("a")), Box::new(var("b"))),
         Term::Tag("Color::Red".into(), Box::new(var("$unit"))),
         Term::Co(Box::new(CoTerm::CoCase(vec![
@@ -40,7 +39,7 @@ fn every_term() -> Vec<Term> {
         // A declaration-shaped term: binders of both kinds, nested.
         Term::Lam(
             "x".into(),
-            Box::new(Term::CoAbs(
+            Box::new(Term::Lam(
                 "k".into(),
                 Box::new(Term::Mu(
                     "__call".into(),

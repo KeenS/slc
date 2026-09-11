@@ -51,7 +51,6 @@ impl std::fmt::Display for Term {
             Term::Mu(a, c) => write!(f, "μ{a}. {c}"),
             Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
             Term::Tag(label, t) => write!(f, "{label}({t})"),
-            Term::CoAbs(a, t) => write!(f, "Λ{a}. {t}"),
             Term::Co(e) => write!(f, "co({e})"),
         }
     }

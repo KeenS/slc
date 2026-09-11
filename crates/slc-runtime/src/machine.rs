@@ -217,7 +217,6 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
             kont.push(Frame::WrapTag(label.to_string()));
             State::Term(payload, env)
         }
-        Node::CoAbs(body) => State::Return(Value::CoAbs { body, env }),
         Node::Co(co) => State::Return(match node(co) {
             // A negative additive consumer closes over its environment; its
             // branch bodies stay unevaluated until activation chooses one.
@@ -400,12 +399,6 @@ fn step_apply(
             let mut branch_env = env;
             bind_components(arity, arg, &mut branch_env)?;
             State::Command(body, branch_env)
-        }
-        // Applying a negative function binds its continuation argument.
-        Value::CoAbs { body, env } => {
-            let mut call_env = env;
-            call_env.define_local(arg);
-            State::Term(body, call_env)
         }
         // The jump: reinstate the captured stack and deliver the value.
         Value::Kont(frames) => {

@@ -47,12 +47,6 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             go_term(t2, out);
         }
         Term::Tag(_, t) => go_term(t, out),
-        Term::CoAbs(a, t) => {
-            let mut inner = HashSet::new();
-            go_term(t, &mut inner);
-            inner.remove(a);
-            out.extend(inner);
-        }
         Term::Co(e) => go_coterm(e, out),
     }
 }
@@ -145,14 +139,6 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
             alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
         }
         (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
-        (Term::CoAbs(a, t1), Term::CoAbs(b, t2)) => {
-            xs.push(a.clone());
-            ys.push(b.clone());
-            let r = alpha_term(t1, t2, xs, ys);
-            xs.pop();
-            ys.pop();
-            r
-        }
         (Term::Co(e1), Term::Co(e2)) => alpha_coterm(e1, e2, xs, ys),
         _ => false,
     }
@@ -243,13 +229,6 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
             Box::new(subst_term(x, replacement, t2)),
         ),
         Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
-        Term::CoAbs(a, t) => {
-            if a == x {
-                term.clone()
-            } else {
-                Term::CoAbs(a.clone(), Box::new(subst_term(x, replacement, t)))
-            }
-        }
         Term::Co(e) => Term::Co(Box::new(subst_coterm(x, replacement, e))),
     }
 }

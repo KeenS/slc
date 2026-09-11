@@ -183,12 +183,6 @@ impl Parser {
                 self.expect(".")?;
                 Ok(Term::Mu(a, Box::new(self.command()?)))
             }
-            Some('Λ') => {
-                self.pos += 1;
-                let a = self.name()?;
-                self.expect(".")?;
-                Ok(Term::CoAbs(a, Box::new(self.term()?)))
-            }
             Some('(') => {
                 self.pos += 1;
                 let left = self.term()?;
