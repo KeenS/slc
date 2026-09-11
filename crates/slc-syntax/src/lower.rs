@@ -243,9 +243,14 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         Expr::Char(c) => Ok(Term::Var(format!("$char_{c}"))),
         Expr::Bool(b) => Ok(Term::Var(if *b { "true" } else { "false" }.to_string())),
         Expr::Ident(s) => {
-            // A variant path resolves to the global the enum declaration
-            // installs; any other identifier stays a variable.
-            Ok(Term::Var(s.clone()))
+            // An unambiguous bare variant resolves to its label, the way
+            // the checker resolves it — `None` is `Option::None`. A variant
+            // path resolves to the global the enum declaration installs;
+            // any other identifier stays a variable.
+            match lookup_variant(s) {
+                Some(label) => Ok(Term::Var(label)),
+                None => Ok(Term::Var(s.clone())),
+            }
         }
 
         Expr::Lambda { param, param_type: _, return_type: _, body } => {

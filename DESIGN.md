@@ -890,15 +890,25 @@ The library has two layers. The **prelude** is ordinary Slant source
 before parsing — the program's text comes first, so its spans and line
 numbers are untouched — and everything in it goes through the same checking
 and lowering as user code. A program's own declaration shadows a prelude
-name (per namespace: values and type declarations separately). Anything
+name (per namespace: values and type declarations separately). Shadowing a
+prelude *type* strands the prelude functions that mention it — a program
+declaring its own `Stream` loses `take` — so shadow a type only to replace
+its whole family. Anything
 expressible in the language belongs here rather than in the runtime.
 
 The prelude defines `min`, `max`, `abs`; the `List<T>` enum with `length`,
-`append`, `map`, and the outcome-offering `command nth`; the **`Display`
-trait** — `fn fmt(self: +Self) -> String`, user-facing formatting as in
-Rust, with impls for `i64`, `String`, `bool`, and `List<T>` (elementwise,
-`[1, 2, 3]`), plus `to_string<T: Display>` — and three **consumer
-combinators**: `then(f, ↓k)` — the composition of a function with a boxed
+`append`, `map`, and the outcome-offering `command nth`; **`Option<T>`**
+and **`Result<T, E>`** with `unwrap_or` — either/or outcomes are additive,
+so they are enums whose consumers are `select`s (a `form` would be the
+wrong connective: it wants every field at once); the negative side's
+**`Stream<T>`** — the coinductive mirror of `List`, with `repeat`,
+`count_from`, `map_stream`, and `take` bridging back to data, since an
+infinite structure cannot print whole and `fmt(take(s, n))` is the honest
+form — and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
+**`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
+formatting as in Rust, with impls for `i64`, `String`, `bool`, and
+`List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
+three **consumer combinators**: `then(f, ↓k)` — the composition of a function with a boxed
 continuation, `-A` from `A → B` and `↓-B` — `traced(label, ↓k)`, a tap that
 logs what passes through and forwards it, and `defaulting(fallback, ↓k)`, a
 `-String` failure consumer that discards the message and sends `fallback`

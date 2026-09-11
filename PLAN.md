@@ -103,21 +103,6 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **A negative-side prelude: useful `menu`s and `form`s beyond `Stream`.**
-  The prelude's declarations are all positive (`List<T>`); the negative
-  column deserves residents of its own. Candidates to weigh:
-  `menu Stream<T> { head: T, tail: Stream<T> }` — the coinductive mirror of
-  `List`, already expressible (`examples/stream.sl`) — with `take`
-  (`Stream<T>` to `List<T>`), a stream `map`, and `from`/`repeat`
-  constructors beside it; `menu Lazy<T> { force: T }` — a one-item menu is
-  a by-name thunk, re-demanded per use; and a named `form` for the
-  recurring ok/err consumer pair, so multi-outcome pipelines can pass one
-  value instead of an ad-hoc pair of continuations. To settle while
-  choosing: which of these earn residence, what the naming conventions for
-  demands are, and how `Display` meets codata — an infinite `Stream` cannot
-  print whole, so `fmt(take(s, n))` may be the honest form rather than an
-  `impl Display for Stream`.
-
 - **Row-polymorphic effects.** Infer a function's effect row and let a
   higher-order function forward an argument's effects, so `map(f, xs)` can say
   it performs whatever `f` does — retiring the monomorphic-rows limit.

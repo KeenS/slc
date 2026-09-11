@@ -124,3 +124,71 @@ fn fmt_items<T: Display>(xs: List<T>) -> String {
 impl<T: Display> Display for List<T> {
     fn fmt(self: +List<T>) -> String { "[" + fmt_items(self) + "]" }
 }
+
+// ── The negative side: Stream and Lazy ───────────────────────────────────
+//
+// A menu is codata: only the demanded branch ever runs, so an infinite
+// structure is just a menu that offers itself again. `Stream` is the
+// coinductive mirror of `List`. There is no `impl Display for Stream` — an
+// infinite structure cannot print whole; the honest form is
+// `fmt(take(s, n))`.
+
+menu Stream<T> {
+    head: T,
+    tail: Stream<T>,
+}
+
+fn repeat<T>(x: T) -> Stream<T> {
+    mu Stream {
+        .head(out) <= x @ out,
+        .tail(out) <= repeat(x) @ out,
+    }
+}
+
+fn count_from(n: +i64) -> Stream<i64> {
+    mu Stream {
+        .head(out) <= n @ out,
+        .tail(out) <= count_from(n + 1) @ out,
+    }
+}
+
+fn map_stream<A, B>(f: (A -> B), s: Stream<A>) -> Stream<B> {
+    mu Stream {
+        .head(out) <= f(s.head) @ out,
+        .tail(out) <= map_stream(f, s.tail) @ out,
+    }
+}
+
+// The bridge back to data: the first `n` elements, as a list.
+fn take<T>(s: Stream<T>, n: +i64) -> List<T> {
+    if n <= 0 { Nil } else { Cons(s.head, take(s.tail, n - 1)) }
+}
+
+// A one-item menu is a by-name thunk: `.force` re-runs its arm at every
+// demand.
+menu Lazy<T> {
+    force: T,
+}
+
+// ── Option and Result ────────────────────────────────────────────────────
+//
+// Either/or outcomes are *additive* — one variant, not every field — so
+// they are enums, and their consumers are `select`s over them. (A `form`
+// would be the wrong connective: it wants every field at once.)
+
+enum Option<T> {
+    None,
+    Some(T),
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn unwrap_or<T>(o: Option<T>, fallback: T) -> T {
+    match o {
+        Option::None => fallback,
+        Option::Some(x) => x,
+    }
+}

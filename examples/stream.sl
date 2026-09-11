@@ -1,19 +1,18 @@
-// An infinite stream — a recursive menu — and nested copatterns.
+// Streams — the prelude's coinductive mirror of `List` — and nested
+// copatterns.
 //
-// `enum` recursion gives inductive data (lists, trees); `menu` recursion
-// gives coinductive codata. A Stream answers `.head` or `.tail`, and only
-// the demanded branch ever runs, so an infinite stream is just a menu that
-// offers itself again.
+// `menu Stream<T> { head: T, tail: Stream<T> }` lives in the prelude with
+// `repeat`, `count_from`, `map_stream`, and `take` beside it. Only the
+// demanded branch of a menu ever runs, so an infinite stream is just a
+// menu that offers itself again — and `take` is the bridge back to data:
+// an infinite structure cannot print whole, so `fmt(take(s, n))` is the
+// honest way to show one.
 
-menu Stream {
-    head: i64,
-    tail: Stream,
-}
-
-// Nested copatterns refine an item: the `.tail` group below is answered by
-// an inner menu built from the nested arms, which must again cover every
-// item — `.tail(.head(out))` alone would leave `.tail(.tail(…))` unanswered.
-fn count_from(n: +i64) -> Stream {
+// A program's own definition shadows the prelude's: this `count_from`
+// answers the first two elements directly, refining `.tail` with nested
+// copatterns — the arms sharing an outer destructor group into an inner
+// menu, which must again cover every item.
+fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
         .head(out) <= n @ out,
         .tail(.head(out)) <= n + 1 @ out,
@@ -21,19 +20,15 @@ fn count_from(n: +i64) -> Stream {
     }
 }
 
-// A stream transformed: demand drives everything, so mapping is lazy.
-fn doubled(s: Stream) -> Stream {
-    mu Stream {
-        .head(out) <= s.head * 2 @ out,
-        .tail(out) <= doubled(s.tail) @ out,
-    }
-}
+fn double(n: +i64) -> i64 { n * 2 }
 
 command main | (exit: -i32) {
     let s = count_from(10);
-    println(s.head);                    // 10
-    println(s.tail.head);               // 11
-    println(s.tail.tail.tail.head);     // 13
-    println(doubled(s).tail.head);      // 22
+    println(s.head);                            // 10
+    println(s.tail.head);                       // 11
+    println(s.tail.tail.tail.head);             // 13
+    println(map_stream(double, s).tail.head);   // 22
+    println(fmt(take(s, 3)));                   // "[10, 11, 12]"
+    println(fmt(take(repeat(7), 2)));           // "[7, 7]"
     0 @ exit
 }

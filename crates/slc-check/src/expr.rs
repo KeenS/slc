@@ -1269,6 +1269,21 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
+            // A function referenced as a value has its signature's type,
+            // curried — which is what lets an argument like `map(double, …)`
+            // solve the type parameters `double` pins down. A *bounded*
+            // function as a value would need its dictionaries packaged with
+            // it, which nothing builds yet, so it stays untyped here.
+            if let Some(signature) = env.functions.get(name)
+                && signature.bounds.is_empty()
+            {
+                let (signature, _) = instantiate(signature, &mut env.uni);
+                if let Some(result) = signature.result {
+                    let ty = signature.params.into_iter().rev().fold(result, Type::arrow_from);
+                    return Some(ty);
+                }
+                return None;
+            }
             let (declaration, payload) = enums.variant(name)?;
             if !payload.is_empty() {
                 diags.push(Diagnostic {
