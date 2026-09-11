@@ -55,7 +55,12 @@ pub fn infer_program(p: &Program) -> Result<Vec<DeclarationType>, Vec<Diagnostic
         }
         // Each variant is a declaration of its own: a value of the enum, or a
         // constructor from its payload to the enum.
-        if let Decl::Enum { name, variants } = &d.kind {
+        // A generic enum's constructors are typed at their uses, where the
+        // registry instantiates the parameters; only monomorphic variants
+        // contribute a standalone declaration type here.
+        if let Decl::Enum { name, type_params, variants } = &d.kind
+            && type_params.is_empty()
+        {
             for (variant, payload) in variants {
                 match variant_type(name, payload) {
                     Ok(ty) => out.push(DeclarationType { name: format!("{name}::{variant}"), ty }),

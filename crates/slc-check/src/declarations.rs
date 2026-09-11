@@ -33,6 +33,8 @@ pub struct Declarations {
     /// Declared `form` names. A form's fields live in `records` like a
     /// `data`'s — the demand view — and the form itself is their dual.
     pub(crate) forms: std::collections::HashSet<String>,
+    /// Declaration name → its type-parameter count.
+    arities: HashMap<String, usize>,
 }
 
 impl Declarations {
@@ -41,9 +43,20 @@ impl Declarations {
     /// names have to be resolved here — including under a sign or a
     /// connective, so `-ParseResult` is a consumer of a declared type.
     pub(crate) fn resolve(&self, ty: &TypeExpr) -> Option<Type> {
+        self.resolve_in(ty, &HashMap::new())
+    }
+
+    /// Resolve a written type inside a declaration with type parameters:
+    /// `params` maps each parameter name to its position, and a bare
+    /// parameter resolves to `Type::Param`.
+    pub(crate) fn resolve_in(
+        &self,
+        ty: &TypeExpr,
+        params: &HashMap<String, usize>,
+    ) -> Option<Type> {
+        let resolve = |inner: &TypeExpr| self.resolve_in(inner, params);
         let resolved = match ty {
-            // A menu name denotes the negative additive itself; its dual —
-            // the bare `Named` — is the positive type of its requests.
+            TypeExpr::Base(name) if params.contains_key(name) => Type::Param(params[name]),
             // A menu or a form name denotes the negative type itself; its
             // dual — the bare `Named` — is the positive type of its demands.
             TypeExpr::Base(name) if self.is_negative_decl(name) => {
@@ -52,24 +65,37 @@ impl Declarations {
             TypeExpr::Base(name) if self.declarations.contains(name) => {
                 Type::Named(name.clone(), Vec::new())
             }
-            TypeExpr::Positive(inner) => self.resolve(&inner.kind)?,
+            // A declaration applied to arguments; the argument count must
+            // match the declaration's.
+            TypeExpr::Apply(name, args) => {
+                if self.arities.get(name) != Some(&args.len()) {
+                    return None;
+                }
+                let args = args.iter().map(|a| resolve(&a.kind)).collect::<Option<Vec<_>>>()?;
+                if self.is_negative_decl(name) {
+                    Type::Dual(Box::new(Type::Named(name.clone(), args)))
+                } else {
+                    Type::Named(name.clone(), args)
+                }
+            }
+            TypeExpr::Positive(inner) => resolve(&inner.kind)?,
             TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
-                self.resolve(&inner.kind)?.dual()
+                resolve(&inner.kind)?.dual()
             }
             TypeExpr::Tensor(a, b) => {
-                Type::Tensor(Box::new(self.resolve(&a.kind)?), Box::new(self.resolve(&b.kind)?))
+                Type::Tensor(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
             }
             TypeExpr::Par(a, b) => {
-                Type::Par(Box::new(self.resolve(&a.kind)?), Box::new(self.resolve(&b.kind)?))
+                Type::Par(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
             }
             // `A → B` is `-A ⅋ B`.
-            TypeExpr::Fun(a, b) => Type::arrow(self.resolve(&a.kind)?, self.resolve(&b.kind)?),
-            TypeExpr::List(inner) => Type::List(Box::new(self.resolve(&inner.kind)?)),
+            TypeExpr::Fun(a, b) => Type::arrow(resolve(&a.kind)?, resolve(&b.kind)?),
+            TypeExpr::List(inner) => Type::List(Box::new(resolve(&inner.kind)?)),
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
-            TypeExpr::Dual(inner) => self.resolve(&inner.kind)?.dual(),
-            TypeExpr::Down(inner) => Type::Down(Box::new(self.resolve(&inner.kind)?)),
-            TypeExpr::Up(inner) => Type::Up(Box::new(self.resolve(&inner.kind)?)),
+            TypeExpr::Dual(inner) => resolve(&inner.kind)?.dual(),
+            TypeExpr::Down(inner) => Type::Down(Box::new(resolve(&inner.kind)?)),
+            TypeExpr::Up(inner) => Type::Up(Box::new(resolve(&inner.kind)?)),
             other => return lower_type(other).ok(),
         };
         Some(resolved)
@@ -103,6 +129,11 @@ impl Declarations {
     /// Whether a name is a declared `data` or `enum`.
     pub(crate) fn declares(&self, name: &str) -> bool {
         self.declarations.contains(name)
+    }
+
+    /// A declaration's type-parameter count (0 when unknown).
+    pub(crate) fn arity(&self, name: &str) -> usize {
+        self.arities.get(name).copied().unwrap_or(0)
     }
 
     /// Whether a name is a declared `menu`.
@@ -173,26 +204,46 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         if let Decl::Form { name, .. } = &d.kind {
             enums.forms.insert(name.clone());
         }
-        // A form's fields are its demand's fields: the record that feeds it.
-        if let Decl::Data { name, fields } | Decl::Form { name, fields } = &d.kind {
+        if let Decl::Data { name, type_params, .. }
+        | Decl::Enum { name, type_params, .. }
+        | Decl::Menu { name, type_params, .. }
+        | Decl::Form { name, type_params, .. } = &d.kind
+        {
+            enums.arities.insert(name.clone(), type_params.len());
+        }
+    }
+    /// A declaration's parameter scope: each name to its position.
+    fn param_scope(type_params: &[String]) -> HashMap<String, usize> {
+        type_params.iter().enumerate().map(|(i, p)| (p.clone(), i)).collect()
+    }
+    for d in &p.decls {
+        // A form's fields are its demand's fields: the record that feeds
+        // it. Field types resolve here, in the second pass, so they may
+        // name any declaration — and any of the declaration's own
+        // parameters.
+        if let Decl::Data { name, type_params, fields } | Decl::Form { name, type_params, fields } =
+            &d.kind
+        {
+            let params = param_scope(type_params);
             enums.records.insert(
                 name.clone(),
                 fields
                     .iter()
-                    .map(|(field, ty)| (field.clone(), lower_type(ty).unwrap_or(Type::One)))
+                    .map(|(field, ty)| {
+                        (field.clone(), enums.resolve_in(ty, &params).unwrap_or(Type::One))
+                    })
                     .collect(),
             );
         }
-    }
-    for d in &p.decls {
         // A menu registers the request view of itself: one "variant" per
         // item, labelled `Menu::item`, whose payload is the consumer of the
         // item's answer — the continuation a request carries.
-        if let Decl::Menu { name, items } = &d.kind {
+        if let Decl::Menu { name, type_params, items } = &d.kind {
+            let params = param_scope(type_params);
             enums.variants.insert(name.clone(), items.iter().map(|(i, _)| i.clone()).collect());
             for (item, answer) in items {
                 let label = format!("{name}::{item}");
-                let answer = enums.resolve(answer).unwrap_or(Type::One);
+                let answer = enums.resolve_in(answer, &params).unwrap_or(Type::One);
                 enums.signatures.insert(label.clone(), (name.clone(), vec![answer.dual()]));
                 enums
                     .destructors
@@ -202,12 +253,15 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             }
             continue;
         }
-        let Decl::Enum { name, variants } = &d.kind else { continue };
+        let Decl::Enum { name, type_params, variants } = &d.kind else { continue };
+        let params = param_scope(type_params);
         enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
         for (variant, payload) in variants {
             let label = format!("{name}::{variant}");
-            let payload =
-                payload.iter().map(|ty| enums.resolve(ty).unwrap_or(Type::One)).collect::<Vec<_>>();
+            let payload = payload
+                .iter()
+                .map(|ty| enums.resolve_in(ty, &params).unwrap_or(Type::One))
+                .collect::<Vec<_>>();
             enums.signatures.insert(label.clone(), (name.clone(), payload));
             enums
                 .unqualified

@@ -172,6 +172,9 @@ impl std::error::Error for LowerError {}
 
 pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
     match t {
+        // A declaration applied to arguments resolves against the checker's
+        // declaration table, not here.
+        TypeExpr::Apply(name, _) => Err(LowerError::UnknownType(name.clone())),
         TypeExpr::Base(s) => match s.as_str() {
             "i32" => Ok(Type::Pos(Base::I32)),
             "i64" => Ok(Type::Pos(Base::I64)),
@@ -728,7 +731,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
 pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     let mut variant_labels: HashMap<String, Option<String>> = HashMap::new();
     for d in &p.decls {
-        if let Decl::Enum { name, variants } = &d.kind {
+        if let Decl::Enum { name, variants, .. } = &d.kind {
             for (variant, _) in variants {
                 let label = format!("{name}::{variant}");
                 variant_labels.insert(label.clone(), Some(label.clone()));
@@ -745,7 +748,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     });
     let mut dtor_labels: HashMap<String, Option<String>> = HashMap::new();
     for d in &p.decls {
-        if let Decl::Menu { name, items } = &d.kind {
+        if let Decl::Menu { name, items, .. } = &d.kind {
             for (item, _) in items {
                 let label = format!("{name}::{item}");
                 dtor_labels.insert(label.clone(), Some(label.clone()));
@@ -763,7 +766,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
 
     let mut out = Vec::new();
     for d in &p.decls {
-        if let Decl::Enum { name, variants } = &d.kind {
+        if let Decl::Enum { name, variants, .. } = &d.kind {
             for (variant, _) in variants {
                 // An enum value is a labelled additive injection. Variant
                 // payloads are not yet constructed, so the payload is unit.

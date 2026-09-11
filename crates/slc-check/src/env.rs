@@ -147,6 +147,9 @@ fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
         Type::List(t) => Type::List(Box::new(replace_vars(t, map))),
         Type::Down(t) => Type::Down(Box::new(replace_vars(t, map))),
         Type::Up(t) => Type::Up(Box::new(replace_vars(t, map))),
+        Type::Named(name, args) => {
+            Type::Named(name.clone(), args.iter().map(|a| replace_vars(a, map)).collect())
+        }
         atom => atom.clone(),
     }
 }
@@ -162,6 +165,11 @@ pub(crate) fn collect_vars(ty: &Type, out: &mut std::collections::HashSet<usize>
         }
         Type::Dual(t) | Type::List(t) | Type::Down(t) | Type::Up(t) => {
             collect_vars(t, out);
+        }
+        Type::Named(_, args) => {
+            for arg in args {
+                collect_vars(arg, out);
+            }
         }
         _ => {}
     }

@@ -181,7 +181,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_type(ty, stack);
             }
         }
-        Decl::Enum { name, variants } => {
+        Decl::Enum { name, variants, .. } => {
             *name = scope.qualify(name);
             for (_, payloads) in variants {
                 for ty in payloads {
@@ -189,13 +189,13 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 }
             }
         }
-        Decl::Menu { name, items } => {
+        Decl::Menu { name, items, .. } => {
             *name = scope.qualify(name);
             for (_, ty) in items {
                 resolve_type(ty, stack);
             }
         }
-        Decl::Form { name, fields } => {
+        Decl::Form { name, fields, .. } => {
             *name = scope.qualify(name);
             for (_, ty) in fields {
                 resolve_type(ty, stack);
@@ -247,6 +247,12 @@ fn resolve_param(p: &mut Param, stack: &[Scope]) {
 
 fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
     match ty {
+        TypeExpr::Apply(name, args) => {
+            *name = resolve_name(name, stack);
+            for arg in args {
+                resolve_type(&mut arg.kind, stack);
+            }
+        }
         TypeExpr::Base(name) => *name = resolve_name(name, stack),
         TypeExpr::Positive(inner)
         | TypeExpr::Negative(inner)

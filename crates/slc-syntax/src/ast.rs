@@ -216,6 +216,8 @@ pub enum FunctionPolarity {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr {
     Base(String),
+    /// A declaration applied to type arguments: `List<i64>`, `Pair<A, B>`.
+    Apply(String, Vec<Node<TypeExpr>>),
     Positive(Box<Node<TypeExpr>>),
     Negative(Box<Node<TypeExpr>>),
     Tensor(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
@@ -354,10 +356,12 @@ pub enum UnOp {
 pub enum Decl {
     Data {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<(String, TypeExpr)>,
     },
     Enum {
         name: String,
+        type_params: Vec<String>,
         variants: Vec<(String, Vec<TypeExpr>)>,
     },
     /// `menu Name { item: Type, … }` — the negative additive: the mirror of
@@ -366,6 +370,7 @@ pub enum Decl {
     /// and the type of the answer it delivers.
     Menu {
         name: String,
+        type_params: Vec<String>,
         items: Vec<(String, TypeExpr)>,
     },
     /// `form Name { field: Type, … }` — the negative multiplicative: the
@@ -374,6 +379,7 @@ pub enum Decl {
     /// denotes `-A ⅋ -B`, and its demand is the record its fields describe.
     Form {
         name: String,
+        type_params: Vec<String>,
         fields: Vec<(String, TypeExpr)>,
     },
     Fn {

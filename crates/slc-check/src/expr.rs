@@ -263,6 +263,19 @@ fn resolve_rigid(
         T::List(inner) => {
             Some(Type::List(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
         }
+        T::Apply(name, args) => {
+            let args = args
+                .iter()
+                .map(|a| resolve_rigid(&a.kind, rigid_vars, enums))
+                .collect::<Option<Vec<_>>>()?;
+            if enums.is_negative_decl(name) {
+                Some(Type::Dual(Box::new(Type::Named(name.clone(), args))))
+            } else if enums.declares(name) {
+                Some(Type::Named(name.clone(), args))
+            } else {
+                None
+            }
+        }
         other => enums.resolve(other),
     }
 }
@@ -477,6 +490,26 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
         }
         _ => return None,
     })
+}
+
+/// The type arguments a scrutinee carries, seen through `Dual` — what a
+/// generic declaration's stored types are instantiated with at this use.
+fn scrutinee_args(scrutinee: &Type) -> &[Type] {
+    match scrutinee {
+        Type::Named(_, args) => args,
+        Type::Dual(inner) => scrutinee_args(inner),
+        _ => &[],
+    }
+}
+
+/// Fresh unification variables for a declaration's type parameters, ready
+/// to instantiate its stored field and payload types at one use.
+fn fresh_args(
+    enums: &Declarations,
+    name: &str,
+    uni: &mut slc_core::typing::Unification,
+) -> Vec<Type> {
+    (0..enums.arity(name)).map(|_| uni.fresh_var()).collect()
 }
 
 fn check_pattern(
@@ -784,14 +817,17 @@ fn bind_match_pattern(
             let written =
                 if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
             let payload = enums.variant(&written).map(|(_, p)| p.clone()).unwrap_or_default();
+            // A generic scrutinee's arguments instantiate the payload types.
+            let args = scrutinee_args(scrutinee);
             for (field, ty) in fields.iter().zip(payload.iter()) {
-                bind_match_pattern(field, ty, enums, env);
+                bind_match_pattern(field, &ty.instantiate(args), enums, env);
             }
         }
         Pattern::Data { name, fields } => {
             let declared = enums.fields(name).unwrap_or_default();
+            let args = scrutinee_args(scrutinee);
             for ((_, field), ty) in fields.iter().zip(declared.iter()) {
-                bind_match_pattern(field, ty, enums, env);
+                bind_match_pattern(field, &ty.instantiate(args), enums, env);
             }
         }
         // A request shape binds the continuation it carries. In a `match`
@@ -800,7 +836,7 @@ fn bind_match_pattern(
         // deferred.
         Pattern::Dtor { dtor, arg } => {
             if let Some(ty) = enums.destructor(dtor).and_then(|(_, p)| p.first()) {
-                bind_match_pattern(arg, ty, enums, env);
+                bind_match_pattern(arg, &ty.instantiate(scrutinee_args(scrutinee)), enums, env);
             }
         }
         Pattern::Tuple(items) => {
@@ -826,6 +862,7 @@ fn bind_match_pattern(
 /// copatterns into an inner menu) and answers with a command.
 fn check_comatch_arms(
     menu: &str,
+    type_args: &[Type],
     rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)>,
     enums: &Declarations,
     env: &mut Env,
@@ -872,7 +909,7 @@ fn check_comatch_arms(
             }
             continue;
         };
-        let k_ty = payload.first().cloned().unwrap_or(Type::One);
+        let k_ty = payload.first().cloned().unwrap_or(Type::One).instantiate(type_args);
         let mut nested: Vec<(&Pattern, &Node<Expr>)> = Vec::new();
         for (arg, command) in group {
             match arg {
@@ -901,7 +938,11 @@ fn check_comatch_arms(
             match enums.nested_menu(&format!("{menu}::{dtor}")) {
                 Some(inner) => {
                     let inner = inner.to_string();
-                    check_comatch_arms(&inner, nested, enums, env, diags);
+                    // The refined item's answer carries the inner menu's
+                    // arguments: `k_ty` is `Named(inner, args)` after
+                    // instantiation, seen through nothing — a request type.
+                    let inner_args = scrutinee_args(&k_ty).to_vec();
+                    check_comatch_arms(&inner, &inner_args, nested, enums, env, diags);
                 }
                 None => {
                     diags.push(Diagnostic {
@@ -958,7 +999,9 @@ fn bind_select_arm(
                 _ => unreachable!("matched above"),
             };
             match declarations.variant(&written) {
-                Some((_, payload)) => payload.clone(),
+                Some((_, payload)) => {
+                    payload.iter().map(|t| t.instantiate(scrutinee_args(consumed))).collect()
+                }
                 None => {
                     diags.push(Diagnostic {
                         message: format!("`{written}` is not a variant of {consumed}"),
@@ -977,7 +1020,12 @@ fn bind_select_arm(
                 });
                 return;
             }
-            declarations.fields(name).unwrap_or_default()
+            declarations
+                .fields(name)
+                .unwrap_or_default()
+                .iter()
+                .map(|t| t.instantiate(scrutinee_args(consumed)))
+                .collect()
         }
         // A tensor: its components, flattened right-nested.
         (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
@@ -1155,7 +1203,11 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            Some(Type::Named(declaration.clone(), Vec::new()))
+            // A payloadless variant of a generic declaration — `List::Nil`
+            // — is a value at any instantiation.
+            let declaration = declaration.clone();
+            let type_args = fresh_args(enums, &declaration, &mut env.uni);
+            Some(Type::Named(declaration, type_args))
         }
         Expr::Lambda { param, param_type, body, .. } => {
             env.push();
@@ -1181,6 +1233,11 @@ fn check_expr_unapplied(
             {
                 let declaration = declaration.clone();
                 let payload = payload.clone();
+                // A generic declaration's payload types carry its
+                // parameters; each construction instantiates them fresh.
+                let type_args = fresh_args(enums, &declaration, &mut env.uni);
+                let payload: Vec<Type> =
+                    payload.iter().map(|t| t.instantiate(&type_args)).collect();
                 if args.len() != payload.len() {
                     diags.push(Diagnostic {
                         message: format!(
@@ -1205,7 +1262,7 @@ fn check_expr_unapplied(
                         });
                     }
                 }
-                return Some(Type::Named(declaration, Vec::new()));
+                return Some(Type::Named(declaration, type_args));
             }
             // A continuation is not applied: it is cut against a value. Only
             // an atomic consumer is certainly not a function — `A → B` is
@@ -1603,6 +1660,7 @@ fn check_expr_unapplied(
             None
         }
         Expr::Data { name, fields } => {
+            let type_args = fresh_args(enums, name, &mut env.uni);
             let Some(declared) = enums.records.get(name).cloned() else {
                 diags.push(Diagnostic {
                     message: format!("`{name}` is not a declared record"),
@@ -1613,6 +1671,8 @@ fn check_expr_unapplied(
                 }
                 return None;
             };
+            let declared: Vec<(String, Type)> =
+                declared.into_iter().map(|(f, t)| (f, t.instantiate(&type_args))).collect();
             // A record literal is the product of its declared fields: every
             // field is present exactly once, in declaration order, with the
             // declared type.
@@ -1647,45 +1707,41 @@ fn check_expr_unapplied(
                     });
                 }
             }
-            Some(Type::Named(name.clone(), Vec::new()))
+            Some(Type::Named(name.clone(), type_args))
         }
         Expr::CoMatch { ty, arms } => {
             // `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a
             // menu value, branching on the demand the ambient consumer turns
             // out to be. Each arm binds the continuation its request carries
             // and answers it with a command.
-            let named = match ty {
-                Some(ty) => match enums.resolve(&ty.kind) {
-                    Some(Type::Dual(inner)) => match *inner {
-                        Type::Named(n, _) if enums.is_menu(&n) => Some(n),
-                        other => {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "`mu` with arms builds a menu; `{other}` is not one"
-                                ),
-                                span: ty.span,
-                            });
-                            None
-                        }
-                    },
-                    _ => {
-                        diags.push(Diagnostic {
-                            message: "`mu` with arms builds a menu; write a declared menu name"
-                                .into(),
-                            span: ty.span,
-                        });
-                        None
-                    }
-                },
+            // The menu's name — written bare or applied to type arguments —
+            // or read off an arm's destructor.
+            let named = match ty.as_deref().map(|ty| &ty.kind) {
+                Some(TypeExpr::Base(n)) if enums.is_menu(n) => Some((n.clone(), None)),
+                Some(TypeExpr::Apply(n, args)) if enums.is_menu(n) => {
+                    let args =
+                        args.iter().map(|a| enums.resolve(&a.kind)).collect::<Option<Vec<_>>>();
+                    Some((n.clone(), args))
+                }
+                Some(_) => {
+                    diags.push(Diagnostic {
+                        message: "`mu` with arms builds a menu; write a declared menu name".into(),
+                        span: ty.as_ref().map(|t| t.span).unwrap_or(e.span),
+                    });
+                    None
+                }
                 // Left out: an arm's destructor may name it.
-                None => arms.iter().find_map(|arm| match &arm.pattern {
-                    slc_syntax::ast::Pattern::Dtor { dtor, .. } => {
-                        enums.destructor(dtor).map(|(menu, _)| menu.clone())
-                    }
-                    _ => None,
-                }),
+                None => arms
+                    .iter()
+                    .find_map(|arm| match &arm.pattern {
+                        slc_syntax::ast::Pattern::Dtor { dtor, .. } => {
+                            enums.destructor(dtor).map(|(menu, _)| menu.clone())
+                        }
+                        _ => None,
+                    })
+                    .map(|menu| (menu, None)),
             };
-            let Some(menu) = named else {
+            let Some((menu, written_args)) = named else {
                 diags.push(Diagnostic {
                     message: "no arm names a menu item, so write the menu: `mu Config { … }`"
                         .into(),
@@ -1693,10 +1749,13 @@ fn check_expr_unapplied(
                 });
                 return None;
             };
+            // A generic menu instantiates fresh at each construction; the
+            // arms' answers constrain the arguments.
+            let type_args = written_args.unwrap_or_else(|| fresh_args(enums, &menu, &mut env.uni));
             let rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)> =
                 arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
-            check_comatch_arms(&menu, rows, enums, env, diags);
-            Some(Type::Dual(Box::new(Type::Named(menu, Vec::new()))))
+            check_comatch_arms(&menu, &type_args, rows, enums, env, diags);
+            Some(Type::Dual(Box::new(Type::Named(menu, type_args))))
         }
         Expr::Select { ty, arms } => {
             // `select T { p => c, … }` builds the consumer of T. Each arm
@@ -1843,7 +1902,8 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            let expected = payload.first().cloned().unwrap_or(Type::One);
+            let type_args = fresh_args(enums, &menu, &mut env.uni);
+            let expected = payload.first().cloned().unwrap_or(Type::One).instantiate(&type_args);
             if let Some(actual) = check_expr(arg, enums, env, diags)
                 && !fits(env, &expected, &actual, &arg.kind)
             {
@@ -1855,7 +1915,7 @@ fn check_expr_unapplied(
                     span: arg.span,
                 });
             }
-            Some(Type::Named(menu, Vec::new()))
+            Some(Type::Named(menu, type_args))
         }
         Expr::Project { base, key } => {
             let base_ty = check_expr(base, enums, env, diags)?;
@@ -1892,10 +1952,18 @@ fn check_expr_unapplied(
                         && enums.is_menu(menu)
                     {
                         let label = format!("{menu}::{name}");
+                        let args = scrutinee_args(&base_ty).to_vec();
                         return match enums.variant(&label) {
                             Some((_, payload)) => {
                                 env.dispatch.demands.insert(e.span, label);
-                                Some(payload.first().cloned().unwrap_or(Type::One).dual())
+                                Some(
+                                    payload
+                                        .first()
+                                        .cloned()
+                                        .unwrap_or(Type::One)
+                                        .instantiate(&args)
+                                        .dual(),
+                                )
                             }
                             None => {
                                 diags.push(Diagnostic {
@@ -1935,7 +2003,7 @@ fn check_expr_unapplied(
                         Some(fields) => match fields.iter().position(|(f, _)| f == name) {
                             Some(index) => {
                                 env.dispatch.projections.insert(e.span, index);
-                                Some(fields[index].1.clone())
+                                Some(fields[index].1.instantiate(scrutinee_args(&base_ty)))
                             }
                             None => {
                                 diags.push(Diagnostic {

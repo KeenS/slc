@@ -134,19 +134,21 @@ fn signature_type(
     enums: &Declarations,
     next_template: &mut usize,
 ) -> Type {
-    let generic = |written: &TypeExpr| match written {
-        TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
-        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) => match &inner.kind {
-            TypeExpr::Base(name) => generics.iter().position(|g| g == name).map(Type::Var),
-            _ => None,
+    // A generic name resolves to its positional template variable wherever
+    // it stands — bare, under a sign, or inside a structured type such as
+    // `(A -> B)` or `Stream<T>`: resolution maps it to a `Param`, the
+    // parameters become the variables the caller instantiates, and a sign
+    // is kept — `-T` is `dual(T)`, not `T` with the sign forgotten.
+    let params: std::collections::HashMap<String, usize> =
+        generics.iter().enumerate().map(|(i, g)| (g.clone(), i)).collect();
+    let vars: Vec<Type> = (0..generics.len()).map(Type::Var).collect();
+    ty.and_then(|ty| enums.resolve_in(ty, &params).map(|t| t.instantiate(&vars))).unwrap_or_else(
+        || {
+            let v = Type::Var(generics.len() + *next_template);
+            *next_template += 1;
+            v
         },
-        _ => None,
-    };
-    ty.and_then(|ty| generic(ty).or_else(|| enums.resolve(ty))).unwrap_or_else(|| {
-        let v = Type::Var(generics.len() + *next_template);
-        *next_template += 1;
-        v
-    })
+    )
 }
 
 pub(crate) fn function_types(
@@ -286,6 +288,9 @@ fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) ->
         Type::List(t) => Type::List(Box::new(freshen(t, seen, uni))),
         Type::Down(t) => Type::Down(Box::new(freshen(t, seen, uni))),
         Type::Up(t) => Type::Up(Box::new(freshen(t, seen, uni))),
+        Type::Named(name, args) => {
+            Type::Named(name.clone(), args.iter().map(|a| freshen(a, seen, uni)).collect())
+        }
         atom => atom.clone(),
     }
 }

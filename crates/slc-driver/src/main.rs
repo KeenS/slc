@@ -191,7 +191,7 @@ fn run_program(
                 );
             }
         }
-        if let slc_syntax::ast::Decl::Enum { name, variants } = &d.kind {
+        if let slc_syntax::ast::Decl::Enum { name, variants, .. } = &d.kind {
             for (v, _) in variants {
                 env.define_global(
                     format!("{name}::{v}"),

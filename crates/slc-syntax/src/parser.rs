@@ -224,6 +224,13 @@ impl Parser {
     fn parse_data(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Data, "`data`")?;
         let name = self.expect_name("data name")?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "a type declaration's parameters carry no bounds".into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         loop {
@@ -239,12 +246,19 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Data { name, fields } })
+        Ok(Node { span: t.span, kind: Decl::Data { name, type_params, fields } })
     }
 
     fn parse_form(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Form, "`form`")?;
         let name = self.expect_name("form name")?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "a type declaration's parameters carry no bounds".into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         loop {
@@ -260,12 +274,19 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Form { name, fields } })
+        Ok(Node { span: t.span, kind: Decl::Form { name, type_params, fields } })
     }
 
     fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Menu, "`menu`")?;
         let name = self.expect_ident("menu name")?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "a type declaration's parameters carry no bounds".into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut items = Vec::new();
         loop {
@@ -281,12 +302,19 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Menu { name, items } })
+        Ok(Node { span: t.span, kind: Decl::Menu { name, type_params, items } })
     }
 
     fn parse_enum(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Enum, "`enum`")?;
         let name = self.expect_ident("enum name")?;
+        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "a type declaration's parameters carry no bounds".into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut variants = Vec::new();
         loop {
@@ -314,7 +342,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Enum { name, variants } })
+        Ok(Node { span: t.span, kind: Decl::Enum { name, type_params, variants } })
     }
 
     /// An optional effect row: `/ { E1, E2 }`, or nothing for pure.
@@ -832,7 +860,22 @@ impl Parser {
                     let segment = self.expect_ident("a path segment")?;
                     s = format!("{s}::{segment}");
                 }
-                TypeExpr::Base(s)
+                // `List<i64>` — a declaration applied to type arguments.
+                if self.peek_kind() == Some(&TokenKind::Lt) {
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.parse_type()?);
+                        if self.eat(&TokenKind::Comma) {
+                            continue;
+                        }
+                        self.expect(TokenKind::Gt, "`>` after type arguments")?;
+                        break;
+                    }
+                    TypeExpr::Apply(s, args)
+                } else {
+                    TypeExpr::Base(s)
+                }
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -2138,12 +2181,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_removed_command_type_former() {
-        let errors = parse(lex("fn f(x: Command<i64, +i64>) -> i64 { 0 }").unwrap()).unwrap_err();
-        assert!(
-            errors.iter().any(|e| e.message.contains("expected `)`, found `<`")),
-            "errors: {errors:?}"
-        );
+    fn a_type_application_parses_generically() {
+        // `Name<…>` is ordinary generic syntax now — the removed `Command`
+        // type former parses as an application and is rejected downstream,
+        // where the checker finds no such declaration.
+        let p = parse_str("fn f(x: Command<i64, +i64>) -> i64 { 0 }");
+        let Decl::Fn { params, .. } = &p.decls[0].kind else { panic!("expected a fn") };
+        assert!(matches!(
+            &params[0].ty,
+            Some(TypeExpr::Apply(name, args)) if name == "Command" && args.len() == 2
+        ));
     }
 
     #[test]
