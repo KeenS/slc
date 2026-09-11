@@ -82,6 +82,19 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
+- **Variant imports: `use List::*;`.** Today `use` aliases a single module
+  member, and enum variants come in bare through an *automatic* rule —
+  unqualified while unambiguous — with a sharp edge: when a second
+  declaration makes a bare name ambiguous, a pattern written with it
+  silently degrades into a binder that catches everything. (The prelude's
+  own list patterns hit exactly this and are fully qualified now.) The
+  Rust-shaped fix is explicit variant imports — `use List::*;` and
+  `use List::{Nil, Cons};` — where an imported name is *bound*, a collision
+  is an error at the `use`, and a bare pattern name that resolves to
+  nothing is an error rather than a catch-all. Whether the automatic rule
+  then stays (Rust's prelude does auto-import `Some`/`None`) or every bare
+  variant must be imported is the design decision to make first.
+
 - **Test `impl Trait for Menu/Form`.** Trait dispatch was built against positive
   receivers; codata is where interfaces naturally live, so impls for menu
   types must be exercised and fixed or rejected with a real diagnostic.
