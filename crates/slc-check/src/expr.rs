@@ -203,6 +203,8 @@ fn infer_param_type(
 ) -> Option<Type> {
     if let Expr::Call { callee, args } = &body.kind
         && let Expr::Ident(function) = &callee.kind
+        // The signature table speaks only for names nothing local has bound.
+        && env.lookup(function).is_none()
         && let Some(slot) =
             args.iter().position(|a| matches!(&a.kind, Expr::Ident(x) if x == name))
         && let Some(ty) = env.functions.get(function).and_then(|s| s.params.get(slot)).cloned()
@@ -241,6 +243,24 @@ fn resolve_rigid(
             Some(Type::Down(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
         }
         T::Up(inner) => Some(Type::Up(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?))),
+        // The connectives recurse, so a type parameter is found inside a
+        // function, tensor, par, or list type too — `(A -> B)` with generic
+        // `A` and `B` is a rigid arrow, not an unresolved name.
+        T::Fun(a, b) => Some(Type::arrow(
+            resolve_rigid(&a.kind, rigid_vars, enums)?,
+            resolve_rigid(&b.kind, rigid_vars, enums)?,
+        )),
+        T::Tensor(a, b) => Some(Type::Tensor(
+            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
+            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
+        )),
+        T::Par(a, b) => Some(Type::Par(
+            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
+            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
+        )),
+        T::List(inner) => {
+            Some(Type::List(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
+        }
         other => enums.resolve(other),
     }
 }
@@ -1225,7 +1245,10 @@ fn check_expr_unapplied(
                 return check_trait_method_call(name, args, e.span, enums, env, diags);
             }
             let callee_ty = check_expr(callee, enums, env, diags);
+            // A parameter shadows a global of the same name: the signature
+            // table speaks only for names nothing local has bound.
             if let Expr::Ident(name) = &callee.kind
+                && env.lookup(name).is_none()
                 && let Some(signature) = env.functions.get(name)
             {
                 let (signature, seen) = instantiate(signature, &mut env.uni);

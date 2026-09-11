@@ -940,6 +940,54 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
 }
 
 #[test]
+fn the_prelude_is_available_and_shadowable() {
+    // Prelude declarations are in scope without an import.
+    let dir = std::env::temp_dir().join("slc_test_prelude.sl");
+    std::fs::write(
+        &dir,
+        r#"fn double(n: +i64) -> i64 { n * 2 }
+        command main | (exit: -i32) {
+            println(min(3, 7));
+            println(max(3, 7));
+            println(abs(0 - 42));
+            println(mu i64 { out <= 21 @ then(double, ↓out) });
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["3", "7", "42", "42"]);
+
+    // A program's own definition shadows the prelude's.
+    let dir = std::env::temp_dir().join("slc_test_prelude_shadow.sl");
+    std::fs::write(
+        &dir,
+        r#"fn min(a: +i64, b: +i64) -> i64 { a + 100 }
+        command main | (exit: -i32) { println(min(3, 7)); 0 @ exit }"#,
+    )
+    .unwrap();
+    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok);
+    assert_eq!(stdout.trim(), "103");
+
+    // The program's text precedes the prelude, so a diagnostic keeps the
+    // program's own line and column.
+    let dir = std::env::temp_dir().join("slc_test_prelude_spans.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) {
+    println(1 + "x");
+    0 @ exit
+}"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("at 2:"), "the program's own position: {stderr}");
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

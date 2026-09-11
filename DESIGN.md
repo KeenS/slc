@@ -847,7 +847,20 @@ program nests is bounded by memory rather than by the host's default stack.
 
 ## Standard library
 
-The library follows the same rule the language does: **a builtin whose outcome
+The library has two layers. The **prelude** is ordinary Slant source
+(`crates/slc-driver/src/prelude.sl`): the driver appends it to the program
+before parsing — the program's text comes first, so its spans and line
+numbers are untouched — and everything in it goes through the same checking
+and lowering as user code. A program's own declaration shadows a prelude
+name (per namespace: values and type declarations separately). The prelude
+currently defines `min`, `max`, `abs`, and `then(f, ↓k)` — the composition
+of a function with a boxed continuation, `-A` from `A → B` and `↓-B`.
+Anything expressible in the language belongs here rather than in the
+runtime.
+
+**Builtins** are what the language cannot express — I/O, arithmetic on
+machine integers, string internals — and they follow the same rule the
+language does: **a builtin whose outcome
 is a single value is an ordinary function; a builtin whose outcome is not —
 it can fail, or find nothing — takes continuations and denotes a command.**
 The value arguments come first, then one continuation per outcome, and exactly

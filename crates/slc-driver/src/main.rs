@@ -5,6 +5,10 @@ enum RunOutcome {
     Exit(i32),
 }
 
+/// The prelude: ordinary declarations every program sees. See
+/// `prelude.sl` for what belongs there.
+const PRELUDE: &str = include_str!("prelude.sl");
+
 const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) { ... }`: a command with no value \
      parameters and one continuation, the exit status";
 
@@ -45,16 +49,48 @@ fn main() -> ExitCode {
     }
 }
 
+/// Keep only the first declaration for each top-level name, per namespace:
+/// values (`fn`, `command`, `const`) in one, type declarations in the other.
+/// The program's declarations precede the prelude's, so its definitions win.
+fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Program {
+    use slc_syntax::ast::Decl;
+    let mut values = std::collections::HashSet::new();
+    let mut types = std::collections::HashSet::new();
+    program.decls.retain(|d| match &d.kind {
+        Decl::Fn { name, .. } | Decl::Command { name, .. } | Decl::Const { name, .. } => {
+            values.insert(name.clone())
+        }
+        Decl::Data { name, .. }
+        | Decl::Enum { name, .. }
+        | Decl::Menu { name, .. }
+        | Decl::Form { name, .. } => types.insert(name.clone()),
+        _ => true,
+    });
+    program
+}
+
 fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
     let _compile_guard = compile_span.enter();
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    // The prelude is ordinary Slant source, appended after the program so
+    // the program's spans — and so its diagnostics' line numbers — are
+    // untouched. Everything in it goes through the same pipeline as user
+    // code, and diagnostics that do point into the prelude still render,
+    // since `source` is the combined text.
+    let source = format!("{source}\n{PRELUDE}");
 
     let tokens = slc_syntax::lexer::lex(&source).map_err(|e| e.message)?;
     let program = slc_syntax::parser::parse(tokens).map_err(|errors| {
         errors.iter().map(|e| format!("parse error: {}", e.message)).collect::<Vec<_>>().join("\n")
     })?;
+
+    // The program's own definitions shadow the prelude's: globals install
+    // in declaration order with the last one winning, and the prelude is
+    // appended, so a redeclared name keeps only its first — the user's —
+    // declaration.
+    let program = shadow_prelude(program);
 
     // Modules flatten into qualified names before anything else looks.
     let program = slc_syntax::resolve::resolve_program(&program).map_err(|errors| {
