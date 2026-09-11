@@ -62,4 +62,3 @@ feature is mid-flight; what remains open is below.
 - **Row-polymorphic effects.** Infer a function's effect row and let a
   higher-order function forward an argument's effects, so `map(f, xs)` can say
   it performs whatever `f` does — retiring the monomorphic-rows limit.
-- Unify Inl and Inr into Tag
