@@ -26,6 +26,7 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
         Decl::Data { .. }
         | Decl::Enum { .. }
         | Decl::Menu { .. }
+        | Decl::Form { .. }
         | Decl::Mod { .. }
         | Decl::Use { .. }
         | Decl::Trait { .. }

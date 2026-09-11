@@ -1550,6 +1550,33 @@ fn check_expr_unapplied(
                 }
                 return Some(resolved);
             }
+            // `select F { F { a, b } <= c }` over a form builds the form
+            // value itself: it consumes the record its fields describe, so
+            // the arm binds that record's components.
+            if let Type::Dual(inner) = &resolved
+                && let Type::Named(form) = inner.as_ref()
+                && enums.is_form(form)
+            {
+                let demand = Type::Named(form.clone());
+                for arm in arms {
+                    env.push();
+                    bind_select_arm(&demand, &arm.pattern, enums, env, e.span, diags);
+                    let command = check_expr(&arm.command, enums, env, diags);
+                    if let Some(command) = command
+                        && command != Type::Bottom
+                        && command != Type::One
+                    {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "a `select` arm is a command; this one has type {command}"
+                            ),
+                            span: arm.command.span,
+                        });
+                    }
+                    env.pop();
+                }
+                return Some(resolved);
+            }
             if resolved.is_negative() {
                 diags.push(Diagnostic {
                     message: format!(
@@ -1687,6 +1714,24 @@ fn check_expr_unapplied(
                             }
                         };
                     }
+                    // A form is fed whole, never read a field at a time:
+                    // from `-A ⅋ -B` there is no `-A` to be had, the way
+                    // `A ⊗ B` yields its `A`. Say so, rather than leaving it
+                    // at "not a record".
+                    if let Type::Dual(inner) = &base_ty
+                        && let Type::Named(form) = inner.as_ref()
+                        && enums.is_form(form)
+                    {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "`{form}` is a form, and a form takes every field at once: send \
+                                 it one, `{form} {{ … }} @ …`. A single field cannot be taken \
+                                 out of it — the others would have to be invented"
+                            ),
+                            span: e.span,
+                        });
+                        return None;
+                    }
                     let Type::Named(record_name) = &base_ty else {
                         diags.push(Diagnostic {
                             message: format!("`.{name}` needs a record; this has type {base_ty}"),
@@ -1790,10 +1835,10 @@ fn check_expr_unapplied(
                 // An unsolved variable is not yet anything; the duality
                 // check below still constrains it.
                 && !contains_var(value_ty)
-                // A menu is a negative *value*, not a boxed consumer: it is
-                // the canonical left side of a request cut.
-                && !matches!(value_ty, Type::Dual(inner)
-                    if matches!(inner.as_ref(), Type::Named(n) if enums.is_menu(n)))
+                // A menu or a form is a negative *value*, not a boxed
+                // consumer: a declared name cannot be confused with the data
+                // it consumes, and the duality check below still applies.
+                && !enums.is_negative_value(value_ty)
             {
                 diags.push(Diagnostic {
                     message: format!(

@@ -537,6 +537,45 @@ Reading { value: 42, unit: "m" } @ show(out)
 (2, 40) @ total(out)
 ```
 
+### `form`: the negative multiplicative declared
+
+`form` names that consumer, the way `menu` names the negative additive. Its
+fields say what flows *in*, so `form Report { value: i64, label: String }`
+denotes `-i64 ⅋ -String` — the dual of the record its fields describe.
+
+```sl
+data Report { value: i64, label: String }   // ⊗ every field, given
+form Report { value: i64, label: String }   // ⅋ every field, wanted
+```
+
+The two negative declarations work the same way, and the rule covering both
+is: **`select` builds the value, and the literal syntax builds the demand.**
+A menu's demand is one labelled request, `.item(k)`; a form's is the whole
+record, `Report { … }`, whose type is the form's dual.
+
+```sl
+fn printer(out: ↓-i64) -> Report {
+    select Report {
+        Report { value, label } <= { println(label); value @ ↑out },
+    }
+}
+
+Report { value: 42, label: "answer" } @ printer(↓k)
+```
+
+`form` needs nothing new in the core: a form value is the `co(μ̃[…])` that
+`select` over a product already builds, and its demand is that product
+labelled — so the two meet by the existing labelled rule. What the
+declaration adds is a *name* for the consumer side, so a signature can say
+`-> Report` instead of spelling out `dual(…)`, and the fields of that
+consumer can be named.
+
+A form is always fed whole: there is no `form.field`. From `-A ⅋ -B` no `-A`
+can be extracted, though `A ⊗ B` yields its `A` — reading a field off a
+record discards the others, and a form would instead have to *invent* them.
+That is not a gap in the implementation but the shape of the connective, and
+it is why `⅋` is not a record in any usable sense.
+
 An atom is the degenerate product: one shape, one component. `select` covers
 it too, and the arm's pattern is a plain binder that names the whole value:
 
@@ -1086,6 +1125,7 @@ nested left to right for several arguments.
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value. Over a `menu`, the arms are requests and the result is the menu itself: `μ[.M::item(k). ⟦c⟧ | …]` |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `select M` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
+| `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
@@ -1108,7 +1148,7 @@ become λ binders.
 | `L(t)` | `enum` values and `data` values — a labelled product |
 | `μ[.d(α). c \| …]` | `select` over a `menu` |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
-| `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction |
+| `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction, and a `form` value |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |

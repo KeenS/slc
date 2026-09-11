@@ -87,6 +87,11 @@ const ROWS: &[Row] = &[
         core: "co(.M::v(out))",
     },
     Row {
+        id: "decl.form",
+        source: "form F { a: i32 } fn g(k: ↓-i32) -> F { select F { F { a } <= a @ ↑k } }",
+        core: "co(μ̃[F(a). ⟨a ∥ k⟩])",
+    },
+    Row {
         id: "decl.menu",
         source: "menu M { v: i32 } fn g() -> M { select M { .v(out) <= 1 @ out } }",
         core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",

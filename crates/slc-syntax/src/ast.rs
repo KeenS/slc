@@ -357,6 +357,14 @@ pub enum Decl {
         name: String,
         items: Vec<(String, TypeExpr)>,
     },
+    /// `form Name { field: Type, … }` — the negative multiplicative: the
+    /// mirror of `data`. A record carries every field at once; a form wants
+    /// every field at once. Each field names what flows in, so a form
+    /// denotes `-A ⅋ -B`, and its demand is the record its fields describe.
+    Form {
+        name: String,
+        fields: Vec<(String, TypeExpr)>,
+    },
     Fn {
         name: String,
         type_params: Vec<String>,

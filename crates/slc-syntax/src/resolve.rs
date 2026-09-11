@@ -63,6 +63,7 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Data { name, .. }
             | Decl::Enum { name, .. }
             | Decl::Menu { name, .. }
+            | Decl::Form { name, .. }
             | Decl::Const { name, .. }
             | Decl::Mod { name, .. }
             | Decl::Trait { name, .. } => {
@@ -191,6 +192,12 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Decl::Menu { name, items } => {
             *name = scope.qualify(name);
             for (_, ty) in items {
+                resolve_type(ty, stack);
+            }
+        }
+        Decl::Form { name, fields } => {
+            *name = scope.qualify(name);
+            for (_, ty) in fields {
                 resolve_type(ty, stack);
             }
         }

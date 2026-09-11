@@ -72,12 +72,6 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Introduce the dual of `data`.** The declaration square is ¾ complete:
-  `enum` ↔ `menu`, `data` ↔ nothing. The named ⅋ — a record of
-  continuations supplied all at once — needs a declaration form, a
-  construction form, and per-position access, the way `menu` got them for
-  `&`. Naming to be settled (no anagram this time).
-
 - **Make `mu` a pattern matcher, and enrich the patterns of both `select`
   and `mu`.** Pattern depth is one-sided: `match` has nesting, literals,
   guards, or-patterns; everything on the mirror side is flat. `mu` should

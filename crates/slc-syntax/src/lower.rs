@@ -429,9 +429,9 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // is wrapped in a μ binder that its body never mentions, because
             // a command has no result and control does not return from it.
             let v = lower_expr(value, continuations)?;
-            let command = match &consumer.kind {
+            let command = match named_consumer(&consumer.kind) {
                 // A named consumer is a co-variable, so the cut is direct.
-                Expr::Ident(name) => Command::Cut(v, CoTerm::Covar(name.clone())),
+                Some(name) => Command::Cut(v, CoTerm::Covar(name.clone())),
                 // Any other consumer is an expression that produces one:
                 // evaluate it, then apply it to the value — the same shape
                 // as an application, ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩.
@@ -845,7 +845,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             | Decl::Trait { .. }
             | Decl::Impl { .. }
             | Decl::Effect { .. } => {}
-            Decl::Data { .. } | Decl::Enum { .. } | Decl::Menu { .. } => {
+            Decl::Data { .. } | Decl::Enum { .. } | Decl::Menu { .. } | Decl::Form { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }
         }
@@ -856,8 +856,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
 /// The μ binder that wraps a cut. The binder is never referenced — a command
 /// has no result — but it must not capture the consumer's own name.
 fn cut_binder(consumer: &Expr) -> String {
-    match consumer {
-        Expr::Ident(name) if name == CUT_BINDER => format!("{CUT_BINDER}_"),
+    match named_consumer(consumer) {
+        Some(name) if name == CUT_BINDER => format!("{CUT_BINDER}_"),
         _ => CUT_BINDER.to_string(),
     }
 }
@@ -934,6 +934,17 @@ fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), 
     }
 }
 
+/// The consumer a cut names, seeing through `↓`/`↑`. Both shifts erase at
+/// lowering — a boxed consumer and the consumer are the same value at run
+/// time — so `v @ ↑k` names `k` just as `v @ k` does.
+fn named_consumer(consumer: &Expr) -> Option<&String> {
+    match consumer {
+        Expr::Ident(name) => Some(name),
+        Expr::Shift { expr, .. } => named_consumer(&expr.kind),
+        _ => None,
+    }
+}
+
 /// The command a `select` arm runs. A cut against a named consumer is that
 /// command directly; any other command-typed expression is lowered as a term
 /// and cut against the arm's own co-variable, which nothing returns to.
@@ -942,7 +953,7 @@ fn lower_select_command(
     continuations: &[String],
 ) -> Result<Command, LowerError> {
     if let Expr::Cut { value, consumer } = &command.kind
-        && let Expr::Ident(name) = &consumer.kind
+        && let Some(name) = named_consumer(&consumer.kind)
     {
         return Ok(Command::Cut(lower_expr(value, continuations)?, CoTerm::Covar(name.clone())));
     }

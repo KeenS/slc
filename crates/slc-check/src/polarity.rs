@@ -81,6 +81,18 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 }
             }
         }
+        Decl::Form { fields, .. } => {
+            for (_, ty) in fields {
+                if let Ok(core_ty) = lower_type(ty)
+                    && !is_usable_as_field(&core_ty)
+                {
+                    diags.push(Diagnostic {
+                        message: field_message("form field", &core_ty),
+                        span: d.span,
+                    });
+                }
+            }
+        }
         Decl::Menu { items, .. } => {
             for (_, ty) in items {
                 if let Ok(core_ty) = lower_type(ty)
@@ -149,10 +161,10 @@ fn check_param_polarity(
             return;
         }
     } else if let TypeExpr::Negative(_) = param_type {
-        // `-Menu` is a request: the dual of a negative type is honest data,
-        // so a value parameter may hold it.
+        // `-Menu` / `-Form` is a demand: the dual of a declared negative
+        // type is honest data, so a value parameter may hold it.
         if let Some(Type::Named(name)) = &resolved
-            && declared.is_menu(name)
+            && declared.is_negative_decl(name)
         {
             return;
         }
@@ -177,13 +189,10 @@ fn check_param_polarity(
         return;
     }
     if let Some(ty) = resolved {
-        // A menu is a negative *value*: it may sit in a value parameter
-        // unboxed, the way a continuation parameter holds its consumer.
-        if let Type::Dual(inner) = &ty
-            && let Type::Named(name) = inner.as_ref()
-            && declared.is_menu(name)
-            && !requires_negative
-        {
+        // A menu or a form is a negative *value*, and a nominal one: it may
+        // sit in a value parameter unboxed, since no involution can confuse
+        // a declared name with the data it consumes.
+        if declared.is_negative_value(&ty) && !requires_negative {
             return;
         }
         let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };

@@ -26,6 +26,9 @@ pub struct Declarations {
     /// `signatures` like an enum's variants — the request view — with each
     /// item's payload being the consumer of its answer.
     pub(crate) menus: std::collections::HashSet<String>,
+    /// Declared `form` names. A form's fields live in `records` like a
+    /// `data`'s — the demand view — and the form itself is their dual.
+    pub(crate) forms: std::collections::HashSet<String>,
 }
 
 impl Declarations {
@@ -37,7 +40,9 @@ impl Declarations {
         let resolved = match ty {
             // A menu name denotes the negative additive itself; its dual —
             // the bare `Named` — is the positive type of its requests.
-            TypeExpr::Base(name) if self.menus.contains(name) => {
+            // A menu or a form name denotes the negative type itself; its
+            // dual — the bare `Named` — is the positive type of its demands.
+            TypeExpr::Base(name) if self.is_negative_decl(name) => {
                 Type::Dual(Box::new(Type::Named(name.clone())))
             }
             TypeExpr::Base(name) if self.declarations.contains(name) => Type::Named(name.clone()),
@@ -99,6 +104,24 @@ impl Declarations {
         self.menus.contains(name)
     }
 
+    /// Whether a name is a declared `form`.
+    pub(crate) fn is_form(&self, name: &str) -> bool {
+        self.forms.contains(name)
+    }
+
+    /// Whether a name is a negative declaration — a `menu` or a `form`.
+    /// Their values are negative but nominal, so the box discipline that
+    /// keeps `-A` out of data positions does not apply to them.
+    pub(crate) fn is_negative_decl(&self, name: &str) -> bool {
+        self.menus.contains(name) || self.forms.contains(name)
+    }
+
+    /// Whether a type is a declared negative type: a menu or form value.
+    pub(crate) fn is_negative_value(&self, ty: &Type) -> bool {
+        matches!(ty, Type::Dual(inner)
+            if matches!(inner.as_ref(), Type::Named(n) if self.is_negative_decl(n)))
+    }
+
     pub(crate) fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
         if let Some(signature) = self.signatures.get(name) {
             return Some(signature);
@@ -111,14 +134,21 @@ impl Declarations {
 pub(crate) fn enum_types(p: &Program) -> Declarations {
     let mut enums = Declarations::default();
     for d in &p.decls {
-        if let Decl::Data { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } = &d.kind
+        if let Decl::Data { name, .. }
+        | Decl::Enum { name, .. }
+        | Decl::Menu { name, .. }
+        | Decl::Form { name, .. } = &d.kind
         {
             enums.declarations.insert(name.clone());
         }
         if let Decl::Menu { name, .. } = &d.kind {
             enums.menus.insert(name.clone());
         }
-        if let Decl::Data { name, fields } = &d.kind {
+        if let Decl::Form { name, .. } = &d.kind {
+            enums.forms.insert(name.clone());
+        }
+        // A form's fields are its demand's fields: the record that feeds it.
+        if let Decl::Data { name, fields } | Decl::Form { name, fields } = &d.kind {
             enums.records.insert(
                 name.clone(),
                 fields

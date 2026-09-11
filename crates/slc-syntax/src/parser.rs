@@ -123,6 +123,7 @@ impl Parser {
             Some(TokenKind::Data) => self.parse_data(),
             Some(TokenKind::Enum) => self.parse_enum(),
             Some(TokenKind::Menu) => self.parse_menu(),
+            Some(TokenKind::Form) => self.parse_form(),
             Some(TokenKind::Plus) | Some(TokenKind::Minus)
                 if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Fn) =>
             {
@@ -225,6 +226,27 @@ impl Parser {
             }
         }
         Ok(Node { span: t.span, kind: Decl::Data { name, fields } })
+    }
+
+    fn parse_form(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Form, "`form`")?;
+        let name = self.expect_name("form name")?;
+        self.expect(TokenKind::LBrace, "`{`")?;
+        let mut fields = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            let f = self.expect_ident("field name")?;
+            self.expect(TokenKind::Colon, "`:`")?;
+            let ty = self.parse_type()?;
+            fields.push((f, ty.kind));
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}`")?;
+                break;
+            }
+        }
+        Ok(Node { span: t.span, kind: Decl::Form { name, fields } })
     }
 
     fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
