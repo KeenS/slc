@@ -82,11 +82,6 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Define stdlib functions negatively where that is the simple form.** The
-  prelude and builtins are all value-side. A function whose natural
-  definition is a consumer transformer should be declared `<-`, so the
-  negative half of the language has a standard library too.
-
 - **Delete the builtin `[A]` and define lists in the prelude.** Lists are an
   ordinary recursive `enum`; the built-in type and the list builtins should
   reduce to prelude definitions, and the `[1, 2]` literal syntax goes with

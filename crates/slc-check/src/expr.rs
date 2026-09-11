@@ -1765,7 +1765,9 @@ fn check_expr_unapplied(
                 }
                 return Some(resolved);
             }
-            if resolved.is_negative() {
+            // An unsolved variable is not yet anything — a generic `<- T`
+            // body selects over the rigid `T` its caller chose.
+            if resolved.is_negative() && !matches!(resolved, Type::Var(_)) {
                 diags.push(Diagnostic {
                     message: format!(
                         "`select` consumes data, and {resolved} is a consumer; a consumer is \

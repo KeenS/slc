@@ -988,6 +988,31 @@ fn the_prelude_is_available_and_shadowable() {
 }
 
 #[test]
+fn the_prelude_consumer_combinators_compose_with_builtins() {
+    let dir = std::env::temp_dir().join("slc_test_prelude_combinators.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) {
+            println(mu i64 { out <= 42 @ traced("answer", ↓out) });
+            println(mu i64 { out <=
+                parse_int("nope", out, defaulting(7, ↓out), defaulting(9, ↓out))
+            });
+            println(mu i64 { out <=
+                parse_int("35", out, defaulting(7, ↓out), defaulting(9, ↓out))
+            });
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        stdout.split_whitespace().collect::<Vec<_>>(),
+        ["\"answer\"", "42", "42", "7", "35"]
+    );
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

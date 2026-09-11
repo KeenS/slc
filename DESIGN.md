@@ -852,11 +852,22 @@ The library has two layers. The **prelude** is ordinary Slant source
 before parsing — the program's text comes first, so its spans and line
 numbers are untouched — and everything in it goes through the same checking
 and lowering as user code. A program's own declaration shadows a prelude
-name (per namespace: values and type declarations separately). The prelude
-currently defines `min`, `max`, `abs`, and `then(f, ↓k)` — the composition
-of a function with a boxed continuation, `-A` from `A → B` and `↓-B`.
-Anything expressible in the language belongs here rather than in the
-runtime.
+name (per namespace: values and type declarations separately). Anything
+expressible in the language belongs here rather than in the runtime.
+
+The prelude currently defines `min`, `max`, `abs`, and three **consumer
+combinators**: `then(f, ↓k)` — the composition of a function with a boxed
+continuation, `-A` from `A → B` and `↓-B` — `traced(label, ↓k)`, a tap that
+logs what passes through and forwards it, and `defaulting(fallback, ↓k)`, a
+`-String` failure consumer that discards the message and sends `fallback`
+onward, made for the multi-outcome builtins below.
+
+The combinators share one shape, and it is forced: a negative `fn`'s
+parameters form its continuation row, and values do not ride in a row — so
+a combinator that needs a value input is a *positive* fn returning the
+consumer, built as a λ whose body is a command, since `A → ⊥` *is* `-A`.
+The `<- A` declaration form remains the natural spelling for pure consumer
+transformers, whose inputs are all continuations.
 
 **Builtins** are what the language cannot express — I/O, arithmetic on
 machine integers, string internals — and they follow the same rule the

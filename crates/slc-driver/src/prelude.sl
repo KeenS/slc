@@ -22,3 +22,23 @@ fn abs(n: +i64) -> i64 {
 fn then<A, B>(f: (A -> B), k: ↓-B) -> -A {
     fn(x: A) { f(x) @ ↑k }
 }
+
+// ── Consumer combinators ─────────────────────────────────────────────────
+//
+// A combinator that needs value inputs cannot be declared `<- A`: a negative
+// fn's parameters form its continuation row, and values do not ride in a
+// row. The stdlib shape for consumer combinators is therefore a positive fn
+// returning the consumer, built as a λ whose body is a command — `A → ⊥`
+// *is* `-A`.
+
+// A tap: log a label and the value passing through, then forward it.
+fn traced<T>(label: +String, k: ↓-T) -> -T {
+    fn(x: T) { println(label); println(x); x @ ↑k }
+}
+
+// A failure consumer that discards the message and sends `fallback` onward
+// — pairs with the `-String` outcomes of `parse_int`, `read_file`, and the
+// other multi-outcome builtins.
+fn defaulting<T>(fallback: T, k: ↓-T) -> -String {
+    fn(m: +String) { fallback @ ↑k }
+}
