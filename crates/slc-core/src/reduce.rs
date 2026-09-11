@@ -77,9 +77,6 @@ pub fn step(c: &Command) -> Step {
             }
         }
 
-        // Activate: k(v) is already a command form
-        Command::Activate(_, _) => Step::Normal,
-
         _ => Step::Normal,
     }
 }

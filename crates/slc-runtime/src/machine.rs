@@ -55,10 +55,6 @@ pub enum Frame {
     Consume(NodeId, Env),
     /// The callee is evaluated; the argument is being computed.
     ApplyCallee(Value),
-    /// `k(v)`: the consumer is being evaluated; `v` (a term) comes next.
-    ActivateArg(NodeId, Env),
-    /// `k(v)`: the consumer is known; the value is being evaluated.
-    ActivateWith(Value),
     /// A handler delimiter: the `return` clause, and the operation clauses
     /// of one effect. Sits on the stack under the body it handles.
     Prompt {
@@ -241,10 +237,6 @@ fn step_command(c: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError
             kont.push(Frame::Consume(e, env.clone()));
             State::Term(t, env)
         }
-        Node::Activate(k, v) => {
-            kont.push(Frame::ActivateArg(v, env.clone()));
-            State::Term(k, env)
-        }
         other => {
             return Err(EvalError::TypeMismatch(format!("expected a command, found {other:?}")));
         }
@@ -261,11 +253,6 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
         Frame::WrapTag(label) => State::Return(Value::Tagged(label, Box::new(v))),
         Frame::Consume(e, env) => step_consume(v, e, env, kont)?,
         Frame::ApplyCallee(callee) => State::Apply { callee, arg: v },
-        Frame::ActivateArg(value_term, env) => {
-            kont.push(Frame::ActivateWith(v));
-            State::Term(value_term, env)
-        }
-        Frame::ActivateWith(consumer) => State::Apply { callee: consumer, arg: v },
         Frame::Prompt { ret, .. } => {
             // The handled body returned normally: its value goes to `return`.
             State::Apply { callee: ret, arg: v }

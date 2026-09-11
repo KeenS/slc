@@ -78,7 +78,6 @@ fn every_command() -> Vec<Command> {
             Term::Lam("x".into(), Box::new(var("x"))),
             CoTerm::MuTilde("y".into(), Box::new(cut(var("y"), CoTerm::Covar("k".into())))),
         ),
-        Command::Activate(var("k"), var("v")),
     ]
 }
 

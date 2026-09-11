@@ -897,7 +897,7 @@ Term      t ::= x                     variable
               | μα. c                 capture of the ambient continuation
               | t ⊗ t                 tensor pair
               | L(t)                  labelled additive injection (enum value)
-              | co(e)                 a co-term reified as a negative value
+              | co(e)                 ↓-shift introduction: a co-term as a value
 
 CoTerm    e ::= α                     co-variable
               | λ̄x. c                 co-abstraction (application)
@@ -907,7 +907,6 @@ CoTerm    e ::= α                     co-variable
               | μ̃(x₁, …, xₙ). c       product consumer
 
 Command   c ::= ⟨ t ∥ e ⟩             cut
-              | k(v)                  continuation activation
 
 Type      A ::= +B | -B               positive / negative atom
               | A ⊗ A | A ⅋ A         multiplicatives
@@ -916,6 +915,15 @@ Type      A ::= +B | -B               positive / negative atom
               | !A | [A] | A → A      exponential, list, function
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
+
+`co(e)` is the introduction form of the `↓` shift: a co-term boxed as data,
+so that a consumer can sit where a value is expected. The surface never
+writes it directly — `select` denotes a consumer and lowers straight to it,
+and a continuation passed as an argument arrives the same way. Its
+elimination is the cut: cutting `co(e)` against a consumer applies that
+consumer to the underlying co-term, which is `↑` opening the box. The
+surface `↓e`/`↑e` glyphs themselves erase at lowering because the value is
+already in this form; the type is what they change.
 
 A declared continuation parameter and `μα. c` both bind a continuation
 variable, and they are not interchangeable. A declared parameter is an
@@ -1000,7 +1008,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
-| `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
+| `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ λ̄__f. ⟨ ⟦v⟧ ∥ __tail ⟩ ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
@@ -1025,14 +1033,13 @@ become λ binders.
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `struct` values — a labelled product |
-| `co(e)` | `select` |
+| `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction |
 | `α` | the consumer named on the right of a cut, `v @ k` |
-| `λ̄x. c` | application, and nothing else |
+| `λ̄x. c` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (struct), the field resolved to its index from the base type |
-| `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |
 
 ### Classical control
 

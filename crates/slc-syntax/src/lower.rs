@@ -415,9 +415,16 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             let command = match &consumer.kind {
                 // A named consumer is a co-variable, so the cut is direct.
                 Expr::Ident(name) => Command::Cut(v, CoTerm::Covar(name.clone())),
-                // Any other consumer is an expression that produces one, so
-                // the cut activates the continuation it evaluates to.
-                _ => Command::Activate(lower_expr(consumer, continuations)?, v),
+                // Any other consumer is an expression that produces one:
+                // evaluate it, then cut the value into it — the same shape as
+                // an application, ⟨ ⟦k⟧ ∥ λ̄__f. ⟨ ⟦v⟧ ∥ __tail ⟩ ⟩.
+                _ => Command::Cut(
+                    lower_expr(consumer, continuations)?,
+                    CoTerm::CoLam(
+                        "__f".into(),
+                        Box::new(Command::Cut(v, CoTerm::Covar("__tail".into()))),
+                    ),
+                ),
             };
             Ok(Term::Mu(cut_binder(&consumer.kind), Box::new(command)))
         }
@@ -1249,22 +1256,25 @@ mod tests {
     }
 
     #[test]
-    fn lower_cut_with_a_computed_consumer_activates_it() {
-        // A consumer that is not a name is an expression producing one, so
-        // the cut activates the continuation it evaluates to.
+    fn lower_cut_with_a_computed_consumer_evaluates_then_cuts() {
+        // A consumer that is not a name is an expression producing one:
+        // evaluate it, then cut the value into it, in application shape.
         let out = lower_str("fn f(ignored: +i32) -> i32 { 1 @ pick(2) }");
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else {
             panic!("a cut is wrapped in a μ binder: {body}");
         };
         assert_eq!(binder, "__cut");
-        let Command::Activate(consumer, value) = command.as_ref() else {
-            panic!("a computed consumer is activated: {command}");
+        let Command::Cut(consumer, CoTerm::CoLam(_, inner)) = command.as_ref() else {
+            panic!("a computed consumer is evaluated then cut: {command}");
         };
-        assert_eq!(value, &Term::Var("$int_1".into()));
         assert!(
             format!("{consumer}").contains("pick"),
             "the consumer expression is evaluated: {consumer}"
+        );
+        assert!(
+            matches!(inner.as_ref(), Command::Cut(Term::Var(v), _) if v == "$int_1"),
+            "the value is cut into the evaluated consumer: {inner}"
         );
     }
 

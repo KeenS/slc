@@ -96,10 +96,6 @@ fn go_command(c: &Command, out: &mut HashSet<String>) {
             go_term(t, out);
             go_coterm(e, out);
         }
-        Command::Activate(k, v) => {
-            go_term(k, out);
-            go_term(v, out);
-        }
     }
 }
 
@@ -198,10 +194,6 @@ fn alpha_command(a: &Command, b: &Command, xs: &mut Vec<String>, ys: &mut Vec<St
         (Command::Cut(t1, e1), Command::Cut(t2, e2)) => {
             alpha_term(t1, t2, xs, ys) && alpha_coterm(e1, e2, xs, ys)
         }
-        (Command::Activate(k1, v1), Command::Activate(k2, v2)) => {
-            alpha_term(k1, k2, xs, ys) && alpha_term(v1, v2, xs, ys)
-        }
-        _ => false,
     }
 }
 
@@ -238,9 +230,6 @@ pub fn subst_command(x: &str, replacement: &Term, command: &Command) -> Command 
     match command {
         Command::Cut(t, e) => {
             Command::Cut(subst_term(x, replacement, t), subst_coterm(x, replacement, e))
-        }
-        Command::Activate(k, v) => {
-            Command::Activate(subst_term(x, replacement, k), subst_term(x, replacement, v))
         }
     }
 }

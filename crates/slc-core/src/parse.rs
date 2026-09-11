@@ -272,26 +272,12 @@ impl Parser {
 
     fn command(&mut self) -> Result<Command, ParseError> {
         self.spaces();
-        if self.eat("⟨") {
-            let t = self.term()?;
-            self.expect("∥")?;
-            let e = self.coterm()?;
-            self.expect("⟩")?;
-            return Ok(Command::Cut(t, e));
-        }
-        // Activation: `k(v)`. In command position a name followed by `(` is
-        // the continuation being activated, not a labelled injection — those
-        // are terms, and this is a command.
-        self.spaces();
-        let k = if self.peek().is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$')) {
-            Term::Var(self.name()?)
-        } else {
-            self.term()?
-        };
-        self.expect("(")?;
-        let v = self.term()?;
-        self.expect(")")?;
-        Ok(Command::Activate(k, v))
+        self.expect("⟨")?;
+        let t = self.term()?;
+        self.expect("∥")?;
+        let e = self.coterm()?;
+        self.expect("⟩")?;
+        Ok(Command::Cut(t, e))
     }
 
     fn ty(&mut self) -> Result<Type, ParseError> {

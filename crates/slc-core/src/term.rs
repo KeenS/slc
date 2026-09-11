@@ -21,11 +21,13 @@ pub enum Term {
     /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.
     Tag(String, Box<Term>),
-    /// A co-term reified as a negative value: `co(e)`.
+    /// A co-term reified as a value: `co(e)` — the introduction form of the
+    /// `↓` shift, boxing a consumer as data.
     ///
     /// The surface language lets a continuation appear where an expression is
     /// expected — `select` denotes one, and continuations are passed as
     /// arguments. `co(e)` is that continuation seen as a value: cutting it
-    /// against a consumer applies the consumer to the underlying co-term.
+    /// against a consumer applies the consumer to the underlying co-term,
+    /// which is the `↑` elimination opening the box.
     Co(Box<CoTerm>),
 }

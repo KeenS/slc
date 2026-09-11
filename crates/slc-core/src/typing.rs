@@ -414,15 +414,6 @@ pub fn infer_command(
                 Err(TypeError::Mismatch { expected: tt.dual(), actual: et })
             }
         }
-        Command::Activate(k, v) => {
-            let kt = infer_term(k, gamma, delta)?;
-            let vt = infer_term(v, gamma, delta)?;
-            if kt.dual() == vt {
-                Ok(())
-            } else {
-                Err(TypeError::Mismatch { expected: kt.dual(), actual: vt })
-            }
-        }
     }
 }
 

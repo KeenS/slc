@@ -82,7 +82,6 @@ impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Command::Cut(t, e) => write!(f, "⟨{t} ∥ {e}⟩"),
-            Command::Activate(k, v) => write!(f, "{k}({v})"),
         }
     }
 }

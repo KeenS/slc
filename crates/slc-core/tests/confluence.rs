@@ -44,9 +44,8 @@ fn normalization_is_deterministic() {
     );
     let n1 = nf(&c);
     let n2 = nf(&c);
-    if let (Command::Cut(t1, _), Command::Cut(t2, _)) = (&n1, &n2) {
-        assert!(alpha_eq_term(t1, t2));
-    }
+    let (Command::Cut(t1, _), Command::Cut(t2, _)) = (&n1, &n2);
+    assert!(alpha_eq_term(t1, t2));
 }
 
 #[test]

@@ -57,8 +57,6 @@ pub enum Node {
     // ── commands ──
     /// `⟨ t ∥ e ⟩` — a cut of a term against a co-term.
     Cut(NodeId, NodeId),
-    /// `k(v)` — continuation activation: (consumer term, value term).
-    Activate(NodeId, NodeId),
 }
 
 /// One branch of a compiled labelled consumer.

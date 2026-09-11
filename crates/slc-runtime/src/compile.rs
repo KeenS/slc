@@ -126,11 +126,6 @@ fn compile_cmd(c: &Command, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             let e = compile_coterm(e, scope, chunk);
             Node::Cut(t, e)
         }
-        Command::Activate(k, v) => {
-            let k = compile_ir(k, scope, chunk);
-            let v = compile_ir(v, scope, chunk);
-            Node::Activate(k, v)
-        }
     };
     chunk.push(node)
 }
