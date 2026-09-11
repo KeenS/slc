@@ -4,7 +4,7 @@ use crate::ast::*;
 use crate::token::Span;
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
-use slc_core::term::Term;
+use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::{Base, Type};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -24,6 +24,12 @@ thread_local! {
     /// Projection span → the component index the checker resolved (`.i`, or a
     /// struct field's position).
     static PROJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
+    /// Destructor name → fully qualified label, for every declared menu. An
+    /// unqualified destructor name is recorded only when it is unambiguous.
+    static MENUS: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
+    /// Demand span → the qualified destructor label the checker resolved
+    /// (`cfg.item` on a menu, as opposed to a struct projection).
+    static DEMANDS: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -46,6 +52,9 @@ pub struct DispatchInfo {
     /// Projection span → the resolved component index (`.i`, or a struct
     /// field's position).
     pub projections: HashMap<Span, usize>,
+    /// Demand span → the qualified destructor label: `cfg.item` resolved
+    /// against a `menu` declaration rather than a struct's fields.
+    pub demands: HashMap<Span, String>,
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -113,6 +122,18 @@ fn projection(span: Span) -> Option<usize> {
     PROJECTIONS.with(|cell| cell.borrow().get(&span).copied())
 }
 
+/// The qualified destructor label a destructor name denotes, if it names a
+/// declared menu item unambiguously (or is already qualified).
+fn lookup_dtor(name: &str) -> Option<String> {
+    MENUS.with(|cell| cell.borrow().get(name).cloned().flatten())
+}
+
+/// The qualified destructor label the checker resolved for the demand at
+/// `span`, if `base.item` demands a menu rather than projecting a struct.
+fn demand(span: Span) -> Option<String> {
+    DEMANDS.with(|cell| cell.borrow().get(&span).cloned())
+}
+
 /// Lower a program with the checker's dispatch resolution in force, so that
 /// trait-method calls become direct calls or dictionary projections and
 /// bounded functions take and forward their dictionaries.
@@ -123,10 +144,12 @@ pub fn lower_program_resolving(
     METHODS.with(|cell| *cell.borrow_mut() = dispatch.methods.clone());
     CALLS.with(|cell| *cell.borrow_mut() = dispatch.calls.clone());
     PROJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.projections.clone());
+    DEMANDS.with(|cell| *cell.borrow_mut() = dispatch.demands.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
     PROJECTIONS.with(|cell| cell.borrow_mut().clear());
+    DEMANDS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -439,11 +462,54 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // vestigial — the projected component returns to the ambient
         // continuation, as a match dispatch does.
         Expr::Project { base, .. } => {
+            // `cfg.item` on a menu is a demand: cut the menu against the
+            // request, with the μ binder as the answer's continuation.
+            if let Some(label) = demand(e.span) {
+                let base = lower_expr(base, continuations)?;
+                return Ok(Term::Mu(
+                    "__ask".into(),
+                    Box::new(Command::Cut(
+                        base,
+                        CoTerm::Dtor(label, Box::new(CoTerm::Covar("__ask".into()))),
+                    )),
+                ));
+            }
             let index = projection(e.span).ok_or_else(|| {
                 LowerError::Unsupported("a projection was not resolved by the checker".into())
             })?;
             let base = lower_expr(base, continuations)?;
             Ok(Term::Mu("__prj".into(), Box::new(Command::Cut(base, CoTerm::Prj(index)))))
+        }
+        // `.item(k)` — a request literal: the continuation boxed under its
+        // destructor. A named continuation is a co-variable directly; any
+        // other expression is bound first, then named.
+        Expr::Request { dtor, arg } => {
+            let label = lookup_dtor(dtor).ok_or_else(|| {
+                LowerError::Unsupported(format!("`.{dtor}` does not name a declared menu item"))
+            })?;
+            if let Expr::Ident(name) = &arg.kind {
+                return Ok(Term::Co(Box::new(CoTerm::Dtor(
+                    label,
+                    Box::new(CoTerm::Covar(name.clone())),
+                ))));
+            }
+            let payload = lower_expr(arg, continuations)?;
+            Ok(Term::Mu(
+                "__req".into(),
+                Box::new(Command::Cut(
+                    payload,
+                    CoTerm::MuTilde(
+                        "__k".into(),
+                        Box::new(Command::Cut(
+                            Term::Co(Box::new(CoTerm::Dtor(
+                                label,
+                                Box::new(CoTerm::Covar("__k".into())),
+                            ))),
+                            CoTerm::Covar("__req".into()),
+                        )),
+                    ),
+                )),
+            ))
         }
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
@@ -554,6 +620,31 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             //
             //   labelled (enum, struct) ⟹ co(μ̃[ L(x…). c | … ])
             //   product (tensor)        ⟹ co(μ̃(x…). c)
+            // A `select` whose arms are request shapes builds a menu — the
+            // negative additive value μ[…] — rather than a consumer.
+            if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Dtor { .. })) {
+                let mut branches = Vec::new();
+                for arm in arms {
+                    let Pattern::Dtor { dtor, binder } = &arm.pattern else {
+                        return Err(LowerError::Unsupported(
+                            "a `select` over a menu answers requests; every arm is `.item(k)`"
+                                .into(),
+                        ));
+                    };
+                    let label = lookup_dtor(dtor).ok_or_else(|| {
+                        LowerError::Unsupported(format!(
+                            "`.{dtor}` does not name a declared menu item"
+                        ))
+                    })?;
+                    let body = lower_select_command(&arm.command, continuations)?;
+                    branches.push(CoMatchBranch {
+                        label,
+                        binder: binder.clone(),
+                        body: Box::new(body),
+                    });
+                }
+                return Ok(Term::CoMatch(branches));
+            }
             let mut branches = Vec::new();
             let mut product: Option<(Vec<String>, Command)> = None;
             for arm in arms {
@@ -647,6 +738,23 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     VARIANTS.with(|cell| {
         *cell.borrow_mut() = variant_labels;
     });
+    let mut dtor_labels: HashMap<String, Option<String>> = HashMap::new();
+    for d in &p.decls {
+        if let Decl::Menu { name, items } = &d.kind {
+            for (item, _) in items {
+                let label = format!("{name}::{item}");
+                dtor_labels.insert(label.clone(), Some(label.clone()));
+                // An unqualified destructor is usable only while unambiguous.
+                dtor_labels
+                    .entry(item.clone())
+                    .and_modify(|existing| *existing = None)
+                    .or_insert(Some(label));
+            }
+        }
+    }
+    MENUS.with(|cell| {
+        *cell.borrow_mut() = dtor_labels;
+    });
 
     let mut out = Vec::new();
     for d in &p.decls {
@@ -737,7 +845,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             | Decl::Trait { .. }
             | Decl::Impl { .. }
             | Decl::Effect { .. } => {}
-            Decl::Struct { .. } | Decl::Enum { .. } => {
+            Decl::Struct { .. } | Decl::Enum { .. } | Decl::Menu { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }
         }
@@ -817,6 +925,9 @@ fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), 
         )),
         // `(a, b)`: an unlabelled product.
         Pattern::Tuple(items) => Ok((None, items.iter().map(binder).collect::<Result<_, _>>()?)),
+        Pattern::Dtor { .. } => Err(LowerError::Unsupported(
+            "a `select` covers either a menu's requests or a data type's shapes, not both".into(),
+        )),
         other => Err(LowerError::Unsupported(format!(
             "a `select` arm covers one shape of the type; found {other:?}"
         ))),
@@ -968,6 +1079,18 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 write(pattern, out);
             }
             Pattern::Rest => out.push_str(".."),
+            // A request shape: its qualified label with the continuation as
+            // the single bound field, exactly as an enum pattern encodes.
+            Pattern::Dtor { dtor, binder } => {
+                let label = lookup_dtor(dtor).unwrap_or_else(|| dtor.clone());
+                out.push('"');
+                out.push_str(&escape(&label));
+                out.push('"');
+                out.push('(');
+                out.push('$');
+                out.push_str(&escape(binder));
+                out.push(')');
+            }
             Pattern::Tuple(items) => {
                 out.push('(');
                 for (i, item) in items.iter().enumerate() {

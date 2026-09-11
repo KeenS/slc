@@ -88,6 +88,14 @@ pub enum Expr {
         base: Box<Node<Expr>>,
         key: ProjKey,
     },
+    /// A request literal: `.item(k)` — one demand on a `menu` type, carrying
+    /// the continuation `k` that wants the answer. The mirror of an enum
+    /// variant expression: a variant is data the producer tags, a request is
+    /// a demand the consumer tags.
+    Request {
+        dtor: String,
+        arg: Box<Node<Expr>>,
+    },
     /// A cut: `v @ k` sends the value `v` to the consumer `k`.
     ///
     /// A cut is a command, not an application: it has no result and control
@@ -162,6 +170,7 @@ impl Expr {
             Expr::Cut { value, consumer } => vec![value, consumer],
             Expr::Shift { expr, .. } => vec![expr],
             Expr::Project { base, .. } => vec![base],
+            Expr::Request { arg, .. } => vec![arg],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))
@@ -257,13 +266,36 @@ pub enum Pattern {
     Bool(bool),
     Float(f64),
     Or(Vec<Pattern>),
-    Range { start: Box<Pattern>, end: Box<Pattern> },
-    Binding { name: String, pattern: Box<Pattern> },
+    Range {
+        start: Box<Pattern>,
+        end: Box<Pattern>,
+    },
+    Binding {
+        name: String,
+        pattern: Box<Pattern>,
+    },
     Rest,
     Tuple(Vec<Pattern>),
-    List { items: Vec<Pattern>, rest: Option<Box<Pattern>> },
-    Struct { name: String, fields: Vec<(String, Pattern)> },
-    Enum { name: String, variant: String, fields: Vec<Pattern> },
+    List {
+        items: Vec<Pattern>,
+        rest: Option<Box<Pattern>>,
+    },
+    Struct {
+        name: String,
+        fields: Vec<(String, Pattern)>,
+    },
+    Enum {
+        name: String,
+        variant: String,
+        fields: Vec<Pattern>,
+    },
+    /// `.item(binder)` — a request shape: the destructor it demands, and the
+    /// binder naming the request's continuation. Matches a continuation of a
+    /// `menu` type the way an `Enum` pattern matches an `enum` value.
+    Dtor {
+        dtor: String,
+        binder: String,
+    },
 }
 
 impl Pattern {
@@ -316,6 +348,14 @@ pub enum Decl {
     Enum {
         name: String,
         variants: Vec<(String, Vec<TypeExpr>)>,
+    },
+    /// `menu Name { item: Type, … }` — the negative additive: the mirror of
+    /// `enum`. An enum value is one variant the producer chose; a menu value
+    /// answers one item the consumer demands. Each item names a destructor
+    /// and the type of the answer it delivers.
+    Menu {
+        name: String,
+        items: Vec<(String, TypeExpr)>,
     },
     Fn {
         name: String,

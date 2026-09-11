@@ -122,6 +122,7 @@ impl Parser {
         match self.peek_kind() {
             Some(TokenKind::Struct) => self.parse_struct(),
             Some(TokenKind::Enum) => self.parse_enum(),
+            Some(TokenKind::Menu) => self.parse_menu(),
             Some(TokenKind::Plus) | Some(TokenKind::Minus)
                 if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Fn) =>
             {
@@ -224,6 +225,27 @@ impl Parser {
             }
         }
         Ok(Node { span: t.span, kind: Decl::Struct { name, fields } })
+    }
+
+    fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Menu, "`menu`")?;
+        let name = self.expect_ident("menu name")?;
+        self.expect(TokenKind::LBrace, "`{`")?;
+        let mut items = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            let item = self.expect_ident("item name")?;
+            self.expect(TokenKind::Colon, "`:`")?;
+            let ty = self.parse_type()?;
+            items.push((item, ty.kind));
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}`")?;
+                break;
+            }
+        }
+        Ok(Node { span: t.span, kind: Decl::Menu { name, items } })
     }
 
     fn parse_enum(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -1037,6 +1059,19 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Node<Expr>, ParseError> {
         let start = self.span_start();
         match self.peek_kind().cloned() {
+            // `.item(k)` — a request literal: one demand on a menu, carrying
+            // the continuation that wants the answer.
+            Some(TokenKind::Dot) => {
+                self.pos += 1;
+                let dtor = self.expect_ident("destructor name")?;
+                self.expect(TokenKind::LParen, "`(` after the destructor")?;
+                let arg = self.parse_expr()?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Request { dtor, arg: Box::new(arg) },
+                })
+            }
             Some(TokenKind::Int(n)) => {
                 self.pos += 1;
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Int(n) })
@@ -1417,6 +1452,16 @@ impl Parser {
 
     fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind().cloned() {
+            // `.item(out)` — a request shape: the demanded destructor, and
+            // the binder naming the request's continuation.
+            Some(TokenKind::Dot) => {
+                self.pos += 1;
+                let dtor = self.expect_ident("destructor name")?;
+                self.expect(TokenKind::LParen, "`(` after the destructor")?;
+                let binder = self.expect_ident("a binder for the request's continuation")?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                Ok(Pattern::Dtor { dtor, binder })
+            }
             Some(TokenKind::Minus) => {
                 self.pos += 1;
                 match self.parse_single_pattern()? {

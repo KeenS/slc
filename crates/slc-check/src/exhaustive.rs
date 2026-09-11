@@ -25,6 +25,7 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
         Decl::Const { value, .. } => check_expr(value, enums, diags),
         Decl::Struct { .. }
         | Decl::Enum { .. }
+        | Decl::Menu { .. }
         | Decl::Mod { .. }
         | Decl::Use { .. }
         | Decl::Trait { .. }
@@ -234,6 +235,7 @@ fn arm_variant(pattern: &Pattern) -> Option<String> {
         Pattern::Enum { name, variant, .. } => {
             Some(if variant.is_empty() { name.clone() } else { variant.clone() })
         }
+        Pattern::Dtor { dtor, .. } => Some(dtor.clone()),
         _ => None,
     }
 }
@@ -326,6 +328,9 @@ fn check_match(
             Pattern::Ident(x) => (x, None),
             Pattern::Enum { name, variant, .. } if variant.is_empty() => (name, None),
             Pattern::Enum { name, variant, .. } => (variant, Some(name)),
+            // A request shape covers its item, resolved like an unqualified
+            // variant against the menu table.
+            Pattern::Dtor { dtor, .. } => (dtor, None),
             _ => continue,
         };
         match payload {

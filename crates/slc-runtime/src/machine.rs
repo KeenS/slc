@@ -405,21 +405,20 @@ fn step_apply(
         // consumer — the request's label chooses the branch, and its
         // continuation (the tagged payload) is what the branch binds.
         Value::Menu { node: menu, env } => {
-            let Node::CoMatch(branches) = node(menu) else {
-                return Err(EvalError::TypeMismatch("a menu value must be `μ[…]`".into()));
-            };
             let Value::Tagged(label, payload) = arg else {
                 return Err(EvalError::TypeMismatch(format!(
                     "activating a menu requires a request, got {}",
                     arg.display()
                 )));
             };
-            let Some(branch) = branches.iter().find(|b| *b.label == label) else {
-                return Err(EvalError::TypeMismatch(format!("no `{label}` branch in menu")));
-            };
-            let mut branch_env = env;
-            branch_env.define_local(*payload);
-            State::Command(branch.body, branch_env)
+            menu_dispatch(menu, env, &label, *payload)?
+        }
+        // The same interaction with the sides swapped: a computed-consumer
+        // cut evaluates the request first, so the request is the callee and
+        // the menu the argument.
+        Value::Tagged(label, payload) if matches!(arg, Value::Menu { .. }) => {
+            let Value::Menu { node: menu, env } = arg else { unreachable!("matched above") };
+            menu_dispatch(menu, env, &label, *payload)?
         }
         // Activating a product consumer binds every component.
         Value::CoTensor { co, env } => {
@@ -490,6 +489,20 @@ fn step_apply(
             )));
         }
     })
+}
+
+/// One request meeting one menu: the label chooses a branch, which runs
+/// with the request's continuation bound.
+fn menu_dispatch(menu: NodeId, env: Env, label: &str, payload: Value) -> Result<State, EvalError> {
+    let Node::CoMatch(branches) = node(menu) else {
+        return Err(EvalError::TypeMismatch("a menu value must be `μ[…]`".into()));
+    };
+    let Some(branch) = branches.iter().find(|b| *b.label == *label) else {
+        return Err(EvalError::TypeMismatch(format!("no `{label}` branch in menu")));
+    };
+    let mut branch_env = env;
+    branch_env.define_local(payload);
+    Ok(State::Command(branch.body, branch_env))
 }
 
 /// Run a builtin once its arguments are in — or wait for more.

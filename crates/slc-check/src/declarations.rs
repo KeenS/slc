@@ -22,6 +22,10 @@ pub struct Declarations {
     unqualified: HashMap<String, Option<String>>,
     /// Declaration name → fields, in declaration order.
     pub(crate) structs: HashMap<String, Vec<(String, Type)>>,
+    /// Declared `menu` names. A menu's items live in `variants` and
+    /// `signatures` like an enum's variants — the request view — with each
+    /// item's payload being the consumer of its answer.
+    pub(crate) menus: std::collections::HashSet<String>,
 }
 
 impl Declarations {
@@ -31,6 +35,11 @@ impl Declarations {
     /// connective, so `-ParseResult` is a consumer of a declared type.
     pub(crate) fn resolve(&self, ty: &TypeExpr) -> Option<Type> {
         let resolved = match ty {
+            // A menu name denotes the negative additive itself; its dual —
+            // the bare `Named` — is the positive type of its requests.
+            TypeExpr::Base(name) if self.menus.contains(name) => {
+                Type::Dual(Box::new(Type::Named(name.clone())))
+            }
             TypeExpr::Base(name) if self.declarations.contains(name) => Type::Named(name.clone()),
             TypeExpr::Positive(inner) => self.resolve(&inner.kind)?,
             TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
@@ -85,6 +94,11 @@ impl Declarations {
         self.declarations.contains(name)
     }
 
+    /// Whether a name is a declared `menu`.
+    pub(crate) fn is_menu(&self, name: &str) -> bool {
+        self.menus.contains(name)
+    }
+
     pub(crate) fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
         if let Some(signature) = self.signatures.get(name) {
             return Some(signature);
@@ -97,8 +111,13 @@ impl Declarations {
 pub(crate) fn enum_types(p: &Program) -> Declarations {
     let mut enums = Declarations::default();
     for d in &p.decls {
-        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } = &d.kind {
+        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } =
+            &d.kind
+        {
             enums.declarations.insert(name.clone());
+        }
+        if let Decl::Menu { name, .. } = &d.kind {
+            enums.menus.insert(name.clone());
         }
         if let Decl::Struct { name, fields } = &d.kind {
             enums.structs.insert(
@@ -111,6 +130,23 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         }
     }
     for d in &p.decls {
+        // A menu registers the request view of itself: one "variant" per
+        // item, labelled `Menu::item`, whose payload is the consumer of the
+        // item's answer — the continuation a request carries.
+        if let Decl::Menu { name, items } = &d.kind {
+            enums.variants.insert(name.clone(), items.iter().map(|(i, _)| i.clone()).collect());
+            for (item, answer) in items {
+                let label = format!("{name}::{item}");
+                let answer = enums.resolve(answer).unwrap_or(Type::One);
+                enums.signatures.insert(label.clone(), (name.clone(), vec![answer.dual()]));
+                enums
+                    .unqualified
+                    .entry(item.clone())
+                    .and_modify(|existing| *existing = None)
+                    .or_insert(Some(label));
+            }
+            continue;
+        }
         let Decl::Enum { name, variants } = &d.kind else { continue };
         enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
         for (variant, payload) in variants {

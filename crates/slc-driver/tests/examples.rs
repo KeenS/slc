@@ -104,6 +104,10 @@ fn repository_example_suite_has_expected_results() {
         ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
         ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
+            "menu.sl",
+            Expected { success: true, stdout: &["3", "\"slant\"", "\"slant!\"", "3"], stderr: &[] },
+        ),
+        (
             "mu_tilde.sl",
             Expected {
                 success: true,

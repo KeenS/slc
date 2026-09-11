@@ -81,6 +81,18 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 }
             }
         }
+        Decl::Menu { items, .. } => {
+            for (_, ty) in items {
+                if let Ok(core_ty) = lower_type(ty)
+                    && !is_usable_as_field(&core_ty)
+                {
+                    diags.push(Diagnostic {
+                        message: field_message("menu item answer", &core_ty),
+                        span: d.span,
+                    });
+                }
+            }
+        }
         // Resolved away before this check runs.
         Decl::Mod { .. }
         | Decl::Use { .. }
@@ -137,6 +149,13 @@ fn check_param_polarity(
             return;
         }
     } else if let TypeExpr::Negative(_) = param_type {
+        // `-Menu` is a request: the dual of a negative type is honest data,
+        // so a value parameter may hold it.
+        if let Some(Type::Named(name)) = &resolved
+            && declared.is_menu(name)
+        {
+            return;
+        }
         // A double negation is the case worth explaining: it reads as a
         // consumer and is not one.
         let message = match &resolved {
@@ -158,6 +177,15 @@ fn check_param_polarity(
         return;
     }
     if let Some(ty) = resolved {
+        // A menu is a negative *value*: it may sit in a value parameter
+        // unboxed, the way a continuation parameter holds its consumer.
+        if let Type::Dual(inner) = &ty
+            && let Type::Named(name) = inner.as_ref()
+            && declared.is_menu(name)
+            && !requires_negative
+        {
+            return;
+        }
         let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };
         if !ok {
             diags.push(Diagnostic {

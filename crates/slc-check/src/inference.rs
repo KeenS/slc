@@ -41,7 +41,9 @@ pub fn infer_program(p: &Program) -> Result<Vec<DeclarationType>, Vec<Diagnostic
         .decls
         .iter()
         .filter_map(|d| match &d.kind {
-            Decl::Struct { name, .. } | Decl::Enum { name, .. } => Some(name.clone()),
+            Decl::Struct { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } => {
+                Some(name.clone())
+            }
             _ => None,
         })
         .collect();
@@ -232,6 +234,12 @@ fn infer_decl(
         Decl::Struct { name, .. } | Decl::Enum { name, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: Type::Named(name.clone()) })
         }
+        // A menu declares the negative additive: its values are menus, and
+        // its dual — the positive `Named` — is the type of its requests.
+        Decl::Menu { name, .. } => Ok(DeclarationType {
+            name: name.clone(),
+            ty: Type::Dual(Box::new(Type::Named(name.clone()))),
+        }),
         Decl::Const { name, ty, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
         }

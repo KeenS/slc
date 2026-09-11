@@ -82,6 +82,16 @@ const ROWS: &[Row] = &[
     Row { id: "decl.mu", source: "command f(x: +i32) | (k: -i32) { k(x) }", core: "λx. λk." },
     Row { id: "decl.const", source: "const C: +i32 = 1;", core: "$int_1" },
     Row {
+        id: "expr.request",
+        source: "menu M { v: i32 } fn f(k: -M) -> -M { match k { .v(out) => .v(out) } }",
+        core: "co(.M::v(out))",
+    },
+    Row {
+        id: "decl.menu",
+        source: "menu M { v: i32 } fn g() -> M { select M { .v(out) <= 1 @ out } }",
+        core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",
+    },
+    Row {
         id: "decl.enum",
         source: "enum Color { Red } fn f() -> i32 { 0 }",
         core: "Color::Red($unit)",

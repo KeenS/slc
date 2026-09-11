@@ -62,6 +62,7 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Command { name, .. }
             | Decl::Struct { name, .. }
             | Decl::Enum { name, .. }
+            | Decl::Menu { name, .. }
             | Decl::Const { name, .. }
             | Decl::Mod { name, .. }
             | Decl::Trait { name, .. } => {
@@ -187,6 +188,12 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 }
             }
         }
+        Decl::Menu { name, items } => {
+            *name = scope.qualify(name);
+            for (_, ty) in items {
+                resolve_type(ty, stack);
+            }
+        }
         Decl::Const { name, ty, value } => {
             *name = scope.qualify(name);
             resolve_type(ty, stack);
@@ -255,6 +262,9 @@ fn is_local(name: &str, locals: &[HashSet<String>]) -> bool {
 
 fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>) {
     match e {
+        Expr::Request { arg, .. } => {
+            resolve_expr(&mut arg.kind, stack, locals);
+        }
         Expr::Ident(name) => {
             if !is_local(name, locals) {
                 *name = resolve_name(name, stack);
@@ -405,6 +415,9 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
 /// variant table tells them apart after flattening.
 fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>]) {
     match p {
+        // The destructor is resolved against the menu table after
+        // flattening, like an unqualified variant name.
+        Pattern::Dtor { .. } => {}
         Pattern::Enum { name, fields, .. } => {
             if !is_local(name, locals) {
                 *name = resolve_name(name, stack);
@@ -461,6 +474,9 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
     match p {
         Pattern::Ident(name) => {
             out.insert(name.clone());
+        }
+        Pattern::Dtor { binder, .. } => {
+            out.insert(binder.clone());
         }
         Pattern::Binding { name, pattern } => {
             out.insert(name.clone());

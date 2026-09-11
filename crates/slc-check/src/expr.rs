@@ -492,6 +492,25 @@ fn check_pattern(
                 check_pattern(item, expected, declarations, span, diags);
             }
         }
+        // A request shape matches a continuation of its menu type — the
+        // positive `Named` that is the menu's dual.
+        Pattern::Dtor { dtor, .. } => match declarations.variant(dtor) {
+            Some((menu, _)) => {
+                if expected != &Type::Named(menu.clone()) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "request pattern `.{dtor}` matches a continuation of `{menu}`; \
+                                 scrutinee has type {expected}"
+                        ),
+                        span,
+                    });
+                }
+            }
+            None => diags.push(Diagnostic {
+                message: format!("`.{dtor}` does not name a declared menu item"),
+                span,
+            }),
+        },
         // A struct pattern decomposes the product: the same fields, in the
         // same order, with the same types as the declaration.
         Pattern::Struct { name, fields } => {
@@ -751,6 +770,12 @@ fn bind_match_pattern(
             let declared = enums.fields(name).unwrap_or_default();
             for ((_, field), ty) in fields.iter().zip(declared.iter()) {
                 bind_match_pattern(field, ty, enums, env);
+            }
+        }
+        // A request shape binds the continuation it carries.
+        Pattern::Dtor { dtor, binder } => {
+            if let Some(ty) = enums.variant(dtor).and_then(|(_, p)| p.first()) {
+                env.define(binder, ty.clone());
             }
         }
         Pattern::Tuple(items) => {
@@ -1479,6 +1504,52 @@ fn check_expr_unapplied(
                 });
                 return None;
             };
+            // `select Menu { .item(k) <= c, … }` builds the menu itself:
+            // one arm per item, each binding the continuation the request
+            // carries and answering it with a command.
+            if let Type::Dual(inner) = &resolved
+                && let Type::Named(menu) = inner.as_ref()
+                && enums.is_menu(menu)
+            {
+                for arm in arms {
+                    env.push();
+                    match &arm.pattern {
+                        slc_syntax::ast::Pattern::Dtor { dtor, binder } => {
+                            match enums.variant(&format!("{menu}::{dtor}")) {
+                                Some((_, payload)) => {
+                                    if let Some(k) = payload.first() {
+                                        env.define(binder, k.clone());
+                                    }
+                                }
+                                None => diags.push(Diagnostic {
+                                    message: format!("`{menu}` has no item `{dtor}`"),
+                                    span: arm.command.span,
+                                }),
+                            }
+                        }
+                        _ => diags.push(Diagnostic {
+                            message: format!(
+                                "`select {menu}` answers requests; every arm is `.item(k)`"
+                            ),
+                            span: arm.command.span,
+                        }),
+                    }
+                    let command = check_expr(&arm.command, enums, env, diags);
+                    if let Some(command) = command
+                        && command != Type::Bottom
+                        && command != Type::One
+                    {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "a `select` arm is a command; this one has type {command}"
+                            ),
+                            span: arm.command.span,
+                        });
+                    }
+                    env.pop();
+                }
+                return Some(resolved);
+            }
             if resolved.is_negative() {
                 diags.push(Diagnostic {
                     message: format!(
@@ -1535,6 +1606,38 @@ fn check_expr_unapplied(
                 }
             }
         }
+        // `.item(k)` — a request: the continuation `k` must consume the
+        // item's answer, and the request itself is the dual of the menu.
+        Expr::Request { dtor, arg } => {
+            let Some((menu, payload)) = enums.variant(dtor).cloned() else {
+                diags.push(Diagnostic {
+                    message: format!("`.{dtor}` does not name a declared menu item"),
+                    span: e.span,
+                });
+                check_expr(arg, enums, env, diags);
+                return None;
+            };
+            if !enums.is_menu(&menu) {
+                diags.push(Diagnostic {
+                    message: format!("`.{dtor}` names an enum variant, not a menu item"),
+                    span: e.span,
+                });
+                return None;
+            }
+            let expected = payload.first().cloned().unwrap_or(Type::One);
+            if let Some(actual) = check_expr(arg, enums, env, diags)
+                && !fits(env, &expected, &actual, &arg.kind)
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`.{dtor}` carries a continuation of type {expected}; this has type \
+                         {actual}"
+                    ),
+                    span: arg.span,
+                });
+            }
+            Some(Type::Named(menu))
+        }
         Expr::Project { base, key } => {
             let base_ty = check_expr(base, enums, env, diags)?;
             let base_ty = env.uni.apply(&base_ty);
@@ -1562,6 +1665,28 @@ fn check_expr_unapplied(
                 }
                 // `base.field` — a struct field, resolved to its index.
                 slc_syntax::ast::ProjKey::Field(name) => {
+                    // `cfg.item` on a menu is a demand: the answer's type is
+                    // the item's, and lowering cuts the menu against the
+                    // request.
+                    if let Type::Dual(inner) = &base_ty
+                        && let Type::Named(menu) = inner.as_ref()
+                        && enums.is_menu(menu)
+                    {
+                        let label = format!("{menu}::{name}");
+                        return match enums.variant(&label) {
+                            Some((_, payload)) => {
+                                env.dispatch.demands.insert(e.span, label);
+                                Some(payload.first().cloned().unwrap_or(Type::One).dual())
+                            }
+                            None => {
+                                diags.push(Diagnostic {
+                                    message: format!("`{menu}` has no item `{name}`"),
+                                    span: e.span,
+                                });
+                                None
+                            }
+                        };
+                    }
                     let Type::Named(struct_name) = &base_ty else {
                         diags.push(Diagnostic {
                             message: format!("`.{name}` needs a struct; this has type {base_ty}"),
@@ -1665,6 +1790,10 @@ fn check_expr_unapplied(
                 // An unsolved variable is not yet anything; the duality
                 // check below still constrains it.
                 && !contains_var(value_ty)
+                // A menu is a negative *value*, not a boxed consumer: it is
+                // the canonical left side of a request cut.
+                && !matches!(value_ty, Type::Dual(inner)
+                    if matches!(inner.as_ref(), Type::Named(n) if enums.is_menu(n)))
             {
                 diags.push(Diagnostic {
                     message: format!(

@@ -377,6 +377,68 @@ activated.
 continuation parameter name. It may then be used as an expression callee, as an
 expression argument, and as a struct-name marker in ordinary call syntax.
 
+### `menu`: the negative additive declared
+
+`menu` declares the negative additive type itself — the mirror of `enum`. An
+enum value is one tagged variant the producer chose; a menu value answers one
+item the consumer demands:
+
+```sl
+enum Config { Retries(↓-i64), Name(↓-String) }   // ⊕ — the value picks
+menu Config { retries: i64,   name: String }     // &  — the demand picks
+```
+
+The two declarations above are each other's dual: `dual(i64 & String)` is
+`-i64 ⊕ -String`, a sum of requests each carrying the continuation that wants
+the answer — the shape the enum writes with explicit boxes. `menu` makes that
+type native, so the boxes and the encoding disappear.
+
+The same two keywords work on both sides of the mirror, because each names a
+syntactic role, not a polarity:
+
+- **`select` — a branch table awaiting its ambient scrutinee.** Over an enum,
+  it is the consumer of values; over a menu, it is the menu value itself,
+  answering whichever request arrives. An arm is `.item(out) <= c`: the
+  destructor it answers, the binder for the continuation the request carries
+  (`out: -A` for an item answering `A`), and the command that answers it.
+  Arms cover each item exactly once. Only the demanded branch ever runs.
+- **`match` — a branch table applied to a named scrutinee.** Over an enum
+  value it takes data apart; over a continuation of a menu type (`k: -Config`)
+  it takes the *request* apart: `.item(out) => e` binds the request's own
+  continuation, and the arms are ordinary expressions — typically other
+  requests.
+
+```sl
+fn config() -> Config {
+    select Config {
+        .retries(out) <= 3 @ out,
+        .name(out) <= "slant" @ out,
+    }
+}
+
+fn reroute(k: -Config) -> -Config {
+    match k {
+        .retries(out) => .retries(out),
+        .name(out) => .name(out),
+    }
+}
+```
+
+Three request forms complete the surface:
+
+- `cfg.item` **demands** one item off a menu — the mirror of struct
+  projection, and typed as the item's answer. Only that branch runs.
+- `.item(k)` is a **request literal** — the mirror of an enum variant
+  expression: a variant is data the producer tags, a request is a demand the
+  consumer tags. It has type `-Config`, and `k` must consume the answer.
+- `v @ request` **cuts** a menu against a request directly; `mu` names where
+  the answer goes.
+
+A menu type is negative, but a menu is a *value*: it may be returned
+(`-> Config`), passed as a value parameter, and sit on the left of `@` — the
+box discipline applies to consumers, and a menu is the thing consumers'
+requests are sent to, not a consumer.
+
 ## 8. Multiplicative data
 
 ### Positive multiplicative construction
@@ -897,6 +959,7 @@ Term      t ::= x                     variable
               | μα. c                 capture of the ambient continuation
               | t ⊗ t                 tensor pair
               | L(t)                  labelled additive injection (enum value)
+              | μ[.d₁(α). c₁ | … ]    menu (negative additive value)
               | co(e)                 ↓-shift introduction: a co-term as a value
 
 CoTerm    e ::= α                     co-variable
@@ -905,6 +968,7 @@ CoTerm    e ::= α                     co-variable
               | prj:i                  projection of the i-th component
               | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, struct)
               | μ̃(x₁, …, xₙ). c       product consumer
+              | .d(e)                 request (destructor)
 
 Command   c ::= ⟨ t ∥ e ⟩             cut
 
@@ -979,11 +1043,17 @@ re-parsed without loss.
 ⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           ↑ — open the box
 ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[… L(x…). c …] ⟩ → c[vᵢ/xᵢ]          labelled
+⟨ μ[… .d(α). c …] ∥ .d(e) ⟩  → c[e/α]              copattern
+⟨ co(.d(e)) ∥ μ̃[… .d(x). c …] ⟩ → c[co(e)/x]        co-labelled
 ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩     → c[v₁/x, v₂/y]      product
 ```
 
 The labelled rule is what makes `select` lazy: the label of the value selects
 one branch, and the branches that were not selected are discarded unreduced.
+The copattern rule is its mirror: the request selects one branch of the menu
+and binds the continuation it carries. The co-labelled rule is what lets
+`match` take a continuation apart — a request boxed by `↓` is a labelled
+positive value, so the arm binds the request's own continuation as a value.
 An `enum` has a branch per variant and a `struct` exactly one, so the same
 rule covers the additive and the labelled multiplicative; the product rule is
 its unlabelled counterpart.
@@ -1013,7 +1083,9 @@ nested left to right for several arguments.
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value. Over a `menu`, the arms are requests and the result is the menu itself: `μ[.M::item(k). ⟦c⟧ | …]` |
+| `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
+| `decl.menu` | `menu M { item: A, … }` | no term of its own: `select M` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
@@ -1034,6 +1106,8 @@ become λ binders.
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `struct` values — a labelled product |
+| `μ[.d(α). c \| …]` | `select` over a `menu` |
+| `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
