@@ -52,27 +52,29 @@ enum List<T> {
     Cons(T, List<T>),
 }
 
-// Patterns here are fully qualified: a program may declare `Nil` and
-// `Cons` variants of its own, and an ambiguous bare name would silently
-// become a binder catching everything.
+// The import pins `Nil` and `Cons` to List *within the prelude*: imports
+// are scoped to their source unit, so a program's own `Nil` — or its own
+// glob — never changes what these mean, and theirs is untouched by ours.
+use List::*;
+
 fn length<T>(xs: List<T>) -> i64 {
     match xs {
-        List::Nil => 0,
-        List::Cons(_, rest) => 1 + length(rest),
+        Nil => 0,
+        Cons(_, rest) => 1 + length(rest),
     }
 }
 
 fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
     match xs {
-        List::Nil => ys,
-        List::Cons(h, rest) => List::Cons(h, append(rest, ys)),
+        Nil => ys,
+        Cons(h, rest) => Cons(h, append(rest, ys)),
     }
 }
 
 fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
     match xs {
-        List::Nil => List::Nil,
-        List::Cons(h, rest) => List::Cons(f(h), map(f, rest)),
+        Nil => Nil,
+        Cons(h, rest) => Cons(f(h), map(f, rest)),
     }
 }
 
@@ -80,8 +82,8 @@ fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
 // the way the lookup builtins do.
 command nth<T>(xs: List<T>, i: +i64) | (found: -T, missing: -String) {
     match xs {
-        List::Nil => "nothing at that index" @ missing,
-        List::Cons(h, rest) => {
+        Nil => "nothing at that index" @ missing,
+        Cons(h, rest) => {
             if i == 0 { h @ found } else { nth(rest, i - 1, found, missing) }
         },
     }
@@ -113,9 +115,9 @@ fn to_string<T: Display>(x: T) -> String { fmt(x) }
 
 fn fmt_items<T: Display>(xs: List<T>) -> String {
     match xs {
-        List::Nil => "",
-        List::Cons(h, List::Nil) => fmt(h),
-        List::Cons(h, rest) => fmt(h) + ", " + fmt_items(rest),
+        Nil => "",
+        Cons(h, Nil) => fmt(h),
+        Cons(h, rest) => fmt(h) + ", " + fmt_items(rest),
     }
 }
 

@@ -78,7 +78,11 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     // the program's spans — and so its diagnostics' line numbers — are
     // untouched. Everything in it goes through the same pipeline as user
     // code, and diagnostics that do point into the prelude still render,
-    // since `source` is the combined text.
+    // since `source` is the combined text. The boundary scopes variant
+    // imports to their own unit.
+    // Spans count characters, not bytes — the surface has multi-byte
+    // glyphs — so the boundary does too.
+    let prelude_from = source.chars().count() + 1;
     let source = format!("{source}\n{PRELUDE}");
 
     let tokens = slc_syntax::lexer::lex(&source).map_err(|e| e.message)?;
@@ -93,13 +97,14 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let program = shadow_prelude(program);
 
     // Modules flatten into qualified names before anything else looks.
-    let program = slc_syntax::resolve::resolve_program(&program).map_err(|errors| {
-        errors
-            .iter()
-            .map(|e| format!("resolve: {} (at {})", e.message, format_span(&source, e.span)))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    let program =
+        slc_syntax::resolve::resolve_program_split(&program, prelude_from).map_err(|errors| {
+            errors
+                .iter()
+                .map(|e| format!("resolve: {} (at {})", e.message, format_span(&source, e.span)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
 
     // Traits elaborate away: impls become mangled functions, and a registry
     // records method signatures and per-type impls.

@@ -46,12 +46,23 @@ impl Scope {
 
 /// Flatten every module, qualifying declarations and references.
 pub fn resolve_program(program: &Program) -> Result<Program, Vec<ResolveError>> {
+    resolve_program_split(program, usize::MAX)
+}
+
+/// Resolve a program whose source is two units — the program's own text,
+/// then the prelude appended from `prelude_from` — with variant imports
+/// scoped to their unit: the prelude's `use List::*;` pins names in the
+/// prelude only, and a program's imports never reach into the prelude.
+pub fn resolve_program_split(
+    program: &Program,
+    prelude_from: usize,
+) -> Result<Program, Vec<ResolveError>> {
     let mut errors = Vec::new();
     let mut out = Vec::new();
     let root = collect_scope(&program.decls, Vec::new(), &mut errors);
     let mut stack = vec![root];
     flatten(&program.decls, &mut stack, &mut out, &mut errors);
-    let out = apply_variant_imports(out, &mut errors);
+    let out = apply_variant_imports(out, prelude_from, &mut errors);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
 }
 
@@ -62,6 +73,7 @@ pub fn resolve_program(program: &Program) -> Result<Program, Vec<ResolveError>> 
 /// names a variant its enum does not have, is an error at the `use`.
 fn apply_variant_imports(
     decls: Vec<Node<Decl>>,
+    prelude_from: usize,
     errors: &mut Vec<ResolveError>,
 ) -> Vec<Node<Decl>> {
     use crate::ast::UseImports;
@@ -73,15 +85,18 @@ fn apply_variant_imports(
             variants_of.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
         }
     }
-    // Bare name → qualified label, from the imports, first one wins and a
-    // second is an error.
-    let mut imported: HashMap<String, String> = HashMap::new();
+    // Bare name → qualified label, one table per source unit: an import is
+    // scoped to the unit that wrote it. A second import of the same name in
+    // the same unit is an error.
+    let mut tables: [HashMap<String, String>; 2] = [HashMap::new(), HashMap::new()];
+    let unit = |span_start: usize| usize::from(span_start >= prelude_from);
     let mut keep = Vec::new();
     for d in decls {
         let Decl::Use { path, imports } = &d.kind else {
             keep.push(d);
             continue;
         };
+        let imported = &mut tables[unit(d.span.start)];
         let enum_name = path.join("::");
         let Some(variants) = variants_of.get(&enum_name) else {
             errors.push(ResolveError {
@@ -114,11 +129,11 @@ fn apply_variant_imports(
             }
         }
     }
-    if imported.is_empty() {
-        return keep;
-    }
     for d in &mut keep {
-        rewrite_decl_imports(&mut d.kind, &imported);
+        let imported = &tables[unit(d.span.start)];
+        if !imported.is_empty() {
+            rewrite_decl_imports(&mut d.kind, imported);
+        }
     }
     keep
 }

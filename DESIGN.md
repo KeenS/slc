@@ -1086,8 +1086,10 @@ not have, is an error at the `use` — otherwise the automatic rule applies:
 unqualified while exactly one enum declares the name. A bare name that
 *several* enums declare and nothing imports is an **error**, not a binder:
 a pattern that silently caught everything is the failure mode this rule
-exists to kill. The prelude's own patterns are fully qualified, so a
-program's `use Mine::*;` never changes what the prelude means.
+exists to kill. Imports are **scoped to their source unit**: the prelude
+pins its own bare names with `use List::*;`, and that import reaches no
+program code — just as a program's `use Mine::*;` never changes what the
+prelude means, and the two never collide.
 
 ## 11. Core calculus
 
