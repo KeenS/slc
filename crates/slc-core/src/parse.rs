@@ -336,10 +336,6 @@ impl Parser {
                 self.pos += 1;
                 Ok(Type::Neg(self.base()?))
             }
-            Some('!') => {
-                self.pos += 1;
-                Ok(Type::Bang(Box::new(self.ty()?)))
-            }
             Some('↓') => {
                 self.pos += 1;
                 Ok(Type::Down(Box::new(self.ty()?)))

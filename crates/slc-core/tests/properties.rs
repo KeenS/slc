@@ -27,7 +27,6 @@ fn types() -> Vec<Type> {
         Type::Par(Box::new(ni32.clone()), Box::new(nbool.clone())),
         Type::Sum(Box::new(i32.clone()), Box::new(bool.clone())),
         Type::With(Box::new(ni32.clone()), Box::new(nbool)),
-        Type::Bang(Box::new(i32.clone())),
         Type::List(Box::new(i32.clone())),
         Type::arrow(i32, bool),
     ]

@@ -72,12 +72,6 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Delete the exponential `!A`.** Linearity was eliminated — the core is
-  classical, weakening and contraction are free — so `!` marks nothing. It
-  also breaks the involution (`dual(!A) = !dual(A)` today, which is not the
-  linear-logic `?dual(A)`, and no `?` exists). Remove the type rather than
-  repair a modality the language no longer needs.
-
 - **Define stdlib functions negatively where that is the simple form.** The
   prelude and builtins are all value-side. A function whose natural
   definition is a consumer transformer should be declared `<-`, so the

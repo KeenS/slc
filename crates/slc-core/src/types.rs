@@ -39,8 +39,6 @@ pub enum Type {
     With(Box<Type>, Box<Type>),
     /// Additive sum: `A + B`.
     Sum(Box<Type>, Box<Type>),
-    /// Exponential: `!A`.
-    Bang(Box<Type>),
     /// List sugar.
     List(Box<Type>),
     /// Downshift: `↓A`, the positive type of a boxed negative one — data
@@ -89,7 +87,6 @@ impl Type {
             Type::Dual(t) => (**t).clone(),
             Type::With(a, b) => Type::Sum(Box::new(a.dual()), Box::new(b.dual())),
             Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
-            Type::Bang(t) => Type::Bang(Box::new(t.dual())),
             Type::List(t) => Type::List(Box::new(t.dual())),
             Type::Down(t) => Type::Up(Box::new(t.dual())),
             Type::Up(t) => Type::Down(Box::new(t.dual())),
@@ -109,7 +106,6 @@ impl Type {
                     | Type::Tensor(..)
                     | Type::One
                     | Type::Sum(..)
-                    | Type::Bang(_)
                     | Type::List(_)
                     | Type::Down(_)
                     | Type::Named(_)
@@ -153,7 +149,6 @@ mod tests {
             Type::Par(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
             Type::With(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
             Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
-            Type::Bang(Box::new(Type::Pos(Base::I32))),
             Type::List(Box::new(Type::Pos(Base::I32))),
             Type::Named("Color".into()),
         ]

@@ -283,7 +283,6 @@ fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) ->
             Type::Sum(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
         }
         Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
-        Type::Bang(t) => Type::Bang(Box::new(freshen(t, seen, uni))),
         Type::List(t) => Type::List(Box::new(freshen(t, seen, uni))),
         Type::Down(t) => Type::Down(Box::new(freshen(t, seen, uni))),
         Type::Up(t) => Type::Up(Box::new(freshen(t, seen, uni))),

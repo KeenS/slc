@@ -1037,7 +1037,7 @@ Type      A ::= +B | -B               positive / negative atom
               | A ⊗ A | A ⅋ A         multiplicatives
               | 1 | ⊥                 their units
               | A + A | A & A         additives
-              | !A | [A] | A → A      exponential, list, function
+              | [A] | A → A           list, function
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
 
