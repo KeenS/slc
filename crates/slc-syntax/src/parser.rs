@@ -835,12 +835,6 @@ impl Parser {
                     left.kind
                 }
             }
-            Some(TokenKind::LBracket) => {
-                self.pos += 1;
-                let inner = self.parse_type()?;
-                self.expect(TokenKind::RBracket, "`]`")?;
-                TypeExpr::List(Box::new(inner))
-            }
             Some(TokenKind::Dual) => {
                 self.pos += 1;
                 self.expect(TokenKind::LParen, "`(`")?;
@@ -1759,28 +1753,6 @@ impl Parser {
                     }
                 }
                 Ok(Pattern::Tuple(items))
-            }
-            Some(TokenKind::LBracket) => {
-                self.pos += 1;
-                let mut items = Vec::new();
-                let mut rest = None;
-                loop {
-                    if self.eat(&TokenKind::RBracket) {
-                        break;
-                    }
-                    if self.peek_kind() == Some(&TokenKind::DotDot) {
-                        self.pos += 1;
-                        rest = Some(Box::new(self.parse_pattern()?));
-                        self.expect(TokenKind::RBracket, "`]` after list rest pattern")?;
-                        break;
-                    }
-                    items.push(self.parse_pattern()?);
-                    if !self.eat(&TokenKind::Comma) {
-                        self.expect(TokenKind::RBracket, "`]` after list pattern")?;
-                        break;
-                    }
-                }
-                Ok(Pattern::List { items, rest })
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });

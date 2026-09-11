@@ -17,10 +17,6 @@ pub(crate) enum RuntimePattern {
     Range(Box<RuntimePattern>, Box<RuntimePattern>),
     Or(Vec<RuntimePattern>),
     Tuple(Vec<RuntimePattern>),
-    List {
-        items: Vec<RuntimePattern>,
-        rest: Option<(Option<String>, Box<RuntimePattern>)>,
-    },
 }
 
 /// Match dispatch payloads use a top-level pair spine:
@@ -177,34 +173,6 @@ fn parse_runtime_pattern_inner(
             take_while(chars, |c| c.is_alphanumeric() || *c == '_'),
             Box::new(RuntimePattern::Wildcard),
         ),
-        Some('[') => {
-            let mut items = Vec::new();
-            let rest = None;
-            loop {
-                match chars.peek() {
-                    Some(']') | None => {
-                        chars.next();
-                        break;
-                    }
-                    _ => {}
-                }
-                items.push(parse_runtime_pattern_inner(chars));
-                match chars.next() {
-                    Some(',') => {
-                        if chars.peek() == Some(&']') {
-                            chars.next();
-                            break;
-                        }
-                    }
-                    Some(']') => break,
-                    _ => break,
-                }
-            }
-            if items.last() == Some(&RuntimePattern::Wildcard) {
-                // no-op; a trailing wildcard is just an ordinary item
-            }
-            RuntimePattern::List { items, rest }
-        }
         Some(c) => {
             let mut name = String::new();
             name.push(c);
@@ -361,29 +329,6 @@ pub(crate) fn pattern_matches(
             } else {
                 false
             }
-        }
-        RuntimePattern::List { items, rest } => {
-            let Value::List(list) = value else {
-                return false;
-            };
-            if list.len() < items.len() {
-                return false;
-            }
-            for (pattern, value) in items.iter().zip(list.iter()) {
-                if !pattern_matches(pattern, value, bindings) {
-                    return false;
-                }
-            }
-            if let Some((name, inner)) = rest {
-                let tail = Value::List(list[items.len()..].to_vec());
-                if !pattern_matches(inner, &tail, bindings) {
-                    return false;
-                }
-                if let Some(name) = name {
-                    bindings.push((name.clone(), tail));
-                }
-            }
-            true
         }
     }
 }

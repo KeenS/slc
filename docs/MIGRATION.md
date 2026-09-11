@@ -4,6 +4,27 @@ This guide covers the syntax changes made during the λ̄μμ̃ redesign. Old fo
 are rejected by the current compiler; each section shows the unsupported form
 and its replacement.
 
+## Lists
+
+The builtin list type `[A]`, the list patterns `[p, …]`, and the
+`list_new`/`list_len`/`list_push`/`list_get` builtins are gone. `List<T>` is
+an ordinary recursive enum in the prelude, with `length`, `map`, `append`,
+and the outcome-offering `command nth` beside it.
+
+Unsupported:
+
+```sl
+fn f(xs: [+i64]) -> i64 { … }
+let xs = list_push(list_new(), 10);
+```
+
+Write:
+
+```sl
+fn f(xs: List<i64>) -> i64 { … }
+let xs = List::Cons(10, List::Nil);
+```
+
 ## Arm arrows
 
 The arrow marks which side of the mirror the scrutinee is on: data flows

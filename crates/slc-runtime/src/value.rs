@@ -158,8 +158,6 @@ pub enum Value {
     },
     /// A builtin that has already received some arguments.
     PartialBuiltin(String, Vec<Value>),
-    /// A list value (v0.1: built via list builtins).
-    List(Vec<Value>),
 }
 
 impl PartialEq for Value {
@@ -180,7 +178,6 @@ impl PartialEq for Value {
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
             }
-            (Value::List(a), Value::List(b)) => a == b,
             (Value::Tagged(a, pa), Value::Tagged(b, pb)) => a == b && pa == pb,
             _ => false,
         }
@@ -200,9 +197,6 @@ impl Value {
             Value::Resume(_) => Type::Bottom,
             Value::Unit | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
-            Value::List(items) => {
-                Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
-            }
             Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
@@ -232,10 +226,6 @@ impl Value {
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
-            }
-            Value::List(items) => {
-                let inner: Vec<String> = items.iter().map(|v| v.display()).collect();
-                format!("[{}]", inner.join(", "))
             }
             Value::Tagged(label, payload) => match payload.as_ref() {
                 Value::Unit => label.clone(),
@@ -282,10 +272,6 @@ pub fn install_stdlib(env: &mut Env) {
         "__match_dispatch",
         "__handle",
         "char_at",
-        "list_new",
-        "list_len",
-        "list_push",
-        "list_get",
         "is_digit",
         "is_ws",
         "skip_digits",

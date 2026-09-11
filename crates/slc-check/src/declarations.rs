@@ -90,7 +90,6 @@ impl Declarations {
             }
             // `A → B` is `-A ⅋ B`.
             TypeExpr::Fun(a, b) => Type::arrow(resolve(&a.kind)?, resolve(&b.kind)?),
-            TypeExpr::List(inner) => Type::List(Box::new(resolve(&inner.kind)?)),
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
             TypeExpr::Dual(inner) => resolve(&inner.kind)?.dual(),

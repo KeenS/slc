@@ -42,3 +42,42 @@ fn traced<T>(label: +String, k: ↓-T) -> -T {
 fn defaulting<T>(fallback: T, k: ↓-T) -> -String {
     fn(m: +String) { fallback @ ↑k }
 }
+
+// ── Lists ────────────────────────────────────────────────────────────────
+//
+// A list is an ordinary recursive enum — nothing about it is built in.
+
+enum List<T> {
+    Nil,
+    Cons(T, List<T>),
+}
+
+fn length<T>(xs: List<T>) -> i64 {
+    match xs {
+        Nil => 0,
+        Cons(_, rest) => 1 + length(rest),
+    }
+}
+
+fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
+    match xs {
+        Nil => ys,
+        Cons(h, rest) => List::Cons(h, append(rest, ys)),
+    }
+}
+
+fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
+    match xs {
+        Nil => List::Nil,
+        Cons(h, rest) => List::Cons(f(h), map(f, rest)),
+    }
+}
+
+// Indexing can find nothing, so it offers its outcomes to continuations,
+// the way the lookup builtins do.
+command nth<T>(xs: List<T>, i: +i64) | (found: -T, missing: -String) {
+    match xs {
+        Nil => "nothing at that index" @ missing,
+        Cons(h, rest) => if i == 0 { h @ found } else { nth(rest, i - 1, found, missing) },
+    }
+}

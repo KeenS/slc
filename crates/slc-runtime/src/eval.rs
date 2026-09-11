@@ -159,18 +159,16 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         | "file_exists" => 1,
         "__index" => 2,
         "close_file" => 1,
-        "list_push" => 2,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
         "substring" => 3,
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
         "read_file" | "open_file" | "read_line" => 3,
-        "char_at" | "list_get" | "write_file" | "parse_int" => 4,
+        "char_at" | "write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__if_dispatch" => 3,
         "__handle" => 2,
-        "list_new" => 0,
         "format" => 0, // variadic: apply immediately
         _ => 0,
     }
@@ -265,22 +263,6 @@ pub(crate) fn run_offering_builtin(
                     message(format!(
                         "index {index} is out of range for a string of length {}",
                         text.chars().count()
-                    )),
-                ),
-            })
-        }
-        "list_get" => {
-            let (ok, out_of_range) = (value(2), value(3));
-            let (Value::List(items), Value::Int(index)) = (value(0), value(1)) else {
-                return Err(EvalError::TypeMismatch("list_get expects (list, i64)".into()));
-            };
-            wrap(match usize::try_from(index).ok().and_then(|i| items.get(i).cloned()) {
-                Some(item) => activate(ok, item),
-                None => activate(
-                    out_of_range,
-                    message(format!(
-                        "index {index} is out of range for a list of length {}",
-                        items.len()
                     )),
                 ),
             })

@@ -104,6 +104,10 @@ fn repository_example_suite_has_expected_results() {
         ),
         ("lambda.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
+            "lists.sl",
+            Expected { success: true, stdout: &["3", "42", "84", "84", "39", "0"], stderr: &[] },
+        ),
+        (
             "command_falls_through.sl",
             Expected {
                 success: false,

@@ -376,26 +376,9 @@ fn boolean_precedence_below_comparisons() {
 }
 
 #[test]
-fn list_indexing_works() {
-    let dir = std::env::temp_dir().join("slc_test_list_index.sl");
-    std::fs::write(
-        &dir,
-        "command main | (exit: -i32) { let xs = list_push(list_push(list_new(), 10), 20); println(xs[1]); 0 @ exit }",
-    )
-    .unwrap();
-    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok);
-    assert!(stdout.contains("20"));
-}
-
-#[test]
 fn out_of_range_index_rejected() {
     let dir = std::env::temp_dir().join("slc_test_oob.sl");
-    std::fs::write(
-        &dir,
-        "command main | (exit: -i32) { let xs = list_push(list_new(), 10); println(xs[5]); 0 @ exit }",
-    )
-    .unwrap();
+    std::fs::write(&dir, r#"command main | (exit: -i32) { println("ab"[5]); 0 @ exit }"#).unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("out of range"));
@@ -643,10 +626,9 @@ fn lookup_builtins_offer_both_outcomes() {
         }
 
         command main | (exit: -i32) {
-            let items = list_push(list_push(list_new(), 10), 20);
-            list_get(items, 1, fn(second: +i64) -> ⊥ {
+            char_at("slant", 1, fn(second: +char) -> ⊥ {
                 println(second);
-                list_get(items, 7, fn(unexpected: +i64) -> ⊥ {
+                char_at("slant", 9, fn(unexpected: +char) -> ⊥ {
                     report("unexpectedly found something")
                 }, fn(message: +String) -> ⊥ {
                     println(message);
@@ -658,8 +640,8 @@ fn lookup_builtins_offer_both_outcomes() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert!(stdout.contains("20"), "stdout: {stdout}");
-    assert!(stdout.contains("index 7 is out of range for a list of length 2"), "stdout: {stdout}");
+    assert!(stdout.contains("'l'"), "stdout: {stdout}");
+    assert!(stdout.contains("out of range"), "stdout: {stdout}");
 }
 
 #[test]

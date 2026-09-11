@@ -125,7 +125,6 @@ pub fn apply_builtin(
             }
             _ => Err(BuiltinError::TypeMismatch("char_at expects (String, i64)".into())),
         },
-        "list_new" => Ok(Value::List(Vec::new())),
         "__index" => match (args.first(), args.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(i))) => {
                 let idx = *i as usize;
@@ -134,11 +133,7 @@ pub fn apply_builtin(
                     .map(Value::Char)
                     .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range")))
             }
-            (Some(Value::List(items)), Some(Value::Int(i))) => items
-                .get(*i as usize)
-                .cloned()
-                .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range"))),
-            _ => Err(BuiltinError::TypeMismatch("__index expects (String|List, i64)".into())),
+            _ => Err(BuiltinError::TypeMismatch("__index expects (String, i64)".into())),
         },
         "char_code_at" => match (args.first(), args.get(1)) {
             (Some(Value::Str(s)), Some(Value::Int(i))) => {
@@ -270,25 +265,6 @@ pub fn apply_builtin(
             (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Bool(a == b)),
             _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
         },
-        "list_len" => match args.first() {
-            Some(Value::List(items)) => Ok(Value::Int(items.len() as i64)),
-            _ => Err(BuiltinError::TypeMismatch("list_len expects a List".into())),
-        },
-        "list_push" => match (args.first(), args.get(1)) {
-            (Some(Value::List(items)), Some(v)) => {
-                let mut new_items = items.clone();
-                new_items.push(v.clone());
-                Ok(Value::List(new_items))
-            }
-            _ => Err(BuiltinError::TypeMismatch("list_push expects (List, value)".into())),
-        },
-        "list_get" => match (args.first(), args.get(1)) {
-            (Some(Value::List(items)), Some(Value::Int(i))) => items
-                .get(*i as usize)
-                .cloned()
-                .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {i} out of range"))),
-            _ => Err(BuiltinError::TypeMismatch("list_get expects (List, i64)".into())),
-        },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
 }
@@ -371,20 +347,6 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let r = apply_builtin("mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
         assert!(matches!(r, Err(BuiltinError::ArithmeticOverflow(_))));
-    }
-
-    #[test]
-    fn list_operations() {
-        let mut buf: Vec<u8> = Vec::new();
-        let empty = Value::List(vec![]);
-        let l1 = apply_builtin("list_push", &[empty, Value::Int(1)], &mut buf).unwrap();
-        assert_eq!(l1, Value::List(vec![Value::Int(1)]));
-        let l2 = apply_builtin("list_push", &[l1, Value::Int(2)], &mut buf).unwrap();
-        assert_eq!(l2, Value::List(vec![Value::Int(1), Value::Int(2)]));
-        let n = apply_builtin("list_len", std::slice::from_ref(&l2), &mut buf).unwrap();
-        assert_eq!(n, Value::Int(2));
-        let item = apply_builtin("list_get", &[l2, Value::Int(1)], &mut buf).unwrap();
-        assert_eq!(item, Value::Int(2));
     }
 }
 

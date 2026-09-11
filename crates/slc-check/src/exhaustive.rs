@@ -378,11 +378,6 @@ fn check_pattern_arity(
                 check_pattern_arity(item, enums, span, diags);
             }
         }
-        Pattern::List { items, rest } => {
-            for item in items.iter().chain(rest.iter().map(|r| r.as_ref())) {
-                check_pattern_arity(item, enums, span, diags);
-            }
-        }
         Pattern::Data { fields, .. } => {
             for (_, field) in fields {
                 check_pattern_arity(field, enums, span, diags);

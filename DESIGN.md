@@ -514,7 +514,6 @@ command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 | `(A ⊗ B)` | positive product; the anonymous form of a two-field `data` |
 | `(A ⅋ B)` | negative product; the dual of `⊗`, a joint consumer of both sides |
 | `(A -> B)` | function: `-A ⅋ B`. So a function is negative, `(A -> ⊥)` *is* `-A`, and `dual(A -> B)` is `A ⊗ -B` — an argument together with a continuation for the result, which is what a call stack is |
-| `[A]` | list |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
 | `⊥` | bottom |
 
@@ -726,6 +725,31 @@ generalizes, and visibly re-runs its capture at each use.
 `examples/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
 
+### Generic declarations
+
+Every type declaration takes parameters, written as a function's are:
+
+```sl
+enum List<T> { Nil, Cons(T, List<T>) }
+data Boxed<T> { inner: T }
+menu Stream<T> { head: T, tail: Stream<T> }
+```
+
+A use applies the declaration — `List<i64>`, `Stream<String>` — and every
+construction instantiates the parameters fresh: a variant, a record
+literal, a bare `List::Nil`, or a `mu` over a generic menu, whose arms then
+constrain the arguments. Patterns and `select` arms instantiate from the
+scrutinee's arguments instead, so `Cons(n, rest)` over a `List<i64>` binds
+`n: +i64` and `rest: List<i64>`. Recursion through the declaration's own
+name gives inductive data — `List` — and, through a `menu`, coinductive
+codata: `Stream<T>` is an infinite structure of which only the demanded
+branches ever run.
+
+Lists themselves are not built in: `List<T>` and its functions (`length`,
+`map`, `append`, and the outcome-offering `command nth`) are prelude
+declarations like any other. There is no list literal — a list is written
+the way any enum value is.
+
 ### Shifts
 
 `↓B` boxes a negative type as data, and `↑P` is its dual — the computation
@@ -885,7 +909,6 @@ one of them is activated.
 | `read_line`  | `handle: +File`                                  | `line: -String`, `end: -unit`                       |
 | `write_file` | `path: +String`, `contents: +String`             | `ok: -unit`, `failed: -String`                      |
 | `char_at`    | `text: +String`, `index: +i64`                   | `ok: -char`, `out_of_range: -String`                |
-| `list_get`   | `list`, `index: +i64`                            | `ok`, `out_of_range: -String`                       |
 | `find_char`  | `text: +String`, `from: +i64`, `character: +i64` | `found: -i64`, `absent: -String`                    |
 
 Every failure continuation receives a `+String` describing what happened, so
@@ -1061,7 +1084,7 @@ Type      A ::= +B | -B               positive / negative atom
               | A ⊗ A | A ⅋ A         multiplicatives
               | 1 | ⊥                 their units
               | A + A | A & A         additives
-              | [A] | A → A           list, function
+              | A → A                 function
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
 

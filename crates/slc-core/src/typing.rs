@@ -131,7 +131,6 @@ impl Unification {
             Type::Dual(t) => Type::Dual(Box::new(self.apply(t))),
             Type::With(a, b) => Type::With(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            Type::List(t) => Type::List(Box::new(self.apply(t))),
             Type::Down(t) => Type::Down(Box::new(self.apply(t))),
             Type::Up(t) => Type::Up(Box::new(self.apply(t))),
             Type::Named(name, args) => {
@@ -149,7 +148,7 @@ impl Unification {
             Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
                 self.occurs(var, a) || self.occurs(var, b)
             }
-            Type::Dual(t) | Type::List(t) | Type::Down(t) | Type::Up(t) => self.occurs(var, t),
+            Type::Dual(t) | Type::Down(t) | Type::Up(t) => self.occurs(var, t),
             Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
             _ => false,
         }
@@ -197,7 +196,6 @@ impl Unification {
             }
             (Type::Down(a), Type::Down(b)) => Ok(Type::Down(Box::new(self.unify(a, b)?))),
             (Type::Up(a), Type::Up(b)) => Ok(Type::Up(Box::new(self.unify(a, b)?))),
-            (Type::List(a), Type::List(b)) => self.unify(a, b),
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
                 let args = xs
                     .iter()
@@ -259,7 +257,7 @@ pub fn contains_var(ty: &Type) -> bool {
             contains_var(a) || contains_var(b)
         }
         Type::Down(t) | Type::Up(t) => contains_var(t),
-        Type::Dual(t) | Type::List(t) => contains_var(t),
+        Type::Dual(t) => contains_var(t),
         Type::Named(_, args) => args.iter().any(contains_var),
         _ => false,
     }
@@ -617,7 +615,7 @@ mod tests {
     fn occurs_check_rejects_recursive_type() {
         let mut u = Unification::new();
         let a = u.fresh_var();
-        let recursive = Type::List(Box::new(a.clone()));
+        let recursive = Type::Named("List".into(), vec![a.clone()]);
         assert!(matches!(u.unify(&a, &recursive), Err(TypeError::Occurs(_))));
     }
 

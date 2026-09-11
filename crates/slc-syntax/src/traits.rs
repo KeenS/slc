@@ -58,7 +58,6 @@ pub fn type_key(ty: &TypeExpr) -> Option<String> {
             type_key(&inner.kind)
         }
         TypeExpr::Base(name) => Some(name.clone()),
-        TypeExpr::List(_) => Some("list".into()),
         _ => None,
     }
 }

@@ -31,8 +31,10 @@ impl Show for bool {
 impl Show for IntList {
     fn show(self: +IntList) -> String {
         match self {
-            Nil => "nil",
-            Cons(h, t) => show(h) + " :: " + show(t),
+            // Qualified: the prelude's List also has Nil and Cons, so the
+            // bare names are ambiguous here.
+            IntList::Nil => "nil",
+            IntList::Cons(h, t) => show(h) + " :: " + show(t),
         }
     }
 }

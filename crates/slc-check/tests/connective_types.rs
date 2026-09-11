@@ -54,7 +54,6 @@ fn explicit_connectives_parse_and_lower() {
             "fn f(g: (+i64 -> +bool)) -> i64 { 0 }",
             Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Bool)),
         ),
-        ("fn f(xs: [+i64]) -> i64 { 0 }", Type::List(Box::new(Type::Pos(Base::I64)))),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
         ("command f | (k: -⊥) { k(0) }", Type::Bottom),

@@ -223,7 +223,6 @@ pub enum TypeExpr {
     Tensor(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Par(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
-    List(Box<Node<TypeExpr>>),
     Dual(Box<Node<TypeExpr>>),
     /// `↓A` — a negative type boxed as data, and `↑A` — the computation that
     /// returns a positive one. Duals of each other, and neither is the
@@ -288,10 +287,6 @@ pub enum Pattern {
     },
     Rest,
     Tuple(Vec<Pattern>),
-    List {
-        items: Vec<Pattern>,
-        rest: Option<Box<Pattern>>,
-    },
     Data {
         name: String,
         fields: Vec<(String, Pattern)>,

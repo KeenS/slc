@@ -48,7 +48,6 @@ fn type_key(ty: &Type) -> Option<String> {
     match ty {
         Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
         Type::Named(n, _) => Some(n.clone()),
-        Type::List(_) => Some("list".into()),
         Type::Down(t) | Type::Up(t) | Type::Dual(t) => type_key(t),
         _ => None,
     }
@@ -260,9 +259,6 @@ fn resolve_rigid(
             Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
             Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
         )),
-        T::List(inner) => {
-            Some(Type::List(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
-        }
         T::Apply(name, args) => {
             let args = args
                 .iter()
@@ -611,37 +607,13 @@ fn check_pattern(
                 }
             }
         }
-        Pattern::List { items, rest } => {
-            let expected = match expected {
-                Type::List(item) => (**item).clone(),
-                _ => {
-                    diags.push(Diagnostic {
-                        message: format!("list pattern expects a list, found {expected}"),
-                        span,
-                    });
-                    Type::One
-                }
-            };
-            for item in items {
-                check_pattern(item, &expected, declarations, span, diags);
-            }
-            if let Some(rest) = rest {
-                check_pattern(
-                    rest,
-                    &Type::List(Box::new(expected.clone())),
-                    declarations,
-                    span,
-                    diags,
-                );
-            }
-        }
         _ => {}
     }
 }
 
 fn expected_index_type(value_ty: &Type) -> Option<Type> {
     match value_ty {
-        Type::Pos(Base::Str) | Type::List(_) => Some(Type::Pos(Base::I64)),
+        Type::Pos(Base::Str) => Some(Type::Pos(Base::I64)),
         _ => None,
     }
 }
@@ -649,7 +621,6 @@ fn expected_index_type(value_ty: &Type) -> Option<Type> {
 fn index_result_type(value_ty: &Type) -> Option<Type> {
     match value_ty {
         Type::Pos(Base::Str) => Some(Type::Pos(Base::Char)),
-        Type::List(inner) => Some((**inner).clone()),
         _ => None,
     }
 }
@@ -1620,11 +1591,7 @@ fn check_expr_unapplied(
                     });
                 }
             }
-            if let Some(Type::List(inner)) = value_ty.clone() {
-                Some(Type::List(inner))
-            } else {
-                value_ty
-            }
+            value_ty
         }
         Expr::Match { scrutinee, arms } => {
             let scrutinee_ty = check_expr(scrutinee, enums, env, diags);
@@ -2610,13 +2577,6 @@ mod tests {
     }
 
     #[test]
-    fn list_index_checked() {
-        assert!(check("fn f(l: [+i32], i: +i64) -> i32 { l[i] }").is_ok());
-        let diags = check("fn f(l: [+i32], i: +bool) -> i32 { l[i] }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("index has type")));
-    }
-
-    #[test]
     fn typed_let_checked() {
         let diags = check("fn f() -> i32 { let x: +char = 1; 2 }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("annotated")));
@@ -2951,28 +2911,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
-    }
-
-    #[test]
-    fn list_elements_flow_through_the_builtins() {
-        // `list_push(list_new(), 42)` makes a `[+i64]`, and its `list_get`
-        // continuation must consume an element of it.
-        let diags = check(
-            "command main | (exit: -i32) {
-                 let xs = list_push(list_new(), 42);
-                 list_get(
-                     xs,
-                     0,
-                     fn(c: +char) -> ⊥ { println(c); 0 @ exit },
-                     fn(m: +String) -> ⊥ { println(m); 1 @ exit },
-                 )
-             }",
-        )
-        .unwrap_err();
-        assert!(
-            diags.iter().any(|d| d.message.contains("has type -char")),
-            "the element type should reach the row: {diags:?}"
-        );
     }
 
     #[test]

@@ -201,7 +201,6 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
-        TypeExpr::List(inner) => Ok(Type::List(Box::new(lower_type(&inner.kind)?))),
         // `dual(A)` applies the involution rather than wrapping a node, so
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a
         // declaration's name stays wrapped: it is opaque to the core.
@@ -1371,22 +1370,6 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                     write(item, out);
                 }
                 out.push(')');
-            }
-            Pattern::List { items, rest } => {
-                out.push('[');
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    write(item, out);
-                }
-                if let Some(rest) = rest {
-                    if !items.is_empty() {
-                        out.push(',');
-                    }
-                    write(rest, out);
-                }
-                out.push(']');
             }
             Pattern::Data { name, fields } => {
                 // Fields are written in declaration order, so the pattern is

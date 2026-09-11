@@ -256,7 +256,6 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         TypeExpr::Base(name) => *name = resolve_name(name, stack),
         TypeExpr::Positive(inner)
         | TypeExpr::Negative(inner)
-        | TypeExpr::List(inner)
         | TypeExpr::Dual(inner)
         | TypeExpr::Down(inner)
         | TypeExpr::Up(inner) => resolve_type(&mut inner.kind, stack),
@@ -468,14 +467,6 @@ fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>])
             resolve_pattern(start, stack, locals);
             resolve_pattern(end, stack, locals);
         }
-        Pattern::List { items, rest } => {
-            for item in items {
-                resolve_pattern(item, stack, locals);
-            }
-            if let Some(rest) = rest {
-                resolve_pattern(rest, stack, locals);
-            }
-        }
         Pattern::Ident(_)
         | Pattern::Wildcard
         | Pattern::Int(_)
@@ -519,14 +510,6 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         Pattern::Data { fields, .. } => {
             for (_, field) in fields {
                 collect_binders(field, out);
-            }
-        }
-        Pattern::List { items, rest } => {
-            for item in items {
-                collect_binders(item, out);
-            }
-            if let Some(rest) = rest {
-                collect_binders(rest, out);
             }
         }
         Pattern::Range { .. }

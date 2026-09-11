@@ -47,7 +47,6 @@ fn builtin_functions() -> Vec<Builtin> {
     // Template variables: instantiated afresh at every call, so `same`
     // relates two slots of one call and promises nothing across calls.
     let same = Type::Var(0);
-    let element = Type::Var(0);
 
     // An ordinary function: every parameter is a value.
     let function = |name, params: Vec<Type>, result| Builtin {
@@ -89,13 +88,6 @@ fn builtin_functions() -> Vec<Builtin> {
         function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
         function("file_exists", vec![string.clone()], Some(bool_.clone())),
-        function("list_new", vec![], Some(Type::List(Box::new(element.clone())))),
-        function("list_len", vec![Type::List(Box::new(element.clone()))], Some(i64.clone())),
-        function(
-            "list_push",
-            vec![Type::List(Box::new(element.clone())), element.clone()],
-            Some(Type::List(Box::new(element.clone()))),
-        ),
         // Parsing, input/output, and lookup can fail or find nothing, so they
         // offer their outcomes to continuations.
         offers(
@@ -115,11 +107,6 @@ fn builtin_functions() -> Vec<Builtin> {
             vec![Type::Neg(Unit), Type::Neg(Str)],
         ),
         offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
-        offers(
-            "list_get",
-            vec![Type::List(Box::new(element.clone())), i64.clone()],
-            vec![Type::Dual(Box::new(element.clone())), Type::Neg(Str)],
-        ),
         offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
     ]
 }
@@ -285,7 +272,6 @@ fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) ->
             Type::Sum(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
         }
         Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
-        Type::List(t) => Type::List(Box::new(freshen(t, seen, uni))),
         Type::Down(t) => Type::Down(Box::new(freshen(t, seen, uni))),
         Type::Up(t) => Type::Up(Box::new(freshen(t, seen, uni))),
         Type::Named(name, args) => {
