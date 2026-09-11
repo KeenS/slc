@@ -35,8 +35,8 @@ fn describe(label: +i64, note: ↓-String) -> ⊥ {
 //     written here is positive while the thing produced is negative.
 fn config() <- Request {
     select Request {
-        Retries(k) <= 3 @ ↑k,
-        Name(k) <= "slant" @ ↑k,
+        Retries(k) => 3 @ ↑k,
+        Name(k) => "slant" @ ↑k,
     }
 }
 

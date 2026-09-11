@@ -9,6 +9,27 @@ pub struct ParseError {
     pub span: Span,
 }
 
+/// The wrong-arrow guidance, one line per direction. The arrow says which
+/// side of the mirror the scrutinee is on: data flows forward into an arm,
+/// `=>`; a demand reaches back into it, `<=`.
+const SELECT_ARROW: &str = "a `select` arm matches data, which flows forward: `pattern => command`";
+const SELECT_LE: &str = "a `select` arm matches data, which flows forward: `pattern => command` — `<=` belongs to \
+     `mu`, whose arms answer demands";
+const MU_LE: &str = "a `mu` arm answers a demand, which reaches back: `copattern <= command`";
+const MU_ARROW: &str = "a `mu` arm answers a demand, which reaches back: `copattern <= command` — `=>` belongs to \
+     arms that match data";
+
+/// Whether a pattern matches a continuation — a request shape — so that its
+/// `match` arm writes `<=`.
+fn pattern_is_copattern(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Dtor { .. } => true,
+        Pattern::Or(items) => items.first().is_some_and(pattern_is_copattern),
+        Pattern::Binding { pattern, .. } => pattern_is_copattern(pattern),
+        _ => false,
+    }
+}
+
 /// Type parameters with their trait bounds.
 type TypeParams = (Vec<String>, Vec<(String, String)>);
 
@@ -1169,11 +1190,18 @@ impl Parser {
                     let arm = self.pos;
                     let pattern = match self.parse_pattern() {
                         Ok(pattern) => pattern,
-                        Err(e) => return Err(self.reversed_arm_error(arm, e)),
+                        Err(e) => {
+                            return Err(self.reversed_arm_error(arm, TokenKind::Le, MU_LE, e));
+                        }
                     };
                     if !self.eat(&TokenKind::Le) {
                         let expected = self.expect(TokenKind::Le, "`<=` in `mu` arm").unwrap_err();
-                        return Err(self.reversed_arm_error(arm, expected));
+                        return Err(self.reversed_arm_error(
+                            arm,
+                            TokenKind::FatArrow,
+                            MU_ARROW,
+                            expected,
+                        ));
                     }
                     let command = self.parse_expr()?;
                     arms.push(SelectArm { pattern, command });
@@ -1287,9 +1315,43 @@ impl Parser {
                         break;
                     }
                     let pattern = self.parse_pattern()?;
-                    let guard =
-                        if self.eat(&TokenKind::If) { Some(self.parse_expr()?) } else { None };
-                    self.expect(TokenKind::FatArrow, "`=>`")?;
+                    // A request arm matches a continuation, so its demand
+                    // reaches back: `.item(out) <= e`. A data arm flows
+                    // forward, `pattern => e`. (A request's payload is
+                    // opaque, so a guard has nothing to test.)
+                    let copattern = pattern_is_copattern(&pattern);
+                    let guard = if !copattern && self.eat(&TokenKind::If) {
+                        Some(self.parse_expr()?)
+                    } else {
+                        None
+                    };
+                    if copattern {
+                        if self.peek_kind() == Some(&TokenKind::FatArrow) {
+                            return Err(ParseError {
+                                message: "a request arm matches a continuation — the demand \
+                                          reaches back: `.item(out) <= e`"
+                                    .into(),
+                                span: self
+                                    .peek()
+                                    .map(|t| t.span)
+                                    .unwrap_or(Span { start, end: start }),
+                            });
+                        }
+                        self.expect(TokenKind::Le, "`<=` in a request arm")?;
+                    } else {
+                        if self.peek_kind() == Some(&TokenKind::Le) {
+                            return Err(ParseError {
+                                message: "a data arm flows forward: `pattern => e` — `<=` \
+                                          belongs to arms that answer a continuation"
+                                    .into(),
+                                span: self
+                                    .peek()
+                                    .map(|t| t.span)
+                                    .unwrap_or(Span { start, end: start }),
+                            });
+                        }
+                        self.expect(TokenKind::FatArrow, "`=>`")?;
+                    }
                     let body = self.parse_expr()?;
                     self.eat(&TokenKind::Comma);
                     arms.push(MatchArm { pattern, guard, body });
@@ -1314,18 +1376,31 @@ impl Parser {
                     if self.eat(&TokenKind::RBrace) {
                         break;
                     }
-                    // An arm reads against the flow of a `match` arm: the
-                    // shape that arrives is on the left, and `<=` points back
-                    // at the command it runs.
+                    // A `select` arm matches data, and data flows forward
+                    // into the command: `pattern => command`. The demands a
+                    // `mu` answers reach back, `<=` — the arrow says which
+                    // side of the mirror the scrutinee is on.
                     let arm = self.pos;
                     let pattern = match self.parse_pattern() {
                         Ok(pattern) => pattern,
-                        Err(e) => return Err(self.reversed_arm_error(arm, e)),
+                        Err(e) => {
+                            return Err(self.reversed_arm_error(
+                                arm,
+                                TokenKind::FatArrow,
+                                SELECT_ARROW,
+                                e,
+                            ));
+                        }
                     };
-                    if !self.eat(&TokenKind::Le) {
+                    if !self.eat(&TokenKind::FatArrow) {
                         let expected =
-                            self.expect(TokenKind::Le, "`<=` in `select` arm").unwrap_err();
-                        return Err(self.reversed_arm_error(arm, expected));
+                            self.expect(TokenKind::FatArrow, "`=>` in `select` arm").unwrap_err();
+                        return Err(self.reversed_arm_error(
+                            arm,
+                            TokenKind::Le,
+                            SELECT_LE,
+                            expected,
+                        ));
                     }
                     let command = self.parse_expr()?;
                     arms.push(SelectArm { pattern, command });
@@ -1427,7 +1502,13 @@ impl Parser {
     /// failed to parse as a pattern. An arm holding a `=>` before it ends was
     /// written the other way round; the rest of the `select` is then skipped,
     /// so one arm in the old order reports one error.
-    fn reversed_arm_error(&mut self, arm: usize, fallback: ParseError) -> ParseError {
+    fn reversed_arm_error(
+        &mut self,
+        arm: usize,
+        wrong: TokenKind,
+        message: &str,
+        fallback: ParseError,
+    ) -> ParseError {
         let mut depth = 0i32;
         for token in &self.tokens[arm..] {
             match token.kind {
@@ -1438,13 +1519,10 @@ impl Parser {
                 // The `}` that closes the arm list, or the `,` that ends this
                 // arm: either way the arm is over.
                 TokenKind::RBrace | TokenKind::Comma => break,
-                TokenKind::FatArrow if depth == 0 => {
+                _ if token.kind == wrong && depth == 0 => {
                     let span = token.span;
                     self.skip_past_arm_list(arm);
-                    return ParseError {
-                        message: "a `select` arm is written `pattern <= command`: the shape comes first, as in a `match`".into(),
-                        span,
-                    };
+                    return ParseError { message: message.into(), span };
                 }
                 _ => {}
             }
@@ -1852,7 +1930,7 @@ mod tests {
     #[test]
     fn parse_select() {
         // One arm per variant of an enum.
-        let p = parse_str("select Color { Red <= 0 @ return, Green <= 1 @ return }");
+        let p = parse_str("select Color { Red => 0 @ return, Green => 1 @ return }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -1962,7 +2040,7 @@ mod tests {
 
     #[test]
     fn a_select_may_leave_out_its_type() {
-        let p = parse_str("select { Red <= 0 @ return }");
+        let p = parse_str("select { Red => 0 @ return }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -1972,32 +2050,38 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_the_old_select_arm_order() {
-        // `command => pattern` was the order before the arrow was turned
-        // around; saying so beats reporting that `0` is not a pattern.
+    fn parse_rejects_the_wrong_arrow_on_either_side() {
+        // The arrow marks the scrutinee's side of the mirror: data flows
+        // forward (`=>`), a demand reaches back (`<=`). Each wrong way gets
+        // the guidance, not a token-soup error.
         let errors = parse(
             lex("enum Color { Red, Green }
                  fn k(return: -i32) <- Color {
                      select Color {
-                         0 @ return => Red,
-                         1 @ return => Green,
+                         Red <= 0 @ return,
+                         Green <= 1 @ return,
                      }
                  }")
             .unwrap(),
         )
         .unwrap_err();
-        assert!(
-            errors.iter().any(|e| e.message.contains("`pattern <= command`")),
-            "errors: {errors:?}"
-        );
-        // One arm in the old order is one error, not one per arm after it.
+        assert!(errors.iter().any(|e| e.message.contains("flows forward")), "errors: {errors:?}",);
+        // One arm with the wrong arrow is one error, not one per arm after.
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
+
+        let errors = parse(
+            lex("menu Config { retries: i64 }
+                 fn f(k: -Config) -> -Config { match k { .retries(out) => .retries(out) } }")
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("reaches back")), "errors: {errors:?}");
     }
 
     #[test]
     fn parse_select_over_a_product() {
         // A product has one shape, so one arm, binding its components.
-        let p = parse_str("select (+i64 ⊗ +String) { (end, text) <= end @ done }");
+        let p = parse_str("select (+i64 ⊗ +String) { (end, text) => end @ done }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -2009,7 +2093,7 @@ mod tests {
 
     #[test]
     fn parse_select_over_a_struct() {
-        let p = parse_str("select Reading { Reading { value: v, unit: u } <= 0 @ out }");
+        let p = parse_str("select Reading { Reading { value: v, unit: u } => 0 @ out }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { arms, .. } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)

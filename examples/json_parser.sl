@@ -264,13 +264,13 @@ command main | (exit: -i32) {
 
     // One consumer per outcome, each ending in a cut against `exit`.
     let parsed = select +String {
-        value <= {
+        value => {
             println("parsed: " + value);
             0 @ exit
         },
     };
     let failed = select +String {
-        message <= {
+        message => {
             println("error: " + message);
             1 @ exit
         },

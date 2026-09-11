@@ -108,8 +108,8 @@ enum Status { Ok(i64), Failed(i64) }
 
 fn report(success: -i64, failure: -i64) <- Status {
     select Status {
-        Ok(code) <= code @ success,
-        Failed(code) <= code @ failure,
+        Ok(code) => code @ success,
+        Failed(code) => code @ failure,
     }
 }
 ```
@@ -254,6 +254,8 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 `mu` is uniformly `mu [Type] { arms }`, mirroring `select`: one binder arm,
 `k <= c`, is the atom form and captures the ambient continuation whole;
 request arms, `.item(out) <= c`, are the copattern form and build a menu.
+Every `mu` arm writes `<=`, and every `select` arm `=>` — the arrow marks
+what arrives: data flows forward into an arm, a demand reaches back.
 A binder arm stands alone — it takes the whole continuation, so a second
 arm would have nothing left to answer. There is no value-binding `mu`
 because a binder whose body is a *command* rather than an expression is
@@ -335,9 +337,9 @@ negative additive:
 ```sl
 fn k(return: -i32) <- Color {
     select Color {
-        Red <= 0 @ return,
-        Green <= 1 @ return,
-        Blue <= 2 @ return,
+        Red => 0 @ return,
+        Green => 1 @ return,
+        Blue => 2 @ return,
     }
 }
 ```
@@ -355,8 +357,8 @@ enum Reading { Measured(i64), Missing }
 
 fn report(value: -i64, absent: -i64) <- Reading {
     select Reading {
-        Measured(measurement) <= measurement @ value,
-        Missing <= -1 @ absent,
+        Measured(measurement) => measurement @ value,
+        Missing => -1 @ absent,
     }
 }
 ```
@@ -371,11 +373,14 @@ guards or literal arms: a branch table answers each shape exactly once,
 unordered, while guards and literals make the arm list ordered, first-match
 — that is `match`, inside the arm.
 
-An arm reads against the flow of a `match` arm. The shape that selects it is
-written first, as `match` writes it, and `<=` points back at the command that
-runs when it arrives — because a consumer receives where a `match` produces.
-That command must be a cut `v @ k` whose consumer is a visible negative
-binding. The arm lowers to it, so a `select` expression is a genuine negative
+An arm writes `=>`, exactly as a `match` arm does, because the arrow marks
+which side of the mirror the scrutinee is on: **data flows forward into an
+arm (`=>`); a demand reaches back into it (`<=`)**. A `select` matches data,
+so its arms are `pattern => command`; a `mu` answers demands, so its arms are
+`copattern <= command`; and a `match` writes whichever its scrutinee calls
+for — `p => e` over a value, `.item(out) <= e` over a continuation. The
+command an arm runs must be a cut `v @ k` whose consumer is a visible
+negative binding. The arm lowers to it, so a `select` expression is a genuine negative
 additive consumer — one branch per variant — and not an opaque builtin. Activation
 chooses exactly one branch: the branches of the arms that were not selected
 are never evaluated, neither when the consumer is constructed nor when it is
@@ -434,8 +439,8 @@ fn config() -> Config {
 
 fn reroute(k: -Config) -> -Config {
     match k {
-        .retries(out) => .retries(out),
-        .name(out) => .name(out),
+        .retries(out) <= .retries(out),
+        .name(out) <= .name(out),
     }
 }
 ```
@@ -531,7 +536,7 @@ data Reading { value: i64, unit: String }
 // dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        Reading { value, unit } <= (int_to_str(value) + unit) @ out,
+        Reading { value, unit } => (int_to_str(value) + unit) @ out,
     }
 }
 ```
@@ -541,7 +546,7 @@ A bare product needs no declaration; its shape is written as the type:
 ```sl
 fn total(out: -i64) <- (+i64 ⊗ +i64) {
     select (+i64 ⊗ +i64) {
-        (left, right) <= (left + right) @ out,
+        (left, right) => (left + right) @ out,
     }
 }
 ```
@@ -574,7 +579,7 @@ form's dual.
 ```sl
 fn printer(out: ↓-i64) -> Report {
     select Report {
-        Report { value, label } <= { println(label); value @ ↑out },
+        Report { value, label } => { println(label); value @ ↑out },
     }
 }
 
@@ -600,7 +605,7 @@ it too, and the arm's pattern is a plain binder that names the whole value:
 ```sl
 fn show(out: -String) <- +i64 {
     select +i64 {
-        n <= int_to_str(n) @ out,
+        n => int_to_str(n) @ out,
     }
 }
 ```
@@ -777,20 +782,20 @@ let source = mu { k <=
 // `Red` is a variant of exactly one enum, so the type is `Color`.
 fn code(return: -i32) <- Color {
     select {
-        Red <= 0 @ return,
-        Green <= 1 @ return,
+        Red => 0 @ return,
+        Green => 1 @ return,
     }
 }
 
 // Nothing in the arm names a type, but `<- +i64` did.
 fn twice(out: -i64) <- +i64 {
     select {
-        n <= (n * 2) @ out,
+        n => (n * 2) @ out,
     }
 }
 ```
 
-What is left is what nothing else says. `select { n <= println(n) }` bound to
+What is left is what nothing else says. `select { n => println(n) }` bound to
 a `let`, outside any negative `fn`, is rejected: no arm names a type and no
 declaration supplied one, so it is written.
 
@@ -823,8 +828,8 @@ function end the program behind `main`'s back, and it is gone.)
 
 ```sl
 command main | (exit: -i32) {
-    let complain = select { message <= { println(message); 1 @ exit } };
-    read_file("input.txt", select { text <= { print(text); 0 @ exit } }, complain)
+    let complain = select { message => { println(message); 1 @ exit } };
+    read_file("input.txt", select { text => { print(text); 0 @ exit } }, complain)
 }
 ```
 
@@ -865,7 +870,7 @@ it composes with an error consumer a program already has.
 ```sl
 read_file(
     "input.json",
-    select +String { source <= parse_json(source, report) },
+    select +String { source => parse_json(source, report) },
     complain,
 )
 ```
@@ -891,7 +896,7 @@ where the handle comes into scope.
 
 ```sl
 let handle = mu { k <= open_file(path, k, complain) };
-let exit = select +i32 { status <= { close_file(handle); status @ exit } };
+let exit = select +i32 { status => { close_file(handle); status @ exit } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the
@@ -1139,7 +1144,7 @@ nested left to right for several arguments.
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[ L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.select` | `select T { p => c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.comatch` | `mu T { .item(k) <= c, … }` | `μ[.T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
@@ -1169,7 +1174,7 @@ become λ binders.
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction, and a `form` value |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
-| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
+| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
 | `μ̃[…]` | `select` over an `enum` or a `data` |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |
@@ -1190,7 +1195,7 @@ fn dne(refuter: +i64) -> i64 {
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
     mu { k <=
-        Choice::Refutes(select +i64 { a <= Choice::Holds(a) @ k }) @ k
+        Choice::Refutes(select +i64 { a => Choice::Holds(a) @ k }) @ k
     }
 }
 ```
@@ -1212,8 +1217,8 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-let parsed = select +String { value <= { println("parsed: " + value); 0 @ exit } };
-let failed = select +String { message <= { println("error: " + message); 1 @ exit } };
+let parsed = select +String { value => { println("parsed: " + value); 0 @ exit } };
+let failed = select +String { message => { println("error: " + message); 1 @ exit } };
 parse_json(source, parsed, failed)
 ```
 
@@ -1235,9 +1240,9 @@ program *reaches* are a row.
 - `k(v)` (activating a continuation) → `v @ k`
 - `EXIT(0)` → `0 @ EXIT` → gone: end the program through a continuation
   parameter, the way `main` does with `exit`
-- `select T { c => p }` → `select T { p <= c }` — the shape comes first, as
-  in a `match`, and `<=` points back at the command
-- `select T { V <= k(v) }` → `select T { V <= v @ k }`
+- `select T { c => p }` → `select T { p => c }` — the shape comes first, as
+  in a `match`
+- `select T { V => k(v) }` → `select T { V => v @ k }`
 - `t @ k` previously lowered to a μ binder that shadowed `k`, so it sent the
   value nowhere; it is now the cut it always claimed to be
 - `mu name(...) | (...)` → `command name(...) | (...)` — a declaration is a

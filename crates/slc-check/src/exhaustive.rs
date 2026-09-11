@@ -611,9 +611,9 @@ mod tests {
                 "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= 0 @ out,
-                     Green <= 1 @ out,
-                     Blue <= 2 @ out,
+                     Red => 0 @ out,
+                     Green => 1 @ out,
+                     Blue => 2 @ out,
                  };
                  cont(Color::Red)
              }"
@@ -628,8 +628,8 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= 0 @ out,
-                     Green <= 1 @ out,
+                     Red => 0 @ out,
+                     Green => 1 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -644,9 +644,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= 0 @ out,
-                     Red <= 1 @ out,
-                     Blue <= 2 @ out,
+                     Red => 0 @ out,
+                     Red => 1 @ out,
+                     Blue => 2 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -661,9 +661,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
              fn main() -> i32 {
                  let cont = select Color {
-                     Red <= 0 @ out,
-                     Green <= 1 @ out,
-                     Purple <= 2 @ out,
+                     Red => 0 @ out,
+                     Green => 1 @ out,
+                     Purple => 2 @ out,
                  };
                  cont(Color::Red)
              }",
@@ -679,7 +679,7 @@ mod tests {
             check(
                 "enum Color { Red, Green }
                  fn code(return: -i32) <- Color {
-                     select { Red <= 0 @ return, Green <= 1 @ return }
+                     select { Red => 0 @ return, Green => 1 @ return }
                  }"
             )
             .is_ok()
@@ -687,7 +687,7 @@ mod tests {
 
         let diags = check(
             "enum Color { Red, Green }
-             fn code(return: -i32) <- Color { select { Red <= 0 @ return } }",
+             fn code(return: -i32) <- Color { select { Red => 0 @ return } }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("missing variants Green")), "{diags:?}");
@@ -698,9 +698,9 @@ mod tests {
         let r = check(
             "fn main() -> i32 {
                  let cont = select Color {
-                     Red <= 0 @ out,
-                     Green <= 1 @ out,
-                     Blue <= 2 @ out,
+                     Red => 0 @ out,
+                     Green => 1 @ out,
+                     Blue => 2 @ out,
                  };
                  cont(Color::Red)
              }",

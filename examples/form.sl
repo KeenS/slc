@@ -19,7 +19,7 @@ form Report { value: i64, label: String }
 // binds the whole demand — every field at once — and runs a command.
 fn printer(out: ↓-i64) -> Report {
     select Report {
-        Report { value, label } <= {
+        Report { value, label } => {
             println(label);
             value @ ↑out
         },
@@ -29,7 +29,7 @@ fn printer(out: ↓-i64) -> Report {
 // A form composes like any consumer: this one relabels, then forwards.
 fn shouting(next: Report) -> Report {
     select Report {
-        Report { value, label } <= Report { value: value, label: label + "!" } @ next,
+        Report { value, label } => Report { value: value, label: label + "!" } @ next,
     }
 }
 

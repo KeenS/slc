@@ -37,7 +37,7 @@ fn sum(p: Pair) -> i64 {
 
 fn report_sum(out: -i64) <- Pair {
     select Pair {
-        Pair { left, right } <= (left + right) @ out,
+        Pair { left, right } => (left + right) @ out,
     }
 }
 
@@ -51,7 +51,7 @@ form Total {
 
 fn total(out: ↓-i64) -> Total {
     select Total {
-        Total { left, right } <= (left + right) @ ↑out,
+        Total { left, right } => (left + right) @ ↑out,
     }
 }
 
@@ -59,7 +59,7 @@ fn total(out: ↓-i64) -> Total {
 
 fn report_first(out: -i64) <- (+i64 ⊗ +String) {
     select (+i64 ⊗ +String) {
-        (count, label) <= count @ out,
+        (count, label) => count @ out,
     }
 }
 
@@ -84,9 +84,9 @@ fn name(c: Colour) -> String {
 
 fn code(out: -i64) <- Colour {
     select Colour {
-        Red <= 0 @ out,
-        Green <= 1 @ out,
-        Blue <= 2 @ out,
+        Red => 0 @ out,
+        Green => 1 @ out,
+        Blue => 2 @ out,
     }
 }
 

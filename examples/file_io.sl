@@ -17,7 +17,7 @@
 
 command main | (exit: -i32) {
     let complain = select +String {
-        message <= {
+        message => {
             println("cannot read: " + message);
             1 @ exit
         },
@@ -35,14 +35,14 @@ command main | (exit: -i32) {
     // `exit` is the outer one, and everything below sees only the composed
     // door. No path past this line can end the program with the file open.
     let exit = select +i32 {
-        status <= {
+        status => {
             close_file(file);
             status @ exit
         },
     };
 
     let first = mu { k <= {
-        read_line(file, k, select +unit { end <= { println("empty file"); 1 @ exit } })
+        read_line(file, k, select +unit { end => { println("empty file"); 1 @ exit } })
     } };
     println("first line: " + first);
 
@@ -52,13 +52,13 @@ command main | (exit: -i32) {
     open_file(
         "examples/missing.sl",
         select +File {
-            unexpected <= {
+            unexpected => {
                 println("unexpectedly opened");
                 1 @ exit
             },
         },
         select +String {
-            message <= {
+            message => {
                 println("cannot open: " + message);
                 0 @ exit
             },

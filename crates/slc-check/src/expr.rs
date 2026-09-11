@@ -1674,7 +1674,7 @@ fn check_expr_unapplied(
             Some(Type::Dual(Box::new(Type::Named(menu))))
         }
         Expr::Select { ty, arms } => {
-            // `select T { p <= c, … }` builds the consumer of T. Each arm
+            // `select T { p => c, … }` builds the consumer of T. Each arm
             // covers one shape of T, binds that shape's components, and runs
             // a command; the whole expression is dual to T.
             let resolved = match ty {
@@ -1715,7 +1715,7 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            // `select F { F { a, b } <= c }` over a form builds the form
+            // `select F { F { a, b } => c }` over a form builds the form
             // value itself: it consumes the record its fields describe, so
             // the arm binds that record's components.
             if let Type::Dual(inner) = &resolved
@@ -2289,8 +2289,8 @@ mod tests {
                 "enum R { Some(i64), None }
                  fn k(ok: -i64, absent: -i64) <- R {
                      select R {
-                         Some(value) <= value @ ok,
-                         None <= 0 @ absent,
+                         Some(value) => value @ ok,
+                         None => 0 @ absent,
                      }
                  }"
             )
@@ -2304,8 +2304,8 @@ mod tests {
             "enum R { Some(i64), None }
              fn k(ok: -i64, absent: -i64) <- R {
                  select R {
-                     Some <= 0 @ ok,
-                     None <= 0 @ absent,
+                     Some => 0 @ ok,
+                     None => 0 @ absent,
                  }
              }",
         )
@@ -2322,7 +2322,7 @@ mod tests {
             "enum R { None }
              fn k(absent: -i32) <- R {
                  select R {
-                     None(value) <= 0 @ absent,
+                     None(value) => 0 @ absent,
                  }
              }",
         )
@@ -2395,8 +2395,8 @@ mod tests {
                 "enum Color { Red, Green }
                  fn code(return: -i64) <- Color {
                      select Color {
-                         Red <= 0 @ return,
-                         Green <= 1 @ return,
+                         Red => 0 @ return,
+                         Green => 1 @ return,
                      }
                  }
                  fn main() -> i64 {
@@ -2551,9 +2551,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
             fn k(return: -i32) <- Color {
                 select Color {
-                    Red <= 0 @ return,
-                    Green <= 1 @ return,
-                    Blue <= 2 @ return,
+                    Red => 0 @ return,
+                    Green => 1 @ return,
+                    Blue => 2 @ return,
                 }
             }",
         );
@@ -2566,8 +2566,8 @@ mod tests {
             "enum Color { Red, Green }
             fn k(return: -i32) <- Color {
                 select Color {
-                    Red <= 0,
-                    Green <= 1 @ return,
+                    Red => 0,
+                    Green => 1 @ return,
                 }
             }",
         )
@@ -2581,8 +2581,8 @@ mod tests {
             "enum Color { Red, Green }
             fn k(return: -i32) <- Color {
                 select Color {
-                    (a, b) <= 0 @ return,
-                    Green <= 1 @ return,
+                    (a, b) => 0 @ return,
+                    Green => 1 @ return,
                 }
             }",
         )
@@ -2970,7 +2970,7 @@ mod tests {
             check(
                 "enum Color { Red, Green }
                  fn code(return: -i32) <- Color {
-                     select { Red <= 0 @ return, Green <= 1 @ return }
+                     select { Red => 0 @ return, Green => 1 @ return }
                  }"
             )
             .is_ok()
@@ -2982,8 +2982,8 @@ mod tests {
     #[test]
     fn a_select_in_a_negative_fn_takes_the_type_it_consumes() {
         // Nothing in `n <= …` names a type, but the declaration already did.
-        assert!(check("fn twice(out: -i64) <- +i64 { select { n <= (n * 2) @ out } }").is_ok());
-        let diags = check("fn twice(out: -String) <- +i64 { select { n <= str_len(n) @ out } }")
+        assert!(check("fn twice(out: -i64) <- +i64 { select { n => (n * 2) @ out } }").is_ok());
+        let diags = check("fn twice(out: -String) <- +i64 { select { n => str_len(n) @ out } }")
             .unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),
@@ -2993,7 +2993,7 @@ mod tests {
         // Outside one, with no arm naming a type, it has to be written.
         let diags = check(
             "command main | (exit: -i32) {
-                 let show = select { n <= println(n) };
+                 let show = select { n => println(n) };
                  42 @ show;
                  0 @ exit
              }",
@@ -3008,7 +3008,7 @@ mod tests {
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) {
-                 let complain = select { m <= { println(m); 1 @ exit } };
+                 let complain = select { m => { println(m); 1 @ exit } };
                  let text = mu { k <= read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 @ exit
@@ -3037,12 +3037,12 @@ mod tests {
         // An atom has one shape and one component, so its arm's pattern is a
         // plain binder, typed by the type being consumed.
         assert!(
-            check("fn show(out: -String) <- +i64 { select +i64 { n <= int_to_str(n) @ out } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n => int_to_str(n) @ out } }")
                 .is_ok()
         );
 
         let diags =
-            check("fn show(out: -String) <- +i64 { select +i64 { n <= str_len(n) @ out } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n => str_len(n) @ out } }")
                 .unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),

@@ -30,7 +30,7 @@ feature is mid-flight; what remains open is below.
   take a dedicated resource/ownership check (the value side of the language is
   otherwise unrestricted — see `DESIGN.md` §4). Until then the idiom is
   composition at the door: shadow `exit` with
-  `select +i32 { status <= { close_file(handle); status @ exit } }` where the
+  `select +i32 { status => { close_file(handle); status @ exit } }` where the
   handle comes into scope, and no later path can leave the file open —
   `examples/file_io.sl` does exactly this.
 

@@ -637,7 +637,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         }
 
         Expr::Select { arms, .. } => {
-            // `select T { p <= c, … }` is the consumer of T, given by cases
+            // `select T { p => c, … }` is the consumer of T, given by cases
             // on it: one branch per shape, binding that shape's components.
             //
             //   labelled (enum, struct) ⟹ co(μ̃[ L(x…). c | … ])
@@ -1496,7 +1496,7 @@ mod tests {
         // `select` must lower to a genuine negative additive co-term — one
         // branch per variant, each cutting the arm value against the arm's
         // consumer — and not to an opaque builtin marker.
-        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red <= 0 @ return, Green <= 1 @ return, Blue <= 2 @ return } }";
+        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => 0 @ return, Green => 1 @ return, Blue => 2 @ return } }";
         let out = lower_str(src);
         let k = out.iter().find(|(name, _)| name == "k").unwrap();
 
@@ -1528,7 +1528,7 @@ mod tests {
         // needs no label.
         let out = lower_str(
             "fn total(out: -i64) <- (+i64 ⊗ +i64) {
-                 select (+i64 ⊗ +i64) { (left, right) <= (left + right) @ out }
+                 select (+i64 ⊗ +i64) { (left, right) => (left + right) @ out }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
@@ -1549,7 +1549,7 @@ mod tests {
         // declaration, binding every field.
         let out = lower_str(
             "data R { value: i64, unit: String }
-             fn show(out: -String) <- R { select R { R { value, unit } <= unit @ out } }",
+             fn show(out: -String) <- R { select R { R { value, unit } => unit @ out } }",
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
         let printed = format!("{}", show.1);
@@ -1566,7 +1566,7 @@ mod tests {
     #[test]
     fn lower_select_rejects_an_arm_that_is_not_a_shape() {
         // An arm covers one shape of the type; a literal is not one.
-        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 <= 0 @ return, Green <= 1 @ return } }";
+        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => 0 @ return, Green => 1 @ return } }";
         let toks = crate::lexer::lex(src).unwrap();
         let prog = crate::parser::parse(toks).unwrap();
         assert!(

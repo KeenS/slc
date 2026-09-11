@@ -51,7 +51,7 @@ fn overshoot(s: Size) -> i64 {
 // binds every field at once.
 fn area_of(out: -i64) <- Point {
     select Point {
-        Point { x, y } <= (x * y) @ out,
+        Point { x, y } => (x * y) @ out,
     }
 }
 
@@ -59,14 +59,14 @@ fn area_of(out: -i64) <- Point {
 // instead of travelling back through a return.
 fn reflect(out: -Point) <- Point {
     select Point {
-        Point { x, y } <= Point { x: y, y: x } @ out,
+        Point { x, y } => Point { x: y, y: x } @ out,
     }
 }
 
 // "Returns" an enum: consume a bare number, send one variant onward.
 fn classify_to(out: -Size) <- +i64 {
     select +i64 {
-        area <= if area > 100 {
+        area => if area > 100 {
             Size::Big(area - 100) @ out
         } else {
             Size::Small @ out
@@ -77,8 +77,8 @@ fn classify_to(out: -Size) <- +i64 {
 // "Takes" an enum: one arm per variant; only the arriving variant runs.
 fn overshoot_of(out: -i64) <- Size {
     select Size {
-        Small <= 0 @ out,
-        Big(over) <= over @ out,
+        Small => 0 @ out,
+        Big(over) => over @ out,
     }
 }
 

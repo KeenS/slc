@@ -42,8 +42,8 @@ fn loud(base: Config) -> Config {
 // literal, the mirror of an enum variant expression.
 fn reroute(k: -Config) -> -Config {
     match k {
-        .retries(out) => .retries(out),
-        .name(out) => .name(out),
+        .retries(out) <= .retries(out),
+        .name(out) <= .name(out),
     }
 }
 

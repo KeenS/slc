@@ -7,11 +7,11 @@
 //   -------------------------------   ------------------------------------
 //   fn f(x: +A) -> B                  fn f(k: -B) <- A
 //   data arrives, data leaves         a consumer arrives, a consumer leaves
-//   match v { p => e }                select A { p <= c }
+//   match v { p => e }                select A { p => c }
 //   return the result                 cut the result against a consumer
 //   f(x)                              x @ f(k)
 //   g(f(x))          — inside out     x @ f(g(k))        — left to right
-//   let y = f(x); rest                x @ f(select +B { y <= rest })
+//   let y = f(x); rest                x @ f(select +B { y => rest })
 //
 // Both halves below compute the area of a shape, decide whether it is big or
 // small, and print that. Neither is a transcription of the other: each is the
@@ -52,14 +52,14 @@ fn label(a: +i64) -> String {
 
 fn area_of(out: -i64) <- Shape {
     select Shape {
-        Circle(r) <= (3 * r * r) @ out,
-        Rect(w, h) <= (w * h) @ out,
+        Circle(r) => (3 * r * r) @ out,
+        Rect(w, h) => (w * h) @ out,
     }
 }
 
 fn label_of(out: -String) <- +i64 {
     select +i64 {
-        a <= if a > 50 {
+        a => if a > 50 {
             "big" @ out
         } else {
             "small" @ out
@@ -81,10 +81,10 @@ command main | (exit: -i32) {
     // consumer: the rest of the program *is* the continuation. That nesting
     // is exactly what a local `mu` removes — see `file_io.sl`.
     Shape::Circle(5) @ area_of(label_of(select +String {
-        first <= {
+        first => {
             println(first);
             Shape::Rect(6, 7) @ area_of(label_of(select +String {
-                second <= {
+                second => {
                     println(second);
                     0 @ exit
                 },

@@ -20,7 +20,7 @@ fn dne(refuter: ↓↑i64) -> i64 {
 // A refuter: hand it a boxed consumer of `i64`, and it fills it with 42.
 fn any_refuter() -> ↓↑i64 {
     ↓select ↓-i64 {
-        boxed <= 42 @ ↑boxed,
+        boxed => 42 @ ↑boxed,
     }
 }
 
@@ -37,7 +37,7 @@ enum Choice {
 // expression have answered `Holds` instead. The refutation is this call's
 // own continuation, dressed as a consumer of `i64`.
 fn lem() -> Choice {
-    mu { k <= Choice::Refutes(↓select +i64 { a <= Choice::Holds(a) @ k }) @ k }
+    mu { k <= Choice::Refutes(↓select +i64 { a => Choice::Holds(a) @ k }) @ k }
 }
 
 command main | (exit: -i32) {

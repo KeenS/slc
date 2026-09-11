@@ -4,6 +4,27 @@ This guide covers the syntax changes made during the λ̄μμ̃ redesign. Old fo
 are rejected by the current compiler; each section shows the unsupported form
 and its replacement.
 
+## Arm arrows
+
+The arrow marks which side of the mirror the scrutinee is on: data flows
+forward into an arm (`=>`), a demand reaches back into it (`<=`). `select`
+matches data, so its arms now write `=>`; a `match` over a continuation
+writes `<=`.
+
+Unsupported:
+
+```sl
+select Colour { Red <= 0 @ out, Green <= 1 @ out }
+match k { .retries(out) => .retries(out) }
+```
+
+Write:
+
+```sl
+select Colour { Red => 0 @ out, Green => 1 @ out }
+match k { .retries(out) <= .retries(out) }
+```
+
 ## Local `mu`
 
 The parenthesised binder group is gone; `mu` is uniformly `mu [Type] { arms }`,
@@ -247,7 +268,7 @@ it is in scope.
 fn die(m: +String) -> ⊥ { println(m); 1 @ EXIT }        // old
 
 command main | (exit: -i32) {                            // new
-    let die = select { m <= { println(m); 1 @ exit } };
+    let die = select { m => { println(m); 1 @ exit } };
     …
 }
 ```
@@ -282,16 +303,16 @@ given, so a `main` that never reaches `exit` is a linearity error.
 
 ```sl
 select Color {                     // one arm per variant — the negative additive
-    Red <= 0 @ return,
-    Green <= 1 @ return,
+    Red => 0 @ return,
+    Green => 1 @ return,
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } <= (int_to_str(value) + unit) @ out,
+    Reading { value, unit } => (int_to_str(value) + unit) @ out,
 }
 
 select (+i64 ⊗ +i64) {             // a bare product names its type
-    (left, right) <= (left + right) @ out,
+    (left, right) => (left + right) @ out,
 }
 ```
 
@@ -303,7 +324,7 @@ way `match` writes it. And an arm used to be written the other way round, as
 ```sl
 select Color {
     0 @ return => Red,     // old
-    Red <= 0 @ return,     // new
+    Red => 0 @ return,     // new
 }
 ```
 
@@ -407,9 +428,9 @@ enum Color { Red, Green, Blue }
 
 fn k(return: -i32) <- Color {
     select Color {
-        Red <= 0 @ return,
-        Green <= 1 @ return,
-        Blue <= 2 @ return,
+        Red => 0 @ return,
+        Green => 1 @ return,
+        Blue => 2 @ return,
     }
 }
 ```
@@ -423,8 +444,8 @@ enum ParseResult { Parsed(String), Failed(String) }
 
 fn deliver(ok: -String, err: -String) <- ParseResult {
     select ParseResult {
-        Parsed(text) <= text @ ok,
-        Failed(message) <= message @ err,
+        Parsed(text) => text @ ok,
+        Failed(message) => message @ err,
     }
 }
 ```
