@@ -46,7 +46,6 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             go_term(t1, out);
             go_term(t2, out);
         }
-        Term::Inl(t) | Term::Inr(t) => go_term(t, out),
         Term::Tag(_, t) => go_term(t, out),
         Term::CoAbs(a, t) => {
             let mut inner = HashSet::new();
@@ -103,12 +102,6 @@ fn go_command(c: &Command, out: &mut HashSet<String>) {
             go_term(t, out);
             go_coterm(e, out);
         }
-        Command::Command(x, t) => {
-            let mut inner = HashSet::new();
-            go_term(t, &mut inner);
-            inner.remove(x);
-            out.extend(inner);
-        }
         Command::Activate(k, v) => {
             go_term(k, out);
             go_term(v, out);
@@ -150,9 +143,6 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
         }
         (Term::Pair(a1, a2), Term::Pair(b1, b2)) => {
             alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
-        }
-        (Term::Inl(t1), Term::Inl(t2)) | (Term::Inr(t1), Term::Inr(t2)) => {
-            alpha_term(t1, t2, xs, ys)
         }
         (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
         (Term::CoAbs(a, t1), Term::CoAbs(b, t2)) => {
@@ -222,14 +212,6 @@ fn alpha_command(a: &Command, b: &Command, xs: &mut Vec<String>, ys: &mut Vec<St
         (Command::Cut(t1, e1), Command::Cut(t2, e2)) => {
             alpha_term(t1, t2, xs, ys) && alpha_coterm(e1, e2, xs, ys)
         }
-        (Command::Command(x, t1), Command::Command(y, t2)) => {
-            xs.push(x.clone());
-            ys.push(y.clone());
-            let r = alpha_term(t1, t2, xs, ys);
-            xs.pop();
-            ys.pop();
-            r
-        }
         (Command::Activate(k1, v1), Command::Activate(k2, v2)) => {
             alpha_term(k1, k2, xs, ys) && alpha_term(v1, v2, xs, ys)
         }
@@ -260,8 +242,6 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
             Box::new(subst_term(x, replacement, t1)),
             Box::new(subst_term(x, replacement, t2)),
         ),
-        Term::Inl(t) => Term::Inl(Box::new(subst_term(x, replacement, t))),
-        Term::Inr(t) => Term::Inr(Box::new(subst_term(x, replacement, t))),
         Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
         Term::CoAbs(a, t) => {
             if a == x {
@@ -279,13 +259,6 @@ pub fn subst_command(x: &str, replacement: &Term, command: &Command) -> Command 
     match command {
         Command::Cut(t, e) => {
             Command::Cut(subst_term(x, replacement, t), subst_coterm(x, replacement, e))
-        }
-        Command::Command(y, t) => {
-            if y == x {
-                command.clone()
-            } else {
-                Command::Command(y.clone(), subst_term(x, replacement, t))
-            }
         }
         Command::Activate(k, v) => {
             Command::Activate(subst_term(x, replacement, k), subst_term(x, replacement, v))

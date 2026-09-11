@@ -897,7 +897,6 @@ Term      t ::= x                     variable
               | μα. c                 capture of the ambient continuation
               | Λα. t                 continuation abstraction (negative function)
               | t ⊗ t                 tensor pair
-              | inl(t) | inr(t)       binary additive injection
               | L(t)                  labelled additive injection (enum value)
               | co(e)                 a co-term reified as a negative value
 
@@ -909,7 +908,6 @@ CoTerm    e ::= α                     co-variable
               | μ̃(x₁, …, xₙ). c       product consumer
 
 Command   c ::= ⟨ t ∥ e ⟩             cut
-              | κx. t                 command abstraction
               | k(v)                  continuation activation
 
 Type      A ::= +B | -B               positive / negative atom
@@ -1011,7 +1009,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟦k⟧(⟦v⟧)` for a computed one. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, with no `Λ` in sight |
-| `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `inl(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
+| `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
@@ -1035,7 +1033,6 @@ continuation parameter becomes a Λ binder.
 | `Λα. t` | a declared continuation parameter of `fn … <- …` or of a `command` |
 | `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `struct` values — a labelled product |
-| `inl` / `inr` | not surface-visible; used internally to tag lowered `match` arms |
 | `co(e)` | `select` |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `λ̄x. c` | application, and nothing else |
@@ -1043,7 +1040,6 @@ continuation parameter becomes a Λ binder.
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (struct), the field resolved to its index from the base type |
-| `κx. t` | not surface-visible; the internal command abstraction |
 | `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |
 
 ### Classical control

@@ -8,8 +8,6 @@ use crate::term::Term;
 pub enum Command {
     /// Cut: `⟨ t ∥ e ⟩`.
     Cut(Term, CoTerm),
-    /// Command abstraction body: `κx.t`.
-    Command(String, Term),
     /// Continuation activation: `k(v)`.
     Activate(Term, Term),
 }

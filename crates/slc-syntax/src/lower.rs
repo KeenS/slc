@@ -486,7 +486,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // which flattens pairs, passes it as one value.
             Ok(call_curried(
                 Term::Var("__handle".into()),
-                vec![Term::Inl(Box::new(encoded)), body_thunk],
+                vec![Term::Tag("__clauses".into(), Box::new(encoded)), body_thunk],
             ))
         }
         Expr::Match { scrutinee, arms } => {
@@ -505,13 +505,16 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     Some(guard) => lower_expr(guard, continuations)?,
                     None => Term::Var("true".into()),
                 };
-                arm_terms.push(Term::Inl(Box::new(Term::Pair(
-                    Box::new(descriptor),
+                arm_terms.push(Term::Tag(
+                    "__match_arm".into(),
                     Box::new(Term::Pair(
-                        Box::new(guard),
-                        Box::new(Term::Lam("__match_arg".into(), Box::new(b))),
+                        Box::new(descriptor),
+                        Box::new(Term::Pair(
+                            Box::new(guard),
+                            Box::new(Term::Lam("__match_arg".into(), Box::new(b))),
+                        )),
                     )),
-                ))));
+                ));
             }
             // Keep the arm spine right-nested: (s, (a1, (a2, ...))).
             // `__match_dispatch` walks this spine, so left-nesting would

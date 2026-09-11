@@ -117,8 +117,6 @@ pub enum Value {
     /// replaces the current stack, which is what makes the jump.
     Kont(crate::machine::Kont),
     Pair(Box<Value>, Box<Value>),
-    Inl(Box<Value>),
-    Inr(Box<Value>),
     Builtin(String),
     /// The marker a call with no arguments applies its callee to. It is not
     /// unit: `f()` passes nothing, while `f(())` passes the unit value.
@@ -177,7 +175,6 @@ impl PartialEq for Value {
             (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
             (Value::Kont(a), Value::Kont(b)) => crate::machine::Kont::ptr_eq(a, b),
             (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
-            (Value::Inl(a), Value::Inl(b)) | (Value::Inr(a), Value::Inr(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
@@ -202,8 +199,6 @@ impl Value {
             Value::Resume(_) => Type::Bottom,
             Value::Unit | Value::NoArguments => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
-            Value::Inl(a) => Type::Sum(Box::new(a.type_of()), Box::new(Type::Bottom)),
-            Value::Inr(a) => Type::Sum(Box::new(Type::Bottom), Box::new(a.type_of())),
             Value::List(items) => {
                 Type::List(Box::new(items.first().map(|v| v.type_of()).unwrap_or(Type::One)))
             }
@@ -229,8 +224,6 @@ impl Value {
             Value::Operation { op, .. } => format!("<operation {op}>"),
             Value::Resume(_) => "<resume>".to_string(),
             Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
-            Value::Inl(a) => format!("inl({})", a.display()),
-            Value::Inr(a) => format!("inr({})", a.display()),
             Value::Closure { .. } => "<closure>".to_string(),
             Value::Kont(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),

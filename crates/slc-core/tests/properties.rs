@@ -58,17 +58,7 @@ fn term_corpus() -> Vec<Term> {
         Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
     );
     let pair = Term::Pair(Box::new(x.clone()), Box::new(y.clone()));
-    vec![
-        Term::Var("z".into()),
-        x,
-        y,
-        id,
-        id_y,
-        mu,
-        pair,
-        Term::Inl(Box::new(Term::Var("z".into()))),
-        Term::Inr(Box::new(Term::Var("z".into()))),
-    ]
+    vec![Term::Var("z".into()), x, y, id, id_y, mu, pair]
 }
 
 #[test]

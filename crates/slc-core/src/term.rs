@@ -14,12 +14,8 @@ pub enum Term {
     Mu(String, Box<Command>),
     /// Tensor pair: `t1 ⊗ t2`.
     Pair(Box<Term>, Box<Term>),
-    /// Left additive injection.
-    Inl(Box<Term>),
-    /// Right additive injection.
-    Inr(Box<Term>),
-    /// Labelled additive injection: `L(t)`. An `enum` value is the labelled
-    /// generalization of `inl`/`inr`; the label is the fully qualified
+    /// Labelled additive injection: `L(t)`. An `enum` value is a labelled
+    /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.
     Tag(String, Box<Term>),
     /// Continuation abstraction: `Λα. t`.

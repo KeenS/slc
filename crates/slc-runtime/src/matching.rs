@@ -39,10 +39,10 @@ pub(crate) fn split_match_payload(v: &Value) -> Vec<Value> {
     out
 }
 
-/// Unwrap the additive marker used by lowered match arms.
+/// Unwrap the `__match_arm` tag lowering wraps each match arm in.
 pub(crate) fn unwrap_match_arm(v: &Value) -> Value {
     match v {
-        Value::Inl(inner) | Value::Inr(inner) => (**inner).clone(),
+        Value::Tagged(label, inner) if label == "__match_arm" => (**inner).clone(),
         other => other.clone(),
     }
 }

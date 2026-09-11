@@ -24,8 +24,6 @@ fn every_term() -> Vec<Term> {
         Term::Mu("k".into(), Box::new(cut(var("v"), CoTerm::Covar("k".into())))),
         Term::CoAbs("k".into(), Box::new(var("v"))),
         Term::Pair(Box::new(var("a")), Box::new(var("b"))),
-        Term::Inl(Box::new(var("a"))),
-        Term::Inr(Box::new(var("b"))),
         Term::Tag("Color::Red".into(), Box::new(var("$unit"))),
         Term::Co(Box::new(CoTerm::CoCase(vec![
             CoCaseBranch {
@@ -81,7 +79,6 @@ fn every_command() -> Vec<Command> {
             Term::Lam("x".into(), Box::new(var("x"))),
             CoTerm::MuTilde("y".into(), Box::new(cut(var("y"), CoTerm::Covar("k".into())))),
         ),
-        Command::Command("x".into(), var("t")),
         Command::Activate(var("k"), var("v")),
     ]
 }

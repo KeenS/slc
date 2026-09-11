@@ -50,8 +50,6 @@ impl std::fmt::Display for Term {
             Term::Lam(x, t) => write!(f, "λ{x}. {t}"),
             Term::Mu(a, c) => write!(f, "μ{a}. {c}"),
             Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
-            Term::Inl(t) => write!(f, "inl({t})"),
-            Term::Inr(t) => write!(f, "inr({t})"),
             Term::Tag(label, t) => write!(f, "{label}({t})"),
             Term::CoAbs(a, t) => write!(f, "Λ{a}. {t}"),
             Term::Co(e) => write!(f, "co({e})"),
@@ -85,7 +83,6 @@ impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Command::Cut(t, e) => write!(f, "⟨{t} ∥ {e}⟩"),
-            Command::Command(x, t) => write!(f, "κ{x}. {t}"),
             Command::Activate(k, v) => write!(f, "{k}({v})"),
         }
     }

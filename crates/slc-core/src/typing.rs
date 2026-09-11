@@ -288,15 +288,6 @@ pub fn infer_term(
             Ok(Type::Tensor(Box::new(a), Box::new(b)))
         }
 
-        Term::Inl(t) => {
-            let a = infer_term(t, gamma, delta)?;
-            Ok(Type::Sum(Box::new(a), Box::new(Type::Bottom)))
-        }
-        Term::Inr(t) => {
-            let a = infer_term(t, gamma, delta)?;
-            Ok(Type::Sum(Box::new(Type::Bottom), Box::new(a)))
-        }
-
         Term::Tag(label, payload) => {
             // A labelled injection belongs to the declaration that owns the
             // label: `Color::Red` inhabits the named positive type `Color`.
@@ -429,11 +420,6 @@ pub fn infer_command(
             } else {
                 Err(TypeError::Mismatch { expected: tt.dual(), actual: et })
             }
-        }
-        Command::Command(x, t) => {
-            let _ = infer_term(t, gamma, delta)?;
-            let _ = x;
-            Ok(())
         }
         Command::Activate(k, v) => {
             let kt = infer_term(k, gamma, delta)?;

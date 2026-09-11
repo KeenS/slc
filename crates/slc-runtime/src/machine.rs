@@ -50,8 +50,6 @@ pub enum Frame {
     PairRight(NodeId, Env),
     /// `(v1 ⊗ v2)` — both components done; build the pair.
     PairDone(Value),
-    WrapInl,
-    WrapInr,
     WrapTag(String),
     /// `⟨ _ ∥ e ⟩` — the term side is done; consume with co-term `e`.
     Consume(NodeId, Env),
@@ -215,14 +213,6 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
             kont.push(Frame::PairRight(t2, env.clone()));
             State::Term(t1, env)
         }
-        Node::Inl(inner) => {
-            kont.push(Frame::WrapInl);
-            State::Term(inner, env)
-        }
-        Node::Inr(inner) => {
-            kont.push(Frame::WrapInr);
-            State::Term(inner, env)
-        }
         Node::Tag(label, payload) => {
             kont.push(Frame::WrapTag(label.to_string()));
             State::Term(payload, env)
@@ -252,7 +242,6 @@ fn step_command(c: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError
             kont.push(Frame::Consume(e, env.clone()));
             State::Term(t, env)
         }
-        Node::CmdTerm(t) => State::Term(t, env),
         Node::Activate(k, v) => {
             kont.push(Frame::ActivateArg(v, env.clone()));
             State::Term(k, env)
@@ -270,8 +259,6 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
             State::Term(t2, env)
         }
         Frame::PairDone(first) => State::Return(Value::Pair(Box::new(first), Box::new(v))),
-        Frame::WrapInl => State::Return(Value::Inl(Box::new(v))),
-        Frame::WrapInr => State::Return(Value::Inr(Box::new(v))),
         Frame::WrapTag(label) => State::Return(Value::Tagged(label, Box::new(v))),
         Frame::Consume(e, env) => step_consume(v, e, env, kont)?,
         Frame::ApplyCallee(callee) => State::Apply { callee, arg: v },
@@ -508,7 +495,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         // operation map and the return closure, push the prompt, force body.
         let mut it = args.into_iter();
         let clauses_value = match it.next() {
-            Some(Value::Inl(inner)) => *inner,
+            Some(Value::Tagged(label, inner)) if label == "__clauses" => *inner,
             other => other.unwrap_or(Value::Unit),
         };
         let body_thunk = it.next().unwrap_or(Value::Unit);

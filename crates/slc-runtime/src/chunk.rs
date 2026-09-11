@@ -34,8 +34,6 @@ pub enum Node {
     /// `μ. c` — binds one positional slot; child is the command.
     Mu(NodeId),
     Pair(NodeId, NodeId),
-    Inl(NodeId),
-    Inr(NodeId),
     Tag(Rc<str>, NodeId),
     /// `Λ. t` — the negative function; child is the body term.
     CoAbs(NodeId),
@@ -61,8 +59,6 @@ pub enum Node {
     // ── commands ──
     /// `⟨ t ∥ e ⟩` — a cut of a term against a co-term.
     Cut(NodeId, NodeId),
-    /// `κx. t` binds nothing at run time; child is the term.
-    CmdTerm(NodeId),
     /// `k(v)` — continuation activation: (consumer term, value term).
     Activate(NodeId, NodeId),
 }

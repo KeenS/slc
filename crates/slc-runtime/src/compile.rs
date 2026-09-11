@@ -79,8 +79,6 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             let b = compile_ir(b, scope, chunk);
             Node::Pair(a, b)
         }
-        Term::Inl(t) => Node::Inl(compile_ir(t, scope, chunk)),
-        Term::Inr(t) => Node::Inr(compile_ir(t, scope, chunk)),
         Term::Tag(label, payload) => {
             Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
         }
@@ -132,8 +130,6 @@ fn compile_cmd(c: &Command, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             let e = compile_coterm(e, scope, chunk);
             Node::Cut(t, e)
         }
-        // `Command(x, t)` binds nothing at run time; `x` is vestigial.
-        Command::Command(_, t) => Node::CmdTerm(compile_ir(t, scope, chunk)),
         Command::Activate(k, v) => {
             let k = compile_ir(k, scope, chunk);
             let v = compile_ir(v, scope, chunk);

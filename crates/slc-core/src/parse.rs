@@ -200,12 +200,6 @@ impl Parser {
             Some(_) => {
                 let name = self.name()?;
                 match name.as_str() {
-                    "inl" | "inr" => {
-                        self.expect("(")?;
-                        let inner = Box::new(self.term()?);
-                        self.expect(")")?;
-                        Ok(if name == "inl" { Term::Inl(inner) } else { Term::Inr(inner) })
-                    }
                     "co" => {
                         self.expect("(")?;
                         let inner = Box::new(self.coterm()?);
@@ -290,12 +284,6 @@ impl Parser {
             let e = self.coterm()?;
             self.expect("⟩")?;
             return Ok(Command::Cut(t, e));
-        }
-        if self.peek() == Some('κ') {
-            self.pos += 1;
-            let x = self.name()?;
-            self.expect(".")?;
-            return Ok(Command::Command(x, self.term()?));
         }
         // Activation: `k(v)`. In command position a name followed by `(` is
         // the continuation being activated, not a labelled injection — those
