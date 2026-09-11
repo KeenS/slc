@@ -377,6 +377,15 @@ impl Parser {
                     _ => Type::arrow(*left, *right),
                 })
             }
+            // `%i` — a declaration's type parameter, by position.
+            Some('%') => {
+                self.pos += 1;
+                let digits = self.name()?;
+                digits
+                    .parse()
+                    .map(Type::Param)
+                    .map_err(|_| self.error("expected a type-parameter index"))
+            }
             Some(_) => {
                 let name = self.name()?;
                 if name == "dual" {
@@ -385,7 +394,19 @@ impl Parser {
                     self.expect(")")?;
                     return Ok(Type::Dual(Box::new(inner)));
                 }
-                Ok(Type::Named(name))
+                // `Name<A, B>` — a declaration applied to type arguments.
+                let mut args = Vec::new();
+                if self.eat("<") {
+                    loop {
+                        args.push(self.ty()?);
+                        if self.eat(",") {
+                            continue;
+                        }
+                        self.expect(">")?;
+                        break;
+                    }
+                }
+                Ok(Type::Named(name, args))
             }
             None => Err(self.error("expected a type")),
         }

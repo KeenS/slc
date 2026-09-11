@@ -206,6 +206,7 @@ impl Value {
             Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
+                Vec::new(),
             ),
             Value::CoCase { .. } | Value::CoTensor { .. } => Type::Bottom,
             Value::Menu { .. } => Type::Bottom,

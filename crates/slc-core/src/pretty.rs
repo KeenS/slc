@@ -37,7 +37,18 @@ impl std::fmt::Display for Type {
             Type::List(t) => write!(f, "[{t}]"),
             Type::Down(t) => write!(f, "↓{t}"),
             Type::Up(t) => write!(f, "↑{t}"),
-            Type::Named(name) => write!(f, "{name}"),
+            Type::Param(i) => write!(f, "%{i}"),
+            Type::Named(name, args) => {
+                write!(f, "{name}")?;
+                if let Some((first, rest)) = args.split_first() {
+                    write!(f, "<{first}")?;
+                    for arg in rest {
+                        write!(f, ", {arg}")?;
+                    }
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
         }
     }
 }

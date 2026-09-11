@@ -48,13 +48,47 @@ pub enum Type {
     /// that returns it. `↓` and `↑` are dual, and neither is the identity:
     /// they are what keeps `¬¬A` from collapsing to `A`.
     Up(Box<Type>),
+    /// A declaration's type parameter, by position: what `T` becomes inside
+    /// the declaration's own field and payload types. It never reaches
+    /// unification — a use of the declaration substitutes its arguments for
+    /// the parameters first.
+    Param(usize),
     /// A named positive declaration, such as `data` or `enum`. Named types
     /// are opaque to core unification; declaration-specific fields and
     /// variants are checked by the surface checker.
-    Named(String),
+    Named(String, Vec<Type>),
 }
 
 impl Type {
+    /// Substitute a declaration's arguments for its parameters: `Param(i)`
+    /// becomes `args[i]`, recursively. The instantiation of `List<T>`'s
+    /// payload types at `List<i64>`.
+    pub fn instantiate(&self, args: &[Type]) -> Type {
+        match self {
+            Type::Param(i) => args.get(*i).cloned().unwrap_or_else(|| self.clone()),
+            Type::Tensor(a, b) => {
+                Type::Tensor(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
+            }
+            Type::Par(a, b) => {
+                Type::Par(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
+            }
+            Type::With(a, b) => {
+                Type::With(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
+            }
+            Type::Sum(a, b) => {
+                Type::Sum(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
+            }
+            Type::Dual(t) => Type::Dual(Box::new(t.instantiate(args))),
+            Type::List(t) => Type::List(Box::new(t.instantiate(args))),
+            Type::Down(t) => Type::Down(Box::new(t.instantiate(args))),
+            Type::Up(t) => Type::Up(Box::new(t.instantiate(args))),
+            Type::Named(name, own) => {
+                Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
+            }
+            atom => atom.clone(),
+        }
+    }
+
     /// A function type: `A → B` is `-A ⅋ B`, so its dual is `A ⊗ -B` — an
     /// argument together with a continuation for the result, which is what a
     /// call stack is. `A → ⊥` is `-A`, since `⊥` is the unit of `⅋`.
@@ -90,7 +124,10 @@ impl Type {
             Type::List(t) => Type::List(Box::new(t.dual())),
             Type::Down(t) => Type::Up(Box::new(t.dual())),
             Type::Up(t) => Type::Down(Box::new(t.dual())),
-            Type::Named(name) => Type::Dual(Box::new(Type::Named(name.clone()))),
+            Type::Named(name, args) => {
+                Type::Dual(Box::new(Type::Named(name.clone(), args.clone())))
+            }
+            Type::Param(i) => Type::Dual(Box::new(Type::Param(*i))),
         }
     }
 
@@ -108,7 +145,8 @@ impl Type {
                     | Type::Sum(..)
                     | Type::List(_)
                     | Type::Down(_)
-                    | Type::Named(_)
+                    | Type::Named(..)
+                    | Type::Param(_)
             ),
         }
     }
@@ -121,6 +159,7 @@ impl Type {
             other => matches!(
                 other,
                 Type::Var(_)
+                    | Type::Param(_)
                     | Type::Neg(_)
                     | Type::Par(..)
                     | Type::Bottom
@@ -150,7 +189,7 @@ mod tests {
             Type::With(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
             Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
             Type::List(Box::new(Type::Pos(Base::I32))),
-            Type::Named("Color".into()),
+            Type::Named("Color".into(), Vec::new()),
         ]
     }
 

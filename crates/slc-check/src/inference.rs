@@ -124,7 +124,7 @@ pub fn variant_type(
     declaration: &str,
     payload: &[slc_syntax::ast::TypeExpr],
 ) -> Result<Type, InferenceError> {
-    let declared = Type::Named(declaration.to_string());
+    let declared = Type::Named(declaration.to_string(), Vec::new());
     let packed = pack(payload)?;
     Ok(match packed {
         None => declared,
@@ -233,7 +233,7 @@ fn infer_decl(
             Ok(DeclarationType { name: name.clone(), ty })
         }
         Decl::Data { name, .. } | Decl::Enum { name, .. } => {
-            Ok(DeclarationType { name: name.clone(), ty: Type::Named(name.clone()) })
+            Ok(DeclarationType { name: name.clone(), ty: Type::Named(name.clone(), Vec::new()) })
         }
         // A menu declares the negative additive: its values are menus, and
         // its dual — the positive `Named` — is the type of its requests.
@@ -241,7 +241,7 @@ fn infer_decl(
         // consumers of the record its fields describe.
         Decl::Menu { name, .. } | Decl::Form { name, .. } => Ok(DeclarationType {
             name: name.clone(),
-            ty: Type::Dual(Box::new(Type::Named(name.clone()))),
+            ty: Type::Dual(Box::new(Type::Named(name.clone(), Vec::new()))),
         }),
         Decl::Const { name, ty, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
@@ -287,7 +287,7 @@ fn declaration_or_lower(
     if let slc_syntax::ast::TypeExpr::Base(name) = ty
         && declared_types.iter().any(|declared| declared == name)
     {
-        return Ok(Type::Named(name.clone()));
+        return Ok(Type::Named(name.clone(), Vec::new()));
     }
     Ok(lower_type(ty)?)
 }
@@ -326,20 +326,20 @@ mod tests {
         let ty = |name: &str| {
             out.iter().find(|d| d.name == name).unwrap_or_else(|| panic!("{name}")).ty.clone()
         };
-        assert_eq!(ty("Shape"), Type::Named("Shape".into()));
+        assert_eq!(ty("Shape"), Type::Named("Shape".into(), Vec::new()));
         // A payload-free variant is a value of its declaration.
-        assert_eq!(ty("Shape::Point"), Type::Named("Shape".into()));
+        assert_eq!(ty("Shape::Point"), Type::Named("Shape".into(), Vec::new()));
         // A variant with a payload is a constructor from that payload.
         assert_eq!(
             ty("Shape::Circle"),
-            Type::arrow(Type::Pos(Base::I64), Type::Named("Shape".into()))
+            Type::arrow(Type::Pos(Base::I64), Type::Named("Shape".into(), Vec::new()))
         );
         // Several payload values are packed into one tensor.
         assert_eq!(
             ty("Shape::Rect"),
             Type::arrow(
                 Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
-                Type::Named("Shape".into())
+                Type::Named("Shape".into(), Vec::new())
             )
         );
     }
@@ -365,7 +365,7 @@ mod tests {
         assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::One);
         // The declaration itself keeps its opaque named type.
         let out = infer("data D { left: i64, right: bool }").unwrap();
-        assert_eq!(out[0].ty, Type::Named("D".into()));
+        assert_eq!(out[0].ty, Type::Named("D".into(), Vec::new()));
     }
 
     #[test]
@@ -413,8 +413,8 @@ mod tests {
     #[test]
     fn struct_and_enum_declarations_use_named_types() {
         let out = infer("data Point { x: i32, y: i32 } enum Color { Red, Green }").unwrap();
-        assert_eq!(out[0].ty, Type::Named("Point".into()));
-        assert_eq!(out[1].ty, Type::Named("Color".into()));
+        assert_eq!(out[0].ty, Type::Named("Point".into(), Vec::new()));
+        assert_eq!(out[1].ty, Type::Named("Color".into(), Vec::new()));
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
             decls.into_iter().map(|d| (d.name, d.ty)).collect();
         let e = find_select(&p);
         let ty = infer_expr(&e, &declarations).unwrap();
-        assert_eq!(ty, Type::Dual(Box::new(Type::Named("Color".into()))));
+        assert_eq!(ty, Type::Dual(Box::new(Type::Named("Color".into(), Vec::new()))));
     }
 
     #[test]

@@ -47,7 +47,7 @@ pub fn check_program_resolving(
 fn type_key(ty: &Type) -> Option<String> {
     match ty {
         Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
-        Type::Named(n) => Some(n.clone()),
+        Type::Named(n, _) => Some(n.clone()),
         Type::List(_) => Some("list".into()),
         Type::Down(t) | Type::Up(t) | Type::Dual(t) => type_key(t),
         _ => None,
@@ -184,9 +184,11 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
 /// declares it.
 fn named_by_arms(arms: &[slc_syntax::ast::SelectArm], enums: &Declarations) -> Option<Type> {
     arms.iter().find_map(|arm| match arm.pattern.names()? {
-        Named::Declaration(name) if enums.declares(name) => Some(Type::Named(name.to_string())),
+        Named::Declaration(name) if enums.declares(name) => {
+            Some(Type::Named(name.to_string(), Vec::new()))
+        }
         Named::Variant(name) => {
-            enums.variant(name).map(|(declaration, _)| Type::Named(declaration.clone()))
+            enums.variant(name).map(|(declaration, _)| Type::Named(declaration.clone(), Vec::new()))
         }
         Named::Declaration(_) => None,
     })
@@ -516,7 +518,7 @@ fn check_pattern(
         // positive `Named` that is the menu's dual.
         Pattern::Dtor { dtor, .. } => match declarations.destructor(dtor) {
             Some((menu, _)) => {
-                if expected != &Type::Named(menu.clone()) {
+                if expected != &Type::Named(menu.clone(), Vec::new()) {
                     diags.push(Diagnostic {
                         message: format!(
                             "request pattern `.{dtor}` matches a continuation of `{menu}`; \
@@ -541,7 +543,7 @@ fn check_pattern(
                 });
                 return;
             };
-            if expected != &Type::Named(name.clone()) {
+            if expected != &Type::Named(name.clone(), Vec::new()) {
                 diags.push(Diagnostic {
                     message: format!(
                         "record pattern `{name}` cannot match a scrutinee of type {expected}"
@@ -943,7 +945,7 @@ fn bind_select_arm(
     }
     let components: Vec<Type> = match (consumed, pattern) {
         // An enum variant: its payload types.
-        (Type::Named(_), Pattern::Ident(_) | Pattern::Enum { .. }) => {
+        (Type::Named(_, _), Pattern::Ident(_) | Pattern::Enum { .. }) => {
             let written = match pattern {
                 Pattern::Ident(name) => name.clone(),
                 Pattern::Enum { name, variant, .. } => {
@@ -967,7 +969,7 @@ fn bind_select_arm(
             }
         }
         // A struct: its field types.
-        (Type::Named(name), Pattern::Data { name: written, .. }) => {
+        (Type::Named(name, _), Pattern::Data { name: written, .. }) => {
             if written != name {
                 diags.push(Diagnostic {
                     message: format!("`select {consumed}` arm cannot bind a `{written}`"),
@@ -1153,7 +1155,7 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            Some(Type::Named(declaration.clone()))
+            Some(Type::Named(declaration.clone(), Vec::new()))
         }
         Expr::Lambda { param, param_type, body, .. } => {
             env.push();
@@ -1203,7 +1205,7 @@ fn check_expr_unapplied(
                         });
                     }
                 }
-                return Some(Type::Named(declaration));
+                return Some(Type::Named(declaration, Vec::new()));
             }
             // A continuation is not applied: it is cut against a value. Only
             // an atomic consumer is certainly not a function — `A → B` is
@@ -1645,7 +1647,7 @@ fn check_expr_unapplied(
                     });
                 }
             }
-            Some(Type::Named(name.clone()))
+            Some(Type::Named(name.clone(), Vec::new()))
         }
         Expr::CoMatch { ty, arms } => {
             // `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a
@@ -1655,7 +1657,7 @@ fn check_expr_unapplied(
             let named = match ty {
                 Some(ty) => match enums.resolve(&ty.kind) {
                     Some(Type::Dual(inner)) => match *inner {
-                        Type::Named(n) if enums.is_menu(&n) => Some(n),
+                        Type::Named(n, _) if enums.is_menu(&n) => Some(n),
                         other => {
                             diags.push(Diagnostic {
                                 message: format!(
@@ -1694,7 +1696,7 @@ fn check_expr_unapplied(
             let rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)> =
                 arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
             check_comatch_arms(&menu, rows, enums, env, diags);
-            Some(Type::Dual(Box::new(Type::Named(menu))))
+            Some(Type::Dual(Box::new(Type::Named(menu, Vec::new()))))
         }
         Expr::Select { ty, arms } => {
             // `select T { p => c, … }` builds the consumer of T. Each arm
@@ -1726,7 +1728,7 @@ fn check_expr_unapplied(
             // A menu belongs to `mu`: `select` answers data, and a menu
             // answers demands.
             if let Type::Dual(inner) = &resolved
-                && let Type::Named(menu) = inner.as_ref()
+                && let Type::Named(menu, _) = inner.as_ref()
                 && enums.is_menu(menu)
             {
                 diags.push(Diagnostic {
@@ -1742,10 +1744,10 @@ fn check_expr_unapplied(
             // value itself: it consumes the record its fields describe, so
             // the arm binds that record's components.
             if let Type::Dual(inner) = &resolved
-                && let Type::Named(form) = inner.as_ref()
+                && let Type::Named(form, _) = inner.as_ref()
                 && enums.is_form(form)
             {
-                let demand = Type::Named(form.clone());
+                let demand = Type::Named(form.clone(), Vec::new());
                 for arm in arms {
                     env.push();
                     bind_select_arm(&demand, &arm.pattern, enums, env, e.span, diags);
@@ -1853,7 +1855,7 @@ fn check_expr_unapplied(
                     span: arg.span,
                 });
             }
-            Some(Type::Named(menu))
+            Some(Type::Named(menu, Vec::new()))
         }
         Expr::Project { base, key } => {
             let base_ty = check_expr(base, enums, env, diags)?;
@@ -1886,7 +1888,7 @@ fn check_expr_unapplied(
                     // the item's, and lowering cuts the menu against the
                     // request.
                     if let Type::Dual(inner) = &base_ty
-                        && let Type::Named(menu) = inner.as_ref()
+                        && let Type::Named(menu, _) = inner.as_ref()
                         && enums.is_menu(menu)
                     {
                         let label = format!("{menu}::{name}");
@@ -1909,7 +1911,7 @@ fn check_expr_unapplied(
                     // `A ⊗ B` yields its `A`. Say so, rather than leaving it
                     // at "not a record".
                     if let Type::Dual(inner) = &base_ty
-                        && let Type::Named(form) = inner.as_ref()
+                        && let Type::Named(form, _) = inner.as_ref()
                         && enums.is_form(form)
                     {
                         diags.push(Diagnostic {
@@ -1922,7 +1924,7 @@ fn check_expr_unapplied(
                         });
                         return None;
                     }
-                    let Type::Named(record_name) = &base_ty else {
+                    let Type::Named(record_name, _) = &base_ty else {
                         diags.push(Diagnostic {
                             message: format!("`.{name}` needs a record; this has type {base_ty}"),
                             span: e.span,

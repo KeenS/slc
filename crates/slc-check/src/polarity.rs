@@ -163,7 +163,7 @@ fn check_param_polarity(
     } else if let TypeExpr::Negative(_) = param_type {
         // `-Menu` / `-Form` is a demand: the dual of a declared negative
         // type is honest data, so a value parameter may hold it.
-        if let Some(Type::Named(name)) = &resolved
+        if let Some(Type::Named(name, _)) = &resolved
             && declared.is_negative_decl(name)
         {
             return;

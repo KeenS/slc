@@ -112,8 +112,14 @@ fn every_type() -> Vec<Type> {
         Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
         Type::List(Box::new(Type::Pos(Base::I32))),
         Type::arrow(Type::Pos(Base::I32), Type::Neg(Base::Bool)),
-        Type::Dual(Box::new(Type::Named("Color".into()))),
-        Type::Named("Color".into()),
+        Type::Dual(Box::new(Type::Named("Color".into(), Vec::new()))),
+        Type::Named("Color".into(), Vec::new()),
+        Type::Named("List".into(), vec![Type::Pos(Base::I64)]),
+        Type::Named(
+            "Pair".into(),
+            vec![Type::Pos(Base::I64), Type::Named("List".into(), vec![Type::Pos(Base::Str)])],
+        ),
+        Type::Param(0),
     ]
 }
 

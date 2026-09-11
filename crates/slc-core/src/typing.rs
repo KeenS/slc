@@ -134,6 +134,9 @@ impl Unification {
             Type::List(t) => Type::List(Box::new(self.apply(t))),
             Type::Down(t) => Type::Down(Box::new(self.apply(t))),
             Type::Up(t) => Type::Up(Box::new(self.apply(t))),
+            Type::Named(name, args) => {
+                Type::Named(name.clone(), args.iter().map(|a| self.apply(a)).collect())
+            }
             atom => atom.clone(),
         }
     }
@@ -147,6 +150,7 @@ impl Unification {
                 self.occurs(var, a) || self.occurs(var, b)
             }
             Type::Dual(t) | Type::List(t) | Type::Down(t) | Type::Up(t) => self.occurs(var, t),
+            Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
             _ => false,
         }
     }
@@ -194,6 +198,14 @@ impl Unification {
             (Type::Down(a), Type::Down(b)) => Ok(Type::Down(Box::new(self.unify(a, b)?))),
             (Type::Up(a), Type::Up(b)) => Ok(Type::Up(Box::new(self.unify(a, b)?))),
             (Type::List(a), Type::List(b)) => self.unify(a, b),
+            (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
+                let args = xs
+                    .iter()
+                    .zip(ys)
+                    .map(|(x, y)| self.unify(x, y))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Type::Named(a.clone(), args))
+            }
             (Type::Tensor(a1, a2), Type::Tensor(b1, b2))
             | (Type::Par(a1, a2), Type::Par(b1, b2))
             | (Type::Sum(a1, a2), Type::Sum(b1, b2))
@@ -248,6 +260,7 @@ pub fn contains_var(ty: &Type) -> bool {
         }
         Type::Down(t) | Type::Up(t) => contains_var(t),
         Type::Dual(t) | Type::List(t) => contains_var(t),
+        Type::Named(_, args) => args.iter().any(contains_var),
         _ => false,
     }
 }
@@ -288,7 +301,7 @@ pub fn infer_term(
             // A labelled injection belongs to the declaration that owns the
             // label: `Color::Red` inhabits the named positive type `Color`.
             let _ = infer_term(payload, gamma, delta)?;
-            Ok(Type::Named(owner_of_label(label)?))
+            Ok(Type::Named(owner_of_label(label)?, Vec::new()))
         }
 
         Term::CoMatch(branches) => {
@@ -315,7 +328,7 @@ pub fn infer_term(
                 }
                 result?;
             }
-            Ok(Type::Named(owner))
+            Ok(Type::Named(owner, Vec::new()))
         }
 
         Term::Co(e) => {
@@ -391,14 +404,14 @@ pub fn infer_coterm(
                 }
                 result?;
             }
-            Ok(Type::Named(owner))
+            Ok(Type::Named(owner, Vec::new()))
         }
 
         CoTerm::Dtor(label, e) => {
             // A request refutes the named negative type that owns its
             // destructor; the payload is the continuation for the answer.
             infer_coterm(e, gamma, delta)?;
-            Ok(Type::Named(owner_of_label(label)?))
+            Ok(Type::Named(owner_of_label(label)?, Vec::new()))
         }
 
         CoTerm::MuTildeTensor(binders, body) => {
@@ -460,7 +473,7 @@ mod tests {
         let mut d = CoTermContext::new();
         g.insert("v".into(), Type::One);
         let value = Term::Tag("Color::Red".into(), Box::new(Term::Var("v".into())));
-        assert_eq!(infer_term(&value, &mut g, &mut d), Ok(Type::Named("Color".into())));
+        assert_eq!(infer_term(&value, &mut g, &mut d), Ok(Type::Named("Color".into(), Vec::new())));
     }
 
     #[test]
@@ -474,13 +487,16 @@ mod tests {
             binders: vec!["x".into()],
             body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()))),
         }]);
-        assert_eq!(infer_coterm(&consumer, &mut g, &mut d), Ok(Type::Named("Color".into())));
+        assert_eq!(
+            infer_coterm(&consumer, &mut g, &mut d),
+            Ok(Type::Named("Color".into(), Vec::new()))
+        );
         // Reified as a value, it is dual to what it refutes — the type the
         // surface checker gives a `select` expression.
         let reified = Term::Co(Box::new(consumer));
         assert_eq!(
             infer_term(&reified, &mut g, &mut d),
-            Ok(Type::Dual(Box::new(Type::Named("Color".into()))))
+            Ok(Type::Dual(Box::new(Type::Named("Color".into(), Vec::new()))))
         );
     }
 
@@ -521,17 +537,17 @@ mod tests {
     #[test]
     fn named_types_unify_by_name_and_reject_mismatches() {
         let mut u = Unification::new();
-        let expected = Type::Named("Point".into());
-        let actual = Type::Named("Point".into());
-        assert_eq!(u.unify(&expected, &actual).unwrap(), Type::Named("Point".into()));
+        let expected = Type::Named("Point".into(), Vec::new());
+        let actual = Type::Named("Point".into(), Vec::new());
+        assert_eq!(u.unify(&expected, &actual).unwrap(), Type::Named("Point".into(), Vec::new()));
 
-        let actual = Type::Named("Color".into());
+        let actual = Type::Named("Color".into(), Vec::new());
         assert!(matches!(
-            u.unify(&Type::Named("Point".into()), &actual),
+            u.unify(&Type::Named("Point".into(), Vec::new()), &actual),
             Err(TypeError::Mismatch { .. })
         ));
         assert!(matches!(
-            u.unify(&Type::Named("Point".into()), &Type::One),
+            u.unify(&Type::Named("Point".into(), Vec::new()), &Type::One),
             Err(TypeError::Mismatch { .. })
         ));
     }

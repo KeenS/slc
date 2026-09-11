@@ -47,9 +47,11 @@ impl Declarations {
             // A menu or a form name denotes the negative type itself; its
             // dual — the bare `Named` — is the positive type of its demands.
             TypeExpr::Base(name) if self.is_negative_decl(name) => {
-                Type::Dual(Box::new(Type::Named(name.clone())))
+                Type::Dual(Box::new(Type::Named(name.clone(), Vec::new())))
             }
-            TypeExpr::Base(name) if self.declarations.contains(name) => Type::Named(name.clone()),
+            TypeExpr::Base(name) if self.declarations.contains(name) => {
+                Type::Named(name.clone(), Vec::new())
+            }
             TypeExpr::Positive(inner) => self.resolve(&inner.kind)?,
             TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
                 self.resolve(&inner.kind)?.dual()
@@ -123,7 +125,7 @@ impl Declarations {
     /// Whether a type is a declared negative type: a menu or form value.
     pub(crate) fn is_negative_value(&self, ty: &Type) -> bool {
         matches!(ty, Type::Dual(inner)
-            if matches!(inner.as_ref(), Type::Named(n) if self.is_negative_decl(n)))
+            if matches!(inner.as_ref(), Type::Named(n, _) if self.is_negative_decl(n)))
     }
 
     /// Resolve a destructor path, or an unambiguous unqualified destructor
@@ -141,7 +143,7 @@ impl Declarations {
     /// copattern `.item(.inner(k))` refines into.
     pub(crate) fn nested_menu(&self, label: &str) -> Option<&str> {
         match self.destructor(label)?.1.first()? {
-            Type::Named(inner) if self.is_menu(inner) => Some(inner),
+            Type::Named(inner, _) if self.is_menu(inner) => Some(inner),
             _ => None,
         }
     }
