@@ -56,11 +56,9 @@ fn go_coterm(e: &CoTerm, out: &mut HashSet<String>) {
         CoTerm::Covar(x) => {
             out.insert(x.clone());
         }
-        CoTerm::CoLam(x, c) => {
-            let mut inner = HashSet::new();
-            go_command(c, &mut inner);
-            inner.remove(x);
-            out.extend(inner);
+        CoTerm::App(v, e) => {
+            go_term(v, out);
+            go_coterm(e, out);
         }
         CoTerm::MuTilde(x, c) => {
             let mut inner = HashSet::new();
@@ -143,13 +141,8 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
 fn alpha_coterm(a: &CoTerm, b: &CoTerm, xs: &mut Vec<String>, ys: &mut Vec<String>) -> bool {
     match (a, b) {
         (CoTerm::Covar(x), CoTerm::Covar(y)) => var_eq(x, y, xs, ys),
-        (CoTerm::CoLam(x, c1), CoTerm::CoLam(y, c2)) => {
-            xs.push(x.clone());
-            ys.push(y.clone());
-            let r = alpha_command(c1, c2, xs, ys);
-            xs.pop();
-            ys.pop();
-            r
+        (CoTerm::App(v1, e1), CoTerm::App(v2, e2)) => {
+            alpha_term(v1, v2, xs, ys) && alpha_coterm(e1, e2, xs, ys)
         }
         (CoTerm::MuTilde(x, c1), CoTerm::MuTilde(y, c2)) => {
             xs.push(x.clone());
@@ -244,12 +237,8 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
                 e.clone()
             }
         }
-        CoTerm::CoLam(y, c) => {
-            if y == x {
-                e.clone()
-            } else {
-                CoTerm::CoLam(y.clone(), Box::new(subst_command(x, replacement, c)))
-            }
+        CoTerm::App(v, tail) => {
+            CoTerm::App(subst_term(x, replacement, v), Box::new(subst_coterm(x, replacement, tail)))
         }
         CoTerm::MuTilde(y, c) => {
             if y == x {

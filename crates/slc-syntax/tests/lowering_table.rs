@@ -26,11 +26,7 @@ const ROWS: &[Row] = &[
         source: "enum Color { Red } fn f() -> Color { Color::Red }",
         core: "Color::Red($unit)",
     },
-    Row {
-        id: "expr.call",
-        source: "fn f() -> i32 { g(1) }",
-        core: "⟨g ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩",
-    },
+    Row { id: "expr.call", source: "fn f() -> i32 { g(1) }", core: "⟨g ∥ $int_1 · __call⟩" },
     Row { id: "expr.lambda", source: "fn f() -> i32 { fn(x: +i32) -> i32 { x } }", core: "λx. x" },
     Row { id: "expr.pair", source: "fn f() -> i32 { (1, 2) }", core: "($int_1 ⊗ $int_2)" },
     Row {
@@ -46,9 +42,7 @@ const ROWS: &[Row] = &[
         core: "__if_dispatch",
     },
     Row {
-        id: "expr.binop",
-        source: "fn f() -> i32 { 1 + 2 }",
-        core: "⟨add ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩",
+        id: "expr.binop", source: "fn f() -> i32 { 1 + 2 }", core: "⟨add ∥ $int_1 · __call⟩"
     },
     Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨neg ∥" },
     Row { id: "expr.index", source: "fn f(s: +String) -> char { s[0] }", core: "⟨__index ∥" },
@@ -60,7 +54,7 @@ const ROWS: &[Row] = &[
     Row {
         id: "expr.mu",
         source: "fn f() -> i32 { mu escape(k: -i32) { k(1) } }",
-        core: "μk. ⟨μ__call. ⟨k ∥ λ̄__f. ⟨$int_1 ∥ __call⟩⟩ ∥ k⟩",
+        core: "μk. ⟨μ__call. ⟨k ∥ $int_1 · __call⟩ ∥ k⟩",
     },
     Row {
         id: "expr.match",
@@ -81,7 +75,7 @@ const ROWS: &[Row] = &[
         id: "expr.shift",
         // The box erases: the core sees the consumer itself.
         source: "fn f(k: -i64) <- i64 { g(↓k) }",
-        core: "⟨g ∥ λ̄__f. ⟨k ∥ __call⟩⟩",
+        core: "⟨g ∥ k · __call⟩",
     },
     Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
     Row { id: "decl.fn.negative", source: "fn f(k: -i32) <- i32 { k(1) }", core: "λk." },

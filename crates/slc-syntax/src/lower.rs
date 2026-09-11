@@ -264,10 +264,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     "__call".into(),
                     Box::new(Command::Cut(
                         result,
-                        CoTerm::CoLam(
-                            "__f".into(),
-                            Box::new(Command::Cut(arg, CoTerm::Covar("__call".into()))),
-                        ),
+                        CoTerm::App(arg, Box::new(CoTerm::Covar("__call".into()))),
                     )),
                 );
             }
@@ -320,7 +317,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 .unwrap_or_else(|| {
                     Term::Lam("__unused".into(), Box::new(Term::Var("$unit".into())))
                 });
-            // Build: μif. ⟨ __if_dispatch(cond, λt, λe) ∥ λ̄__f. ⟨ __f ∥ if ⟩ ⟩
+            // Build: μif. ⟨ cond ∥ μ̃__cond. ⟨ μ__call. ⟨ __if_dispatch ∥ (…) · __call ⟩ ∥ __tail ⟩ ⟩
             // The dispatch builtin applies the chosen thunk to unit.
             let triple = Term::Pair(
                 Box::new(Term::Var("__cond".into())),
@@ -330,10 +327,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 "__call".into(),
                 Box::new(Command::Cut(
                     Term::Var("__if_dispatch".into()),
-                    CoTerm::CoLam(
-                        "__f".into(),
-                        Box::new(Command::Cut(triple, CoTerm::Covar("__call".into()))),
-                    ),
+                    CoTerm::App(triple, Box::new(CoTerm::Covar("__call".into()))),
                 )),
             );
             Ok(Term::Mu(
@@ -416,14 +410,11 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 // A named consumer is a co-variable, so the cut is direct.
                 Expr::Ident(name) => Command::Cut(v, CoTerm::Covar(name.clone())),
                 // Any other consumer is an expression that produces one:
-                // evaluate it, then cut the value into it — the same shape as
-                // an application, ⟨ ⟦k⟧ ∥ λ̄__f. ⟨ ⟦v⟧ ∥ __tail ⟩ ⟩.
+                // evaluate it, then apply it to the value — the same shape
+                // as an application, ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩.
                 _ => Command::Cut(
                     lower_expr(consumer, continuations)?,
-                    CoTerm::CoLam(
-                        "__f".into(),
-                        Box::new(Command::Cut(v, CoTerm::Covar("__tail".into()))),
-                    ),
+                    CoTerm::App(v, Box::new(CoTerm::Covar("__tail".into()))),
                 ),
             };
             Ok(Term::Mu(cut_binder(&consumer.kind), Box::new(command)))
@@ -535,10 +526,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 "__match".into(),
                 Box::new(Command::Cut(
                     Term::Var("__match_dispatch".into()),
-                    CoTerm::CoLam(
-                        "__f".into(),
-                        Box::new(Command::Cut(payload, CoTerm::Covar("__match".into()))),
-                    ),
+                    CoTerm::App(payload, Box::new(CoTerm::Covar("__match".into()))),
                 )),
             ))
         }
@@ -771,7 +759,7 @@ const CUT_BINDER: &str = "__cut";
 /// `let x = v; body` → `μlet. ⟨ v ∥ μ̃x. ⟨ body ∥ let ⟩ ⟩`.
 ///
 /// A binder is `μ̃`, the value abstraction: it takes what the cut delivers
-/// and runs the rest with it bound. `λ̄` is application, and nothing else.
+/// and runs the rest with it bound. `v · e` is application, and nothing else.
 ///
 /// Both surface `let` forms — the expression form with an explicit body and
 /// the bodyless form that scopes over the rest of its block — lower here.
@@ -867,10 +855,7 @@ fn call_curried(callee: Term, args: Vec<Term>) -> Term {
             "__call".into(),
             Box::new(Command::Cut(
                 result,
-                CoTerm::CoLam(
-                    "__f".into(),
-                    Box::new(Command::Cut(arg, CoTerm::Covar("__call".into()))),
-                ),
+                CoTerm::App(arg, Box::new(CoTerm::Covar("__call".into()))),
             )),
         );
     }
@@ -1258,24 +1243,21 @@ mod tests {
     #[test]
     fn lower_cut_with_a_computed_consumer_evaluates_then_cuts() {
         // A consumer that is not a name is an expression producing one:
-        // evaluate it, then cut the value into it, in application shape.
+        // evaluate it, then apply it to the value — an application stack.
         let out = lower_str("fn f(ignored: +i32) -> i32 { 1 @ pick(2) }");
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else {
             panic!("a cut is wrapped in a μ binder: {body}");
         };
         assert_eq!(binder, "__cut");
-        let Command::Cut(consumer, CoTerm::CoLam(_, inner)) = command.as_ref() else {
-            panic!("a computed consumer is evaluated then cut: {command}");
+        let Command::Cut(consumer, CoTerm::App(value, _)) = command.as_ref() else {
+            panic!("a computed consumer is applied to the value: {command}");
         };
         assert!(
             format!("{consumer}").contains("pick"),
             "the consumer expression is evaluated: {consumer}"
         );
-        assert!(
-            matches!(inner.as_ref(), Command::Cut(Term::Var(v), _) if v == "$int_1"),
-            "the value is cut into the evaluated consumer: {inner}"
-        );
+        assert_eq!(value, &Term::Var("$int_1".into()));
     }
 
     #[test]

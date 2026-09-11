@@ -45,10 +45,7 @@ fn every_term() -> Vec<Term> {
                     "__call".into(),
                     Box::new(cut(
                         var("k"),
-                        CoTerm::CoLam(
-                            "__f".into(),
-                            Box::new(cut(var("x"), CoTerm::Covar("__call".into()))),
-                        ),
+                        CoTerm::App(var("x"), Box::new(CoTerm::Covar("__call".into()))),
                     )),
                 )),
             )),
@@ -59,7 +56,11 @@ fn every_term() -> Vec<Term> {
 fn every_coterm() -> Vec<CoTerm> {
     vec![
         CoTerm::Covar("k".into()),
-        CoTerm::CoLam("x".into(), Box::new(cut(var("x"), CoTerm::Covar("k".into())))),
+        CoTerm::App(var("v"), Box::new(CoTerm::Covar("k".into()))),
+        CoTerm::App(
+            Term::Lam("x".into(), Box::new(var("x"))),
+            Box::new(CoTerm::App(var("v"), Box::new(CoTerm::Covar("k".into())))),
+        ),
         CoTerm::MuTilde("x".into(), Box::new(cut(var("x"), CoTerm::Covar("k".into())))),
         CoTerm::Prj(0),
         CoTerm::Prj(1),

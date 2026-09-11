@@ -43,8 +43,9 @@ pub enum Node {
     CoLocal(usize),
     /// A name used as a co-variable (a forwarding continuation, or a global).
     CoDynamic(Rc<str>),
-    /// `λ̄. c` — binds one positional slot; child is the command.
-    CoLam(NodeId),
+    /// `v · e` — application: the argument term, then the tail co-term that
+    /// consumes the result.
+    App(NodeId, NodeId),
     /// `μ̃. c` — binds one positional slot; child is the command.
     MuTilde(NodeId),
     /// Projection of the `index`-th spine component of a right-nested product.

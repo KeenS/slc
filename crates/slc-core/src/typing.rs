@@ -319,11 +319,12 @@ pub fn infer_coterm(
     match e {
         CoTerm::Covar(a) => delta.lookup(a).cloned().ok_or(TypeError::Unbound(a.clone())),
 
-        CoTerm::CoLam(x, c) => {
-            let xt =
-                gamma.lookup(x).cloned().ok_or(TypeError::Unbound(format!("(co-param) {x}")))?;
-            infer_command(c, gamma, delta)?;
-            Ok(xt.dual())
+        CoTerm::App(v, e) => {
+            // `v · e` refutes a function: with `v : A` and `e` refuting `B`,
+            // the stack consumes `A → B`.
+            let vt = infer_term(v, gamma, delta)?;
+            let et = infer_coterm(e, gamma, delta)?;
+            Ok(Type::arrow(vt, et))
         }
 
         CoTerm::MuTilde(x, c) => {

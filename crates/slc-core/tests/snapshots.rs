@@ -23,13 +23,10 @@ fn snapshot_lambda_term() {
 #[test]
 fn snapshot_cut_command() {
     let command = Command::Cut(
-        Term::Var("v".into()),
-        CoTerm::CoLam(
-            "x".into(),
-            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
-        ),
+        Term::Var("f".into()),
+        CoTerm::App(Term::Var("v".into()), Box::new(CoTerm::Covar("k".into()))),
     );
-    assert_eq!(command.to_string(), "⟨v ∥ λ̄x. ⟨x ∥ k⟩⟩");
+    assert_eq!(command.to_string(), "⟨f ∥ v · k⟩");
 }
 
 #[test]

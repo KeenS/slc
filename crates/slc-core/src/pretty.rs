@@ -60,7 +60,7 @@ impl std::fmt::Display for CoTerm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CoTerm::Covar(a) => write!(f, "{a}"),
-            CoTerm::CoLam(x, c) => write!(f, "λ̄{x}. {c}"),
+            CoTerm::App(v, e) => write!(f, "{v} · {e}"),
             CoTerm::MuTilde(x, c) => write!(f, "μ̃{x}. {c}"),
             CoTerm::Prj(index) => write!(f, "prj:{index}"),
             CoTerm::MuTildeTensor(binders, c) => write!(f, "μ̃({}). {c}", binders.join(", ")),

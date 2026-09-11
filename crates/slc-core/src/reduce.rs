@@ -64,8 +64,18 @@ pub fn step(c: &Command) -> Step {
             }
         }
 
-        // co-β-rule: ⟨ t ∥ λ̄x.c ⟩ → c[t/x]
-        Command::Cut(t, CoTerm::CoLam(x, c2)) => Step::Reduced(subst_command(x, t, c2)),
+        // →-rule: ⟨ λx.t ∥ v·e ⟩ → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩ — application:
+        // the argument goes to the binder, and the body meets the tail.
+        Command::Cut(Term::Lam(x, t), CoTerm::App(v, e)) => Step::Reduced(Command::Cut(
+            v.clone(),
+            CoTerm::MuTilde(x.clone(), Box::new(Command::Cut((**t).clone(), (**e).clone()))),
+        )),
+
+        // ↑-rule: ⟨ co(e′) ∥ v·e ⟩ → ⟨ v ∥ e′ ⟩ — applying a boxed consumer
+        // opens the box; a consumer does not return, so the tail is dropped.
+        Command::Cut(Term::Co(consumer), CoTerm::App(v, _)) => {
+            Step::Reduced(Command::Cut(v.clone(), (**consumer).clone()))
+        }
 
         // Projection: ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩ → tᵢ. Walk `i` tails along the
         // right-nested spine, then take the head — or the whole remainder
@@ -135,16 +145,36 @@ mod tests {
     }
 
     #[test]
-    fn co_beta_reduces() {
-        // ⟨ t ∥ λ̄x. ⟨ x ∥ k ⟩ ⟩ → ⟨ t ∥ k ⟩
-        let inner = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
-        let co_lam = CoTerm::CoLam("x".into(), Box::new(inner));
-        let t = Term::Var("y".into());
-        let cut = Command::Cut(t, co_lam);
-        match step(&cut) {
+    fn application_reduces() {
+        // ⟨ λx.x ∥ y · k ⟩ → ⟨ y ∥ μ̃x. ⟨ x ∥ k ⟩ ⟩
+        let app = CoTerm::App(Term::Var("y".into()), Box::new(CoTerm::Covar("k".into())));
+        match step(&Command::Cut(identity(), app)) {
             Step::Reduced(c) => {
-                let expected = Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into()));
+                let expected = Command::Cut(
+                    Term::Var("y".into()),
+                    CoTerm::MuTilde(
+                        "x".into(),
+                        Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+                    ),
+                );
                 assert_eq!(c, expected);
+            }
+            Step::Normal => panic!("expected reduction"),
+        }
+    }
+
+    #[test]
+    fn applying_a_boxed_consumer_opens_the_box() {
+        // ⟨ co(μ̃x. ⟨x ∥ k⟩) ∥ y · tail ⟩ → ⟨ y ∥ μ̃x. ⟨x ∥ k⟩ ⟩
+        let consumer = CoTerm::MuTilde(
+            "x".into(),
+            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+        );
+        let boxed = Term::Co(Box::new(consumer.clone()));
+        let app = CoTerm::App(Term::Var("y".into()), Box::new(CoTerm::Covar("tail".into())));
+        match step(&Command::Cut(boxed, app)) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("y".into()), consumer));
             }
             Step::Normal => panic!("expected reduction"),
         }

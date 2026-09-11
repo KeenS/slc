@@ -1,6 +1,7 @@
 //! λ̄μμ̃ co-terms (refutations).
 
 use crate::command::Command;
+use crate::term::Term;
 
 /// One branch of a labelled consumer.
 ///
@@ -19,8 +20,10 @@ pub struct CoCaseBranch {
 pub enum CoTerm {
     /// Co-variable reference.
     Covar(String),
-    /// Co-abstraction: `λ̄x.c`.
-    CoLam(String, Box<Command>),
+    /// Application: `v · e` — the canonical call stack. Consumes a function:
+    /// `v` is the argument and `e` consumes the result, so `⟨f ∥ v · e⟩`
+    /// applies `f` to `v` and sends what comes back on to `e`.
+    App(Term, Box<CoTerm>),
     /// Value abstraction: `μ̃x.c`.
     MuTilde(String, Box<Command>),
     /// Projection of the `index`-th component of a right-nested product,

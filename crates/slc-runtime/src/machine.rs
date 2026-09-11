@@ -284,25 +284,17 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
             Some(consumer) if is_applicable(&consumer) => State::Apply { callee: consumer, arg: v },
             _ => State::Return(v),
         },
-        // ⟨ f ∥ λ̄x. c ⟩ — application: `c` computes the argument.
-        Node::CoLam(c2) => {
-            let mut env2 = env;
-            env2.define_local(v.clone());
-            if is_applicable(&v) || matches!(v, Value::PartialBuiltin(..)) {
-                kont.push(Frame::ApplyCallee(v));
-                // The argument command has the form ⟨ arg ∥ __call ⟩: the
-                // co-variable there is the onward continuation, ignored here.
-                match node(c2) {
-                    Node::Cut(t, co)
-                        if matches!(node(co), Node::CoLocal(_) | Node::CoDynamic(_)) =>
-                    {
-                        State::Term(t, env2)
-                    }
-                    _ => State::Command(c2, env2),
-                }
-            } else {
-                State::Command(c2, env2)
+        // ⟨ f ∥ v · e ⟩ — application: evaluate the argument, apply `f` to
+        // it, and send the result on to `e`. A co-variable tail names the
+        // onward continuation, so the result simply flows out to the ambient
+        // stack — under a handler that is the live, possibly-resumed stack,
+        // not the one the enclosing μ captured, so no frame is pushed.
+        Node::App(arg, tail) => {
+            if !matches!(node(tail), Node::CoLocal(_) | Node::CoDynamic(_)) {
+                kont.push(Frame::Consume(tail, env.clone()));
             }
+            kont.push(Frame::ApplyCallee(v));
+            State::Term(arg, env)
         }
         // ⟨ v ∥ μ̃x. c ⟩ → c[v/x] — a binder: `let`, a discarded block
         // expression, or any other form that names a value.

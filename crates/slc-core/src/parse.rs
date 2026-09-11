@@ -45,9 +45,8 @@ pub fn parse_type(source: &str) -> Result<Type, ParseError> {
     Parser::over(source).finish(|p| p.ty())
 }
 
-/// The combining marks that distinguish `μ̃` from `μ` and `λ̄` from `λ`.
+/// The combining mark that distinguishes `μ̃` from `μ`.
 const TILDE: char = '\u{303}';
-const MACRON: char = '\u{304}';
 
 struct Parser {
     chars: Vec<char>,
@@ -218,12 +217,6 @@ impl Parser {
     fn coterm(&mut self) -> Result<CoTerm, ParseError> {
         self.spaces();
         match self.peek() {
-            Some('λ') if self.chars.get(self.pos + 1).copied() == Some(MACRON) => {
-                self.pos += 2;
-                let x = self.name()?;
-                self.expect(".")?;
-                Ok(CoTerm::CoLam(x, Box::new(self.command()?)))
-            }
             Some('μ') if self.chars.get(self.pos + 1).copied() == Some(TILDE) => {
                 self.pos += 2;
                 if self.eat("[") {
@@ -255,16 +248,27 @@ impl Parser {
                 self.expect(".")?;
                 Ok(CoTerm::MuTilde(x, Box::new(self.command()?)))
             }
+            // A projection, a co-variable, or an application `v · e`: parse
+            // a term first — a following `·` makes it the argument.
             Some(_) => {
-                let name = self.name()?;
-                // A projection prints as one token `prj:index`.
-                if let Some(rest) = name.strip_prefix("prj:") {
-                    return rest
-                        .parse()
-                        .map(CoTerm::Prj)
-                        .map_err(|_| self.error("malformed projection co-term"));
+                let t = self.term()?;
+                self.spaces();
+                if self.eat("·") {
+                    return Ok(CoTerm::App(t, Box::new(self.coterm()?)));
                 }
-                Ok(CoTerm::Covar(name))
+                match t {
+                    Term::Var(name) => {
+                        // A projection prints as one token `prj:index`.
+                        if let Some(rest) = name.strip_prefix("prj:") {
+                            return rest
+                                .parse()
+                                .map(CoTerm::Prj)
+                                .map_err(|_| self.error("malformed projection co-term"));
+                        }
+                        Ok(CoTerm::Covar(name))
+                    }
+                    _ => Err(self.error("expected a co-term")),
+                }
             }
             None => Err(self.error("expected a co-term")),
         }

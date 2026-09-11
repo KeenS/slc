@@ -26,8 +26,8 @@ pub enum Term {
     ///
     /// The surface language lets a continuation appear where an expression is
     /// expected — `select` denotes one, and continuations are passed as
-    /// arguments. `co(e)` is that continuation seen as a value: cutting it
-    /// against a consumer applies the consumer to the underlying co-term,
+    /// arguments. `co(e)` is that continuation seen as a value: applying it
+    /// — `⟨co(e) ∥ v · e′⟩` — sends the argument to the underlying co-term,
     /// which is the `↑` elimination opening the box.
     Co(Box<CoTerm>),
 }

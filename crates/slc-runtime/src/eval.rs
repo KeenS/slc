@@ -409,11 +409,12 @@ mod tests {
     }
 
     #[test]
-    fn eval_colam_binds() {
-        // ⟨ int_5 ∥ λ̄x. ⟨ x ∥ k ⟩ ⟩ → 5
-        let inner = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
-        let c =
-            Command::Cut(Term::Var("$int_5".into()), CoTerm::CoLam("x".into(), Box::new(inner)));
+    fn eval_application_stack() {
+        // ⟨ λx.x ∥ $int_5 · k ⟩ → 5
+        let c = Command::Cut(
+            Term::Lam("x".into(), Box::new(Term::Var("x".into()))),
+            CoTerm::App(Term::Var("$int_5".into()), Box::new(CoTerm::Covar("k".into()))),
+        );
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval_command(&c, &mut env, &mut fuel).unwrap(), Value::Int(5));

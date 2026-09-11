@@ -93,9 +93,10 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             Some(i) => Node::CoLocal(i),
             None => Node::CoDynamic(Rc::from(a.as_str())),
         },
-        CoTerm::CoLam(x, c) => {
-            let body = compile_cmd(c, &scope.with(std::slice::from_ref(x)), chunk);
-            Node::CoLam(body)
+        CoTerm::App(v, tail) => {
+            let v = compile_ir(v, scope, chunk);
+            let tail = compile_coterm(tail, scope, chunk);
+            Node::App(v, tail)
         }
         CoTerm::MuTilde(x, c) => {
             let body = compile_cmd(c, &scope.with(std::slice::from_ref(x)), chunk);

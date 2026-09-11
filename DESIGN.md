@@ -900,7 +900,7 @@ Term      t ::= x                     variable
               | co(e)                 ↓-shift introduction: a co-term as a value
 
 CoTerm    e ::= α                     co-variable
-              | λ̄x. c                 co-abstraction (application)
+              | t · e                 application: argument, then tail
               | μ̃x. c                 value abstraction
               | prj:i                  projection of the i-th component
               | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, struct)
@@ -920,8 +920,8 @@ Type      A ::= +B | -B               positive / negative atom
 so that a consumer can sit where a value is expected. The surface never
 writes it directly — `select` denotes a consumer and lowers straight to it,
 and a continuation passed as an argument arrives the same way. Its
-elimination is the cut: cutting `co(e)` against a consumer applies that
-consumer to the underlying co-term, which is `↑` opening the box. The
+elimination is application: `⟨ co(e′) ∥ v · e ⟩ → ⟨ v ∥ e′ ⟩` sends the
+argument to the underlying co-term, which is `↑` opening the box. The
 surface `↓e`/`↑e` glyphs themselves erase at lowering because the value is
 already in this form; the type is what they change.
 
@@ -975,7 +975,8 @@ re-parsed without loss.
 ```text
 ⟨ μα. c ∥ e ⟩                → c[e/α]              μ
 ⟨ v ∥ μ̃x. c ⟩                → c[v/x]              μ̃ — the binder
-⟨ t ∥ λ̄x. c ⟩                → c[t/x]              co-β — application
+⟨ λx. t ∥ v · e ⟩            → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩  → — application
+⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           ↑ — open the box
 ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[… L(x…). c …] ⟩ → c[vᵢ/xᵢ]          labelled
 ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩     → c[v₁/x, v₂/y]      product
@@ -990,8 +991,8 @@ its unlabelled counterpart.
 ### Lowering table
 
 Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
-`e`, and `f(a)` abbreviates the application encoding `μ__call. ⟨ ⟦f⟧ ∥ λ̄__f.
-⟨ ⟦a⟧ ∥ __call ⟩ ⟩`, nested left to right for several arguments.
+`e`, and `f(a)` abbreviates the application `μ__call. ⟨ ⟦f⟧ ∥ ⟦a⟧ · __call ⟩`,
+nested left to right for several arguments.
 
 | Construct | Surface | Core |
 |---|---|---|
@@ -1008,7 +1009,7 @@ Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
 | `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
-| `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ λ̄__f. ⟨ ⟦v⟧ ∥ __tail ⟩ ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
+| `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
@@ -1035,7 +1036,7 @@ become λ binders.
 | `L(t)` | `enum` values and `struct` values — a labelled product |
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction |
 | `α` | the consumer named on the right of a cut, `v @ k` |
-| `λ̄x. c` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
+| `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
