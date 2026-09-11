@@ -23,8 +23,6 @@ pub enum CoTerm {
     CoLam(String, Box<Command>),
     /// Value abstraction: `μ̃x.c`.
     MuTilde(String, Box<Command>),
-    /// Par: `e1 ⅋ e2`.
-    Par(Box<CoTerm>, Box<CoTerm>),
     /// Projection of the `index`-th component of a right-nested product,
     /// counted along the spine (the last component is stored bare).
     Prj(usize),

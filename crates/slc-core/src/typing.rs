@@ -351,12 +351,6 @@ pub fn infer_coterm(
             Ok(xt)
         }
 
-        CoTerm::Par(e1, e2) => {
-            let a = infer_coterm(e1, gamma, delta)?;
-            let b = infer_coterm(e2, gamma, delta)?;
-            Ok(Type::Par(Box::new(a), Box::new(b)))
-        }
-
         CoTerm::CoCase(branches) => {
             // A negative additive consumer refutes the named type its labels
             // belong to. Every branch must belong to the same declaration.

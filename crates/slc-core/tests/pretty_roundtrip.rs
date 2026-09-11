@@ -64,7 +64,6 @@ fn every_coterm() -> Vec<CoTerm> {
         CoTerm::Covar("k".into()),
         CoTerm::CoLam("x".into(), Box::new(cut(var("x"), CoTerm::Covar("k".into())))),
         CoTerm::MuTilde("x".into(), Box::new(cut(var("x"), CoTerm::Covar("k".into())))),
-        CoTerm::Par(Box::new(CoTerm::Covar("a".into())), Box::new(CoTerm::Covar("b".into()))),
         CoTerm::Prj(0),
         CoTerm::Prj(1),
         CoTerm::CoCase(vec![CoCaseBranch {

@@ -904,7 +904,6 @@ Term      t ::= x                     variable
 CoTerm    e ::= α                     co-variable
               | λ̄x. c                 co-abstraction (application)
               | μ̃x. c                 value abstraction
-              | e ⅋ e                 par
               | prj:i                  projection of the i-th component
               | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, struct)
               | μ̃(x₁, …, xₙ). c       product consumer
@@ -1043,7 +1042,6 @@ continuation parameter becomes a Λ binder.
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
 | `μ̃[…]` | `select` over an `enum` or a `struct` |
 | `μ̃(x…)` | `select` over a bare product |
-| `e ⅋ e` | not surface-visible: a `⅋` consumer is built by `select` over a product |
 | `prj:i` | `base.i` (tuple) and `base.field` (struct), the field resolved to its index from the base type |
 | `κx. t` | not surface-visible; the internal command abstraction |
 | `k(v)` | a cut whose consumer is computed rather than named: `v @ f(a)` |

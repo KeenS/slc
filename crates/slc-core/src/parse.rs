@@ -267,14 +267,6 @@ impl Parser {
                 self.expect(".")?;
                 Ok(CoTerm::MuTilde(x, Box::new(self.command()?)))
             }
-            Some('(') => {
-                self.pos += 1;
-                let left = self.coterm()?;
-                self.expect("⅋")?;
-                let right = self.coterm()?;
-                self.expect(")")?;
-                Ok(CoTerm::Par(Box::new(left), Box::new(right)))
-            }
             Some(_) => {
                 let name = self.name()?;
                 // A projection prints as one token `prj:index`.
