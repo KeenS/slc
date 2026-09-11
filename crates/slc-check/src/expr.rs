@@ -600,6 +600,29 @@ fn check_pattern(
         });
     }
     match pattern {
+        // A bare name that several enums claim resolves to nothing, and a
+        // pattern binder that silently catches everything is worse than an
+        // error: qualify it, or import one enum's variants.
+        Pattern::Ident(name) if declarations.is_ambiguous_variant(name) => {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{name}` is a variant of more than one enum; qualify it, or pin one \
+                     with `use Enum::{{{name}}};`"
+                ),
+                span,
+            });
+        }
+        Pattern::Enum { name, variant, .. }
+            if variant.is_empty() && declarations.is_ambiguous_variant(name) =>
+        {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{name}` is a variant of more than one enum; qualify it, or pin one \
+                     with `use Enum::{{{name}}};`"
+                ),
+                span,
+            });
+        }
         Pattern::Or(alternatives) => {
             for alternative in alternatives {
                 check_pattern(alternative, expected, declarations, span, diags);
@@ -1023,6 +1046,16 @@ fn bind_select_arm(
     if let Pattern::Ident(name) = pattern
         && declarations.variant(name).is_none()
     {
+        if declarations.is_ambiguous_variant(name) {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{name}` is a variant of more than one enum; qualify it, or pin one \
+                     with `use Enum::{{{name}}};`"
+                ),
+                span,
+            });
+            return;
+        }
         env.define(name, consumed.clone());
         return;
     }

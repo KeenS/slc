@@ -51,7 +51,76 @@ pub fn resolve_program(program: &Program) -> Result<Program, Vec<ResolveError>> 
     let root = collect_scope(&program.decls, Vec::new(), &mut errors);
     let mut stack = vec![root];
     flatten(&program.decls, &mut stack, &mut out, &mut errors);
+    let out = apply_variant_imports(out, &mut errors);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
+}
+
+/// Apply `use Enum::*;` and `use Enum::{A, B};`: every bare use of an
+/// imported variant — in patterns and in expressions — is rewritten to its
+/// qualified label, so the automatic unqualified-while-unambiguous rule
+/// never has to guess about it. An import that collides with another, or
+/// names a variant its enum does not have, is an error at the `use`.
+fn apply_variant_imports(
+    decls: Vec<Node<Decl>>,
+    errors: &mut Vec<ResolveError>,
+) -> Vec<Node<Decl>> {
+    use crate::ast::UseImports;
+    // The variants of every flattened enum (and every menu's items, for
+    // symmetry — though destructors are never bare).
+    let mut variants_of: HashMap<String, Vec<String>> = HashMap::new();
+    for d in &decls {
+        if let Decl::Enum { name, variants, .. } = &d.kind {
+            variants_of.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
+        }
+    }
+    // Bare name → qualified label, from the imports, first one wins and a
+    // second is an error.
+    let mut imported: HashMap<String, String> = HashMap::new();
+    let mut keep = Vec::new();
+    for d in decls {
+        let Decl::Use { path, imports } = &d.kind else {
+            keep.push(d);
+            continue;
+        };
+        let enum_name = path.join("::");
+        let Some(variants) = variants_of.get(&enum_name) else {
+            errors.push(ResolveError {
+                message: format!("`use {enum_name}::…` does not name a declared enum"),
+                span: d.span,
+            });
+            continue;
+        };
+        let names: Vec<String> = match imports {
+            UseImports::Glob => variants.clone(),
+            UseImports::Names(names) => names.clone(),
+            UseImports::Member => continue,
+        };
+        for name in names {
+            if !variants.contains(&name) {
+                errors.push(ResolveError {
+                    message: format!("`{enum_name}` has no variant `{name}`"),
+                    span: d.span,
+                });
+                continue;
+            }
+            let label = format!("{enum_name}::{name}");
+            if let Some(previous) = imported.insert(name.clone(), label.clone())
+                && previous != label
+            {
+                errors.push(ResolveError {
+                    message: format!("`{name}` is imported from both `{previous}` and `{label}`"),
+                    span: d.span,
+                });
+            }
+        }
+    }
+    if imported.is_empty() {
+        return keep;
+    }
+    for d in &mut keep {
+        rewrite_decl_imports(&mut d.kind, &imported);
+    }
+    keep
 }
 
 fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<ResolveError>) -> Scope {
@@ -76,7 +145,10 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
                 }
             }
             Decl::Impl { .. } => {}
-            Decl::Use { path } => {
+            Decl::Use { path, imports } => {
+                if !matches!(imports, crate::ast::UseImports::Member) {
+                    continue;
+                }
                 let target = path.join("::");
                 let name = path.last().expect("a use path has segments").clone();
                 if scope.aliases.insert(name.clone(), target).is_some() {
@@ -107,7 +179,21 @@ fn flatten(
                 flatten(decls, stack, out, errors);
                 stack.pop();
             }
-            Decl::Use { .. } => {}
+            Decl::Use { path, imports } => {
+                // A variant import survives flattening — with the enum it
+                // names resolved to its flat name — and a later pass applies
+                // it to the whole program.
+                if !matches!(imports, crate::ast::UseImports::Member) {
+                    let mut path = path.clone();
+                    if let Some(first) = path.first_mut() {
+                        *first = resolve_name(first, stack);
+                    }
+                    out.push(Node {
+                        span: d.span,
+                        kind: Decl::Use { path, imports: imports.clone() },
+                    });
+                }
+            }
             other => {
                 let mut resolved = other.clone();
                 let locals = &mut Vec::new();
@@ -520,5 +606,159 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         | Pattern::Bool(_)
         | Pattern::Float(_)
         | Pattern::Rest => {}
+    }
+}
+
+/// Rewrite every bare use of an imported variant to its qualified label —
+/// in expressions and in patterns, through every declaration body. Imported
+/// names take precedence over like-named locals, as a variant does in a
+/// pattern.
+fn rewrite_decl_imports(d: &mut Decl, imported: &HashMap<String, String>) {
+    match d {
+        Decl::Fn { body, .. } => rewrite_expr_imports(&mut body.kind, imported),
+        Decl::Command { body, .. } => rewrite_expr_imports(&mut body.kind, imported),
+        Decl::Const { value, .. } => rewrite_expr_imports(&mut value.kind, imported),
+        Decl::Impl { methods, .. } => {
+            for method in methods {
+                rewrite_decl_imports(&mut method.kind, imported);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
+    match e {
+        Expr::Ident(name) => {
+            if let Some(label) = imported.get(name) {
+                *name = label.clone();
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            rewrite_expr_imports(&mut scrutinee.kind, imported);
+            for arm in arms {
+                rewrite_pattern_imports(&mut arm.pattern, imported);
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_expr_imports(&mut guard.kind, imported);
+                }
+                rewrite_expr_imports(&mut arm.body.kind, imported);
+            }
+        }
+        Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
+            for arm in arms {
+                rewrite_pattern_imports(&mut arm.pattern, imported);
+                rewrite_expr_imports(&mut arm.command.kind, imported);
+            }
+        }
+        Expr::Lambda { body, .. } | Expr::UnOp { body, .. } | Expr::Mu { body, .. } => {
+            rewrite_expr_imports(&mut body.kind, imported)
+        }
+        Expr::Call { callee, args } => {
+            rewrite_expr_imports(&mut callee.kind, imported);
+            for arg in args {
+                rewrite_expr_imports(&mut arg.kind, imported);
+            }
+        }
+        Expr::Pair(items) | Expr::Block(items) => {
+            for item in items {
+                rewrite_expr_imports(&mut item.kind, imported);
+            }
+        }
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                rewrite_expr_imports(&mut value.kind, imported);
+            }
+        }
+        Expr::Let { value, body, .. } => {
+            rewrite_expr_imports(&mut value.kind, imported);
+            if let Some(body) = body {
+                rewrite_expr_imports(&mut body.kind, imported);
+            }
+        }
+        Expr::If { cond, then, otherwise } => {
+            rewrite_expr_imports(&mut cond.kind, imported);
+            rewrite_expr_imports(&mut then.kind, imported);
+            if let Some(otherwise) = otherwise {
+                rewrite_expr_imports(&mut otherwise.kind, imported);
+            }
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            rewrite_expr_imports(&mut lhs.kind, imported);
+            rewrite_expr_imports(&mut rhs.kind, imported);
+        }
+        Expr::Cut { value, consumer } => {
+            rewrite_expr_imports(&mut value.kind, imported);
+            rewrite_expr_imports(&mut consumer.kind, imported);
+        }
+        Expr::Shift { expr, .. } | Expr::Request { arg: expr, .. } => {
+            rewrite_expr_imports(&mut expr.kind, imported)
+        }
+        Expr::Project { base, .. } => rewrite_expr_imports(&mut base.kind, imported),
+        Expr::Handle { body, clauses, ret } => {
+            rewrite_expr_imports(&mut body.kind, imported);
+            for clause in clauses {
+                rewrite_expr_imports(&mut clause.body.kind, imported);
+            }
+            if let Some((_, ret)) = ret {
+                rewrite_expr_imports(&mut ret.kind, imported);
+            }
+        }
+        Expr::Index { value, index } => {
+            rewrite_expr_imports(&mut value.kind, imported);
+            rewrite_expr_imports(&mut index.kind, imported);
+        }
+        Expr::Slice { value, start, end } => {
+            rewrite_expr_imports(&mut value.kind, imported);
+            for endpoint in [start, end].into_iter().flatten() {
+                rewrite_expr_imports(&mut endpoint.kind, imported);
+            }
+        }
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => {}
+    }
+}
+
+fn rewrite_pattern_imports(p: &mut Pattern, imported: &HashMap<String, String>) {
+    match p {
+        // A bare imported name is that variant, payloadless.
+        Pattern::Ident(name) => {
+            if let Some(label) = imported.get(name) {
+                let (enum_name, variant) = label.rsplit_once("::").expect("a qualified label");
+                *p = Pattern::Enum {
+                    name: enum_name.to_string(),
+                    variant: variant.to_string(),
+                    fields: Vec::new(),
+                };
+            }
+        }
+        // `Cons(h, t)` parses with the variant in `name`; qualify it.
+        Pattern::Enum { name, variant, fields } => {
+            if variant.is_empty()
+                && let Some(label) = imported.get(name)
+            {
+                let (enum_name, v) = label.rsplit_once("::").expect("a qualified label");
+                *name = enum_name.to_string();
+                *variant = v.to_string();
+            }
+            for field in fields {
+                rewrite_pattern_imports(field, imported);
+            }
+        }
+        Pattern::Binding { pattern, .. } => rewrite_pattern_imports(pattern, imported),
+        Pattern::Or(items) | Pattern::Tuple(items) => {
+            for item in items {
+                rewrite_pattern_imports(item, imported);
+            }
+        }
+        Pattern::Range { start, end } => {
+            rewrite_pattern_imports(start, imported);
+            rewrite_pattern_imports(end, imported);
+        }
+        Pattern::Data { fields, .. } => {
+            for (_, field) in fields {
+                rewrite_pattern_imports(field, imported);
+            }
+        }
+        Pattern::Dtor { arg, .. } => rewrite_pattern_imports(arg, imported),
+        _ => {}
     }
 }

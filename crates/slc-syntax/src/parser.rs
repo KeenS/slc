@@ -535,17 +535,39 @@ impl Parser {
     fn parse_use_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let t = self.expect(TokenKind::Use, "`use`")?;
         let mut path = vec![self.expect_ident("a path to use")?];
+        let mut imports = UseImports::Member;
         while self.eat(&TokenKind::ColonColon) {
+            // `::*` — every variant of the enum the path names, bare.
+            if self.eat(&TokenKind::Star) {
+                imports = UseImports::Glob;
+                break;
+            }
+            // `::{A, B}` — the listed variants, bare.
+            if self.eat(&TokenKind::LBrace) {
+                let mut names = Vec::new();
+                loop {
+                    if self.eat(&TokenKind::RBrace) {
+                        break;
+                    }
+                    names.push(self.expect_ident("a variant name")?);
+                    if !self.eat(&TokenKind::Comma) {
+                        self.expect(TokenKind::RBrace, "`}` after the imported names")?;
+                        break;
+                    }
+                }
+                imports = UseImports::Names(names);
+                break;
+            }
             path.push(self.expect_ident("a path segment")?);
         }
-        if path.len() < 2 {
+        if path.len() < 2 && imports == UseImports::Member {
             return Err(ParseError {
                 message: "`use` takes a path with at least two segments, `module::name`".into(),
                 span: t.span,
             });
         }
         let _ = self.eat(&TokenKind::Semicolon);
-        Ok(Node { span: t.span, kind: Decl::Use { path } })
+        Ok(Node { span: t.span, kind: Decl::Use { path, imports } })
     }
 
     fn parse_effect_decl(&mut self) -> Result<Node<Decl>, ParseError> {

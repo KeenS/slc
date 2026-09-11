@@ -1070,6 +1070,25 @@ Modules are single-file, everything is public, and `main` must be declared at
 the root — a `main` inside a module is `m::main`, which the entry point does
 not accept.
 
+### Variant imports
+
+`use` has three forms:
+
+```sl
+use module::name;        // one member, aliased into this module
+use Colour::*;           // every variant of an enum, bare
+use Colour::{Red, Blue}; // the listed variants, bare
+```
+
+A bare variant name resolves in this order: an explicit import pins it — an
+import that collides with another import, or names a variant its enum does
+not have, is an error at the `use` — otherwise the automatic rule applies:
+unqualified while exactly one enum declares the name. A bare name that
+*several* enums declare and nothing imports is an **error**, not a binder:
+a pattern that silently caught everything is the failure mode this rule
+exists to kill. The prelude's own patterns are fully qualified, so a
+program's `use Mine::*;` never changes what the prelude means.
+
 ## 11. Core calculus
 
 ### Grammar

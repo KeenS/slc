@@ -194,6 +194,17 @@ impl Expr {
     }
 }
 
+/// What a `use` declaration brings into scope.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UseImports {
+    /// `use module::name;` — the member the path ends in.
+    Member,
+    /// `use Enum::*;` — every variant, bare.
+    Glob,
+    /// `use Enum::{A, B};` — the listed variants, bare.
+    Names(Vec<String>),
+}
+
 /// One operation clause of a handler: `op(params) resume => body`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HandleClause {
@@ -414,6 +425,10 @@ pub enum Decl {
     /// module.
     Use {
         path: Vec<String>,
+        /// What the path brings in: the path's last member itself, every
+        /// variant of the enum it names (`use List::*;`), or the listed
+        /// variants (`use List::{Nil, Cons};`).
+        imports: UseImports,
     },
     Const {
         name: String,

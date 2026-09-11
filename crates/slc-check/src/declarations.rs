@@ -135,6 +135,13 @@ impl Declarations {
         self.arities.get(name).copied().unwrap_or(0)
     }
 
+    /// Whether a bare name is a variant of more than one enum — in which
+    /// case it resolves to nothing, and treating it as a binder would
+    /// silently catch everything.
+    pub(crate) fn is_ambiguous_variant(&self, name: &str) -> bool {
+        matches!(self.unqualified.get(name), Some(None))
+    }
+
     /// Whether a name is a declared `menu`.
     pub(crate) fn is_menu(&self, name: &str) -> bool {
         self.menus.contains(name)

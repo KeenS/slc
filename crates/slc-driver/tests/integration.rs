@@ -1043,6 +1043,55 @@ fn display_formats_through_bounded_impls() {
 }
 
 #[test]
+fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
+    // A glob import pins the bare names even beside a competing enum.
+    let dir = std::env::temp_dir().join("slc_test_use_glob.sl");
+    std::fs::write(
+        &dir,
+        r#"use List::*;
+        enum Mine { Nil, Cons(i64, Mine) }
+        fn total(xs: List<i64>) -> i64 {
+            match xs { Nil => 0, Cons(n, rest) => n + total(rest) }
+        }
+        command main | (exit: -i32) { println(total(Cons(40, Cons(2, Nil)))); 0 @ exit }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+
+    // Without an import, an ambiguous bare pattern is an error — never a
+    // silent catch-all binder.
+    let dir = std::env::temp_dir().join("slc_test_use_ambiguous.sl");
+    std::fs::write(
+        &dir,
+        r#"enum Mine { Nil, Cons(i64, Mine) }
+        fn count(xs: Mine) -> i64 {
+            match xs { Nil => 0, Cons(_, rest) => 1 + count(rest) }
+        }
+        command main | (exit: -i32) { println(count(Mine::Nil)); 0 @ exit }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("variant of more than one enum"), "stderr: {stderr}");
+
+    // Colliding imports are an error at the `use`.
+    let dir = std::env::temp_dir().join("slc_test_use_collision.sl");
+    std::fs::write(
+        &dir,
+        r#"use List::*;
+        enum Mine { Nil }
+        use Mine::*;
+        command main | (exit: -i32) { 0 @ exit }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("imported from both"), "stderr: {stderr}");
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
