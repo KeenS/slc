@@ -110,7 +110,8 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
             };
             match written {
                 Some(name) if enums.variants_of(&name).is_some() => {
-                    check_branch_coverage("mu", &name, "item", arms, enums, e.span, diags);
+                    let rows: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
+                    check_comatch_coverage(&name, rows, enums, e.span, diags);
                 }
                 Some(name) => {
                     diags.push(Diagnostic {
@@ -217,6 +218,68 @@ fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
         slc_syntax::ast::TypeExpr::Base(name) => Some(name.clone()),
         slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
         _ => None,
+    }
+}
+
+/// The coverage law for a copattern `mu`, recursively: every item of the
+/// menu is answered exactly once — by one bound arm, or by a group of
+/// nested arms that together cover the item's own menu.
+fn check_comatch_coverage(
+    menu: &str,
+    rows: Vec<&Pattern>,
+    enums: &Declarations,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let items = enums.variants_of(menu).cloned().unwrap_or_default();
+    let mut order: Vec<&String> = Vec::new();
+    let mut groups: std::collections::HashMap<&String, Vec<&Pattern>> =
+        std::collections::HashMap::new();
+    for pattern in rows {
+        let Pattern::Dtor { dtor, arg } = pattern else {
+            diags.push(Diagnostic {
+                message: format!("`mu {menu}` arm must name an item of `{menu}`"),
+                span,
+            });
+            continue;
+        };
+        if !groups.contains_key(dtor) {
+            order.push(dtor);
+        }
+        groups.entry(dtor).or_default().push(arg.as_ref());
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    for dtor in order {
+        let group = groups.remove(dtor).expect("grouped above");
+        if !items.contains(dtor) {
+            diags.push(Diagnostic {
+                message: format!("`mu {menu}` refers to unknown item `{dtor}`"),
+                span,
+            });
+            continue;
+        }
+        seen.insert(dtor.clone());
+        if group.iter().all(|arg| matches!(arg, Pattern::Dtor { .. })) {
+            // Refined: the group's inner arms must cover the item's menu.
+            // (When the item's answer is not a menu, the type checker
+            // already said so.)
+            if let Some(inner) = enums.nested_menu(&format!("{menu}::{dtor}")) {
+                let inner = inner.to_string();
+                check_comatch_coverage(&inner, group, enums, span, diags);
+            }
+        } else if group.len() > 1 {
+            diags.push(Diagnostic {
+                message: format!("`mu {menu}` has duplicate arm for `{dtor}`"),
+                span,
+            });
+        }
+    }
+    let missing: Vec<String> = items.iter().filter(|v| !seen.contains(*v)).cloned().collect();
+    if !missing.is_empty() {
+        diags.push(Diagnostic {
+            message: format!("non-exhaustive `mu {menu}`: missing items {}", missing.join(", ")),
+            span,
+        });
     }
 }
 

@@ -137,6 +137,15 @@ impl Declarations {
         self.signatures.get(label)
     }
 
+    /// The menu an item's answer is, if it is one — what a nested
+    /// copattern `.item(.inner(k))` refines into.
+    pub(crate) fn nested_menu(&self, label: &str) -> Option<&str> {
+        match self.destructor(label)?.1.first()? {
+            Type::Named(inner) if self.is_menu(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
     pub(crate) fn variant(&self, name: &str) -> Option<&(String, Vec<Type>)> {
         if let Some(signature) = self.signatures.get(name) {
             return Some(signature);

@@ -615,37 +615,17 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         }
 
         // `mu T { .item(k) <= c, … }` — the copattern form: a menu value,
-        // μ[…], one branch per demand.
+        // μ[…], one branch per demand. Arms may refine an item with nested
+        // copatterns — `.tail(.head(out))` — which group by their outer
+        // destructor into an inner menu.
         Expr::CoMatch { ty, arms } => {
-            let mut branches = Vec::new();
-            for arm in arms {
-                let Pattern::Dtor { dtor, binder } = &arm.pattern else {
-                    return Err(LowerError::Unsupported(
-                        "`mu` with arms answers a menu's demands; every arm is `.item(k)`".into(),
-                    ));
-                };
-                // Qualify against the written menu first, then the
-                // unambiguous-destructor table.
-                let label = ty
-                    .as_ref()
-                    .and_then(|ty| match &ty.kind {
-                        TypeExpr::Base(name) => lookup_dtor(&format!("{name}::{dtor}")),
-                        _ => None,
-                    })
-                    .or_else(|| lookup_dtor(dtor))
-                    .ok_or_else(|| {
-                        LowerError::Unsupported(format!(
-                            "`.{dtor}` does not name a declared menu item"
-                        ))
-                    })?;
-                let body = lower_select_command(&arm.command, continuations)?;
-                branches.push(CoMatchBranch {
-                    label,
-                    binder: binder.clone(),
-                    body: Box::new(body),
-                });
-            }
-            Ok(Term::CoMatch(branches))
+            let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
+                TypeExpr::Base(name) => Some(name.as_str()),
+                _ => None,
+            });
+            let rows: Vec<(&Pattern, &Node<Expr>)> =
+                arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
+            lower_comatch(qualifier, rows, continuations, 0)
         }
 
         Expr::Select { arms, .. } => {
@@ -665,8 +645,8 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             let mut branches = Vec::new();
             let mut product: Option<(Vec<String>, Command)> = None;
             for arm in arms {
-                let (label, binders) = select_arm_shape(&arm.pattern)?;
                 let command = lower_select_command(&arm.command, continuations)?;
+                let (label, binders, command) = select_arm_shape(&arm.pattern, command)?;
                 match label {
                     Some(label) => {
                         branches.push(CoCaseBranch { label, binders, body: Box::new(command) })
@@ -909,39 +889,37 @@ fn bind_param(p: &Param, body: Term) -> Term {
 
 /// The shape a `select` arm covers: the label it answers to, if it has one,
 /// and the binders for that shape's components.
-fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), LowerError> {
-    fn binder(pattern: &Pattern) -> Result<String, LowerError> {
-        match pattern {
-            Pattern::Ident(name) => Ok(name.clone()),
-            Pattern::Wildcard => Ok(UNUSED_BINDER.to_string()),
-            other => Err(LowerError::Unsupported(format!(
-                "a `select` arm binds each component by name; found {other:?}"
-            ))),
-        }
-    }
+fn select_arm_shape(
+    pattern: &Pattern,
+    command: Command,
+) -> Result<(Option<String>, Vec<String>, Command), LowerError> {
     match pattern {
         // `Red`: an unqualified variant written without a payload. Any other
         // name binds the whole value: a type with no structure has one shape
         // whose single component is the value itself.
         Pattern::Ident(name) => match lookup_variant(name) {
-            Some(label) => Ok((Some(label), Vec::new())),
-            None => Ok((None, vec![name.clone()])),
+            Some(label) => Ok((Some(label), Vec::new(), command)),
+            None => Ok((None, vec![name.clone()], command)),
         },
-        Pattern::Wildcard => Ok((None, vec![UNUSED_BINDER.to_string()])),
+        Pattern::Wildcard => Ok((None, vec![UNUSED_BINDER.to_string()], command)),
         // `Color::Red(x)` or `Red(x)`.
         Pattern::Enum { name, variant, fields } => {
             let written =
                 if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
             let label = lookup_variant(&written).unwrap_or(written);
-            Ok((Some(label), fields.iter().map(binder).collect::<Result<_, _>>()?))
+            let (binders, command) = components(fields.iter(), command)?;
+            Ok((Some(label), binders, command))
         }
-        // `S { left: a, right: b }`: a struct is a labelled product.
-        Pattern::Data { name, fields } => Ok((
-            Some(name.clone()),
-            fields.iter().map(|(_, pattern)| binder(pattern)).collect::<Result<_, _>>()?,
-        )),
+        // `S { left: a, right: b }`: a record is a labelled product.
+        Pattern::Data { name, fields } => {
+            let (binders, command) = components(fields.iter().map(|(_, p)| p), command)?;
+            Ok((Some(name.clone()), binders, command))
+        }
         // `(a, b)`: an unlabelled product.
-        Pattern::Tuple(items) => Ok((None, items.iter().map(binder).collect::<Result<_, _>>()?)),
+        Pattern::Tuple(items) => {
+            let (binders, command) = components(items.iter(), command)?;
+            Ok((None, binders, command))
+        }
         Pattern::Dtor { .. } => Err(LowerError::Unsupported(
             "a `select` covers either a menu's requests or a data type's shapes, not both".into(),
         )),
@@ -949,6 +927,125 @@ fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), 
             "a `select` arm covers one shape of the type; found {other:?}"
         ))),
     }
+}
+
+/// The binders of an arm's components, with the command wrapped by whatever
+/// deeper destructuring the components ask for. A nested product has one
+/// shape, so taking it apart keeps the one-arm-per-shape law: the component
+/// is bound to a fresh name and taken apart again inside the command.
+fn components<'p>(
+    patterns: impl Iterator<Item = &'p Pattern>,
+    command: Command,
+) -> Result<(Vec<String>, Command), LowerError> {
+    fn component(
+        pattern: &Pattern,
+        fresh: String,
+        command: Command,
+    ) -> Result<(String, Command), LowerError> {
+        match pattern {
+            Pattern::Ident(name) => Ok((name.clone(), command)),
+            Pattern::Wildcard => Ok((UNUSED_BINDER.to_string(), command)),
+            Pattern::Tuple(items) => {
+                let (binders, command) = nested(items.iter(), &fresh, command)?;
+                let cut = Command::Cut(
+                    Term::Var(fresh.clone()),
+                    CoTerm::MuTildeTensor(binders, Box::new(command)),
+                );
+                Ok((fresh, cut))
+            }
+            Pattern::Data { name, fields } => {
+                let (binders, command) = nested(fields.iter().map(|(_, p)| p), &fresh, command)?;
+                let cut = Command::Cut(
+                    Term::Var(fresh.clone()),
+                    CoTerm::CoCase(vec![CoCaseBranch {
+                        label: name.clone(),
+                        binders,
+                        body: Box::new(command),
+                    }]),
+                );
+                Ok((fresh, cut))
+            }
+            other => Err(LowerError::Unsupported(format!(
+                "a `select` arm covers one shape: a sum or a value inside a component needs \
+                 its own `match` in the arm; found {other:?}"
+            ))),
+        }
+    }
+    fn nested<'p>(
+        patterns: impl Iterator<Item = &'p Pattern>,
+        parent: &str,
+        command: Command,
+    ) -> Result<(Vec<String>, Command), LowerError> {
+        let mut command = command;
+        let mut binders = Vec::new();
+        for (i, pattern) in patterns.enumerate() {
+            let (name, wrapped) = component(pattern, format!("{parent}_{i}"), command)?;
+            command = wrapped;
+            binders.push(name);
+        }
+        Ok((binders, command))
+    }
+    nested(patterns, "__s", command)
+}
+
+/// Build a menu from copattern rows, grouping arms by their outer
+/// destructor. A group with one plainly-bound arm is a leaf; a group whose
+/// arms all nest — `.tail(.head(out))` — answers its item with an inner
+/// menu, built recursively from the arms' payload patterns and cut against
+/// the request's continuation.
+fn lower_comatch(
+    qualifier: Option<&str>,
+    rows: Vec<(&Pattern, &Node<Expr>)>,
+    continuations: &[String],
+    depth: usize,
+) -> Result<Term, LowerError> {
+    let mut order: Vec<&String> = Vec::new();
+    let mut groups: HashMap<&String, Vec<(&Pattern, &Node<Expr>)>> = HashMap::new();
+    for (pattern, command) in rows {
+        let Pattern::Dtor { dtor, arg } = pattern else {
+            return Err(LowerError::Unsupported(
+                "`mu` with arms answers a menu's demands; every arm is `.item(p)`".into(),
+            ));
+        };
+        if !groups.contains_key(dtor) {
+            order.push(dtor);
+        }
+        groups.entry(dtor).or_default().push((arg.as_ref(), command));
+    }
+    let mut branches = Vec::new();
+    for dtor in order {
+        let label = qualifier
+            .and_then(|q| lookup_dtor(&format!("{q}::{dtor}")))
+            .or_else(|| lookup_dtor(dtor))
+            .ok_or_else(|| {
+                LowerError::Unsupported(format!("`.{dtor}` does not name a declared menu item"))
+            })?;
+        let group = groups.remove(dtor).expect("grouped above");
+        if let [(Pattern::Ident(name), command)] = group.as_slice() {
+            let body = lower_select_command(command, continuations)?;
+            branches.push(CoMatchBranch { label, binder: name.clone(), body: Box::new(body) });
+        } else if let [(Pattern::Wildcard, command)] = group.as_slice() {
+            let body = lower_select_command(command, continuations)?;
+            branches.push(CoMatchBranch {
+                label,
+                binder: UNUSED_BINDER.into(),
+                body: Box::new(body),
+            });
+        } else if group.iter().all(|(arg, _)| matches!(arg, Pattern::Dtor { .. })) {
+            // The item is refined: its answer is an inner menu, and the
+            // whole of it goes to this request's continuation.
+            let inner = lower_comatch(None, group, continuations, depth + 1)?;
+            let binder = format!("__k{depth}");
+            let body = Command::Cut(inner, CoTerm::Covar(binder.clone()));
+            branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
+        } else {
+            return Err(LowerError::Unsupported(format!(
+                "item `{dtor}` is answered once with a binder, or refined by nested requests — \
+                 not both"
+            )));
+        }
+    }
+    Ok(Term::CoMatch(branches))
 }
 
 /// The consumer a cut names, seeing through `↓`/`↑`. Both shifts erase at
@@ -1109,14 +1206,22 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
             Pattern::Rest => out.push_str(".."),
             // A request shape: its qualified label with the continuation as
             // the single bound field, exactly as an enum pattern encodes.
-            Pattern::Dtor { dtor, binder } => {
+            Pattern::Dtor { dtor, arg } => {
                 let label = lookup_dtor(dtor).unwrap_or_else(|| dtor.clone());
                 out.push('"');
                 out.push_str(&escape(&label));
                 out.push('"');
                 out.push('(');
-                out.push('$');
-                out.push_str(&escape(binder));
+                // The payload of a matched request is its continuation — a
+                // live value with no shape to inspect — so anything but a
+                // binder or a wildcard cannot match at run time.
+                match arg.as_ref() {
+                    Pattern::Ident(name) => {
+                        out.push('$');
+                        out.push_str(&escape(name));
+                    }
+                    _ => out.push('*'),
+                }
                 out.push(')');
             }
             Pattern::Tuple(items) => {

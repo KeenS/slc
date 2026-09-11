@@ -1513,15 +1513,15 @@ impl Parser {
 
     fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
         match self.peek_kind().cloned() {
-            // `.item(out)` — a request shape: the demanded destructor, and
-            // the binder naming the request's continuation.
+            // `.item(p)` — a request shape: the demanded destructor, and a
+            // pattern for the continuation the request carries.
             Some(TokenKind::Dot) => {
                 self.pos += 1;
                 let dtor = self.expect_ident("destructor name")?;
                 self.expect(TokenKind::LParen, "`(` after the destructor")?;
-                let binder = self.expect_ident("a binder for the request's continuation")?;
+                let arg = self.parse_pattern()?;
                 self.expect(TokenKind::RParen, "`)`")?;
-                Ok(Pattern::Dtor { dtor, binder })
+                Ok(Pattern::Dtor { dtor, arg: Box::new(arg) })
             }
             Some(TokenKind::Minus) => {
                 self.pos += 1;

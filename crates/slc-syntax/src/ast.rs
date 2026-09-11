@@ -300,12 +300,13 @@ pub enum Pattern {
         variant: String,
         fields: Vec<Pattern>,
     },
-    /// `.item(binder)` — a request shape: the destructor it demands, and the
-    /// binder naming the request's continuation. Matches a continuation of a
-    /// `menu` type the way an `Enum` pattern matches an `enum` value.
+    /// `.item(p)` — a request shape: the destructor it demands, and a
+    /// pattern for the continuation the request carries. In `match` the
+    /// pattern is a binder naming that continuation; in `mu` it may itself
+    /// be a request shape — a nested copattern, `.tail(.head(out))`.
     Dtor {
         dtor: String,
-        binder: String,
+        arg: Box<Pattern>,
     },
 }
 

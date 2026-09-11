@@ -340,6 +340,30 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
             branch_env.define_local(reify_coterm(e, &env)?);
             State::Command(branch.body, branch_env)
         }
+        // ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩ — a direct cut against a product
+        // consumer binds every component and runs the body.
+        Node::MuTildeTensor(arity, body) => {
+            let mut env2 = env;
+            bind_components(arity, v, &mut env2)?;
+            State::Command(body, env2)
+        }
+        // ⟨ L(v) ∥ μ̃[…] ⟩ — a direct cut against a labelled consumer: the
+        // label chooses the branch, exactly as activation through a value
+        // does.
+        Node::CoCase(branches) => {
+            let Value::Tagged(label, payload) = v else {
+                return Err(EvalError::TypeMismatch(format!(
+                    "a labelled consumer requires a labelled value, got {}",
+                    v.display()
+                )));
+            };
+            let Some(branch) = branches.iter().find(|b| *b.label == label) else {
+                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in select")));
+            };
+            let mut env2 = env;
+            bind_components(branch.arity, *payload, &mut env2)?;
+            State::Command(branch.body, env2)
+        }
         // ⟨ v ∥ prj:index ⟩ → the index-th spine component of v. A struct is
         // a tagged product, so unwrap the tag first; then walk `index` tails
         // and take the head, or the whole remainder when it is the bare last.

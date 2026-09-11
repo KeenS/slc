@@ -159,6 +159,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         ("select.sl", Expected { success: true, stdout: &["1", "42", "100"], stderr: &[] }),
+        ("stream.sl", Expected { success: true, stdout: &["10", "11", "13", "22"], stderr: &[] }),
         (
             "strings.sl",
             Expected { success: true, stdout: &["Hello, world!", "H", "world"], stderr: &[] },

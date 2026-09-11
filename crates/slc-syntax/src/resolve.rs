@@ -493,8 +493,8 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         Pattern::Ident(name) => {
             out.insert(name.clone());
         }
-        Pattern::Dtor { binder, .. } => {
-            out.insert(binder.clone());
+        Pattern::Dtor { arg, .. } => {
+            collect_binders(arg, out);
         }
         Pattern::Binding { name, pattern } => {
             out.insert(name.clone());

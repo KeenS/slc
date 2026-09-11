@@ -772,10 +772,13 @@ fn bind_match_pattern(
                 bind_match_pattern(field, ty, enums, env);
             }
         }
-        // A request shape binds the continuation it carries.
-        Pattern::Dtor { dtor, binder } => {
+        // A request shape binds the continuation it carries. In a `match`
+        // the payload is a live continuation — opaque at run time — so only
+        // a binder can take it; nesting belongs to `mu`, where dispatch is
+        // deferred.
+        Pattern::Dtor { dtor, arg } => {
             if let Some(ty) = enums.destructor(dtor).and_then(|(_, p)| p.first()) {
-                env.define(binder, ty.clone());
+                bind_match_pattern(arg, ty, enums, env);
             }
         }
         Pattern::Tuple(items) => {
@@ -793,6 +796,106 @@ fn bind_match_pattern(
             }
         }
         _ => {}
+    }
+}
+
+/// Check the arms of a copattern `mu` against its menu, recursively: each
+/// arm binds its request's continuation (or refines it with nested
+/// copatterns into an inner menu) and answers with a command.
+fn check_comatch_arms(
+    menu: &str,
+    rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use slc_syntax::ast::Pattern;
+    let mut order: Vec<&String> = Vec::new();
+    let mut groups: std::collections::HashMap<&String, Vec<(&Pattern, &Node<Expr>)>> =
+        std::collections::HashMap::new();
+    let check_command = |env: &mut Env, command: &Node<Expr>, diags: &mut Vec<Diagnostic>| {
+        let ty = check_expr(command, enums, env, diags);
+        if let Some(ty) = ty
+            && ty != Type::Bottom
+            && ty != Type::One
+        {
+            diags.push(Diagnostic {
+                message: format!("a `mu` arm is a command; this one has type {ty}"),
+                span: command.span,
+            });
+        }
+    };
+    for (pattern, command) in rows {
+        let Pattern::Dtor { dtor, arg } = pattern else {
+            diags.push(Diagnostic {
+                message: format!("`mu {menu}` answers demands; every arm is `.item(p)`"),
+                span: command.span,
+            });
+            continue;
+        };
+        if !groups.contains_key(dtor) {
+            order.push(dtor);
+        }
+        groups.entry(dtor).or_default().push((arg.as_ref(), command));
+    }
+    for dtor in order {
+        let group = groups.remove(dtor).expect("grouped above");
+        let Some((_, payload)) = enums.destructor(&format!("{menu}::{dtor}")) else {
+            diags.push(Diagnostic {
+                message: format!("`{menu}` has no item `{dtor}`"),
+                span: group[0].1.span,
+            });
+            for (_, command) in group {
+                check_command(env, command, diags);
+            }
+            continue;
+        };
+        let k_ty = payload.first().cloned().unwrap_or(Type::One);
+        let mut nested: Vec<(&Pattern, &Node<Expr>)> = Vec::new();
+        for (arg, command) in group {
+            match arg {
+                Pattern::Ident(name) => {
+                    env.push();
+                    env.define(name, k_ty.clone());
+                    check_command(env, command, diags);
+                    env.pop();
+                }
+                Pattern::Wildcard => check_command(env, command, diags),
+                Pattern::Dtor { .. } => nested.push((arg, command)),
+                _ => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`.{dtor}` carries a continuation: bind it, or refine it with a \
+                             nested request"
+                        ),
+                        span: command.span,
+                    });
+                    check_command(env, command, diags);
+                }
+            }
+        }
+        if !nested.is_empty() {
+            // A refined item's answer must itself be a menu.
+            match enums.nested_menu(&format!("{menu}::{dtor}")) {
+                Some(inner) => {
+                    let inner = inner.to_string();
+                    check_comatch_arms(&inner, nested, enums, env, diags);
+                }
+                None => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`.{dtor}` answers {}, which is not a menu, so its request cannot \
+                             be refined",
+                            k_ty.dual()
+                        ),
+                        span: nested[0].1.span,
+                    });
+                    for (_, command) in nested {
+                        check_command(env, command, diags);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -882,9 +985,53 @@ fn bind_select_arm(
         });
     }
     for (binder, ty) in binders.iter().zip(components) {
-        if let Pattern::Ident(name) = binder {
-            env.define(name, ty);
+        bind_select_component(binder, &ty, declarations, env, span, diags);
+    }
+}
+
+/// Bind one component of a `select` arm. A nested product — a tuple or a
+/// record — has one shape, so it may be taken apart in place; a sum inside a
+/// component needs its own `match` in the arm.
+fn bind_select_component(
+    pattern: &slc_syntax::ast::Pattern,
+    ty: &Type,
+    declarations: &Declarations,
+    env: &mut Env,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Ident(name) => env.define(name, ty.clone()),
+        Pattern::Wildcard => {}
+        Pattern::Tuple(items) => {
+            let components = flatten_tensor(ty);
+            if items.len() != components.len() {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "this component has {} part(s); the pattern binds {}",
+                        components.len(),
+                        items.len()
+                    ),
+                    span,
+                });
+            }
+            for (item, ty) in items.iter().zip(components) {
+                bind_select_component(item, &ty, declarations, env, span, diags);
+            }
         }
+        Pattern::Data { name, fields } => {
+            let declared = declarations.fields(name).unwrap_or_default();
+            for ((_, field), ty) in fields.iter().zip(declared.iter()) {
+                bind_select_component(field, ty, declarations, env, span, diags);
+            }
+        }
+        _ => diags.push(Diagnostic {
+            message: "a `select` arm covers one shape: a sum or a value inside a component \
+                      needs its own `match` in the arm"
+                .into(),
+            span,
+        }),
     }
 }
 
@@ -1521,39 +1668,9 @@ fn check_expr_unapplied(
                 });
                 return None;
             };
-            for arm in arms {
-                env.push();
-                match &arm.pattern {
-                    slc_syntax::ast::Pattern::Dtor { dtor, binder } => {
-                        match enums.destructor(&format!("{menu}::{dtor}")) {
-                            Some((_, payload)) => {
-                                if let Some(k) = payload.first() {
-                                    env.define(binder, k.clone());
-                                }
-                            }
-                            None => diags.push(Diagnostic {
-                                message: format!("`{menu}` has no item `{dtor}`"),
-                                span: arm.command.span,
-                            }),
-                        }
-                    }
-                    _ => diags.push(Diagnostic {
-                        message: format!("`mu {menu}` answers demands; every arm is `.item(k)`"),
-                        span: arm.command.span,
-                    }),
-                }
-                let command = check_expr(&arm.command, enums, env, diags);
-                if let Some(command) = command
-                    && command != Type::Bottom
-                    && command != Type::One
-                {
-                    diags.push(Diagnostic {
-                        message: format!("a `mu` arm is a command; this one has type {command}"),
-                        span: arm.command.span,
-                    });
-                }
-                env.pop();
-            }
+            let rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)> =
+                arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
+            check_comatch_arms(&menu, rows, enums, env, diags);
             Some(Type::Dual(Box::new(Type::Named(menu))))
         }
         Expr::Select { ty, arms } => {
