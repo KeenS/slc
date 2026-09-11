@@ -114,10 +114,8 @@ fn to_string<T: Display>(x: T) -> String { fmt(x) }
 fn fmt_items<T: Display>(xs: List<T>) -> String {
     match xs {
         List::Nil => "",
-        List::Cons(h, rest) => match rest {
-            List::Nil => fmt(h),
-            List::Cons(_, _) => fmt(h) + ", " + fmt_items(rest),
-        },
+        List::Cons(h, List::Nil) => fmt(h),
+        List::Cons(h, rest) => fmt(h) + ", " + fmt_items(rest),
     }
 }
 
