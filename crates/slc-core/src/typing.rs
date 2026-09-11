@@ -295,6 +295,33 @@ pub fn infer_term(
             Ok(Type::Named(owner_of_label(label)?))
         }
 
+        Term::CoMatch(branches) => {
+            // A menu value inhabits the named negative type its destructors
+            // belong to. Every branch must belong to the same declaration.
+            let Some(first) = branches.first() else {
+                return Err(TypeError::Arity("empty menu value".into()));
+            };
+            let owner = owner_of_label(&first.label)?;
+            for branch in branches {
+                if owner_of_label(&branch.label)? != owner {
+                    return Err(TypeError::Arity(format!(
+                        "menu value mixes `{owner}` with `{}`",
+                        branch.label
+                    )));
+                }
+                // The request's continuation scopes over the branch body only.
+                let shadowed = delta.lookup(&branch.binder).cloned();
+                delta.insert(branch.binder.clone(), Type::Bottom);
+                let result = infer_command(&branch.body, gamma, delta);
+                match shadowed {
+                    Some(ty) => delta.insert(branch.binder.clone(), ty),
+                    None => delta.remove(&branch.binder),
+                }
+                result?;
+            }
+            Ok(Type::Named(owner))
+        }
+
         Term::Co(e) => {
             // A reified co-term is a value of the dual of what it refutes.
             Ok(infer_coterm(e, gamma, delta)?.dual())
@@ -369,6 +396,13 @@ pub fn infer_coterm(
                 result?;
             }
             Ok(Type::Named(owner))
+        }
+
+        CoTerm::Dtor(label, e) => {
+            // A request refutes the named negative type that owns its
+            // destructor; the payload is the continuation for the answer.
+            infer_coterm(e, gamma, delta)?;
+            Ok(Type::Named(owner_of_label(label)?))
         }
 
         CoTerm::MuTildeTensor(binders, body) => {

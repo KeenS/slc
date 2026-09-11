@@ -3,6 +3,18 @@
 use crate::command::Command;
 use crate::coterm::CoTerm;
 
+/// One branch of a menu (a negative additive value).
+///
+/// `label` is the destructor it answers — a fully qualified request name —
+/// `binder` names the request's continuation inside `body`, and `body` is
+/// the command that computes and delivers that answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoMatchBranch {
+    pub label: String,
+    pub binder: String,
+    pub body: Box<Command>,
+}
+
 /// A term — the proof side of a cut.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
@@ -21,6 +33,11 @@ pub enum Term {
     /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.
     Tag(String, Box<Term>),
+    /// Menu: `μ[.d₁(α). c₁ | … | .dₙ(α). cₙ]` — the negative additive value,
+    /// dual of [`CoTerm::CoCase`]. One branch per destructor the type
+    /// offers; the request that arrives chooses exactly one of them, and
+    /// the others are never evaluated. A `menu` value is a menu term.
+    CoMatch(Vec<CoMatchBranch>),
     /// A co-term reified as a value: `co(e)` — the introduction form of the
     /// `↓` shift, boxing a consumer as data.
     ///

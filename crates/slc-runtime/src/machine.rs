@@ -213,20 +213,38 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
             kont.push(Frame::WrapTag(label.to_string()));
             State::Term(payload, env)
         }
-        Node::Co(co) => State::Return(match node(co) {
-            // A negative additive consumer closes over its environment; its
-            // branch bodies stay unevaluated until activation chooses one.
-            Node::CoCase(_) => Value::CoCase { co, env },
-            // A product consumer, or `μ̃x. c` (a one-part product consumer).
-            Node::MuTildeTensor(..) | Node::MuTilde(_) => Value::CoTensor { co, env },
-            other => {
-                return Err(EvalError::TypeMismatch(format!(
-                    "cannot reify this co-term as a value: {other:?}"
-                )));
-            }
-        }),
+        // A menu closes over its environment; its branch bodies stay
+        // unevaluated until a request chooses one.
+        Node::CoMatch(_) => State::Return(Value::Menu { node: t, env }),
+        Node::Co(co) => State::Return(reify_coterm(co, &env)?),
         other => {
             return Err(EvalError::TypeMismatch(format!("expected a term, found {other:?}")));
+        }
+    })
+}
+
+/// A co-term seen as a value — the `↓` shift, `co(e)`.
+///
+/// A consumer closes over its environment with its branch bodies
+/// unevaluated; a co-variable is already a value in the environment; and a
+/// request `.d(e)` becomes a labelled value carrying its own continuation
+/// reified, which is what lets `match` take a continuation apart with the
+/// same machinery that takes an `enum` value apart.
+fn reify_coterm(co: NodeId, env: &Env) -> Result<Value, EvalError> {
+    Ok(match node(co) {
+        Node::CoCase(_) => Value::CoCase { co, env: env.clone() },
+        Node::MuTildeTensor(..) | Node::MuTilde(_) => Value::CoTensor { co, env: env.clone() },
+        Node::CoLocal(i) => {
+            env.local(i).ok_or_else(|| EvalError::Unbound(format!("de Bruijn co-local #{i}")))?
+        }
+        Node::CoDynamic(a) => {
+            env.lookup(&a).ok_or_else(|| EvalError::Unbound(format!("co-variable `{a}`")))?
+        }
+        Node::Dtor(label, e) => Value::Tagged(label.to_string(), Box::new(reify_coterm(e, env)?)),
+        other => {
+            return Err(EvalError::TypeMismatch(format!(
+                "cannot reify this co-term as a value: {other:?}"
+            )));
         }
     })
 }
@@ -303,6 +321,25 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
             env2.define_local(v);
             State::Command(c2, env2)
         }
+        // ⟨ menu ∥ .d(e) ⟩ — a request: the label chooses one branch of the
+        // menu, which runs with the request's continuation bound.
+        Node::Dtor(label, e) => {
+            let Value::Menu { node: menu, env: menu_env } = v else {
+                return Err(EvalError::TypeMismatch(format!(
+                    "a request needs a menu value, got {}",
+                    v.display()
+                )));
+            };
+            let Node::CoMatch(branches) = node(menu) else {
+                return Err(EvalError::TypeMismatch("a menu value must be `μ[…]`".into()));
+            };
+            let Some(branch) = branches.iter().find(|b| *b.label == *label) else {
+                return Err(EvalError::TypeMismatch(format!("no `{label}` branch in menu")));
+            };
+            let mut branch_env = menu_env;
+            branch_env.define_local(reify_coterm(e, &env)?);
+            State::Command(branch.body, branch_env)
+        }
         // ⟨ v ∥ prj:index ⟩ → the index-th spine component of v. A struct is
         // a tagged product, so unwrap the tag first; then walk `index` tails
         // and take the head, or the whole remainder when it is the bare last.
@@ -362,6 +399,26 @@ fn step_apply(
             };
             let mut branch_env = env;
             bind_components(branch.arity, *payload, &mut branch_env)?;
+            State::Command(branch.body, branch_env)
+        }
+        // A request applied to a menu: the mirror of activating a labelled
+        // consumer — the request's label chooses the branch, and its
+        // continuation (the tagged payload) is what the branch binds.
+        Value::Menu { node: menu, env } => {
+            let Node::CoMatch(branches) = node(menu) else {
+                return Err(EvalError::TypeMismatch("a menu value must be `μ[…]`".into()));
+            };
+            let Value::Tagged(label, payload) = arg else {
+                return Err(EvalError::TypeMismatch(format!(
+                    "activating a menu requires a request, got {}",
+                    arg.display()
+                )));
+            };
+            let Some(branch) = branches.iter().find(|b| *b.label == label) else {
+                return Err(EvalError::TypeMismatch(format!("no `{label}` branch in menu")));
+            };
+            let mut branch_env = env;
+            branch_env.define_local(*payload);
             State::Command(branch.body, branch_env)
         }
         // Activating a product consumer binds every component.

@@ -82,6 +82,17 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         Term::Tag(label, payload) => {
             Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
         }
+        Term::CoMatch(branches) => {
+            let branches = branches
+                .iter()
+                .map(|b| {
+                    let body =
+                        compile_cmd(&b.body, &scope.with(std::slice::from_ref(&b.binder)), chunk);
+                    Branch { label: Rc::from(b.label.as_str()), arity: 1, body }
+                })
+                .collect();
+            Node::CoMatch(Rc::new(branches))
+        }
         Term::Co(e) => Node::Co(compile_coterm(e, scope, chunk)),
     };
     chunk.push(node)
@@ -110,6 +121,9 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         CoTerm::MuTildeTensor(binders, c) => {
             let body = compile_cmd(c, &scope.with(binders), chunk);
             Node::MuTildeTensor(binders.len(), body)
+        }
+        CoTerm::Dtor(label, e) => {
+            Node::Dtor(Rc::from(label.as_str()), compile_coterm(e, scope, chunk))
         }
     };
     chunk.push(node)

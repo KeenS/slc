@@ -51,6 +51,16 @@ impl std::fmt::Display for Term {
             Term::Mu(a, c) => write!(f, "μ{a}. {c}"),
             Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
             Term::Tag(label, t) => write!(f, "{label}({t})"),
+            Term::CoMatch(branches) => {
+                write!(f, "μ[")?;
+                for (i, branch) in branches.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " | ")?;
+                    }
+                    write!(f, ".{}({}). {}", branch.label, branch.binder, branch.body)?;
+                }
+                write!(f, "]")
+            }
             Term::Co(e) => write!(f, "co({e})"),
         }
     }
@@ -74,6 +84,7 @@ impl std::fmt::Display for CoTerm {
                 }
                 write!(f, "]")
             }
+            CoTerm::Dtor(label, e) => write!(f, ".{label}({e})"),
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use crate::command::Command;
 use crate::coterm::{CoCaseBranch, CoTerm};
-use crate::term::Term;
+use crate::term::{CoMatchBranch, Term};
 use std::collections::HashSet;
 
 /// Generate a fresh variable name not in `used`.
@@ -47,6 +47,14 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             go_term(t2, out);
         }
         Term::Tag(_, t) => go_term(t, out),
+        Term::CoMatch(branches) => {
+            for branch in branches {
+                let mut inner = HashSet::new();
+                go_command(&branch.body, &mut inner);
+                inner.remove(&branch.binder);
+                out.extend(inner);
+            }
+        }
         Term::Co(e) => go_coterm(e, out),
     }
 }
@@ -85,6 +93,7 @@ fn go_coterm(e: &CoTerm, out: &mut HashSet<String>) {
             }
             out.extend(inner);
         }
+        CoTerm::Dtor(_, e) => go_coterm(e, out),
     }
 }
 
@@ -133,6 +142,20 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
             alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
         }
         (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
+        (Term::CoMatch(b1), Term::CoMatch(b2)) => {
+            b1.len() == b2.len()
+                && b1.iter().zip(b2).all(|(l, r)| {
+                    if l.label != r.label {
+                        return false;
+                    }
+                    xs.push(l.binder.clone());
+                    ys.push(r.binder.clone());
+                    let eq = alpha_command(&l.body, &r.body, xs, ys);
+                    xs.pop();
+                    ys.pop();
+                    eq
+                })
+        }
         (Term::Co(e1), Term::Co(e2)) => alpha_coterm(e1, e2, xs, ys),
         _ => false,
     }
@@ -164,6 +187,7 @@ fn alpha_coterm(a: &CoTerm, b: &CoTerm, xs: &mut Vec<String>, ys: &mut Vec<Strin
             eq
         }
         (CoTerm::Prj(i), CoTerm::Prj(j)) => i == j,
+        (CoTerm::Dtor(l1, e1), CoTerm::Dtor(l2, e2)) => l1 == l2 && alpha_coterm(e1, e2, xs, ys),
         (CoTerm::CoCase(b1), CoTerm::CoCase(b2)) => {
             b1.len() == b2.len()
                 && b1.iter().zip(b2).all(|(l, r)| {
@@ -214,6 +238,22 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
             Box::new(subst_term(x, replacement, t2)),
         ),
         Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
+        Term::CoMatch(branches) => Term::CoMatch(
+            branches
+                .iter()
+                .map(|branch| {
+                    if branch.binder == x {
+                        branch.clone()
+                    } else {
+                        CoMatchBranch {
+                            label: branch.label.clone(),
+                            binder: branch.binder.clone(),
+                            body: Box::new(subst_command(x, replacement, &branch.body)),
+                        }
+                    }
+                })
+                .collect(),
+        ),
         Term::Co(e) => Term::Co(Box::new(subst_coterm(x, replacement, e))),
     }
 }
@@ -270,6 +310,121 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
             } else {
                 CoTerm::MuTildeTensor(binders.clone(), Box::new(subst_command(x, replacement, c)))
             }
+        }
+        CoTerm::Dtor(label, e) => {
+            CoTerm::Dtor(label.clone(), Box::new(subst_coterm(x, replacement, e)))
+        }
+    }
+}
+
+/// Substitute co-term `replacement` for co-variable `a` in a command.
+///
+/// The mirror of [`subst_command`]: values and continuations share one
+/// namespace, so any binder of the same name shadows `a` and stops the
+/// descent.
+pub fn subst_covar_command(a: &str, replacement: &CoTerm, command: &Command) -> Command {
+    match command {
+        Command::Cut(t, e) => {
+            Command::Cut(subst_covar_term(a, replacement, t), subst_covar_coterm(a, replacement, e))
+        }
+    }
+}
+
+/// Substitute co-term `replacement` for co-variable `a` in a term.
+pub fn subst_covar_term(a: &str, replacement: &CoTerm, term: &Term) -> Term {
+    match term {
+        Term::Var(_) => term.clone(),
+        Term::Lam(y, body) => {
+            if y == a {
+                term.clone()
+            } else {
+                Term::Lam(y.clone(), Box::new(subst_covar_term(a, replacement, body)))
+            }
+        }
+        Term::Mu(b, c) => {
+            if b == a {
+                term.clone()
+            } else {
+                Term::Mu(b.clone(), Box::new(subst_covar_command(a, replacement, c)))
+            }
+        }
+        Term::Pair(t1, t2) => Term::Pair(
+            Box::new(subst_covar_term(a, replacement, t1)),
+            Box::new(subst_covar_term(a, replacement, t2)),
+        ),
+        Term::Tag(label, t) => {
+            Term::Tag(label.clone(), Box::new(subst_covar_term(a, replacement, t)))
+        }
+        Term::CoMatch(branches) => Term::CoMatch(
+            branches
+                .iter()
+                .map(|branch| {
+                    if branch.binder == a {
+                        branch.clone()
+                    } else {
+                        CoMatchBranch {
+                            label: branch.label.clone(),
+                            binder: branch.binder.clone(),
+                            body: Box::new(subst_covar_command(a, replacement, &branch.body)),
+                        }
+                    }
+                })
+                .collect(),
+        ),
+        Term::Co(e) => Term::Co(Box::new(subst_covar_coterm(a, replacement, e))),
+    }
+}
+
+/// Substitute co-term `replacement` for co-variable `a` in a co-term.
+pub fn subst_covar_coterm(a: &str, replacement: &CoTerm, e: &CoTerm) -> CoTerm {
+    match e {
+        CoTerm::Covar(y) => {
+            if y == a {
+                replacement.clone()
+            } else {
+                e.clone()
+            }
+        }
+        CoTerm::App(v, tail) => CoTerm::App(
+            subst_covar_term(a, replacement, v),
+            Box::new(subst_covar_coterm(a, replacement, tail)),
+        ),
+        CoTerm::MuTilde(y, c) => {
+            if y == a {
+                e.clone()
+            } else {
+                CoTerm::MuTilde(y.clone(), Box::new(subst_covar_command(a, replacement, c)))
+            }
+        }
+        CoTerm::Prj(_) => e.clone(),
+        CoTerm::CoCase(branches) => CoTerm::CoCase(
+            branches
+                .iter()
+                .map(|branch| {
+                    if branch.binders.iter().any(|binder| binder == a) {
+                        branch.clone()
+                    } else {
+                        CoCaseBranch {
+                            label: branch.label.clone(),
+                            binders: branch.binders.clone(),
+                            body: Box::new(subst_covar_command(a, replacement, &branch.body)),
+                        }
+                    }
+                })
+                .collect(),
+        ),
+        CoTerm::MuTildeTensor(binders, c) => {
+            if binders.iter().any(|binder| binder == a) {
+                e.clone()
+            } else {
+                CoTerm::MuTildeTensor(
+                    binders.clone(),
+                    Box::new(subst_covar_command(a, replacement, c)),
+                )
+            }
+        }
+        CoTerm::Dtor(label, e) => {
+            CoTerm::Dtor(label.clone(), Box::new(subst_covar_coterm(a, replacement, e)))
         }
     }
 }

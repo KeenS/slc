@@ -40,6 +40,10 @@ pub enum CoTerm {
     /// tensor it is given. This is the negative multiplicative: it is the
     /// unlabelled counterpart of a one-branch `CoCase`.
     MuTildeTensor(Vec<String>, Box<Command>),
+    /// Destructor: `.d(e)` — a request, the dual of [`Term::Tag`]. The label
+    /// selects one branch of a menu value, and the payload is the
+    /// continuation that wants that branch's answer.
+    Dtor(String, Box<CoTerm>),
 }
 
 impl CoTerm {

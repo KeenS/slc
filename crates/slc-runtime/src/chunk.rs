@@ -35,6 +35,9 @@ pub enum Node {
     Mu(NodeId),
     Pair(NodeId, NodeId),
     Tag(Rc<str>, NodeId),
+    /// `μ[…]` — a menu value: its branches, each binding one positional
+    /// slot (the request's continuation) before its body.
+    CoMatch(Rc<Vec<Branch>>),
     /// A reified co-term value; child is the co-term node.
     Co(NodeId),
 
@@ -54,6 +57,9 @@ pub enum Node {
     CoCase(Rc<Vec<Branch>>),
     /// A product consumer binding `arity` slots; child is the command.
     MuTildeTensor(usize, NodeId),
+    /// `.d(e)` — a request: the destructor label, and the co-term that
+    /// consumes the answer.
+    Dtor(Rc<str>, NodeId),
 
     // ── commands ──
     /// `⟨ t ∥ e ⟩` — a cut of a term against a co-term.

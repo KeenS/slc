@@ -4,7 +4,7 @@
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::parse::{parse_command, parse_coterm, parse_term, parse_type};
-use slc_core::term::Term;
+use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::{Base, Type};
 
 fn var(x: &str) -> Term {
@@ -36,6 +36,20 @@ fn every_term() -> Vec<Term> {
                 body: Box::new(cut(var("y"), CoTerm::Covar("return".into()))),
             },
         ]))),
+        // A menu: one branch per destructor, each binding its request's
+        // continuation.
+        Term::CoMatch(vec![
+            CoMatchBranch {
+                label: "Config::retries".into(),
+                binder: "out".into(),
+                body: Box::new(cut(var("n"), CoTerm::Covar("out".into()))),
+            },
+            CoMatchBranch {
+                label: "Config::name".into(),
+                binder: "out".into(),
+                body: Box::new(cut(var("s"), CoTerm::Covar("out".into()))),
+            },
+        ]),
         // A declaration-shaped term: binders of both kinds, nested.
         Term::Lam(
             "x".into(),
@@ -62,6 +76,7 @@ fn every_coterm() -> Vec<CoTerm> {
             Box::new(CoTerm::App(var("v"), Box::new(CoTerm::Covar("k".into())))),
         ),
         CoTerm::MuTilde("x".into(), Box::new(cut(var("x"), CoTerm::Covar("k".into())))),
+        CoTerm::Dtor("Config::retries".into(), Box::new(CoTerm::Covar("k".into()))),
         CoTerm::Prj(0),
         CoTerm::Prj(1),
         CoTerm::CoCase(vec![CoCaseBranch {

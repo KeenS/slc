@@ -8,7 +8,7 @@
 
 use crate::command::Command;
 use crate::coterm::{CoCaseBranch, CoTerm};
-use crate::term::Term;
+use crate::term::{CoMatchBranch, Term};
 use crate::types::{Base, Type};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +178,29 @@ impl Parser {
             }
             Some('μ') => {
                 self.pos += 1;
+                // `μ[.d(α). c | …]` is a menu; `μα. c` binds a co-variable.
+                if self.eat("[") {
+                    let mut branches = Vec::new();
+                    loop {
+                        self.expect(".")?;
+                        let label = self.name()?;
+                        self.expect("(")?;
+                        let binder = self.name()?;
+                        self.expect(")")?;
+                        self.expect(".")?;
+                        branches.push(CoMatchBranch {
+                            label,
+                            binder,
+                            body: Box::new(self.command()?),
+                        });
+                        if self.eat("|") {
+                            continue;
+                        }
+                        self.expect("]")?;
+                        break;
+                    }
+                    return Ok(Term::CoMatch(branches));
+                }
                 let a = self.name()?;
                 self.expect(".")?;
                 Ok(Term::Mu(a, Box::new(self.command()?)))
@@ -247,6 +270,16 @@ impl Parser {
                 let x = self.name()?;
                 self.expect(".")?;
                 Ok(CoTerm::MuTilde(x, Box::new(self.command()?)))
+            }
+            // `.d(e)` is a destructor: a request carrying the continuation
+            // that wants its answer.
+            Some('.') => {
+                self.pos += 1;
+                let label = self.name()?;
+                self.expect("(")?;
+                let e = self.coterm()?;
+                self.expect(")")?;
+                Ok(CoTerm::Dtor(label, Box::new(e)))
             }
             // A projection, a co-variable, or an application `v · e`: parse
             // a term first — a following `·` makes it the argument.

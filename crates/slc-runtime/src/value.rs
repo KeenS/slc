@@ -143,6 +143,13 @@ pub enum Value {
         co: crate::chunk::NodeId,
         env: Env,
     },
+    /// A menu value (`μ[…]`): the branches of a core menu term together
+    /// with the environment they closed over. Branch bodies are held
+    /// unevaluated; the request that arrives runs exactly one.
+    Menu {
+        node: crate::chunk::NodeId,
+        env: Env,
+    },
     /// A consumer of a product (`μ̃(x, y). c`): it binds every component of
     /// the value it is given, `arity` of them.
     CoTensor {
@@ -201,6 +208,7 @@ impl Value {
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
             ),
             Value::CoCase { .. } | Value::CoTensor { .. } => Type::Bottom,
+            Value::Menu { .. } => Type::Bottom,
             Value::Kont(_) => Type::Bottom,
         }
     }
@@ -234,6 +242,7 @@ impl Value {
             },
             Value::CoCase { .. } => "<select>".to_string(),
             Value::CoTensor { .. } => "<consumer>".to_string(),
+            Value::Menu { .. } => "<menu>".to_string(),
         }
     }
 }

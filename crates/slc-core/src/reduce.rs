@@ -2,7 +2,7 @@
 
 use crate::command::Command;
 use crate::coterm::CoTerm;
-use crate::substitution::subst_command;
+use crate::substitution::{subst_command, subst_covar_command};
 use crate::term::Term;
 
 /// The `index`-th component of a right-nested product: walk `index` tails,
@@ -55,6 +55,35 @@ pub fn step(c: &Command) -> Step {
                 None => Step::Normal,
             }
         }
+
+        // Copattern rule: ⟨ μ[… .d(α). c …] ∥ .d(e) ⟩ → c[e/α]
+        // The mirror of the labelled rule: the request selects exactly one
+        // branch of the menu, binds its continuation, and the branches that
+        // were not demanded are discarded unreduced.
+        Command::Cut(Term::CoMatch(branches), CoTerm::Dtor(label, e)) => {
+            match branches.iter().find(|b| &b.label == label) {
+                Some(branch) => Step::Reduced(subst_covar_command(&branch.binder, e, &branch.body)),
+                None => Step::Normal,
+            }
+        }
+
+        // Co-labelled rule: ⟨ co(.d(e)) ∥ μ̃[… .d(x). c …] ⟩ → c[co(e)/x]
+        // A request boxed by ↓ is a positive value with a label, so matching
+        // on a continuation is the labelled rule with the payload rewrapped:
+        // the arm receives the request's own continuation as a value.
+        Command::Cut(Term::Co(request), CoTerm::CoCase(branches)) => match request.as_ref() {
+            CoTerm::Dtor(label, e) => match branches.iter().find(|b| &b.label == label) {
+                Some(branch) => {
+                    let payload = Term::Co(e.clone());
+                    match bind_components(&branch.binders, &payload, &branch.body) {
+                        Some(command) => Step::Reduced(command),
+                        None => Step::Normal,
+                    }
+                }
+                None => Step::Normal,
+            },
+            _ => Step::Normal,
+        },
 
         // Multiplicative rule: ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩ → c[v₁/x, v₂/y]
         Command::Cut(value, CoTerm::MuTildeTensor(binders, body)) => {
@@ -223,6 +252,60 @@ mod tests {
         let consumer = CoTerm::CoCase(vec![branch("Color::Red", "r")]);
         let value = Term::Tag("Color::Blue".into(), Box::new(Term::Var("v".into())));
         assert!(matches!(step(&Command::Cut(value, consumer)), Step::Normal));
+    }
+
+    fn menu_branch(label: &str, answer: &str) -> crate::term::CoMatchBranch {
+        crate::term::CoMatchBranch {
+            label: label.into(),
+            binder: "out".into(),
+            body: Box::new(Command::Cut(Term::Var(answer.into()), CoTerm::Covar("out".into()))),
+        }
+    }
+
+    #[test]
+    fn a_request_selects_its_menu_branch() {
+        // ⟨ μ[.C::a(out). ⟨x ∥ out⟩ | .C::b(out). ⟨y ∥ out⟩] ∥ .C::b(k) ⟩
+        //   → ⟨ y ∥ k ⟩
+        let menu = Term::CoMatch(vec![menu_branch("C::a", "x"), menu_branch("C::b", "y")]);
+        let request = CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())));
+        match step(&Command::Cut(menu, request)) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into())));
+            }
+            Step::Normal => panic!("expected the C::b branch to fire"),
+        }
+    }
+
+    #[test]
+    fn a_request_with_no_branch_does_not_reduce() {
+        let menu = Term::CoMatch(vec![menu_branch("C::a", "x")]);
+        let request = CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())));
+        assert!(matches!(step(&Command::Cut(menu, request)), Step::Normal));
+    }
+
+    #[test]
+    fn matching_a_boxed_request_binds_its_continuation() {
+        // ⟨ co(.C::b(k)) ∥ μ̃[C::a(f). ⟨x ∥ k2⟩ | C::b(f). ⟨f ∥ k2⟩] ⟩
+        //   → ⟨ co(k) ∥ k2 ⟩ — the arm binds f to the request's own
+        // continuation, boxed, exactly as it would bind an enum payload.
+        let branch = |label: &str, answer: &str| crate::coterm::CoCaseBranch {
+            label: label.into(),
+            binders: vec!["f".into()],
+            body: Box::new(Command::Cut(Term::Var(answer.into()), CoTerm::Covar("k2".into()))),
+        };
+        let boxed =
+            Term::Co(Box::new(CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())))));
+        let consumer = CoTerm::CoCase(vec![branch("C::a", "x"), branch("C::b", "f")]);
+        match step(&Command::Cut(boxed, consumer)) {
+            Step::Reduced(c) => {
+                let expected = Command::Cut(
+                    Term::Co(Box::new(CoTerm::Covar("k".into()))),
+                    CoTerm::Covar("k2".into()),
+                );
+                assert_eq!(c, expected);
+            }
+            Step::Normal => panic!("expected the C::b arm to fire"),
+        }
     }
 
     #[test]
