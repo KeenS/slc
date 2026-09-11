@@ -49,6 +49,10 @@ fn repository_example_suite_has_expected_results() {
             Expected { success: true, stdout: &["42", "[77]", "[TT]"], stderr: &[] },
         ),
         (
+            "data_functions.sl",
+            Expected { success: true, stdout: &["10", "100", "200", "2", "50"], stderr: &[] },
+        ),
+        (
             "file_io.sl",
             Expected {
                 success: true,
