@@ -56,6 +56,16 @@ feature is mid-flight; what remains open is below.
   variants to write, so no surface form. Whether they deserve one is a
   future discussion.
 
+- **Composition syntax.** Composing a function with a continuation is
+  already one binder away in either spelling — `select +A { x => f(x) @ k }`
+  from the consumer side, `fn(x: +A) { f(x) @ k }` from the value side
+  (`A → ⊥` *is* `-A`) — and negative functions compose by plain
+  application. In a sequent calculus composition *is* the cut, so an
+  operator would be a third name for it. Revisit once the stdlib work
+  shows how often the eta-wrap recurs: the first remedy is a prelude
+  function (`then(f, k)`), and surface syntax only if that proves
+  insufficient.
+
 ## Deferred, with no accepted replacement
 
 - **Trait objects (`dyn`).** Dispatch is static — a concrete call goes direct,
