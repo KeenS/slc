@@ -140,22 +140,22 @@ menu Stream<T> {
 
 fn repeat<T>(x: T) -> Stream<T> {
     mu Stream {
-        .head(out) <= x @ out,
-        .tail(out) <= repeat(x) @ out,
+        .head => x,
+        .tail => repeat(x),
     }
 }
 
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
-        .head(out) <= n @ out,
-        .tail(out) <= count_from(n + 1) @ out,
+        .head => n,
+        .tail => count_from(n + 1),
     }
 }
 
 fn map_stream<A, B>(f: (A -> B), s: Stream<A>) -> Stream<B> {
     mu Stream {
-        .head(out) <= f(s.head) @ out,
-        .tail(out) <= map_stream(f, s.tail) @ out,
+        .head => f(s.head),
+        .tail => map_stream(f, s.tail),
     }
 }
 

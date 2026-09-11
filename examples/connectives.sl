@@ -103,8 +103,8 @@ menu Config {
 
 fn config() -> Config {
     mu Config {
-        .retries(out) <= 3 @ out,
-        .name(out) <= "slant" @ out,
+        .retries => 3,
+        .name => "slant",
     }
 }
 

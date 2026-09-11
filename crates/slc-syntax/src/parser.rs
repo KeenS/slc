@@ -1247,6 +1247,42 @@ impl Parser {
                         break;
                     }
                     let arm = self.pos;
+                    // `.item => e` — the value arm: the answer flows forward
+                    // into the demand, its continuation implicit. Sugar for
+                    // `.item(__ask) <= e @ __ask`; an arm that wants the
+                    // demand's continuation binds it and writes `<=`.
+                    if self.peek_kind() == Some(&TokenKind::Dot)
+                        && matches!(
+                            self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                            Some(TokenKind::Ident(_))
+                        )
+                        && self.tokens.get(self.pos + 2).map(|t| &t.kind)
+                            == Some(&TokenKind::FatArrow)
+                    {
+                        self.pos += 1;
+                        let dtor = self.expect_ident("destructor name")?;
+                        self.expect(TokenKind::FatArrow, "`=>`")?;
+                        let value = self.parse_expr()?;
+                        let value_span = value.span;
+                        let pattern =
+                            Pattern::Dtor { dtor, arg: Box::new(Pattern::Ident("__ask".into())) };
+                        let command = Node {
+                            span: value_span,
+                            kind: Expr::Cut {
+                                value: Box::new(value),
+                                consumer: Box::new(Node {
+                                    span: value_span,
+                                    kind: Expr::Ident("__ask".into()),
+                                }),
+                            },
+                        };
+                        arms.push(SelectArm { pattern, command });
+                        if !self.eat(&TokenKind::Comma) {
+                            self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
+                            break;
+                        }
+                        continue;
+                    }
                     let pattern = match self.parse_pattern() {
                         Ok(pattern) => pattern,
                         Err(e) => {

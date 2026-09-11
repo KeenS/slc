@@ -412,6 +412,15 @@ arrives at them:
 - **`select` answers data** — it builds the μ̃ family: the consumer of an
   atom, a product, an enum, or the record a `form` consumes. One arm per
   shape the data can take.
+- A `mu` arm has two forms, told apart by its arrow. The value arm
+  `.item => e` produces the answer, flowing forward into the demand with
+  its continuation implicit — sugar for `.item(__ask) <= e @ __ask` — and
+  reads as `match` does. The command arm `.item(out) <= c` binds the
+  demand's continuation — its *return address*, carried the way a
+  variant's payload is — for when the arm routes control itself: nested
+  copatterns, or answering through a multi-outcome builtin. The two mix
+  freely.
+
 - **`mu` answers demands** — it builds the μ family: a binder arm `mu { k <= c }` captures
   the ambient continuation, and `mu Config { … }` is the copattern form, a
   menu value. An arm is `.item(out) <= c`: the destructor it answers, the
