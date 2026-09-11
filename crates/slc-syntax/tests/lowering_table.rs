@@ -62,8 +62,8 @@ const ROWS: &[Row] = &[
         core: "__match_dispatch",
     },
     Row {
-        id: "expr.struct",
-        source: "struct S { a: i32 } fn f() -> i32 { use_struct(S { a: 1 }) }",
+        id: "expr.data",
+        source: "data S { a: i32 } fn f() -> i32 { use_struct(S { a: 1 }) }",
         core: "S($int_1)",
     },
     Row {
@@ -96,7 +96,7 @@ const ROWS: &[Row] = &[
         source: "enum Color { Red } fn f() -> i32 { 0 }",
         core: "Color::Red($unit)",
     },
-    Row { id: "decl.struct", source: "struct S { a: i32 } fn f() -> i32 { 0 }", core: "$int_0" },
+    Row { id: "decl.data", source: "data S { a: i32 } fn f() -> i32 { 0 }", core: "$int_0" },
 ];
 
 fn documented_ids() -> Vec<String> {

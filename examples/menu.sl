@@ -49,7 +49,7 @@ fn reroute(k: -Config) -> -Config {
 command main | (exit: -i32) {
     let cfg = config();
 
-    // Demand one item off the menu: the mirror of struct projection.
+    // Demand one item off the menu: the mirror of record projection.
     println(cfg.retries);            // 3
     println(cfg.name);               // "slant"
     println(loud(cfg).name);         // "slant!"

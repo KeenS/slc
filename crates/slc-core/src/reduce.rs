@@ -45,7 +45,7 @@ pub fn step(c: &Command) -> Step {
 
         // Labelled rule: ⟨ L(v₁ ⊗ … ⊗ vₙ) ∥ μ̃[… L(x₁,…,xₙ). c …] ⟩ → c[vᵢ/xᵢ]
         // The label selects exactly one branch; the others are discarded
-        // unreduced. An `enum` has a branch per variant, a `struct` one.
+        // unreduced. An `enum` has a branch per variant, a `data` one.
         Command::Cut(Term::Tag(label, payload), CoTerm::CoCase(branches)) => {
             match branches.iter().find(|b| &b.label == label) {
                 Some(branch) => match bind_components(&branch.binders, payload, &branch.body) {

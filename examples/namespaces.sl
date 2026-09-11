@@ -7,7 +7,7 @@
 // variants are paths already.
 
 mod geometry {
-    struct Point {
+    data Point {
         x: i64,
         y: i64,
     }

@@ -25,7 +25,7 @@ pub struct Parser {
     errors: Vec<ParseError>,
     in_block: bool,
     /// True where a following `{` opens a block, so an identifier before it
-    /// is not a struct literal.
+    /// is not a record literal.
     no_struct_literal: bool,
 }
 
@@ -120,7 +120,7 @@ impl Parser {
     fn parse_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let start = self.span_start();
         match self.peek_kind() {
-            Some(TokenKind::Struct) => self.parse_struct(),
+            Some(TokenKind::Data) => self.parse_data(),
             Some(TokenKind::Enum) => self.parse_enum(),
             Some(TokenKind::Menu) => self.parse_menu(),
             Some(TokenKind::Plus) | Some(TokenKind::Minus)
@@ -206,9 +206,9 @@ impl Parser {
         }
     }
 
-    fn parse_struct(&mut self) -> Result<Node<Decl>, ParseError> {
-        let t = self.expect(TokenKind::Struct, "`struct`")?;
-        let name = self.expect_name("struct name")?;
+    fn parse_data(&mut self) -> Result<Node<Decl>, ParseError> {
+        let t = self.expect(TokenKind::Data, "`data`")?;
+        let name = self.expect_name("data name")?;
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         loop {
@@ -224,7 +224,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Struct { name, fields } })
+        Ok(Node { span: t.span, kind: Decl::Data { name, fields } })
     }
 
     fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -657,18 +657,18 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_struct_expr_fields(&mut self) -> Result<Vec<(String, Node<Expr>)>, ParseError> {
+    fn parse_data_expr_fields(&mut self) -> Result<Vec<(String, Node<Expr>)>, ParseError> {
         let mut fields = Vec::new();
         loop {
             if self.eat(&TokenKind::RBrace) {
                 break;
             }
-            let field = self.expect_ident("struct field name")?;
-            self.expect(TokenKind::Colon, "`:` in struct literal")?;
+            let field = self.expect_ident("record field name")?;
+            self.expect(TokenKind::Colon, "`:` in record literal")?;
             let value = self.parse_expr()?;
             fields.push((field, value));
             if !self.eat(&TokenKind::Comma) {
-                self.expect(TokenKind::RBrace, "`}` after struct literal")?;
+                self.expect(TokenKind::RBrace, "`}` after record literal")?;
                 break;
             }
         }
@@ -922,7 +922,7 @@ impl Parser {
     }
 
     /// Parse an expression in a position where a following `{` opens a block
-    /// rather than a struct literal: the condition of an `if`, the scrutinee
+    /// rather than a record literal: the condition of an `if`, the scrutinee
     /// of a `match`.
     fn parse_scrutinee(&mut self) -> Result<Node<Expr>, ParseError> {
         let outer = self.no_struct_literal;
@@ -977,12 +977,12 @@ impl Parser {
                         && self.tokens.get(self.pos + 1).map(|t| &t.kind)
                             == Some(&TokenKind::LBrace)
                     {
-                        let name = self.expect_name("struct name")?;
-                        let fields = self.parse_struct_expr_fields()?;
+                        let name = self.expect_name("data name")?;
+                        let fields = self.parse_data_expr_fields()?;
                         let end = self.span_end();
                         e = Node {
                             span: Span { start: e.span.start, end },
-                            kind: Expr::Struct { name, fields },
+                            kind: Expr::Data { name, fields },
                         };
                         continue;
                     }
@@ -1000,7 +1000,7 @@ impl Parser {
                         };
                         continue;
                     }
-                    // `base.field` — projection of a struct field by name.
+                    // `base.field` — projection of a record field by name.
                     if matches!(field_name, Some(TokenKind::Ident(_)) | Some(TokenKind::Return)) {
                         let name = self.expect_name("field name")?;
                         let end = self.span_end();
@@ -1100,14 +1100,14 @@ impl Parser {
                     let segment = self.expect_ident("a path segment")?;
                     s = format!("{s}::{segment}");
                 }
-                // `S { field: value }` is a struct literal wherever a `{`
+                // `S { field: value }` is a record literal wherever a `{`
                 // here cannot be a block.
                 if !self.no_struct_literal && self.peek_kind() == Some(&TokenKind::LBrace) {
                     self.pos += 1;
-                    let fields = self.parse_struct_expr_fields()?;
+                    let fields = self.parse_data_expr_fields()?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: Expr::Struct { name: s, fields },
+                        kind: Expr::Data { name: s, fields },
                     });
                 }
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Ident(s) })
@@ -1116,10 +1116,10 @@ impl Parser {
                 self.pos += 1;
                 if !self.no_struct_literal && self.peek_kind() == Some(&TokenKind::LBrace) {
                     self.pos += 1;
-                    let fields = self.parse_struct_expr_fields()?;
+                    let fields = self.parse_data_expr_fields()?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: Expr::Struct { name: "return".into(), fields },
+                        kind: Expr::Data { name: "return".into(), fields },
                     });
                 }
                 Ok(Node {
@@ -1480,7 +1480,7 @@ impl Parser {
                 }
                 // Path pattern: Enum::Variant or Enum::Variant(fields),
                 // with the enum itself possibly module-qualified — or a
-                // qualified struct name, when a `{` follows the path.
+                // qualified data name, when a `{` follows the path.
                 let mut s = s;
                 if self.peek_kind() == Some(&TokenKind::ColonColon) {
                     let mut segments = vec![s.clone()];
@@ -1516,7 +1516,7 @@ impl Parser {
                         if self.eat(&TokenKind::RBrace) {
                             break;
                         }
-                        let field = self.expect_ident("struct field name")?;
+                        let field = self.expect_ident("record field name")?;
                         let pattern = if self.eat(&TokenKind::Colon) {
                             self.parse_pattern()?
                         } else {
@@ -1524,11 +1524,11 @@ impl Parser {
                         };
                         fields.push((field, pattern));
                         if !self.eat(&TokenKind::Comma) {
-                            self.expect(TokenKind::RBrace, "`}` after struct pattern")?;
+                            self.expect(TokenKind::RBrace, "`}` after record pattern")?;
                             break;
                         }
                     }
-                    return Ok(Pattern::Struct { name: s, fields });
+                    return Ok(Pattern::Data { name: s, fields });
                 }
                 // Check for enum pattern: Name(variant)
                 if self.peek_kind() == Some(&TokenKind::LParen) {
@@ -1725,7 +1725,7 @@ mod tests {
                     Expr::Call { callee, args }
                         if matches!(&callee.kind, Expr::Ident(name) if name == "return")
                             && matches!(&args[0].kind,
-                                Expr::Struct { name, .. } if name == "return")
+                                Expr::Data { name, .. } if name == "return")
                 )
         ));
     }
@@ -1974,7 +1974,7 @@ mod tests {
             panic!("expected a select: {:?}", body.kind)
         };
         assert!(
-            matches!(&arms[0].pattern, Pattern::Struct { name, fields }
+            matches!(&arms[0].pattern, Pattern::Data { name, fields }
                 if name == "Reading" && fields.len() == 2),
             "{:?}",
             arms[0].pattern
@@ -2125,7 +2125,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_struct_pattern_with_shorthand() {
+    fn parse_data_pattern_with_shorthand() {
         let p = parse_str("match p { Point { x, y: rest } => 1 }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
@@ -2135,7 +2135,7 @@ mod tests {
         };
         assert!(matches!(
             &arms[0].pattern,
-            Pattern::Struct { name, fields }
+            Pattern::Data { name, fields }
                 if name == "Point" && fields.len() == 2
         ));
     }

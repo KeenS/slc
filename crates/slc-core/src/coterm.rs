@@ -34,7 +34,7 @@ pub enum CoTerm {
     /// The dual of a labelled positive type: one branch per shape the value
     /// can take, and the label supplied at activation chooses exactly one of
     /// them. An `enum` has a branch per variant — the negative additive — and
-    /// a `struct` has exactly one, binding its fields.
+    /// a `data` has exactly one, binding its fields.
     CoCase(Vec<CoCaseBranch>),
     /// Consumer of a product: `μ̃(x₁, …, xₙ). c` binds every component of the
     /// tensor it is given. This is the negative multiplicative: it is the

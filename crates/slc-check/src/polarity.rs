@@ -55,13 +55,13 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 check_param_polarity(p, true, &Default::default(), declared, d.span, diags);
             }
         }
-        Decl::Struct { fields, .. } => {
+        Decl::Data { fields, .. } => {
             for (_, ty) in fields {
                 if let Ok(core_ty) = lower_type(ty)
                     && !is_usable_as_field(&core_ty)
                 {
                     diags.push(Diagnostic {
-                        message: field_message("struct field", &core_ty),
+                        message: field_message("record field", &core_ty),
                         span: d.span,
                     });
                 }

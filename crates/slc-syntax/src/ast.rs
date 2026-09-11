@@ -8,7 +8,7 @@ pub struct Node<T> {
     pub span: Span,
 }
 
-/// What a `base.key` projection selects: a tuple position, or a struct field
+/// What a `base.key` projection selects: a tuple position, or a record field
 /// by name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjKey {
@@ -39,8 +39,8 @@ pub enum Expr {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
     },
-    /// A struct literal: `Direction { left: 0, right: 1 }`.
-    Struct {
+    /// A record literal: `Direction { left: 0, right: 1 }`.
+    Data {
         name: String,
         fields: Vec<(String, Node<Expr>)>,
     },
@@ -157,7 +157,7 @@ impl Expr {
             Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
                 .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
                 .collect(),
-            Expr::Struct { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
+            Expr::Data { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
             Expr::Select { arms, .. } => arms.iter().map(|arm| &arm.command).collect(),
             Expr::Let { value, body, .. } => {
                 std::iter::once(&**value).chain(body.iter().map(|b| &**b)).collect()
@@ -280,7 +280,7 @@ pub enum Pattern {
         items: Vec<Pattern>,
         rest: Option<Box<Pattern>>,
     },
-    Struct {
+    Data {
         name: String,
         fields: Vec<(String, Pattern)>,
     },
@@ -306,7 +306,7 @@ impl Pattern {
     /// nothing — a product and an atom have no name of their own.
     pub fn names(&self) -> Option<Named<'_>> {
         match self {
-            Pattern::Struct { name, .. } => Some(Named::Declaration(name)),
+            Pattern::Data { name, .. } => Some(Named::Declaration(name)),
             Pattern::Enum { name, variant, .. } if variant.is_empty() => Some(Named::Variant(name)),
             Pattern::Enum { name, .. } => Some(Named::Declaration(name)),
             Pattern::Ident(name) => Some(Named::Variant(name)),
@@ -341,7 +341,7 @@ pub enum UnOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
-    Struct {
+    Data {
         name: String,
         fields: Vec<(String, TypeExpr)>,
     },

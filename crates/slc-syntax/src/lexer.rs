@@ -77,7 +77,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "let" => TokenKind::Let,
                 "if" => TokenKind::If,
                 "else" => TokenKind::Else,
-                "struct" => TokenKind::Struct,
+                "data" => TokenKind::Data,
                 "enum" => TokenKind::Enum,
                 "menu" => TokenKind::Menu,
                 "dual" => TokenKind::Dual,

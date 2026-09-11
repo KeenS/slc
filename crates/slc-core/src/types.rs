@@ -50,7 +50,7 @@ pub enum Type {
     /// that returns it. `↓` and `↑` are dual, and neither is the identity:
     /// they are what keeps `¬¬A` from collapsing to `A`.
     Up(Box<Type>),
-    /// A named positive declaration, such as `struct` or `enum`. Named types
+    /// A named positive declaration, such as `data` or `enum`. Named types
     /// are opaque to core unification; declaration-specific fields and
     /// variants are checked by the surface checker.
     Named(String),

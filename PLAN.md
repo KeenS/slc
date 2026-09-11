@@ -70,14 +70,10 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **Row-polymorphic effects.** Infer a function's effect row and let a
-  higher-order function forward an argument's effects, so `map(f, xs)` can say
-  it performs whatever `f` does — retiring the monomorphic-rows limit.
-
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Introduce the dual of `struct`.** The declaration square is ¾ complete:
-  `enum` ↔ `menu`, `struct` ↔ nothing. The named ⅋ — a record of
+- **Introduce the dual of `data`.** The declaration square is ¾ complete:
+  `enum` ↔ `menu`, `data` ↔ nothing. The named ⅋ — a record of
   continuations supplied all at once — needs a declaration form, a
   construction form, and per-position access, the way `menu` got them for
   `&`. Naming to be settled (no anagram this time).
@@ -111,3 +107,8 @@ The symmetry audit (after `menu` landed) left these queued, in order:
 - **Test `impl Trait for Menu`.** Trait dispatch was built against positive
   receivers; codata is where interfaces naturally live, so impls for menu
   types must be exercised and fixed or rejected with a real diagnostic.
+
+- **Row-polymorphic effects.** Infer a function's effect row and let a
+  higher-order function forward an argument's effects, so `map(f, xs)` can say
+  it performs whatever `f` does — retiring the monomorphic-rows limit.
+

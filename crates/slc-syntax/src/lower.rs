@@ -22,7 +22,7 @@ thread_local! {
     /// (variable names), in the order the function's bounds are declared.
     static CALLS: RefCell<HashMap<Span, Vec<String>>> = RefCell::new(HashMap::new());
     /// Projection span → the component index the checker resolved (`.i`, or a
-    /// struct field's position).
+    /// record field's position).
     static PROJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     /// Destructor name → fully qualified label, for every declared menu. An
     /// unqualified destructor name is recorded only when it is unambiguous.
@@ -597,8 +597,8 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             ))
         }
 
-        Expr::Struct { name, fields } => {
-            // A struct value is a labelled product: the declaration's name
+        Expr::Data { name, fields } => {
+            // A record value is a labelled product: the declaration's name
             // tags the right-nested tensor of its field values. An `enum`
             // variant is the same shape with a different label, so one core
             // form covers both.
@@ -845,7 +845,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             | Decl::Trait { .. }
             | Decl::Impl { .. }
             | Decl::Effect { .. } => {}
-            Decl::Struct { .. } | Decl::Enum { .. } | Decl::Menu { .. } => {
+            Decl::Data { .. } | Decl::Enum { .. } | Decl::Menu { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }
         }
@@ -919,7 +919,7 @@ fn select_arm_shape(pattern: &Pattern) -> Result<(Option<String>, Vec<String>), 
             Ok((Some(label), fields.iter().map(binder).collect::<Result<_, _>>()?))
         }
         // `S { left: a, right: b }`: a struct is a labelled product.
-        Pattern::Struct { name, fields } => Ok((
+        Pattern::Data { name, fields } => Ok((
             Some(name.clone()),
             fields.iter().map(|(_, pattern)| binder(pattern)).collect::<Result<_, _>>()?,
         )),
@@ -1117,7 +1117,7 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 }
                 out.push(']');
             }
-            Pattern::Struct { name, fields } => {
+            Pattern::Data { name, fields } => {
                 // Fields are written in declaration order, so the pattern is
                 // the labelled shape the value has, with positional fields.
                 out.push('"');
@@ -1280,7 +1280,7 @@ mod tests {
         // A struct is a labelled product: one branch, labelled by the
         // declaration, binding every field.
         let out = lower_str(
-            "struct R { value: i64, unit: String }
+            "data R { value: i64, unit: String }
              fn show(out: -String) <- R { select R { R { value, unit } <= unit @ out } }",
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
@@ -1311,20 +1311,20 @@ mod tests {
 
     #[test]
     fn lower_struct_literal_is_a_labelled_product() {
-        // A struct literal is its declaration's name applied to the
+        // A record literal is its declaration's name applied to the
         // right-nested tensor of its field values — the same labelled shape
         // an enum variant has.
         let out = lower_str(
-            "struct D { left: i64, right: i64 } fn f() -> i64 { use_it(D { left: 1, right: 2 }) }",
+            "data D { left: i64, right: i64 } fn f() -> i64 { use_it(D { left: 1, right: 2 }) }",
         );
         let printed = format!("{}", out.iter().find(|(name, _)| name == "f").unwrap().1);
         assert!(
             printed.contains("D(($int_1 ⊗ $int_2))"),
-            "struct literal should lower to a labelled product: {printed}"
+            "record literal should lower to a labelled product: {printed}"
         );
 
         // One field needs no tensor, and none is unit.
-        let one = lower_str("struct One { only: i64 } fn f() -> i64 { use_it(One { only: 1 }) }");
+        let one = lower_str("data One { only: i64 } fn f() -> i64 { use_it(One { only: 1 }) }");
         let printed = format!("{}", one.iter().find(|(name, _)| name == "f").unwrap().1);
         assert!(printed.contains("One($int_1)"), "{printed}");
     }

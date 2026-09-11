@@ -673,7 +673,7 @@ fn select_builds_the_consumer_of_a_product() {
     let dir = std::env::temp_dir().join("slc_test_select_product.sl");
     std::fs::write(
         &dir,
-        r#"struct Reading { value: i64, unit: String }
+        r#"data Reading { value: i64, unit: String }
 
         fn show(out: -String) <- Reading {
             select Reading {
@@ -704,12 +704,12 @@ fn select_builds_the_consumer_of_a_product() {
 
 #[test]
 fn a_struct_is_built_and_taken_apart_anywhere() {
-    // A struct literal is an ordinary expression, and a struct pattern binds
+    // A record literal is an ordinary expression, and a record pattern binds
     // its fields.
     let dir = std::env::temp_dir().join("slc_test_struct_roundtrip.sl");
     std::fs::write(
         &dir,
-        r#"struct D { left: i64, right: i64 }
+        r#"data D { left: i64, right: i64 }
 
         fn sum(d: D) -> i64 {
             match d {

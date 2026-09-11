@@ -375,7 +375,7 @@ activated.
 
 `return` is a reserved identifier, but it is accepted as an ordinary
 continuation parameter name. It may then be used as an expression callee, as an
-expression argument, and as a struct-name marker in ordinary call syntax.
+expression argument, and as a record-name marker in ordinary call syntax.
 
 ### `menu`: the negative additive declared
 
@@ -426,7 +426,7 @@ fn reroute(k: -Config) -> -Config {
 
 Three request forms complete the surface:
 
-- `cfg.item` **demands** one item off a menu — the mirror of struct
+- `cfg.item` **demands** one item off a menu — the mirror of record
   projection, and typed as the item's answer. Only that branch runs.
 - `.item(k)` is a **request literal** — the mirror of an enum variant
   expression: a variant is data the producer tags, a request is a demand the
@@ -443,10 +443,10 @@ requests are sent to, not a consumer.
 
 ### Positive multiplicative construction
 
-A `struct` is a positive product. A value contains all fields:
+A `data` is a positive product. A value contains all fields:
 
 ```sl
-struct Direction { left: i32, right: i32 }
+data Direction { left: i32, right: i32 }
 ```
 
 Declaration names have opaque core types (`Named`). Core unification treats two
@@ -454,24 +454,24 @@ named types as equal only when their names match; the surface checker owns
 field presence, field types, order, and exhaustiveness. This keeps named
 declarations distinct from the tensor unit `1`.
 
-A struct declaration's *representation* is the right-nested tensor of its
-field types — `+i32 ⊗ +i32` for the declaration above — and a struct with no
-fields is the tensor unit `1`. A struct literal and a struct pattern must both
+A record declaration's *representation* is the right-nested tensor of its
+field types — `+i32 ⊗ +i32` for the declaration above — and a record with no
+fields is the tensor unit `1`. A record literal and a record pattern must both
 write every declared field exactly once, in declaration order, with the
 declared type.
 
-A struct *value* is that tensor labelled by the declaration's name, exactly as
+A record *value* is that tensor labelled by the declaration's name, exactly as
 an `enum` variant is its payload labelled by the variant's name. One core form
 covers both, which is why one surface form — `match` — takes either apart.
 
-A `struct` value carries every field at once, which is what `⊗` means: the
-positive product of its field types, associated to the right. `struct
+A `data` value carries every field at once, which is what `⊗` means: the
+positive product of its field types, associated to the right. `data
 Direction { left: i32, right: i32 }` describes `+i32 ⊗ +i32`, and the surface
 tuple `(a, b)` is the same connective written anonymously.
 
 A product is taken apart by `match`/`select`, which binds every component, or
 by **projection** for a single one: `t.0`, `t.1`, … reads a tuple component,
-and `s.field` reads a struct field. Because the product is right-nested with
+and `s.field` reads a record field. Because the product is right-nested with
 its last component stored bare, projection is resolved against the value's
 type — the checker turns `.i` and `.field` into the component index — and then
 walks the spine to it. A nested tuple and a flat one of the same shape are the
@@ -490,14 +490,14 @@ command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 
 | Type syntax | Meaning |
 |---|---|
-| `(A ⊗ B)` | positive product; the anonymous form of a two-field `struct` |
+| `(A ⊗ B)` | positive product; the anonymous form of a two-field `data` |
 | `(A ⅋ B)` | negative product; the dual of `⊗`, a joint consumer of both sides |
 | `(A -> B)` | function: `-A ⅋ B`. So a function is negative, `(A -> ⊥)` *is* `-A`, and `dual(A -> B)` is `A ⊗ -B` — an argument together with a continuation for the result, which is what a call stack is |
 | `[A]` | list |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
 | `⊥` | bottom |
 
-`⊗` and `struct` are the same connective: a `struct` declaration names a
+`⊗` and `data` are the same connective: a `data` declaration names a
 product and its fields, while `(A ⊗ B)` writes one anonymously. Neither is
 sugar for the other — a named declaration is opaque to core unification, while
 an explicit tensor is structural.
@@ -510,7 +510,7 @@ component — which is what makes it multiplicative rather than additive: the
 halves arrive together, in one command, sharing its context.
 
 ```sl
-struct Reading { value: i64, unit: String }
+data Reading { value: i64, unit: String }
 
 // dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
 fn show(out: -String) <- Reading {
@@ -643,7 +643,7 @@ Two forms, one discipline. A declaration may take type parameters —
 `fn id<T>(x: T) -> T` — which are rigid inside their own body and
 instantiated afresh at every call. And a `let` generalizes, under the
 **value restriction**: only when its right-hand side is a syntactic value —
-a literal, a `fn`, a `select`, a constructor, struct, tuple, or box of
+a literal, a `fn`, a `select`, a constructor, record, tuple, or box of
 values, a plain name. Every use of such a binding instantiates its variables
 afresh:
 
@@ -680,7 +680,7 @@ the same value at run time; the type is what the box is for.
 
 Three rules make the boxes load-bearing:
 
-- a data position — an enum payload, a struct field, a `fn` value parameter —
+- a data position — an enum payload, a record field, a `fn` value parameter —
   holds a **positive** type, so a consumer goes in boxed: `Refutes(↓-i64)`;
 - the left of `@` is data, so a consumer is sent boxed: `↓k @ ↑refuter`;
 - `select` consumes data, so consuming a consumer means `select ↓B`.
@@ -966,7 +966,7 @@ CoTerm    e ::= α                     co-variable
               | t · e                 application: argument, then tail
               | μ̃x. c                 value abstraction
               | prj:i                  projection of the i-th component
-              | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, struct)
+              | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, data)
               | μ̃(x₁, …, xₙ). c       product consumer
               | .d(e)                 request (destructor)
 
@@ -1054,7 +1054,7 @@ The copattern rule is its mirror: the request selects one branch of the menu
 and binds the continuation it carries. The co-labelled rule is what lets
 `match` take a continuation apart — a request boxed by `↓` is a labelled
 positive value, so the arm binds the request's own continuation as a value.
-An `enum` has a branch per variant and a `struct` exactly one, so the same
+An `enum` has a branch per variant and a `data` exactly one, so the same
 rule covers the additive and the labelled multiplicative; the product rule is
 its unlabelled counterpart.
 
@@ -1082,7 +1082,7 @@ nested left to right for several arguments.
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
-| `expr.struct` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
+| `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value. Over a `menu`, the arms are requests and the result is the menu itself: `μ[.M::item(k). ⟦c⟧ | …]` |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `select M` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
@@ -1092,7 +1092,7 @@ nested left to right for several arguments.
 | `decl.mu` | `mu f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
 | `decl.const` | `const C: +A = v;` | `⟦v⟧` |
 | `decl.enum` | `enum E { V }` | one global per variant: `E::V = E::V(unit)` |
-| `decl.struct` | `struct S { … }` | no term; the declaration is a type |
+| `decl.data` | `data S { … }` | no term; the declaration is a type |
 
 Binders are nested in declaration order, so a call supplies arguments in the
 order the parameters are written; value and continuation parameters alike
@@ -1104,17 +1104,17 @@ become λ binders.
 |---|---|
 | `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
-| `t ⊗ t` | tuple literals, `struct` literals, `(A ⊗ B)` values |
-| `L(t)` | `enum` values and `struct` values — a labelled product |
+| `t ⊗ t` | tuple literals, `data` literals, `(A ⊗ B)` values |
+| `L(t)` | `enum` values and `data` values — a labelled product |
 | `μ[.d(α). c \| …]` | `select` over a `menu` |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x <= c }` |
-| `μ̃[…]` | `select` over an `enum` or a `struct` |
+| `μ̃[…]` | `select` over an `enum` or a `data` |
 | `μ̃(x…)` | `select` over a bare product |
-| `prj:i` | `base.i` (tuple) and `base.field` (struct), the field resolved to its index from the base type |
+| `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |
 
 ### Classical control
 

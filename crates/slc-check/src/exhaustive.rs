@@ -23,7 +23,7 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
         Decl::Fn { body, .. } => check_expr(body, enums, diags),
         Decl::Command { body, .. } => check_expr(body, enums, diags),
         Decl::Const { value, .. } => check_expr(value, enums, diags),
-        Decl::Struct { .. }
+        Decl::Data { .. }
         | Decl::Enum { .. }
         | Decl::Menu { .. }
         | Decl::Mod { .. }
@@ -212,7 +212,7 @@ fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
         Pattern::Ident(name) => enums.payload_arity(name).is_none(),
         Pattern::Binding { pattern, .. } => is_irrefutable(pattern, enums),
         Pattern::Tuple(items) => items.iter().all(|item| is_irrefutable(item, enums)),
-        Pattern::Struct { name, fields } => {
+        Pattern::Data { name, fields } => {
             enums.declares(name) && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
         }
         _ => false,
@@ -282,7 +282,7 @@ fn check_pattern_arity(
                 check_pattern_arity(item, enums, span, diags);
             }
         }
-        Pattern::Struct { fields, .. } => {
+        Pattern::Data { fields, .. } => {
             for (_, field) in fields {
                 check_pattern_arity(field, enums, span, diags);
             }

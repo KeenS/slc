@@ -41,7 +41,7 @@ pub fn infer_program(p: &Program) -> Result<Vec<DeclarationType>, Vec<Diagnostic
         .decls
         .iter()
         .filter_map(|d| match &d.kind {
-            Decl::Struct { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } => {
+            Decl::Data { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } => {
                 Some(name.clone())
             }
             _ => None,
@@ -133,7 +133,7 @@ pub fn variant_type(
 
 /// The tensor representation of a struct declaration: the right-nested
 /// product of its field types. A struct with no fields is the tensor unit.
-pub fn struct_representation(
+pub fn record_representation(
     fields: &[(String, slc_syntax::ast::TypeExpr)],
 ) -> Result<Type, InferenceError> {
     let types: Vec<slc_syntax::ast::TypeExpr> = fields.iter().map(|(_, ty)| ty.clone()).collect();
@@ -231,7 +231,7 @@ fn infer_decl(
             let ty = u.resolve_or_cannot_infer(&ty, &format!("command {name}"))?;
             Ok(DeclarationType { name: name.clone(), ty })
         }
-        Decl::Struct { name, .. } | Decl::Enum { name, .. } => {
+        Decl::Data { name, .. } | Decl::Enum { name, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: Type::Named(name.clone()) })
         }
         // A menu declares the negative additive: its values are menus, and
@@ -342,26 +342,26 @@ mod tests {
     }
 
     #[test]
-    fn struct_declaration_lowers_to_a_tensor_of_its_fields() {
+    fn record_declaration_lowers_to_a_tensor_of_its_fields() {
         let fields = |source: &str| {
             let p = parse(lex(source).unwrap()).unwrap();
             match &p.decls[0].kind {
-                Decl::Struct { fields, .. } => fields.clone(),
+                Decl::Data { fields, .. } => fields.clone(),
                 other => panic!("expected a struct: {other:?}"),
             }
         };
         assert_eq!(
-            struct_representation(&fields("struct D { left: i64, right: bool }")).unwrap(),
+            record_representation(&fields("data D { left: i64, right: bool }")).unwrap(),
             Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::Bool)))
         );
         assert_eq!(
-            struct_representation(&fields("struct One { only: i64 }")).unwrap(),
+            record_representation(&fields("data One { only: i64 }")).unwrap(),
             Type::Pos(Base::I64)
         );
         // The empty product is the tensor unit.
-        assert_eq!(struct_representation(&fields("struct Empty { }")).unwrap(), Type::One);
+        assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::One);
         // The declaration itself keeps its opaque named type.
-        let out = infer("struct D { left: i64, right: bool }").unwrap();
+        let out = infer("data D { left: i64, right: bool }").unwrap();
         assert_eq!(out[0].ty, Type::Named("D".into()));
     }
 
@@ -409,7 +409,7 @@ mod tests {
 
     #[test]
     fn struct_and_enum_declarations_use_named_types() {
-        let out = infer("struct Point { x: i32, y: i32 } enum Color { Red, Green }").unwrap();
+        let out = infer("data Point { x: i32, y: i32 } enum Color { Red, Green }").unwrap();
         assert_eq!(out[0].ty, Type::Named("Point".into()));
         assert_eq!(out[1].ty, Type::Named("Color".into()));
     }

@@ -17,7 +17,7 @@ fn names(program: &slc_syntax::ast::Program) -> Vec<String> {
         .map(|d| match &d.kind {
             Decl::Fn { name, .. }
             | Decl::Command { name, .. }
-            | Decl::Struct { name, .. }
+            | Decl::Data { name, .. }
             | Decl::Enum { name, .. }
             | Decl::Const { name, .. } => name.clone(),
             _ => "UNRESOLVED".into(),

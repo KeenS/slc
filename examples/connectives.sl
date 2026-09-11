@@ -15,7 +15,7 @@
 
 // ─── A ⊗ B ─── the positive product: a value carries every part.
 
-struct Pair {
+data Pair {
     left: i64,
     right: i64,
 }

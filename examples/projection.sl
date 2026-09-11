@@ -1,10 +1,10 @@
-// Projection: `.i` reads a tuple component, `.field` reads a struct field.
+// Projection: `.i` reads a tuple component, `.field` reads a record field.
 //
 // A product is right-nested with its last component bare, so projection
 // walks the spine to the i-th element — resolved from the value's type, so
 // `t.2` and `p.z` know which component they name.
 
-struct Point { x: +i64, y: +i64, z: +i64 }
+data Point { x: +i64, y: +i64, z: +i64 }
 
 fn manhattan(p: +Point) -> i64 {
     p.x + p.y + p.z

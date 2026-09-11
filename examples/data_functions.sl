@@ -1,6 +1,6 @@
 // Functions over data types, in both polarities.
 //
-// A `struct` is a positive product and an `enum` a positive sum: data you
+// A `data` is a positive product and an `enum` a positive sum: data you
 // build and take apart. A positive function maps data to data. A negative
 // function is its mirror image: what follows `<-` is the type it consumes,
 // and its parameters are the continuations the answer leaves through — so
@@ -10,7 +10,7 @@
 //   positive      fn f(p: Point) -> …             fn f(…) -> Point
 //   negative      fn f(…) <- Point                fn f(out: -Point) <- …
 
-struct Point {
+data Point {
     x: i64,
     y: i64,
 }
@@ -22,12 +22,12 @@ enum Size {
 
 // ─── Positive ────────────────────────────────────────────────────────────
 
-// Takes a struct and returns one: build a new value from the old.
+// Takes a record and returns one: build a new value from the old.
 fn translate(p: Point, dx: +i64, dy: +i64) -> Point {
     Point { x: p.x + dx, y: p.y + dy }
 }
 
-// Takes a struct and returns an enum: the result is one tagged variant.
+// Takes a record and returns an enum: the result is one tagged variant.
 fn classify(p: Point) -> Size {
     let area = p.x * p.y;
     if area > 100 {
@@ -47,7 +47,7 @@ fn overshoot(s: Size) -> i64 {
 
 // ─── Negative ────────────────────────────────────────────────────────────
 
-// "Takes" a struct: the function is a consumer of `Point`, and the arm
+// "Takes" a record: the function is a consumer of `Point`, and the arm
 // binds every field at once.
 fn area_of(out: -i64) <- Point {
     select Point {
@@ -55,7 +55,7 @@ fn area_of(out: -i64) <- Point {
     }
 }
 
-// Takes a struct and "returns" one: the new value is cut against `out`
+// Takes a record and "returns" one: the new value is cut against `out`
 // instead of travelling back through a return.
 fn reflect(out: -Point) <- Point {
     select Point {

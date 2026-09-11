@@ -1,5 +1,5 @@
 //! What the program declares: the variants of each `enum`, the payload each
-//! variant carries, the fields of each `struct` — and how a written type
+//! variant carries, the fields of each `data` — and how a written type
 //! resolves against them.
 
 use slc_core::types::Type;
@@ -9,10 +9,10 @@ use std::collections::HashMap;
 
 /// What the checker knows about the program's type declarations: the variants
 /// of each `enum`, the payload each variant carries, and the fields of each
-/// `struct`.
+/// `data`.
 #[derive(Debug, Default)]
 pub struct Declarations {
-    /// Every declaration name in the program: `struct` and `enum` alike.
+    /// Every declaration name in the program: `data` and `enum` alike.
     pub(crate) declarations: std::collections::HashSet<String>,
     /// Declaration name → variant names, in declaration order.
     variants: HashMap<String, Vec<String>>,
@@ -21,7 +21,7 @@ pub struct Declarations {
     /// Unqualified variant name → its label, when only one enum declares it.
     unqualified: HashMap<String, Option<String>>,
     /// Declaration name → fields, in declaration order.
-    pub(crate) structs: HashMap<String, Vec<(String, Type)>>,
+    pub(crate) records: HashMap<String, Vec<(String, Type)>>,
     /// Declared `menu` names. A menu's items live in `variants` and
     /// `signatures` like an enum's variants — the request view — with each
     /// item's payload being the consumer of its answer.
@@ -30,7 +30,7 @@ pub struct Declarations {
 
 impl Declarations {
     /// Lower a written type, resolving a declaration name to its named type.
-    /// `lower_type` only knows the built-in types, so `struct` and `enum`
+    /// `lower_type` only knows the built-in types, so `data` and `enum`
     /// names have to be resolved here — including under a sign or a
     /// connective, so `-ParseResult` is a consumer of a declared type.
     pub(crate) fn resolve(&self, ty: &TypeExpr) -> Option<Type> {
@@ -85,11 +85,11 @@ impl Declarations {
 
     /// The field types of a declared struct, in declaration order.
     pub(crate) fn fields(&self, name: &str) -> Option<Vec<Type>> {
-        Some(self.structs.get(name)?.iter().map(|(_, ty)| ty.clone()).collect())
+        Some(self.records.get(name)?.iter().map(|(_, ty)| ty.clone()).collect())
     }
 
     /// Resolve a variant path or an unambiguous unqualified variant name.
-    /// Whether a name is a declared `struct` or `enum`.
+    /// Whether a name is a declared `data` or `enum`.
     pub(crate) fn declares(&self, name: &str) -> bool {
         self.declarations.contains(name)
     }
@@ -111,16 +111,15 @@ impl Declarations {
 pub(crate) fn enum_types(p: &Program) -> Declarations {
     let mut enums = Declarations::default();
     for d in &p.decls {
-        if let Decl::Struct { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } =
-            &d.kind
+        if let Decl::Data { name, .. } | Decl::Enum { name, .. } | Decl::Menu { name, .. } = &d.kind
         {
             enums.declarations.insert(name.clone());
         }
         if let Decl::Menu { name, .. } = &d.kind {
             enums.menus.insert(name.clone());
         }
-        if let Decl::Struct { name, fields } = &d.kind {
-            enums.structs.insert(
+        if let Decl::Data { name, fields } = &d.kind {
+            enums.records.insert(
                 name.clone(),
                 fields
                     .iter()

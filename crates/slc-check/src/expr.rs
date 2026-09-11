@@ -179,7 +179,7 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
     }
 }
 
-/// The type a `select`'s arms name, when one of them does: a struct pattern
+/// The type a `select`'s arms name, when one of them does: a record pattern
 /// names its struct, `Color::Red(x)` its enum, and a bare `Red` the enum that
 /// declares it.
 fn named_by_arms(arms: &[slc_syntax::ast::SelectArm], enums: &Declarations) -> Option<Type> {
@@ -403,7 +403,7 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
         Expr::Pair(items) => items.iter().all(|item| is_value_form(&item.kind, enums)),
-        Expr::Struct { fields, .. } => {
+        Expr::Data { fields, .. } => {
             fields.iter().all(|(_, value)| is_value_form(&value.kind, enums))
         }
         // A constructor applied to values builds data; any other call runs.
@@ -511,12 +511,12 @@ fn check_pattern(
                 span,
             }),
         },
-        // A struct pattern decomposes the product: the same fields, in the
+        // A record pattern decomposes the product: the same fields, in the
         // same order, with the same types as the declaration.
-        Pattern::Struct { name, fields } => {
-            let Some(declared) = declarations.structs.get(name) else {
+        Pattern::Data { name, fields } => {
+            let Some(declared) = declarations.records.get(name) else {
                 diags.push(Diagnostic {
-                    message: format!("`{name}` is not a declared struct"),
+                    message: format!("`{name}` is not a declared record"),
                     span,
                 });
                 return;
@@ -524,7 +524,7 @@ fn check_pattern(
             if expected != &Type::Named(name.clone()) {
                 diags.push(Diagnostic {
                     message: format!(
-                        "struct pattern `{name}` cannot match a scrutinee of type {expected}"
+                        "record pattern `{name}` cannot match a scrutinee of type {expected}"
                     ),
                     span,
                 });
@@ -766,7 +766,7 @@ fn bind_match_pattern(
                 bind_match_pattern(field, ty, enums, env);
             }
         }
-        Pattern::Struct { name, fields } => {
+        Pattern::Data { name, fields } => {
             let declared = enums.fields(name).unwrap_or_default();
             for ((_, field), ty) in fields.iter().zip(declared.iter()) {
                 bind_match_pattern(field, ty, enums, env);
@@ -844,7 +844,7 @@ fn bind_select_arm(
             }
         }
         // A struct: its field types.
-        (Type::Named(name), Pattern::Struct { name: written, .. }) => {
+        (Type::Named(name), Pattern::Data { name: written, .. }) => {
             if written != name {
                 diags.push(Diagnostic {
                     message: format!("`select {consumed}` arm cannot bind a `{written}`"),
@@ -867,7 +867,7 @@ fn bind_select_arm(
 
     let binders: Vec<&slc_syntax::ast::Pattern> = match pattern {
         Pattern::Enum { fields, .. } => fields.iter().collect(),
-        Pattern::Struct { fields, .. } => fields.iter().map(|(_, p)| p).collect(),
+        Pattern::Data { fields, .. } => fields.iter().map(|(_, p)| p).collect(),
         Pattern::Tuple(items) => items.iter().collect(),
         _ => Vec::new(),
     };
@@ -1430,10 +1430,10 @@ fn check_expr_unapplied(
             }
             None
         }
-        Expr::Struct { name, fields } => {
-            let Some(declared) = enums.structs.get(name).cloned() else {
+        Expr::Data { name, fields } => {
+            let Some(declared) = enums.records.get(name).cloned() else {
                 diags.push(Diagnostic {
-                    message: format!("`{name}` is not a declared struct"),
+                    message: format!("`{name}` is not a declared record"),
                     span: e.span,
                 });
                 for (_, value) in fields {
@@ -1441,7 +1441,7 @@ fn check_expr_unapplied(
                 }
                 return None;
             };
-            // A struct literal is the product of its declared fields: every
+            // A record literal is the product of its declared fields: every
             // field is present exactly once, in declaration order, with the
             // declared type.
             let written: Vec<&String> = fields.iter().map(|(field, _)| field).collect();
@@ -1663,7 +1663,7 @@ fn check_expr_unapplied(
                         }
                     }
                 }
-                // `base.field` — a struct field, resolved to its index.
+                // `base.field` — a record field, resolved to its index.
                 slc_syntax::ast::ProjKey::Field(name) => {
                     // `cfg.item` on a menu is a demand: the answer's type is
                     // the item's, and lowering cuts the menu against the
@@ -1687,14 +1687,14 @@ fn check_expr_unapplied(
                             }
                         };
                     }
-                    let Type::Named(struct_name) = &base_ty else {
+                    let Type::Named(record_name) = &base_ty else {
                         diags.push(Diagnostic {
-                            message: format!("`.{name}` needs a struct; this has type {base_ty}"),
+                            message: format!("`.{name}` needs a record; this has type {base_ty}"),
                             span: e.span,
                         });
                         return None;
                     };
-                    match enums.structs.get(struct_name) {
+                    match enums.records.get(record_name) {
                         Some(fields) => match fields.iter().position(|(f, _)| f == name) {
                             Some(index) => {
                                 env.dispatch.projections.insert(e.span, index);
@@ -1702,7 +1702,7 @@ fn check_expr_unapplied(
                             }
                             None => {
                                 diags.push(Diagnostic {
-                                    message: format!("`{struct_name}` has no field `{name}`"),
+                                    message: format!("`{record_name}` has no field `{name}`"),
                                     span: e.span,
                                 });
                                 None
@@ -1710,7 +1710,7 @@ fn check_expr_unapplied(
                         },
                         None => {
                             diags.push(Diagnostic {
-                                message: format!("`{struct_name}` is not a declared struct"),
+                                message: format!("`{record_name}` is not a declared record"),
                                 span: e.span,
                             });
                             None
@@ -1890,10 +1890,10 @@ mod tests {
 
     #[test]
     fn projection_resolves_and_range_checks() {
-        // A tuple component and a struct field both check.
+        // A tuple component and a record field both check.
         assert!(
             check(
-                "struct P { x: +i64, y: +i64 }
+                "data P { x: +i64, y: +i64 }
                  fn f(p: +P) -> i64 { p.x + p.y }
                  fn g(t: (+i64 ⊗ (+i64 ⊗ +i64))) -> i64 { t.0 + t.2 }"
             )
@@ -1903,22 +1903,22 @@ mod tests {
         let diags = check("fn f(t: (+i64 ⊗ +i64)) -> i64 { t.5 }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("out of range")), "{diags:?}");
         // Unknown field.
-        let diags = check("struct P { x: +i64 } fn f(p: +P) -> i64 { p.y }").unwrap_err();
+        let diags = check("data P { x: +i64 } fn f(p: +P) -> i64 { p.y }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("no field `y`")), "{diags:?}");
     }
 
     #[test]
-    fn struct_literal_must_write_every_declared_field_in_order() {
+    fn record_literal_must_write_every_declared_field_in_order() {
         assert!(
             check(
-                "struct Direction { left: i64, right: i64 }
+                "data Direction { left: i64, right: i64 }
                  fn f() -> i64 { use_it(Direction { left: 1, right: 2 }) }"
             )
             .is_ok()
         );
 
         let missing = check(
-            "struct Direction { left: i64, right: i64 }
+            "data Direction { left: i64, right: i64 }
              fn f() -> i64 { use_it(Direction { left: 1 }) }",
         )
         .unwrap_err();
@@ -1928,7 +1928,7 @@ mod tests {
         );
 
         let reordered = check(
-            "struct Direction { left: i64, right: i64 }
+            "data Direction { left: i64, right: i64 }
              fn f() -> i64 { use_it(Direction { right: 2, left: 1 }) }",
         )
         .unwrap_err();
@@ -1939,10 +1939,10 @@ mod tests {
     }
 
     #[test]
-    fn struct_pattern_must_write_every_declared_field_in_order() {
+    fn record_pattern_must_write_every_declared_field_in_order() {
         assert!(
             check(
-                "struct D { left: i64, right: i64 }
+                "data D { left: i64, right: i64 }
                  fn f(d: D) -> i64 {
                      match d {
                          D { left: a, right: b } => a,
@@ -1954,7 +1954,7 @@ mod tests {
         );
 
         let diags = check(
-            "struct D { left: i64, right: i64 }
+            "data D { left: i64, right: i64 }
              fn f(d: D) -> i64 {
                  match d {
                      D { right: b, left: a } => a,
@@ -1970,9 +1970,9 @@ mod tests {
     }
 
     #[test]
-    fn struct_pattern_field_types_are_checked() {
+    fn record_pattern_field_types_are_checked() {
         let diags = check(
-            "struct D { left: i64, right: i64 }
+            "data D { left: i64, right: i64 }
              fn f(d: D) -> i64 {
                  match d {
                      D { left: 1, right: 'c' } => 0,
@@ -1985,9 +1985,9 @@ mod tests {
     }
 
     #[test]
-    fn struct_pattern_cannot_match_another_type() {
+    fn record_pattern_cannot_match_another_type() {
         let diags = check(
-            "struct D { left: i64 }
+            "data D { left: i64 }
              fn f(x: +i64) -> i64 {
                  match x {
                      D { left: a } => a,
@@ -2003,9 +2003,9 @@ mod tests {
     }
 
     #[test]
-    fn struct_literal_field_types_are_checked() {
+    fn record_literal_field_types_are_checked() {
         let diags = check(
-            "struct Direction { left: i64, right: i64 }
+            "data Direction { left: i64, right: i64 }
              fn f() -> i64 { use_it(Direction { left: 1, right: \"two\" }) }",
         )
         .unwrap_err();
@@ -2021,7 +2021,7 @@ mod tests {
     fn undeclared_struct_literal_is_rejected() {
         let diags = check("fn f() -> i64 { use_it(Nope { a: 1 }) }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("`Nope` is not a declared struct")),
+            diags.iter().any(|d| d.message.contains("`Nope` is not a declared record")),
             "{diags:?}"
         );
     }
@@ -2062,7 +2062,7 @@ mod tests {
     fn declaration_name_is_not_a_value() {
         for source in [
             "enum Color { Red } fn f() -> Color { Color }",
-            "struct S { a: i32 } fn f() -> i32 { S }",
+            "data S { a: i32 } fn f() -> i32 { S }",
         ] {
             let diags = check(source).unwrap_err();
             assert!(
