@@ -614,36 +614,53 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             Ok(Term::Tag(name.clone(), Box::new(payload)))
         }
 
+        // `mu T { .item(k) <= c, … }` — the copattern form: a menu value,
+        // μ[…], one branch per demand.
+        Expr::CoMatch { ty, arms } => {
+            let mut branches = Vec::new();
+            for arm in arms {
+                let Pattern::Dtor { dtor, binder } = &arm.pattern else {
+                    return Err(LowerError::Unsupported(
+                        "`mu` with arms answers a menu's demands; every arm is `.item(k)`".into(),
+                    ));
+                };
+                // Qualify against the written menu first, then the
+                // unambiguous-destructor table.
+                let label = ty
+                    .as_ref()
+                    .and_then(|ty| match &ty.kind {
+                        TypeExpr::Base(name) => lookup_dtor(&format!("{name}::{dtor}")),
+                        _ => None,
+                    })
+                    .or_else(|| lookup_dtor(dtor))
+                    .ok_or_else(|| {
+                        LowerError::Unsupported(format!(
+                            "`.{dtor}` does not name a declared menu item"
+                        ))
+                    })?;
+                let body = lower_select_command(&arm.command, continuations)?;
+                branches.push(CoMatchBranch {
+                    label,
+                    binder: binder.clone(),
+                    body: Box::new(body),
+                });
+            }
+            Ok(Term::CoMatch(branches))
+        }
+
         Expr::Select { arms, .. } => {
             // `select T { p <= c, … }` is the consumer of T, given by cases
             // on it: one branch per shape, binding that shape's components.
             //
             //   labelled (enum, struct) ⟹ co(μ̃[ L(x…). c | … ])
             //   product (tensor)        ⟹ co(μ̃(x…). c)
-            // A `select` whose arms are request shapes builds a menu — the
-            // negative additive value μ[…] — rather than a consumer.
+            // Request arms belong to `mu`: `select` answers data.
             if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Dtor { .. })) {
-                let mut branches = Vec::new();
-                for arm in arms {
-                    let Pattern::Dtor { dtor, binder } = &arm.pattern else {
-                        return Err(LowerError::Unsupported(
-                            "a `select` over a menu answers requests; every arm is `.item(k)`"
-                                .into(),
-                        ));
-                    };
-                    let label = lookup_dtor(dtor).ok_or_else(|| {
-                        LowerError::Unsupported(format!(
-                            "`.{dtor}` does not name a declared menu item"
-                        ))
-                    })?;
-                    let body = lower_select_command(&arm.command, continuations)?;
-                    branches.push(CoMatchBranch {
-                        label,
-                        binder: binder.clone(),
-                        body: Box::new(body),
-                    });
-                }
-                return Ok(Term::CoMatch(branches));
+                return Err(LowerError::Unsupported(
+                    "`select` answers data; a menu answers demands and is built by \
+                     `mu Menu { .item(k) <= c, … }`"
+                        .into(),
+                ));
             }
             let mut branches = Vec::new();
             let mut product: Option<(Vec<String>, Command)> = None;

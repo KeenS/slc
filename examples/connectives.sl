@@ -10,10 +10,10 @@
 //   A ⅋ B   form       a consumer wanting all        its record   (⊗)
 //   A & B   menu       a value answering one item    its request  (⊕)
 //
-// Two constructs cover all four, and each keeps its role across the mirror.
-// `match` takes a *named* scrutinee apart. `select` is a branch table
-// awaiting its scrutinee: over a positive declaration it builds that type's
-// consumer, and over a negative one it builds the value itself.
+// Three constructs cover all four. `match` takes a *named* scrutinee apart,
+// on either side. `select` answers data: it builds the consumer of whatever
+// shape arrives — so it also builds a form, which consumes a record. `mu`
+// answers demands: with arms it builds a menu, whose requests choose.
 //
 // The negative connectives do not need a declaration — every positive type
 // already has a dual, and `select` builds it. What `form` and `menu` add is
@@ -102,7 +102,7 @@ menu Config {
 }
 
 fn config() -> Config {
-    select Config {
+    mu Config {
         .retries(out) <= 3 @ out,
         .name(out) <= "slant" @ out,
     }

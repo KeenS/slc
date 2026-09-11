@@ -4,14 +4,15 @@
 // answers one item the consumer demands. The same two operations work on
 // both, and each keyword keeps its role across the mirror:
 //
-//   `select` — a branch table awaiting its scrutinee. Over an enum it is
-//   the consumer of values; over a menu it is the menu itself, answering
-//   whichever request arrives. Only the demanded branch ever runs.
+//   `select` answers *data*: it builds the consumer of a positive type,
+//   one arm per shape that can arrive. `mu` answers *demands*: with arms,
+//   it builds a menu, one arm per request that can arrive — the ambient
+//   consumer chooses the branch, and only the demanded one ever runs.
 //
-//   `match` — a branch table applied to a named scrutinee. Over an enum
-//   value it takes data apart; over a continuation of a menu type it takes
-//   the *request* apart — `.item(out)` binds the continuation the request
-//   carries, and each arm can answer it or build another request.
+//   `match` — a branch table applied to a named scrutinee, on either side.
+//   Over an enum value it takes data apart; over a continuation of a menu
+//   type it takes the *request* apart — `.item(out)` binds the continuation
+//   the request carries, and each arm can answer it or build another.
 
 menu Config {
     retries: i32,
@@ -21,7 +22,7 @@ menu Config {
 // Build a menu: one arm per item. `out` is the continuation the request
 // carries; the arm answers by cutting into it.
 fn config() -> Config {
-    select Config {
+    mu Config {
         .retries(out) <= 3 @ out,
         .name(out) <= "slant" @ out,
     }
@@ -30,7 +31,7 @@ fn config() -> Config {
 // A menu built from another menu: answer `name` differently, forward the
 // rest. Only the demanded item is ever computed.
 fn loud(base: Config) -> Config {
-    select Config {
+    mu Config {
         .retries(out) <= base.retries @ out,
         .name(out) <= base.name + "!" @ out,
     }

@@ -393,24 +393,28 @@ The two declarations above are each other's dual: `dual(i64 & String)` is
 the answer — the shape the enum writes with explicit boxes. `menu` makes that
 type native, so the boxes and the encoding disappear.
 
-The same two keywords work on both sides of the mirror, because each names a
-syntactic role, not a polarity:
+Each keyword owns one core family, so the branch tables split by what
+arrives at them:
 
-- **`select` — a branch table awaiting its ambient scrutinee.** Over an enum,
-  it is the consumer of values; over a menu, it is the menu value itself,
-  answering whichever request arrives. An arm is `.item(out) <= c`: the
-  destructor it answers, the binder for the continuation the request carries
-  (`out: -A` for an item answering `A`), and the command that answers it.
-  Arms cover each item exactly once. Only the demanded branch ever runs.
-- **`match` — a branch table applied to a named scrutinee.** Over an enum
-  value it takes data apart; over a continuation of a menu type (`k: -Config`)
-  it takes the *request* apart: `.item(out) => e` binds the request's own
-  continuation, and the arms are ordinary expressions — typically other
-  requests.
+- **`select` answers data** — it builds the μ̃ family: the consumer of an
+  atom, a product, an enum, or the record a `form` consumes. One arm per
+  shape the data can take.
+- **`mu` answers demands** — it builds the μ family: bare `mu(k)` captures
+  the ambient continuation, and `mu Config { … }` is the copattern form, a
+  menu value. An arm is `.item(out) <= c`: the destructor it answers, the
+  binder for the continuation the request carries (`out: -A` for an item
+  answering `A`), and the command that answers it. Arms cover each item
+  exactly once, only the demanded branch ever runs, and the menu's name may
+  be left out when a destructor names it unambiguously.
+- **`match` — a branch table applied to a named scrutinee, on either side.**
+  Over an enum value it takes data apart; over a continuation of a menu type
+  (`k: -Config`) it takes the *request* apart: `.item(out) => e` binds the
+  request's own continuation, and the arms are ordinary expressions —
+  typically other requests.
 
 ```sl
 fn config() -> Config {
-    select Config {
+    mu Config {
         .retries(out) <= 3 @ out,
         .name(out) <= "slant" @ out,
     }
@@ -548,10 +552,12 @@ data Report { value: i64, label: String }   // ⊗ every field, given
 form Report { value: i64, label: String }   // ⅋ every field, wanted
 ```
 
-The two negative declarations work the same way, and the rule covering both
-is: **`select` builds the value, and the literal syntax builds the demand.**
-A menu's demand is one labelled request, `.item(k)`; a form's is the whole
-record, `Report { … }`, whose type is the form's dual.
+The two negative declarations follow one rule: **the literal syntax builds
+the demand, and the value is built by the keyword of its core family.** A
+form is a consumer — μ̃ family — so `select` builds it; a menu is a μ[…]
+value, so `mu` builds it. A menu's demand is one labelled request,
+`.item(k)`; a form's is the whole record, `Report { … }`, whose type is the
+form's dual.
 
 ```sl
 fn printer(out: ↓-i64) -> Report {
@@ -1122,9 +1128,10 @@ nested left to right for several arguments.
 | `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
 | `expr.match` | `match s { p => e, … }` | `__match_dispatch(⟦s⟧, arm₁, …)`; each arm is `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))`, so an arm body runs only when its pattern matches |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value. Over a `menu`, the arms are requests and the result is the menu itself: `μ[.M::item(k). ⟦c⟧ | …]` |
+| `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.comatch` | `mu T { .item(k) <= c, … }` | `μ[.T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
-| `decl.menu` | `menu M { item: A, … }` | no term of its own: `select M` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
+| `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
 | `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
@@ -1146,7 +1153,7 @@ become λ binders.
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `data` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `data` values — a labelled product |
-| `μ[.d(α). c \| …]` | `select` over a `menu` |
+| `μ[.d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction, and a `form` value |
 | `α` | the consumer named on the right of a cut, `v @ k` |

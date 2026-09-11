@@ -1477,6 +1477,85 @@ fn check_expr_unapplied(
             }
             Some(Type::Named(name.clone()))
         }
+        Expr::CoMatch { ty, arms } => {
+            // `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a
+            // menu value, branching on the demand the ambient consumer turns
+            // out to be. Each arm binds the continuation its request carries
+            // and answers it with a command.
+            let named = match ty {
+                Some(ty) => match enums.resolve(&ty.kind) {
+                    Some(Type::Dual(inner)) => match *inner {
+                        Type::Named(n) if enums.is_menu(&n) => Some(n),
+                        other => {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`mu` with arms builds a menu; `{other}` is not one"
+                                ),
+                                span: ty.span,
+                            });
+                            None
+                        }
+                    },
+                    _ => {
+                        diags.push(Diagnostic {
+                            message: "`mu` with arms builds a menu; write a declared menu name"
+                                .into(),
+                            span: ty.span,
+                        });
+                        None
+                    }
+                },
+                // Left out: an arm's destructor may name it.
+                None => arms.iter().find_map(|arm| match &arm.pattern {
+                    slc_syntax::ast::Pattern::Dtor { dtor, .. } => {
+                        enums.destructor(dtor).map(|(menu, _)| menu.clone())
+                    }
+                    _ => None,
+                }),
+            };
+            let Some(menu) = named else {
+                diags.push(Diagnostic {
+                    message: "no arm names a menu item, so write the menu: `mu Config { … }`"
+                        .into(),
+                    span: e.span,
+                });
+                return None;
+            };
+            for arm in arms {
+                env.push();
+                match &arm.pattern {
+                    slc_syntax::ast::Pattern::Dtor { dtor, binder } => {
+                        match enums.destructor(&format!("{menu}::{dtor}")) {
+                            Some((_, payload)) => {
+                                if let Some(k) = payload.first() {
+                                    env.define(binder, k.clone());
+                                }
+                            }
+                            None => diags.push(Diagnostic {
+                                message: format!("`{menu}` has no item `{dtor}`"),
+                                span: arm.command.span,
+                            }),
+                        }
+                    }
+                    _ => diags.push(Diagnostic {
+                        message: format!("`mu {menu}` answers demands; every arm is `.item(k)`"),
+                        span: arm.command.span,
+                    }),
+                }
+                let command = check_expr(&arm.command, enums, env, diags);
+                if let Some(command) = command
+                    && command != Type::Bottom
+                    && command != Type::One
+                {
+                    diags.push(Diagnostic {
+                        message: format!("a `mu` arm is a command; this one has type {command}"),
+                        span: arm.command.span,
+                    });
+                }
+                env.pop();
+            }
+            Some(Type::Dual(Box::new(Type::Named(menu))))
+        }
         Expr::Select { ty, arms } => {
             // `select T { p <= c, … }` builds the consumer of T. Each arm
             // covers one shape of T, binds that shape's components, and runs
@@ -1504,51 +1583,20 @@ fn check_expr_unapplied(
                 });
                 return None;
             };
-            // `select Menu { .item(k) <= c, … }` builds the menu itself:
-            // one arm per item, each binding the continuation the request
-            // carries and answering it with a command.
+            // A menu belongs to `mu`: `select` answers data, and a menu
+            // answers demands.
             if let Type::Dual(inner) = &resolved
                 && let Type::Named(menu) = inner.as_ref()
                 && enums.is_menu(menu)
             {
-                for arm in arms {
-                    env.push();
-                    match &arm.pattern {
-                        slc_syntax::ast::Pattern::Dtor { dtor, binder } => {
-                            match enums.variant(&format!("{menu}::{dtor}")) {
-                                Some((_, payload)) => {
-                                    if let Some(k) = payload.first() {
-                                        env.define(binder, k.clone());
-                                    }
-                                }
-                                None => diags.push(Diagnostic {
-                                    message: format!("`{menu}` has no item `{dtor}`"),
-                                    span: arm.command.span,
-                                }),
-                            }
-                        }
-                        _ => diags.push(Diagnostic {
-                            message: format!(
-                                "`select {menu}` answers requests; every arm is `.item(k)`"
-                            ),
-                            span: arm.command.span,
-                        }),
-                    }
-                    let command = check_expr(&arm.command, enums, env, diags);
-                    if let Some(command) = command
-                        && command != Type::Bottom
-                        && command != Type::One
-                    {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "a `select` arm is a command; this one has type {command}"
-                            ),
-                            span: arm.command.span,
-                        });
-                    }
-                    env.pop();
-                }
-                return Some(resolved);
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`select` answers data, and `{menu}` is a menu, which answers demands: \
+                         build it with `mu {menu} {{ … }}`"
+                    ),
+                    span: e.span,
+                });
+                return None;
             }
             // `select F { F { a, b } <= c }` over a form builds the form
             // value itself: it consumes the record its fields describe, so

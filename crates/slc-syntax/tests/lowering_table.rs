@@ -92,8 +92,13 @@ const ROWS: &[Row] = &[
         core: "co(μ̃[F(a). ⟨a ∥ k⟩])",
     },
     Row {
+        id: "expr.comatch",
+        source: "menu M { v: i32 } fn g() -> M { mu { .v(out) <= 1 @ out } }",
+        core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",
+    },
+    Row {
         id: "decl.menu",
-        source: "menu M { v: i32 } fn g() -> M { select M { .v(out) <= 1 @ out } }",
+        source: "menu M { v: i32 } fn g() -> M { mu M { .v(out) <= 1 @ out } }",
         core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",
     },
     Row {

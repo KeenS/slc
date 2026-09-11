@@ -1156,6 +1156,45 @@ impl Parser {
                     Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
                     _ => None,
                 };
+                // `mu T { .item(k) <= c, … }` — a brace right after `mu`
+                // (or its name slot, which is then the menu's name) is the
+                // copattern form: a menu value, one arm per demand. A bare
+                // `mu` binds its continuation with a parenthesised group.
+                if self.peek_kind() == Some(&TokenKind::LBrace) {
+                    let ty = name.map(|n| {
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: TypeExpr::Base(n),
+                        })
+                    });
+                    self.pos += 1;
+                    let mut arms = Vec::new();
+                    loop {
+                        if self.eat(&TokenKind::RBrace) {
+                            break;
+                        }
+                        let arm = self.pos;
+                        let pattern = match self.parse_pattern() {
+                            Ok(pattern) => pattern,
+                            Err(e) => return Err(self.reversed_arm_error(arm, e)),
+                        };
+                        if !self.eat(&TokenKind::Le) {
+                            let expected =
+                                self.expect(TokenKind::Le, "`<=` in `mu` arm").unwrap_err();
+                            return Err(self.reversed_arm_error(arm, expected));
+                        }
+                        let command = self.parse_expr()?;
+                        arms.push(SelectArm { pattern, command });
+                        if !self.eat(&TokenKind::Comma) {
+                            self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
+                            break;
+                        }
+                    }
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::CoMatch { ty, arms },
+                    });
+                }
                 // One group, and it is the continuation the expression
                 // captures — `fn(x)` binds a value, `mu(k)` binds the
                 // continuation. Nothing separates it from a second group,

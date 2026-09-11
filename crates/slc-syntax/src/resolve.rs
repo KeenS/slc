@@ -343,6 +343,17 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 locals.pop();
             }
         }
+        Expr::CoMatch { ty, arms } => {
+            if let Some(ty) = ty {
+                resolve_type(&mut ty.kind, stack);
+            }
+            for arm in arms {
+                resolve_pattern(&mut arm.pattern, stack, locals);
+                locals.push(pattern_binders(&arm.pattern));
+                resolve_expr(&mut arm.command.kind, stack, locals);
+                locals.pop();
+            }
+        }
         Expr::Select { ty, arms } => {
             if let Some(ty) = ty {
                 resolve_type(&mut ty.kind, stack);

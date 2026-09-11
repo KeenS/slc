@@ -64,45 +64,7 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
             };
             match written {
                 Some(name) if enums.variants_of(&name).is_some() => {
-                    let variants = enums.variants_of(&name).cloned().unwrap_or_default();
-                    let mut seen: HashSet<String> = HashSet::new();
-                    for arm in arms {
-                        let Some(variant) = arm_variant(&arm.pattern) else {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "`select {name}` arm must name a variant of `{name}`"
-                                ),
-                                span: e.span,
-                            });
-                            continue;
-                        };
-                        if !variants.contains(&variant) {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "`select {name}` refers to unknown variant `{variant}`"
-                                ),
-                                span: e.span,
-                            });
-                        } else if !seen.insert(variant.clone()) {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "`select {name}` has duplicate arm for `{variant}`"
-                                ),
-                                span: e.span,
-                            });
-                        }
-                    }
-                    let missing: Vec<String> =
-                        variants.iter().filter(|v| !seen.contains(*v)).cloned().collect();
-                    if !missing.is_empty() {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "non-exhaustive `select {name}`: missing variants {}",
-                                missing.join(", ")
-                            ),
-                            span: e.span,
-                        });
-                    }
+                    check_branch_coverage("select", &name, "variant", arms, enums, e.span, diags);
                 }
                 // A bare name that is neither declared nor built in is not
                 // a type.
@@ -128,6 +90,35 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
                     });
                 }
                 _ => {}
+            }
+            for arm in arms {
+                check_expr(&arm.command, enums, diags);
+            }
+        }
+        Expr::CoMatch { ty, arms } => {
+            // `mu T { … }` covers each item of its menu exactly once, the
+            // way `select` covers each variant of its enum.
+            let written = match ty {
+                Some(ty) => written_type_name(&ty.kind),
+                None => arms.iter().find_map(|arm| {
+                    let item = arm_variant(&arm.pattern)?;
+                    enums
+                        .enums()
+                        .find(|(_, items)| items.contains(&item))
+                        .map(|(menu, _)| menu.clone())
+                }),
+            };
+            match written {
+                Some(name) if enums.variants_of(&name).is_some() => {
+                    check_branch_coverage("mu", &name, "item", arms, enums, e.span, diags);
+                }
+                Some(name) => {
+                    diags.push(Diagnostic {
+                        message: format!("`mu {name}` refers to an unknown menu"),
+                        span: e.span,
+                    });
+                }
+                None => {}
             }
             for arm in arms {
                 check_expr(&arm.command, enums, diags);
@@ -226,6 +217,52 @@ fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
         slc_syntax::ast::TypeExpr::Base(name) => Some(name.clone()),
         slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
         _ => None,
+    }
+}
+
+/// Every arm names one label of `name`, no label repeats, and none is
+/// missing — the coverage law a branch table obeys, shared by `select` over
+/// an enum and `mu` over a menu.
+fn check_branch_coverage(
+    keyword: &str,
+    name: &str,
+    label_kind: &str,
+    arms: &[slc_syntax::ast::SelectArm],
+    enums: &Declarations,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let labels = enums.variants_of(name).cloned().unwrap_or_default();
+    let mut seen: HashSet<String> = HashSet::new();
+    for arm in arms {
+        let Some(label) = arm_variant(&arm.pattern) else {
+            diags.push(Diagnostic {
+                message: format!("`{keyword} {name}` arm must name a {label_kind} of `{name}`"),
+                span,
+            });
+            continue;
+        };
+        if !labels.contains(&label) {
+            diags.push(Diagnostic {
+                message: format!("`{keyword} {name}` refers to unknown {label_kind} `{label}`"),
+                span,
+            });
+        } else if !seen.insert(label.clone()) {
+            diags.push(Diagnostic {
+                message: format!("`{keyword} {name}` has duplicate arm for `{label}`"),
+                span,
+            });
+        }
+    }
+    let missing: Vec<String> = labels.iter().filter(|v| !seen.contains(*v)).cloned().collect();
+    if !missing.is_empty() {
+        diags.push(Diagnostic {
+            message: format!(
+                "non-exhaustive `{keyword} {name}`: missing {label_kind}s {}",
+                missing.join(", ")
+            ),
+            span,
+        });
     }
 }
 

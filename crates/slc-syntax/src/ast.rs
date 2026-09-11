@@ -104,6 +104,15 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
+    /// `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a menu
+    /// value, branching on the demand the ambient consumer turns out to be.
+    /// The mirror of `select` over a data type: `select` answers data, `mu`
+    /// answers demands. The type may be left out when an arm's destructor
+    /// names its menu unambiguously.
+    CoMatch {
+        ty: Option<Box<Node<TypeExpr>>>,
+        arms: Vec<SelectArm>,
+    },
     /// A local μ abstraction: `mu(k) { body }`, which captures the
     /// continuation the expression is cut against. It has no value
     /// parameters — abstracting over a value is what `fn` does — and the
@@ -158,7 +167,9 @@ impl Expr {
                 .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
                 .collect(),
             Expr::Data { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
-            Expr::Select { arms, .. } => arms.iter().map(|arm| &arm.command).collect(),
+            Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
+                arms.iter().map(|arm| &arm.command).collect()
+            }
             Expr::Let { value, body, .. } => {
                 std::iter::once(&**value).chain(body.iter().map(|b| &**b)).collect()
             }
