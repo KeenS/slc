@@ -1092,6 +1092,70 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
 }
 
 #[test]
+fn traits_dispatch_on_menu_and_form_receivers() {
+    // Codata carries impls: a concrete menu, a form, a bounded impl for a
+    // generic menu, and a bound discharged at a menu type all dispatch.
+    let dir = std::env::temp_dir().join("slc_test_trait_menu.sl");
+    std::fs::write(
+        &dir,
+        r#"menu Config { retries: i64, name: String }
+        form Report { value: i32, label: String }
+        menu Stream2<T> { head: T, tail: Stream2<T> }
+
+        trait Describe { fn describe(self: +Self) -> String; }
+
+        impl Describe for Config {
+            fn describe(self: +Config) -> String {
+                self.name + " with " + fmt(self.retries) + " retries"
+            }
+        }
+        impl Describe for Report {
+            fn describe(self: +Report) -> String { "a report sink" }
+        }
+        impl<T: Display> Describe for Stream2<T> {
+            fn describe(self: +Stream2<T>) -> String {
+                "stream starting " + fmt(self.head)
+            }
+        }
+
+        fn config() -> Config {
+            mu Config { .retries(out) <= 3 @ out, .name(out) <= "slant" @ out }
+        }
+        fn printer(out: ↓-i32) -> Report {
+            select Report { Report { value, label } => value @ ↑out }
+        }
+        fn ones() -> Stream2<i64> {
+            mu Stream2 { .head(out) <= 1 @ out, .tail(out) <= ones() @ out }
+        }
+        fn label<T: Describe>(x: T) -> String { describe(x) }
+
+        command main | (exit: -i32) {
+            println(describe(config()));
+            println(describe(printer(↓exit)));
+            println(describe(ones()));
+            println(label(config()));
+            println(label(printer(↓exit)));
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "\"slant with 3 retries\"",
+            "\"a report sink\"",
+            "\"stream starting 1\"",
+            "\"slant with 3 retries\"",
+            "\"a report sink\"",
+        ],
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

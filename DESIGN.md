@@ -618,6 +618,11 @@ atom.
 
 ### Traits
 
+Impls dispatch on either side of the mirror: a `menu` or a `form` carries
+one exactly as a `data` or an `enum` does — `impl Describe for Config`
+with the method demanding `self.retries` — including bounded impls for
+generic menus.
+
 A bounded impl — `impl<T: Display> Display for List<T>` — keys by the
 declaration's name and covers every instantiation; its dictionary is
 **constructed** at each use, the impl's global applied to one dictionary per
