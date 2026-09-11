@@ -242,7 +242,7 @@ continuations. `k` is a *parameter*: the caller passes it.
 
 ## 6. `mu`: capturing the current continuation
 
-The expression `mu(k: -A) { … }` is the other half, and it is the real μ of
+The expression `mu { k <= … }` is the other half, and it is the real μ of
 the calculus: it captures the continuation of the expression it stands in —
 the language's `call/cc`. Nothing supplies `k`; an expression has no caller,
 only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a cut:
@@ -251,20 +251,22 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 ⟨ μk. c ∥ e ⟩  →  c[e/k]
 ```
 
-A `mu` abstracts over that continuation and over nothing else, so it has one
-parameter group and no `|` to separate a second: `fn(x)` binds a value and
-`mu(k)` binds the continuation. There is no value-binding `mu` because there
-is already a value-binding form — `mu(v) { … }` and `fn(v) { … }` both lowered
-to `λv. …`, and a binder whose body is a *command* rather than an expression
-is `select`, the μ̃.
+`mu` is uniformly `mu [Type] { arms }`, mirroring `select`: one binder arm,
+`k <= c`, is the atom form and captures the ambient continuation whole;
+request arms, `.item(out) <= c`, are the copattern form and build a menu.
+A binder arm stands alone — it takes the whole continuation, so a second
+arm would have nothing left to answer. There is no value-binding `mu`
+because a binder whose body is a *command* rather than an expression is
+`select`, the μ̃.
 
-So `k` is bound to whatever consumer the expression meets. Its type is what
-that continuation receives, which makes `mu(k: -A) { … }` an `A`, and a
-call whose result comes back through a continuation can be written without
-nesting the rest of the program inside it:
+So `k` is bound to whatever consumer the expression meets. The type written
+in front is what the expression produces — `mu String { k <= c }` is a
+`String` and `k` consumes one — and it may be left off when the arm says
+it. A call whose result comes back through a continuation can be written
+without nesting the rest of the program inside it:
 
 ```sl
-let source = mu here(k: -String) {
+let source = mu String { k <=
     read_file(path, k, complain)
 };
 print(source);
@@ -405,7 +407,7 @@ arrives at them:
 - **`select` answers data** — it builds the μ̃ family: the consumer of an
   atom, a product, an enum, or the record a `form` consumes. One arm per
   shape the data can take.
-- **`mu` answers demands** — it builds the μ family: bare `mu(k)` captures
+- **`mu` answers demands** — it builds the μ family: a binder arm `mu { k <= c }` captures
   the ambient continuation, and `mu Config { … }` is the copattern form, a
   menu value. An arm is `.item(out) <= c`: the destructor it answers, the
   binder for the continuation the request carries (`out: -A` for an item
@@ -708,13 +710,13 @@ println(f(1) + 1);           // a := +i64
 println(str_len(f("s")));    // a := +String
 ```
 
-Anything that computes stays monomorphic — `mu(k)` above all, and every
+Anything that computes stays monomorphic — `mu { k <= c }` above all, and every
 application. A value ran nothing, so no two instantiations can disagree
 about anything that happened; a computation may have captured its
 continuation, and generalizing that is the classical unsoundness (the
 Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
-per-use behaviour is wanted, write it: `fn(u) { mu(k) { … } }` is a value,
+per-use behaviour is wanted, write it: `fn(u) { mu { k <= … } }` is a value,
 generalizes, and visibly re-runs its capture at each use.
 `examples/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
@@ -748,7 +750,7 @@ without erasing them.
 
 ```sl
 fn dne(refuter: ↓↑i64) -> i64 {
-    mu(k) { ↓k @ ↑refuter }
+    mu { k <= ↓k @ ↑refuter }
 }
 
 dne(42)   // rejected: argument 1 of `dne` has type +i64; the declaration says ↓↑+i64
@@ -762,14 +764,13 @@ inside one may leave a type out when something else already says it:
 | written                                         | may be omitted when                                                                     |
 |-------------------------------------------------|-----------------------------------------------------------------------------------------|
 | a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used                             |
-| a `mu`'s name: `mu(k) { … }`                   | always — nothing refers to it                                                          |
-| a `mu`'s parameter type: `mu(k) { … }`         | the body hands it to a slot whose type is declared, or cuts a value against it          |
+| a `mu`'s produced type: `mu { k <= … }`        | the arm hands `k` to a slot whose type is declared, or cuts a value against it          |
 | a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
 
 ```sl
 // `k` goes to a slot `read_file` declares, so it is `-String`, and this
 // `let` binds a `+String`.
-let source = mu(k) {
+let source = mu { k <=
     read_file("input.json", k, complain)
 };
 
@@ -889,7 +890,7 @@ construction: compose the close onto the only door out, by shadowing `exit`
 where the handle comes into scope.
 
 ```sl
-let handle = mu(k) { open_file(path, k, complain) };
+let handle = mu { k <= open_file(path, k, complain) };
 let exit = select +i32 { status <= { close_file(handle); status @ exit } };
 ```
 
@@ -1135,7 +1136,7 @@ nested left to right for several arguments.
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
-| `expr.mu` | `mu(k: -A) { e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter |
+| `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[ L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
 | `expr.select` | `select T { p <= c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
@@ -1146,7 +1147,7 @@ nested left to right for several arguments.
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
-| `decl.mu` | `mu f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
+| `decl.mu` | `command f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
 | `decl.const` | `const C: +A = v;` | `⟦v⟧` |
 | `decl.enum` | `enum E { V }` | one global per variant: `E::V = E::V(unit)` |
 | `decl.data` | `data S { … }` | no term; the declaration is a type |
@@ -1183,12 +1184,12 @@ it stands in:
 ```sl
 // ¬¬A → A: give the refuter this call's continuation.
 fn dne(refuter: +i64) -> i64 {
-    mu(k) { k @ refuter }
+    mu { k <= k @ refuter }
 }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
-    mu(k) {
+    mu { k <=
         Choice::Refutes(select +i64 { a <= Choice::Holds(a) @ k }) @ k
     }
 }
@@ -1198,7 +1199,7 @@ fn lem() -> Choice {
 §8 — `¬¬i64` is `↓↑i64`, not `i64`, so `dne(42)` is rejected at the call.
 
 A captured continuation is a value with no expiry: the evaluator is an
-abstract machine whose continuation is an explicit frame stack, and `mu(k)`
+abstract machine whose continuation is an explicit frame stack, and `mu`
 captures by reifying it. Activating `k` *reinstates* that stack — after the
 `mu` has answered, from however deep, as many times as it is reached — so
 taking `lem()`'s offer re-enters the very `match` that already received

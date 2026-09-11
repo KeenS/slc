@@ -4,6 +4,28 @@ This guide covers the syntax changes made during the λ̄μμ̃ redesign. Old fo
 are rejected by the current compiler; each section shows the unsupported form
 and its replacement.
 
+## Local `mu`
+
+The parenthesised binder group is gone; `mu` is uniformly `mu [Type] { arms }`,
+mirroring `select`. One binder arm captures the ambient continuation whole;
+request arms build a menu. The decorative name is gone with the group, and
+the type in front is what the expression *produces* (the old annotation's
+dual).
+
+Unsupported:
+
+```sl
+mu(k) { 42 @ k }
+mu here(k: -i64) { read_file(path, k, complain) }
+```
+
+Write:
+
+```sl
+mu { k <= 42 @ k }
+mu i64 { k <= read_file(path, k, complain) }
+```
+
 ## Function polarity
 
 Every function now requires an arrow.

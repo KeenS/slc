@@ -14,9 +14,7 @@
 // Capture this call's continuation, box it, and send it to the refuter.
 // Whatever the refuter puts in the box is what the call returns.
 fn dne(refuter: ↓↑i64) -> i64 {
-    mu(k) {
-        ↓k @ ↑refuter
-    }
+    mu { k <= ↓k @ ↑refuter }
 }
 
 // A refuter: hand it a boxed consumer of `i64`, and it fills it with 42.
@@ -39,9 +37,7 @@ enum Choice {
 // expression have answered `Holds` instead. The refutation is this call's
 // own continuation, dressed as a consumer of `i64`.
 fn lem() -> Choice {
-    mu(k) {
-        Choice::Refutes(↓select +i64 { a <= Choice::Holds(a) @ k }) @ k
-    }
+    mu { k <= Choice::Refutes(↓select +i64 { a <= Choice::Holds(a) @ k }) @ k }
 }
 
 command main | (exit: -i32) {

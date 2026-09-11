@@ -9,13 +9,6 @@ pub struct ParseError {
     pub span: Span,
 }
 
-/// Whether the parameters being parsed must carry types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TypeAnnotations {
-    Required,
-    Optional,
-}
-
 /// Type parameters with their trait bounds.
 type TypeParams = (Vec<String>, Vec<(String, String)>);
 
@@ -407,8 +400,7 @@ impl Parser {
         let t = self.expect(TokenKind::Command, "`command`")?;
         let name = self.expect_ident("`command` name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
-        let (value_params, continuation_params) =
-            self.parse_command_params(TypeAnnotations::Required)?;
+        let (value_params, continuation_params) = self.parse_command_params()?;
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
@@ -439,12 +431,9 @@ impl Parser {
     /// The parameter groups of a `command`: `(values) | (continuations)`, with
     /// either side left out when it has none. `mu f(k)` takes no values,
     /// `mu f(x)` takes no continuations, and an empty group is not written.
-    fn parse_command_params(
-        &mut self,
-        annotations: TypeAnnotations,
-    ) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
+    fn parse_command_params(&mut self) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
         let value_params = match self.peek_kind() {
-            Some(TokenKind::LParen) => self.parse_group(annotations, "value")?,
+            Some(TokenKind::LParen) => self.parse_group("value")?,
             _ => Vec::new(),
         };
         if !self.eat(&TokenKind::Pipe) {
@@ -453,7 +442,7 @@ impl Parser {
         // A parameter in the second group is a continuation parameter because
         // of where it is declared, not because of anything that follows it.
         let continuation_params = self
-            .parse_group(annotations, "continuation")?
+            .parse_group("continuation")?
             .into_iter()
             .map(|mut p| {
                 p.is_continuation = true;
@@ -465,13 +454,9 @@ impl Parser {
 
     /// One group, which must hold something: an empty group is written by
     /// leaving it out.
-    fn parse_group(
-        &mut self,
-        annotations: TypeAnnotations,
-        which: &str,
-    ) -> Result<Vec<Param>, ParseError> {
+    fn parse_group(&mut self, which: &str) -> Result<Vec<Param>, ParseError> {
         let start = self.span_start();
-        let params = self.parse_params_with(annotations)?;
+        let params = self.parse_params_with()?;
         if params.is_empty() {
             return Err(ParseError {
                 message: format!("a group with no {which} parameters is not written"),
@@ -585,8 +570,7 @@ impl Parser {
             Some(TokenKind::Command) => {
                 self.pos += 1;
                 let name = self.expect_ident("method name")?;
-                let (value_params, continuation_params) =
-                    self.parse_command_params(TypeAnnotations::Required)?;
+                let (value_params, continuation_params) = self.parse_command_params()?;
                 self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
                 Ok(TraitMethod {
                     name,
@@ -648,13 +632,10 @@ impl Parser {
     /// written. A local `mu` is not an interface: its types may be left to
     /// the body that uses them.
     fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
-        self.parse_params_with(TypeAnnotations::Required)
+        self.parse_params_with()
     }
 
-    fn parse_params_with(
-        &mut self,
-        annotations: TypeAnnotations,
-    ) -> Result<Vec<Param>, ParseError> {
+    fn parse_params_with(&mut self) -> Result<Vec<Param>, ParseError> {
         let mut params = Vec::new();
         self.expect(TokenKind::LParen, "`(`")?;
         loop {
@@ -662,14 +643,8 @@ impl Parser {
                 break;
             }
             let name = self.expect_ident("parameter name")?;
-            let ty = if annotations == TypeAnnotations::Required {
-                self.expect(TokenKind::Colon, "`:` — a declaration's parameters carry types")?;
-                Some(self.parse_type()?.kind)
-            } else if self.eat(&TokenKind::Colon) {
-                Some(self.parse_type()?.kind)
-            } else {
-                None
-            };
+            self.expect(TokenKind::Colon, "`:` — a declaration's parameters carry types")?;
+            let ty = Some(self.parse_type()?.kind);
             params.push(Param { name, ty, is_continuation: false });
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RParen, "`)`")?;
@@ -1151,80 +1126,96 @@ impl Parser {
             }
             Some(TokenKind::Mu) => {
                 self.pos += 1;
-                // Nothing refers to a local `mu`'s name, so it is optional.
-                let name = match self.peek_kind() {
-                    Some(TokenKind::Ident(_)) => Some(self.expect_ident("local `mu` name")?),
+                // `mu` is uniformly `mu [Type] { arms }`. The type is what
+                // the expression produces — a menu for the copattern form,
+                // any type for the binder form — and may be left out when
+                // the arms say it.
+                let old_form_here = |parser: &Self, at: usize| {
+                    matches!(parser.tokens.get(at).map(|t| &t.kind), Some(TokenKind::LParen))
+                        && matches!(
+                            parser.tokens.get(at + 1).map(|t| &t.kind),
+                            Some(TokenKind::Ident(_))
+                        )
+                        && matches!(
+                            parser.tokens.get(at + 2).map(|t| &t.kind),
+                            Some(TokenKind::Colon) | Some(TokenKind::RParen)
+                        )
+                };
+                // `mu(k)` / `mu name(k: -T)` — the retired parenthesised
+                // binder. `(` can also open a tensor type, so only the
+                // binder shape gets the guidance.
+                if old_form_here(self, self.pos)
+                    || (matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+                        && old_form_here(self, self.pos + 1))
+                {
+                    return Err(ParseError {
+                        message: "the parenthesised `mu(k)` form is gone; bind the \
+                                  continuation as an arm — `mu { k <= c }`, with the produced \
+                                  type in front: `mu i64 { k <= c }`"
+                            .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                    });
+                }
+                let ty = match self.peek_kind() {
+                    Some(TokenKind::LBrace) => None,
+                    _ => Some(Box::new(self.parse_type()?)),
+                };
+                self.expect(TokenKind::LBrace, "`{` after `mu`")?;
+                let mut arms = Vec::new();
+                loop {
+                    if self.eat(&TokenKind::RBrace) {
+                        break;
+                    }
+                    let arm = self.pos;
+                    let pattern = match self.parse_pattern() {
+                        Ok(pattern) => pattern,
+                        Err(e) => return Err(self.reversed_arm_error(arm, e)),
+                    };
+                    if !self.eat(&TokenKind::Le) {
+                        let expected = self.expect(TokenKind::Le, "`<=` in `mu` arm").unwrap_err();
+                        return Err(self.reversed_arm_error(arm, expected));
+                    }
+                    let command = self.parse_expr()?;
+                    arms.push(SelectArm { pattern, command });
+                    if !self.eat(&TokenKind::Comma) {
+                        self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
+                        break;
+                    }
+                }
+                // One binder arm — `mu { k <= c }` — is the atom form: it
+                // captures the ambient continuation whole. Anything else is
+                // the copattern form, a menu.
+                let binder = match arms.as_slice() {
+                    [SelectArm { pattern: Pattern::Ident(name), .. }] => Some(name.clone()),
+                    [SelectArm { pattern: Pattern::Wildcard, .. }] => Some("__unused".to_string()),
                     _ => None,
                 };
-                // `mu T { .item(k) <= c, … }` — a brace right after `mu`
-                // (or its name slot, which is then the menu's name) is the
-                // copattern form: a menu value, one arm per demand. A bare
-                // `mu` binds its continuation with a parenthesised group.
-                if self.peek_kind() == Some(&TokenKind::LBrace) {
-                    let ty = name.map(|n| {
-                        Box::new(Node {
-                            span: Span { start, end: self.span_end() },
-                            kind: TypeExpr::Base(n),
-                        })
-                    });
-                    self.pos += 1;
-                    let mut arms = Vec::new();
-                    loop {
-                        if self.eat(&TokenKind::RBrace) {
-                            break;
-                        }
-                        let arm = self.pos;
-                        let pattern = match self.parse_pattern() {
-                            Ok(pattern) => pattern,
-                            Err(e) => return Err(self.reversed_arm_error(arm, e)),
-                        };
-                        if !self.eat(&TokenKind::Le) {
-                            let expected =
-                                self.expect(TokenKind::Le, "`<=` in `mu` arm").unwrap_err();
-                            return Err(self.reversed_arm_error(arm, expected));
-                        }
-                        let command = self.parse_expr()?;
-                        arms.push(SelectArm { pattern, command });
-                        if !self.eat(&TokenKind::Comma) {
-                            self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
-                            break;
-                        }
-                    }
+                if let Some(name) = binder {
+                    let command = arms.pop().expect("matched one arm").command;
+                    let param =
+                        Param { name, ty: ty.map(TypeExpr::Negative), is_continuation: true };
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: Expr::CoMatch { ty, arms },
+                        kind: Expr::Mu {
+                            continuation_params: vec![param],
+                            body: Box::new(command),
+                        },
                     });
                 }
-                // One group, and it is the continuation the expression
-                // captures — `fn(x)` binds a value, `mu(k)` binds the
-                // continuation. Nothing separates it from a second group,
-                // because a `mu` has no second group.
-                if self.peek_kind() == Some(&TokenKind::Pipe) {
+                if arms
+                    .iter()
+                    .any(|arm| matches!(arm.pattern, Pattern::Ident(_) | Pattern::Wildcard))
+                {
                     return Err(ParseError {
-                        message: "a `mu` binds only the continuation it captures: write `mu(k)`"
+                        message: "a `mu` either binds its continuation with one arm, or \
+                                  answers a menu's items — a binder arm stands alone"
                             .into(),
-                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                        span: Span { start, end: self.span_end() },
                     });
                 }
-                let continuation_params: Vec<Param> = self
-                    .parse_group(TypeAnnotations::Optional, "continuation")?
-                    .into_iter()
-                    .map(|mut p| {
-                        p.is_continuation = true;
-                        p
-                    })
-                    .collect();
-                if self.peek_kind() == Some(&TokenKind::Pipe) {
-                    return Err(ParseError {
-                        message: "a `mu` has one parameter group: the continuation it captures"
-                            .into(),
-                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
-                    });
-                }
-                let body = self.parse_block()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Mu { name, continuation_params, body: Box::new(body) },
+                    kind: Expr::CoMatch { ty, arms },
                 })
             }
             Some(TokenKind::Fn) => {
@@ -1874,71 +1865,60 @@ mod tests {
     }
 
     #[test]
-    fn a_local_mu_may_leave_out_its_name_and_its_parameter_types() {
-        let p = parse_str("mu(k) { 42 @ k }");
+    fn a_local_mu_may_leave_out_its_type() {
+        let p = parse_str("mu { k <= 42 @ k }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
-        let Expr::Mu { name, continuation_params, .. } = &body.kind else {
+        let Expr::Mu { continuation_params, .. } = &body.kind else {
             panic!("expected a local mu: {:?}", body.kind)
         };
-        assert_eq!(*name, None);
         assert_eq!(continuation_params[0].name, "k");
         assert_eq!(continuation_params[0].ty, None);
 
-        // Either may still be written. With a name it needs an enclosing
-        // declaration: `mu name(…)` at the top level is a declaration.
-        let p = parse_str("fn f() -> i32 { mu here(k: -i32) { 42 @ k } }");
+        // The produced type may be written in front; the binder then
+        // consumes it — `mu i32 { k <= c }` gives `k` the type `-i32`.
+        let p = parse_str("fn f() -> i32 { mu i32 { k <= 42 @ k } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
-        let Expr::Mu { name, continuation_params, .. } = &exprs[0].kind else {
+        let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
             panic!("expected a local mu: {:?}", exprs[0].kind)
         };
-        assert_eq!(name.as_deref(), Some("here"));
-        assert!(continuation_params[0].ty.is_some());
+        assert!(matches!(
+            &continuation_params[0].ty,
+            Some(TypeExpr::Negative(inner)) if matches!(&inner.kind, TypeExpr::Base(b) if b == "i32")
+        ));
     }
 
     #[test]
     fn a_declaration_is_a_command_and_mu_is_the_expression() {
-        // `mu name(…)` was the declaration before the two forms were told
-        // apart; the diagnostic says which is which.
-        for source in ["mu main(exit: -i32) { 0 @ exit }", "mu f(x: +i32) | (k: -i32) { x @ k }"] {
-            let errors = parse(lex(source).unwrap()).unwrap_err();
-            assert!(
-                errors.iter().any(|e| e.message.contains("a declaration is a `command`")),
-                "{source}: {errors:?}"
-            );
-        }
-
-        // A named `mu` inside a declaration is still the capturing form.
+        // A declaration over parameters is a `command`; `mu` is the
+        // expression capturing the ambient continuation.
         let p = parse_str("command f | (k: -i32) { 1 @ k }");
         assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
-        let p = parse_str("fn g() -> i32 { mu here(k: -i32) { 1 @ k } }");
+        let p = parse_str("fn g() -> i32 { mu { k <= 1 @ k } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
     }
 
     #[test]
-    fn a_mu_binds_one_group_and_it_is_the_continuation() {
-        // `fn(x)` binds a value, `mu(k)` binds the continuation it captures.
-        let p = parse_str("fn f() -> i32 { mu(k: -i32) { 1 @ k } }");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
-        let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
-        let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
-            panic!("expected a mu: {:?}", exprs[0].kind)
-        };
-        assert_eq!(continuation_params[0].name, "k");
-        assert!(continuation_params[0].is_continuation);
-
-        // There is no second group to separate, so `|` is a mistake.
+    fn the_parenthesised_mu_form_is_gone() {
+        // `mu(k) { c }` and `mu name(k: -T) { c }` both point at the arm
+        // syntax now.
         for source in
-            ["fn f() -> i32 { mu | (k) { 1 @ k } }", "fn f() -> i32 { mu(x) | (k) { x @ k } }"]
+            ["fn f() -> i32 { mu(k: -i32) { 1 @ k } }", "fn f() -> i32 { mu here(k) { 1 @ k } }"]
         {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
-                errors.iter().any(|e| e.message.contains("continuation it captures")),
+                errors.iter().any(|e| e.message.contains("mu { k <= c }")),
                 "{source}: {errors:?}"
             );
         }
+
+        // A binder arm stands alone: it captures the whole continuation, so
+        // a second arm has nothing left to answer.
+        let errors = parse(lex("fn f() -> i32 { mu { k <= 1 @ k, .item(x) <= 2 @ x } }").unwrap())
+            .unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("binder arm stands alone")), "{errors:?}");
     }
 
     #[test]

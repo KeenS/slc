@@ -4,7 +4,7 @@
 // traversal, threaded through every frame. When the target is found, the
 // walker does not return `true` up through each level — it cuts the value
 // straight to `jump`, and every pending `done` on the way up is simply
-// abandoned. The jump lands at the `mu(k)` that captured the continuation
+// abandoned. The jump lands at the `mu` that captured the continuation
 // of the `let`, however deep the recursion was when it fired.
 //
 // The visit log is the proof: searching for 2 never visits 4, because after
@@ -41,15 +41,11 @@ command main | (exit: -i32) {
     );
 
     // Found: the walk stops the moment it hits, and `done` never fires.
-    let hit = mu(k) {
-        walk(tree, 2, k, select +unit { exhausted <= -1 @ k })
-    };
+    let hit = mu { k <= walk(tree, 2, k, select +unit { exhausted <= -1 @ k }) };
     println("found: " + int_to_str(hit));
 
     // Absent: the walk exhausts the tree, and the `done` chain delivers -1.
-    let missing = mu(k) {
-        walk(tree, 99, k, select +unit { exhausted <= -1 @ k })
-    };
+    let missing = mu { k <= walk(tree, 99, k, select +unit { exhausted <= -1 @ k }) };
     println("missing: " + int_to_str(missing));
 
     0 @ exit

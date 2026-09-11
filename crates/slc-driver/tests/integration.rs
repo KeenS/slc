@@ -497,9 +497,7 @@ fn select_dispatches_to_matching_enum_variant() {
             }}
         }}
         command main | (exit: -i32) {{
-            println(mu run(out: -i32) {{
-                Color::{variant} @ k(out)
-            }});
+            println(mu i32 {{ out <= Color::{variant} @ k(out) }});
             0 @ exit
         }}"#
             ),
@@ -532,9 +530,7 @@ fn activating_one_select_arm_does_not_activate_other_arms() {
         }
 
         command main | (exit: -i32) {
-            println(mu run(out: -i32) {
-                Color::Green @ dispatch(out)
-            });
+            println(mu i32 { out <= Color::Green @ dispatch(out) });
             0 @ exit
         }"#,
     )
@@ -571,10 +567,10 @@ fn constructing_select_does_not_activate_any_arm() {
         }
 
         command main | (exit: -i32) {
-            println(mu run(out: -i32) {
+            println(mu i32 { out <= {
                 let consumer = dispatch(out);
                 7
-            });
+            } });
             0 @ exit
         }"#,
     )
@@ -688,10 +684,8 @@ fn select_builds_the_consumer_of_a_product() {
         }
 
         command main | (exit: -i32) {
-            println(mu sum(answer: -i64) { (2, 40) @ total(answer) });
-            println(mu ask(answer: -String) {
-                Reading { value: 42, unit: "m" } @ show(answer)
-            });
+            println(mu i64 { answer <= (2, 40) @ total(answer) });
+            println(mu String { answer <= Reading { value: 42, unit: "m" } @ show(answer) });
             0 @ exit
         }"#,
     )
@@ -738,11 +732,11 @@ fn control_does_not_return_from_a_cut() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) {
-            println(mu run(k: -i64) {
+            println(mu i64 { k <= {
                 println("before");
                 1 @ k;
                 println("after")
-            });
+            } });
             0 @ exit
         }"#,
     )
@@ -772,9 +766,7 @@ fn a_computed_consumer_receives_the_value() {
         }
 
         command main | (exit: -i32) {
-            println(mu ask(answer: -i64) {
-                Color::Blue @ code(answer)
-            });
+            println(mu i64 { answer <= Color::Blue @ code(answer) });
             0 @ exit
         }"#,
     )
@@ -804,7 +796,7 @@ fn negative_fn_and_local_mu_capture_do_not_conflict() {
     std::fs::write(
         &dir,
         r#"fn f(k: -i32) <- i32 {
-            (mu escape(outer: -i32) { 42 @ outer }) @ k
+            (mu i32 { outer <= 42 @ outer }) @ k
         }
         command main | (exit: -i32) { 0 @ exit }"#,
     )
@@ -930,9 +922,9 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
         format!(
             r#"command main | (exit: -i32) {{
                 let fail = select +String {{ m <= {{ println(m); 1 @ exit }} }};
-                let fh = mu(k) {{ open_file("{}", k, fail) }};
+                let fh = mu {{ k <= open_file("{}", k, fail) }};
                 close_file(fh);
-                let line = mu(k) {{
+                let line = mu {{ k <=
                     read_line(fh, k, select +unit {{ e <= {{ println("eof"); 1 @ exit }} }})
                 }};
                 println(line);

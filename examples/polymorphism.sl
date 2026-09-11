@@ -29,10 +29,10 @@ command main | (exit: -i32) {
     // The by-name idiom. `fresh` is a lambda, hence a value, hence
     // polymorphic — and every use runs its own capture.
     let fresh = fn(u) {
-        mu(k) {
+        mu { k <= {
             println("capturing");
             fn(x) { x } @ k
-        }
+        } }
     };
     println(fresh(())(1) + 1);
     println(str_len(fresh(())("again")));

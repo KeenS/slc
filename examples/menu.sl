@@ -56,9 +56,9 @@ command main | (exit: -i32) {
     println(loud(cfg).name);         // "slant!"
 
     // A cut delivers a request directly: `mu` names where the answer goes.
-    println(mu ask(a: -i32) {
+    println(mu i32 { a <= {
         cfg @ reroute(.retries(a))   // 3
-    });
+    } });
 
     0 @ exit
 }

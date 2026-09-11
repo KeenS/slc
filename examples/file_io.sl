@@ -25,15 +25,11 @@ command main | (exit: -i32) {
 
     // Whole-file reading. `k` is the continuation of the `let`, captured by
     // `mu` — the language's `call/cc` — so the program stays flat.
-    let source = mu(k) {
-        read_file("examples/hello.sl", k, complain)
-    };
+    let source = mu { k <= read_file("examples/hello.sl", k, complain) };
     print(source);
 
     // Line reading, through a file.
-    let file = mu(k) {
-        open_file("examples/hello.sl", k, complain)
-    };
+    let file = mu { k <= open_file("examples/hello.sl", k, complain) };
 
     // From here on, `exit` *is* "close the file, then leave": the arm's
     // `exit` is the outer one, and everything below sees only the composed
@@ -45,9 +41,9 @@ command main | (exit: -i32) {
         },
     };
 
-    let first = mu(k) {
+    let first = mu { k <= {
         read_line(file, k, select +unit { end <= { println("empty file"); 1 @ exit } })
-    };
+    } };
     println("first line: " + first);
 
     // The failure path: exactly one of the two consumers runs, and this

@@ -66,9 +66,7 @@ fn is_hex(c: +char) -> bool {
 command parse_json(input: +String) | (parsed: -String, failed: -String) {
     let start = skip_ws(input, 0);
     if start < str_len(input) {
-        let end = mu value(k) {
-            parse_value(input, start, k, failed)
-        };
+        let end = mu { k <= parse_value(input, start, k, failed) };
         if skip_ws(input, end) == str_len(input) {
             input[start..end] @ parsed
         } else {
@@ -108,9 +106,7 @@ command parse_number(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
 
 command parse_number_tail(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     if at(input, pos) == '.' {
-        let after_fraction = mu fraction(k) {
-            parse_fraction(input, pos + 1, k, failed)
-        };
+        let after_fraction = mu { k <= parse_fraction(input, pos + 1, k, failed) };
         parse_exponent(input, after_fraction, ok, failed)
     } else {
         parse_exponent(input, pos, ok, failed)
@@ -209,9 +205,7 @@ command parse_array(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
 }
 
 command parse_array_body(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
-    let value_end = mu value(k) {
-        parse_value(input, pos, k, failed)
-    };
+    let value_end = mu { k <= parse_value(input, pos, k, failed) };
     let after_value = skip_ws(input, value_end);
     let ch = at(input, after_value);
     if ch == COMMA {
@@ -239,14 +233,10 @@ command parse_object(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
 
 command parse_object_body(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     if at(input, pos) == QUOTE {
-        let key_end = mu key(k) {
-            parse_string(input, pos, k, failed)
-        };
+        let key_end = mu { k <= parse_string(input, pos, k, failed) };
         let after_key = skip_ws(input, key_end);
         if at(input, after_key) == COLON {
-            let value_end = mu value(k) {
-                parse_value(input, skip_ws(input, after_key + 1), k, failed)
-            };
+            let value_end = mu { k <= parse_value(input, skip_ws(input, after_key + 1), k, failed) };
             let after_value = skip_ws(input, value_end);
             let ch = at(input, after_value);
             if ch == COMMA {

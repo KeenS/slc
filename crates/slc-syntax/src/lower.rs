@@ -1758,7 +1758,7 @@ mod tests {
         // A local mu adds its binder only inside its own body.
         let out = lower_str(
             "fn f(ok: -i32) <- i32 {
-                mu escape(inner: -i32) { ok(escape(1, inner)) }
+                mu i32 { inner <= ok(escape(1, inner)) }
             }",
         );
         let printed = format!("{}", out[0].1);

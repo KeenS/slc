@@ -2047,7 +2047,7 @@ fn check_expr_unapplied(
             let result = check_expr(body, enums, env, diags);
             env.pop();
             // A `mu` captures the ambient continuation, so its value is
-            // whatever that continuation receives: `mu(k: -A) { … }` has
+            // whatever that continuation receives: `mu A { k <= … }` has
             // type `A`. A row whose positions disagree has no single such
             // type, and neither does one that is empty.
             let captured = captured_types
@@ -2400,7 +2400,7 @@ mod tests {
                      }
                  }
                  fn main() -> i64 {
-                     mu ask(answer: -i64) { Color::Green @ code(answer) }
+                     mu i64 { answer <= Color::Green @ code(answer) }
                  }"
             )
             .is_ok()
@@ -2412,7 +2412,7 @@ mod tests {
         assert!(
             check(
                 "command route(x: +i32) | (k: -i32) { x @ k }
-                 fn main() -> i32 { mu run(out: -i32) { route(1, out) } }"
+                 fn main() -> i32 { mu i32 { out <= route(1, out) } }"
             )
             .is_ok()
         );
@@ -2422,7 +2422,7 @@ mod tests {
     fn continuation_row_rejects_an_incompatible_continuation_type() {
         let diags = check(
             "command route(x: +i32) | (k: -i32) { x @ k }
-             fn main() -> i32 { mu run(out: -bool) { route(1, out) } }",
+             fn main() -> i32 { mu bool { out <= route(1, out) } }",
         )
         .unwrap_err();
         assert!(
@@ -2440,9 +2440,7 @@ mod tests {
         // is rejected even though both types appear in the declaration.
         let diags = check(
             "command route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
-             fn main() -> i32 {
-                 mu run(first: -i32, second: -bool) { route(0, true, second, first) }
-             }",
+             command caller | (first: -i32, second: -bool) { route(0, true, second, first) }",
         )
         .unwrap_err();
         assert!(
@@ -2455,7 +2453,7 @@ mod tests {
     fn continuation_row_rejects_extra_arguments() {
         let diags = check(
             "command route(x: +i32) | (k: -i32) { x @ k }
-             fn main() -> i32 { mu run(out: -i32) { route(1, out, out) } }",
+             fn main() -> i32 { mu i32 { out <= route(1, out, out) } }",
         )
         .unwrap_err();
         assert!(
@@ -2767,7 +2765,7 @@ mod tests {
         // at another, so it stays monomorphic and mixed uses are rejected.
         let diags = check(
             "command main | (exit: -i32) {
-                 let g = mu(k) { fn(x) { x } @ k };
+                 let g = mu { k <= fn(x) { x } @ k };
                  println(g(1) + 1);
                  println(str_len(g(\"s\")));
                  0 @ exit
@@ -2798,7 +2796,7 @@ mod tests {
         assert!(
             check(
                 "command main | (exit: -i32) {
-                     let fresh = fn(u) { mu(k) { fn(x) { x } @ k } };
+                     let fresh = fn(u) { mu { k <= fn(x) { x } @ k } };
                      println(fresh(())(1) + 1);
                      println(str_len(fresh(())(\"s\")));
                      0 @ exit
@@ -2932,7 +2930,7 @@ mod tests {
         // `¬¬i64` is `↓↑i64`, and an `i64` is not one: `dne(42)` is the
         // program the shifts exist to reject.
         let diags = check(
-            "fn dne(refuter: ↓↑i64) -> i64 { mu(k) { ↓k @ ↑refuter } }
+            "fn dne(refuter: ↓↑i64) -> i64 { mu { k <= ↓k @ ↑refuter } }
              command main | (exit: -i32) { println(dne(42)); 0 @ exit }",
         )
         .unwrap_err();
@@ -3011,7 +3009,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) {
                  let complain = select { m <= { println(m); 1 @ exit } };
-                 let text = mu(k) { read_file(\"in\", k, complain) };
+                 let text = mu { k <= read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 @ exit
              }",
@@ -3025,7 +3023,7 @@ mod tests {
         // A cut says it just as well: `42 @ k` makes `k` a consumer of i64.
         let diags = check(
             "command main | (exit: -i32) {
-                 let answer = mu(k) { 42 @ k };
+                 let answer = mu { k <= 42 @ k };
                  println(str_len(answer));
                  0 @ exit
              }",

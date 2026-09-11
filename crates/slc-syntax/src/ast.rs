@@ -113,13 +113,12 @@ pub enum Expr {
         ty: Option<Box<Node<TypeExpr>>>,
         arms: Vec<SelectArm>,
     },
-    /// A local μ abstraction: `mu(k) { body }`, which captures the
-    /// continuation the expression is cut against. It has no value
-    /// parameters — abstracting over a value is what `fn` does — and the
-    /// name is optional, since nothing refers to it, as is a parameter's
-    /// type, when the body says what it is.
+    /// A local μ abstraction, the binder arm of `mu`: `mu { k <= c }`
+    /// captures the continuation the expression is cut against and runs the
+    /// command with it bound. It has no value parameters — abstracting over
+    /// a value is what `fn` does — and the produced type in front,
+    /// `mu i64 { k <= c }`, may be left off when the command says it.
     Mu {
-        name: Option<String>,
         continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
     },
