@@ -145,6 +145,27 @@ fn check_trait_method_call(
             .and_then(|key| env.traits.method_impls.get(method).and_then(|m| m.get(&key)))
             .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone())),
     };
+    // A static dispatch into a bounded impl — `impl<T: Display> Display for
+    // List<T>` — supplies one dictionary per impl bound, read off the
+    // receiver's type arguments.
+    if let Some(slc_syntax::lower::MethodDispatch::Static(_)) = &resolution
+        && let Some(key) = type_key(&target)
+        && let Some(impl_bounds) = env.traits.impl_bounds.get(&(trait_name.clone(), key)).cloned()
+    {
+        let receiver_args = scrutinee_args(&target).to_vec();
+        let mut dict_args = Vec::new();
+        for (position, bound_trait) in &impl_bounds {
+            let Some(arg) = receiver_args.get(*position) else { continue };
+            let arg = env.uni.apply(arg);
+            discharge_bound(bound_trait, &arg, method, span, env, diags);
+            if let Some(dict) = dict_for(bound_trait, &arg, env, span, diags) {
+                dict_args.push(dict);
+            }
+        }
+        if !dict_args.is_empty() {
+            env.dispatch.calls.insert(span, dict_args);
+        }
+    }
     if let Some(resolution) = resolution {
         env.dispatch.methods.insert(span, resolution);
     }
@@ -496,6 +517,59 @@ fn scrutinee_args(scrutinee: &Type) -> &[Type] {
         Type::Dual(inner) => scrutinee_args(inner),
         _ => &[],
     }
+}
+
+/// The dictionary witnessing `ty: bound_trait` — the enclosing function's
+/// own parameter for a bound rigid variable, a global for a concrete type,
+/// and for a bounded impl the global *constructed*: applied to one
+/// dictionary per impl bound, read off the type's arguments, recursively.
+fn dict_for(
+    bound_trait: &str,
+    ty: &Type,
+    env: &mut Env,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<slc_syntax::lower::DictExpr> {
+    if let Type::Var(v) = ty {
+        return env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == bound_trait).map(
+            |(_, _, tp)| slc_syntax::lower::DictExpr {
+                name: slc_syntax::lower::dict_param_name(bound_trait, tp),
+                args: Vec::new(),
+            },
+        );
+    }
+    let key = type_key(ty)?;
+    if !env.traits.has_impl(bound_trait, &key) {
+        return None;
+    }
+    let mut args = Vec::new();
+    if let Some(impl_bounds) =
+        env.traits.impl_bounds.get(&(bound_trait.to_string(), key.clone())).cloned()
+    {
+        // Construction applies the impl's methods to the inner
+        // dictionaries; a multi-method dictionary is a tuple, which an
+        // application cannot thread through.
+        let methods = env.traits.traits.get(bound_trait).map(|m| m.len()).unwrap_or(1);
+        if methods > 1 {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{bound_trait}` has several methods, and its impl for `{key}` is \
+                     bounded; constructing that dictionary is not supported yet"
+                ),
+                span,
+            });
+            return None;
+        }
+        let ty_args = scrutinee_args(ty).to_vec();
+        for (position, inner_trait) in impl_bounds {
+            let inner_ty = env.uni.apply(ty_args.get(position)?);
+            args.push(dict_for(&inner_trait, &inner_ty, env, span, diags)?);
+        }
+    }
+    Some(slc_syntax::lower::DictExpr {
+        name: slc_syntax::lower::dict_global_name(bound_trait, &key),
+        args,
+    })
 }
 
 /// Fresh unification variables for a declaration's type parameters, ready
@@ -1308,24 +1382,12 @@ fn check_expr_unapplied(
                 // record the dictionary the call must pass for it: the global
                 // dict of a concrete type, or the enclosing function's own
                 // dict parameter when the bound is forwarded.
-                let mut dict_args: Vec<String> = Vec::new();
+                let mut dict_args = Vec::new();
                 for (param_index, trait_name) in &signature.bounds {
                     if let Some(var) = seen.get(param_index) {
                         let target = env.uni.apply(var);
                         discharge_bound(trait_name, &target, name, e.span, env, diags);
-                        let dict = match &target {
-                            Type::Var(v) => env
-                                .bounds
-                                .iter()
-                                .find(|(bv, bt, _)| bv == v && bt == trait_name)
-                                .map(|(_, _, tp)| {
-                                    slc_syntax::lower::dict_param_name(trait_name, tp)
-                                }),
-                            _ => type_key(&target)
-                                .filter(|key| env.traits.has_impl(trait_name, key))
-                                .map(|key| slc_syntax::lower::dict_global_name(trait_name, &key)),
-                        };
-                        if let Some(dict) = dict {
+                        if let Some(dict) = dict_for(trait_name, &target, env, e.span, diags) {
                             dict_args.push(dict);
                         }
                     }
@@ -2747,7 +2809,7 @@ mod tests {
             "bounded receiver dispatches through a dictionary: {poly:?}"
         );
         assert!(
-            poly.calls.values().any(|dicts| dicts.iter().any(|d| d.contains("Show"))),
+            poly.calls.values().any(|dicts| dicts.iter().any(|d| d.name.contains("Show"))),
             "the call to the bounded function passes a dictionary: {poly:?}"
         );
     }

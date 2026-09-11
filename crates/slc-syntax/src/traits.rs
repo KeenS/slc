@@ -32,6 +32,11 @@ pub struct TraitInfo {
     pub method_impls: HashMap<String, HashMap<String, String>>,
     /// Every (trait, type key) with an impl — for bound checking.
     pub impls: std::collections::HashSet<(String, String)>,
+    /// (trait, type key) → the impl's own bounds, as (position of the
+    /// bound parameter in the impl's `for_type` arguments, trait). A
+    /// dictionary for such an impl is *constructed*: the global applied to
+    /// one dictionary per entry, read off the use's type arguments.
+    pub impl_bounds: HashMap<(String, String), Vec<(usize, String)>>,
 }
 
 impl TraitInfo {
@@ -58,6 +63,9 @@ pub fn type_key(ty: &TypeExpr) -> Option<String> {
             type_key(&inner.kind)
         }
         TypeExpr::Base(name) => Some(name.clone()),
+        // A generic declaration keys by its name: `impl<T: …> … for List<T>`
+        // covers every instantiation, its bound discharged per element type.
+        TypeExpr::Apply(name, _) => Some(name.clone()),
         _ => None,
     }
 }
@@ -120,6 +128,24 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                         span: d.span,
                     });
                     continue;
+                }
+                // `impl<T: Show> Display for List<T>`: each bound points at
+                // the position its parameter holds in the for-type's
+                // arguments, so a call can read the element type off the
+                // receiver.
+                let positioned_bounds: Vec<(usize, String)> = match &for_type {
+                    TypeExpr::Apply(_, args) => bounds
+                        .iter()
+                        .filter_map(|(param, tr)| {
+                            args.iter()
+                                .position(|a| matches!(&a.kind, TypeExpr::Base(n) if n == param))
+                                .map(|i| (i, tr.clone()))
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                if !positioned_bounds.is_empty() {
+                    info.impl_bounds.insert((trait_name.clone(), key.clone()), positioned_bounds);
                 }
                 for method in methods {
                     let method_name = decl_name(&method.kind);

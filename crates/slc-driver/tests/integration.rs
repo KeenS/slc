@@ -995,6 +995,54 @@ fn the_prelude_consumer_combinators_compose_with_builtins() {
 }
 
 #[test]
+fn display_formats_through_bounded_impls() {
+    let dir = std::env::temp_dir().join("slc_test_display.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) {
+            println(fmt(42));
+            println(fmt("plain"));
+            println(fmt(false));
+            println(to_string(7));
+            let xs = List::Cons(1, List::Cons(2, List::Nil));
+            println(fmt(xs));
+            println(to_string(xs));
+            println(fmt(List::Cons(xs, List::Cons(List::Nil, List::Nil))));
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "\"42\"",
+            "\"plain\"",
+            "\"false\"",
+            "\"7\"",
+            "\"[1, 2]\"",
+            "\"[1, 2]\"",
+            "\"[[1, 2], []]\""
+        ],
+        "stdout: {stdout}"
+    );
+
+    // A type without an impl is rejected, not garbled.
+    let dir = std::env::temp_dir().join("slc_test_display_missing.sl");
+    std::fs::write(
+        &dir,
+        r#"data P { x: i64 }
+        command main | (exit: -i32) { println(fmt(P { x: 1 })); 0 @ exit }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("no `impl Display for P`"), "stderr: {stderr}");
+}
+
+#[test]
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

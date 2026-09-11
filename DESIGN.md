@@ -618,6 +618,15 @@ atom.
 
 ### Traits
 
+A bounded impl — `impl<T: Display> Display for List<T>` — keys by the
+declaration's name and covers every instantiation; its dictionary is
+**constructed** at each use, the impl's global applied to one dictionary per
+bound, read off the use's type arguments and built recursively:
+`fmt` over a `List<List<i64>>` passes
+`__dict_Display_List(__dict_Display_List(__dict_Display_i64))`. (v1 limit:
+a *multi-method* trait's bounded impl cannot be constructed yet, and says
+so.)
+
 A `trait` names operations over an implicit `Self`; an `impl` gives them for a
 type; a bound `<T: Show>` lets a generic use them. A method is a free function
 overloaded on its first argument's type — `show(x)`, never `x.show()`:
@@ -879,7 +888,11 @@ and lowering as user code. A program's own declaration shadows a prelude
 name (per namespace: values and type declarations separately). Anything
 expressible in the language belongs here rather than in the runtime.
 
-The prelude currently defines `min`, `max`, `abs`, and three **consumer
+The prelude defines `min`, `max`, `abs`; the `List<T>` enum with `length`,
+`append`, `map`, and the outcome-offering `command nth`; the **`Display`
+trait** — `fn fmt(self: +Self) -> String`, user-facing formatting as in
+Rust, with impls for `i64`, `String`, `bool`, and `List<T>` (elementwise,
+`[1, 2, 3]`), plus `to_string<T: Display>` — and three **consumer
 combinators**: `then(f, ↓k)` — the composition of a function with a boxed
 continuation, `-A` from `A → B` and `↓-B` — `traced(label, ↓k)`, a tap that
 logs what passes through and forwards it, and `defaulting(fallback, ↓k)`, a

@@ -52,24 +52,27 @@ enum List<T> {
     Cons(T, List<T>),
 }
 
+// Patterns here are fully qualified: a program may declare `Nil` and
+// `Cons` variants of its own, and an ambiguous bare name would silently
+// become a binder catching everything.
 fn length<T>(xs: List<T>) -> i64 {
     match xs {
-        Nil => 0,
-        Cons(_, rest) => 1 + length(rest),
+        List::Nil => 0,
+        List::Cons(_, rest) => 1 + length(rest),
     }
 }
 
 fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
     match xs {
-        Nil => ys,
-        Cons(h, rest) => List::Cons(h, append(rest, ys)),
+        List::Nil => ys,
+        List::Cons(h, rest) => List::Cons(h, append(rest, ys)),
     }
 }
 
 fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
     match xs {
-        Nil => List::Nil,
-        Cons(h, rest) => List::Cons(f(h), map(f, rest)),
+        List::Nil => List::Nil,
+        List::Cons(h, rest) => List::Cons(f(h), map(f, rest)),
     }
 }
 
@@ -77,7 +80,47 @@ fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
 // the way the lookup builtins do.
 command nth<T>(xs: List<T>, i: +i64) | (found: -T, missing: -String) {
     match xs {
-        Nil => "nothing at that index" @ missing,
-        Cons(h, rest) => if i == 0 { h @ found } else { nth(rest, i - 1, found, missing) },
+        List::Nil => "nothing at that index" @ missing,
+        List::Cons(h, rest) => {
+            if i == 0 { h @ found } else { nth(rest, i - 1, found, missing) }
+        },
     }
+}
+
+// ── Display ──────────────────────────────────────────────────────────────
+//
+// User-facing formatting, as in Rust: `fmt` renders a value as the String a
+// person should see — `fmt("hi")` is `hi`, unquoted — and `to_string` is
+// the same act as a plain function.
+
+trait Display {
+    fn fmt(self: +Self) -> String;
+}
+
+impl Display for i64 {
+    fn fmt(self: +i64) -> String { int_to_str(self) }
+}
+
+impl Display for String {
+    fn fmt(self: +String) -> String { self }
+}
+
+impl Display for bool {
+    fn fmt(self: +bool) -> String { if self { "true" } else { "false" } }
+}
+
+fn to_string<T: Display>(x: T) -> String { fmt(x) }
+
+fn fmt_items<T: Display>(xs: List<T>) -> String {
+    match xs {
+        List::Nil => "",
+        List::Cons(h, rest) => match rest {
+            List::Nil => fmt(h),
+            List::Cons(_, _) => fmt(h) + ", " + fmt_items(rest),
+        },
+    }
+}
+
+impl<T: Display> Display for List<T> {
+    fn fmt(self: +List<T>) -> String { "[" + fmt_items(self) + "]" }
 }

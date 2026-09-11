@@ -82,7 +82,7 @@ feature is mid-flight; what remains open is below.
 
 The symmetry audit (after `menu` landed) left these queued, in order:
 
-- **Test `impl Trait for Menu`.** Trait dispatch was built against positive
+- **Test `impl Trait for Menu/Form`.** Trait dispatch was built against positive
   receivers; codata is where interfaces naturally live, so impls for menu
   types must be exercised and fixed or rejected with a real diagnostic.
 

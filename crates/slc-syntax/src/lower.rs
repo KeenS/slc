@@ -18,9 +18,9 @@ thread_local! {
     /// receiver is a direct call to the impl; a bounded one projects the
     /// method from the enclosing function's dictionary parameter.
     static METHODS: RefCell<HashMap<Span, MethodDispatch>> = RefCell::new(HashMap::new());
-    /// Call-to-bounded-function span → the dictionary arguments to pass
-    /// (variable names), in the order the function's bounds are declared.
-    static CALLS: RefCell<HashMap<Span, Vec<String>>> = RefCell::new(HashMap::new());
+    /// Call-to-bounded-function span → the dictionary arguments to pass,
+    /// in the order the function's bounds are declared.
+    static CALLS: RefCell<HashMap<Span, Vec<DictExpr>>> = RefCell::new(HashMap::new());
     /// Projection span → the component index the checker resolved (`.i`, or a
     /// record field's position).
     static PROJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
@@ -42,13 +42,22 @@ pub enum MethodDispatch {
     Dict { dict_var: String, index: usize, count: usize },
 }
 
+/// A dictionary argument: a named dictionary — a global, or the enclosing
+/// function's own parameter — applied to the dictionaries a bounded impl's
+/// parameters need: `__dict_Display_List(__dict_Display_i64)`, recursively.
+#[derive(Debug, Clone)]
+pub struct DictExpr {
+    pub name: String,
+    pub args: Vec<DictExpr>,
+}
+
 /// What the checker resolved about a program's trait dispatch, handed to
 /// lowering so method calls become direct calls or dictionary projections
 /// and bounded functions take and forward dictionaries.
 #[derive(Debug, Clone, Default)]
 pub struct DispatchInfo {
     pub methods: HashMap<Span, MethodDispatch>,
-    pub calls: HashMap<Span, Vec<String>>,
+    pub calls: HashMap<Span, Vec<DictExpr>>,
     /// Projection span → the resolved component index (`.i`, or a struct
     /// field's position).
     pub projections: HashMap<Span, usize>,
@@ -113,8 +122,19 @@ fn method_dispatch(span: Span) -> Option<MethodDispatch> {
 
 /// The dictionary arguments a call at `span` must pass, if it calls a
 /// bounded function.
-fn call_dicts(span: Span) -> Option<Vec<String>> {
+fn call_dicts(span: Span) -> Option<Vec<DictExpr>> {
     CALLS.with(|cell| cell.borrow().get(&span).cloned())
+}
+
+/// The term a dictionary argument lowers to: the named dictionary, applied
+/// to its constructor arguments when the impl behind it is bounded.
+fn dict_term(dict: &DictExpr) -> Term {
+    let base = Term::Var(dict.name.clone());
+    if dict.args.is_empty() {
+        base
+    } else {
+        call_curried(base, dict.args.iter().map(dict_term).collect())
+    }
 }
 
 /// The component index the checker resolved for a projection at `span`.
@@ -274,7 +294,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // A call to a bounded function forwards its dictionaries first,
             // in bound order, then the value arguments.
             let mut call_args: Vec<Term> =
-                call_dicts(e.span).unwrap_or_default().into_iter().map(Term::Var).collect();
+                call_dicts(e.span).unwrap_or_default().iter().map(dict_term).collect();
             if args.is_empty() {
                 // A call with no value arguments still applies its callee, to
                 // the marker that carries none.
