@@ -2818,7 +2818,7 @@ mod tests {
                 "effect Ask { fn ask() -> i64; }
                  fn u() -> i64 / {Ask} { ask() + 5 }
                  command main | (exit: -i32) {
-                     let r = handle u() { ask() resume => 1000 + resume(7), return(n) => n };
+                     let r = handle u() { ask(): resume => 1000 + resume(7), return(n) => n };
                      println(r); 0 @ exit
                  }"
             )
@@ -2835,7 +2835,7 @@ mod tests {
                  fn f() -> i64 / {C} { if c() { 1 } else { 2 } }
                  command main | (exit: -i32) {
                      let r = handle f() {
-                         c() resume => resume(true) + resume(false),
+                         c(): resume => resume(true) + resume(false),
                          return(n) => n,
                      };
                      println(r); 0 @ exit

@@ -116,7 +116,7 @@ pub enum Expr {
         continuation_params: Vec<Param>,
         body: Box<Node<Expr>>,
     },
-    /// `handle body { op(p) resume => b, …, return(x) => r }`: run `body`,
+    /// `handle body { op(p): k => b, …, return(x) => r }`: run `body`,
     /// answering each performed operation with its clause and its normal
     /// result with the `return` clause. The handled effect is determined by
     /// the clause operations — operation names are unique across effects — so
@@ -198,7 +198,9 @@ pub enum UseImports {
     Names(Vec<String>),
 }
 
-/// One operation clause of a handler: `op(params) resume => body`.
+/// One operation clause of a handler: `op(params): k => body`, the
+/// carried continuation bound after the colon — or omitted, for a clause
+/// that never resumes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HandleClause {
     pub op: String,

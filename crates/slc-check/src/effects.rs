@@ -634,10 +634,8 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
         // Handled at the call, the row is discharged and `main` stays pure.
         assert!(
-            check(&src(
-                "let r = handle app(risky, 1) { throw(m) resume => 0 - 1, return(n) => n };
-                 println(r)"
-            ))
+            check(&src("let r = handle app(risky, 1) { throw(m) => 0 - 1, return(n) => n };
+                 println(r)"))
             .is_ok()
         );
     }
@@ -688,7 +686,7 @@ mod tests {
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) {{
-                     let r = handle twice(risky, 8) {{ throw(m) resume => 0 - 1, return(n) => n }};
+                     let r = handle twice(risky, 8) {{ throw(m) => 0 - 1, return(n) => n }};
                      println(r); 0 @ exit
                  }}"
             ))
@@ -717,7 +715,7 @@ mod tests {
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) {{
-                     let r = handle guard(risky, 1) {{ throw(m) resume => 0 - 1, return(n) => n }};
+                     let r = handle guard(risky, 1) {{ throw(m) => 0 - 1, return(n) => n }};
                      println(r); 0 @ exit
                  }}"
             ))
@@ -758,7 +756,7 @@ mod tests {
             check(&format!(
                 "{EXN}{FALLIBLE} command main | (exit: -i32) {{
                      println(handle checked(1).value {{
-                         throw(m) resume => 0 - 1, return(n) => n
+                         throw(m) => 0 - 1, return(n) => n
                      }});
                      0 @ exit
                  }}"
@@ -812,7 +810,7 @@ mod tests {
             "{EXN}{after} command main | (exit: -i32) {{
                  let n = mu i64 {{ out <= {{
                      let c = handle after(risky, out) {{
-                         throw(m) resume => 0 - 1, return(x) => x
+                         throw(m) => 0 - 1, return(x) => x
                      }};
                      5 @ c
                  }} }};
@@ -826,7 +824,7 @@ mod tests {
             check(&format!(
                 "{EXN}{after} command main | (exit: -i32) {{
                      let n = handle (mu i64 {{ out <= 5 @ after(risky, out) }}) {{
-                         throw(m) resume => 0 - 1, return(x) => x
+                         throw(m) => 0 - 1, return(x) => x
                      }};
                      println(n); 0 @ exit
                  }}"
@@ -868,6 +866,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must be distinct")), "{diags:?}");
+    }
+
+    #[test]
+    fn clause_binders_are_copattern_shaped() {
+        // Omitted for a clause that never resumes; bound after a colon,
+        // under any name, for one that does.
+        assert!(
+            check(&format!(
+                "{EXN} command main | (exit: -i32) {{
+                     let r = handle throw(\"x\") {{ throw(m) => 0 - 1, return(n) => n }};
+                     println(r); 0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
+        assert!(
+            check(&format!(
+                "{EXN} command main | (exit: -i32) {{
+                     let r = handle throw(\"x\") {{ throw(m): k => k(9), return(n) => n }};
+                     println(r); 0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
     }
 
     #[test]

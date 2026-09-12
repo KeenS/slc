@@ -439,6 +439,21 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
+## Handler clauses bind their continuation after a colon
+
+An operation is a demand, and its clause binds the carried continuation
+the way a copattern does — after a colon, under any name — or omits it
+when the clause never resumes. The bare word between pattern and arrow is
+gone:
+
+```sl
+throw(m) resume => 0 - 1               // old
+throw(m) => 0 - 1                      // new: never resumes, no binder
+
+config() resume => resume(10)          // old
+config(): resume => resume(10)         // new: bound after the colon
+```
+
 ## Effect rows: row variables, written like generics
 
 A higher-order function forwards an argument's effects by declaring a

@@ -145,7 +145,7 @@ command main | (exit: -i32) {
     let result = handle checked_div(10, 0) {
         // the handler ignores `resume`: the computation is abandoned, and the
         // handler's value replaces it. dropping `resume` is an exception.
-        throw(msg) resume => "error: " + msg,
+        throw(msg) => "error: " + msg,
         return(n)        => "ok: " + int_to_str(n),
     };
     println(result);                  // "error: division by zero"
@@ -175,7 +175,7 @@ command main | (exit: -i32) {
     // by resuming twice and concatenating. The continuation from the first
     // `choose` is entered with `true` and again with `false`.
     let all = handle pair() {
-        choose() resume => resume(true) + " " + resume(false),
+        choose(): resume => resume(true) + " " + resume(false),
         return(s)       => s,
     };
     println(all);                     // "HH HT TH TT"

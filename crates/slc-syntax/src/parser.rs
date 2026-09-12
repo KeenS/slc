@@ -1454,7 +1454,27 @@ impl Parser {
                                 }
                             }
                         }
-                        let resume = self.expect_ident("the resume binder")?;
+                        // The operation is a demand, and its carried
+                        // continuation is bound the copattern way: after a
+                        // colon — `op(args): k => body` — or not at all,
+                        // for a clause that never resumes.
+                        let resume = if self.eat(&TokenKind::Colon) {
+                            self.expect_ident("the continuation binder after `:`")?
+                        } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
+                            let name = name.clone();
+                            return Err(ParseError {
+                                message: format!(
+                                    "a clause binds its continuation after a colon:                                      `{op}(…): {name} => …` — or omits it when it                                      never resumes: `{op}(…) => …`"
+                                ),
+                                span: self
+                                    .peek()
+                                    .map(|t| t.span)
+                                    .unwrap_or(Span { start: 0, end: 0 }),
+                            });
+                        } else {
+                            // Never resumed: nothing in the body can name it.
+                            "__never_resumed".to_string()
+                        };
                         self.expect(TokenKind::FatArrow, "`=>` in a handler clause")?;
                         let body = self.parse_expr()?;
                         clauses.push(HandleClause { op, params, resume, body });

@@ -48,19 +48,19 @@ command main | (exit: -i32) {
     // Exn, the outer Reader. Either order works; each handler answers its
     // own operations.
     let ok = handle (handle scale(5) {
-        fail(m) resume => 0 - 1,
+        fail(m) => 0 - 1,
         return(n) => n,
     }) {
-        config() resume => resume(10),
+        config(): resume => resume(10),
         return(n) => n,
     };
     println(ok);                        // 5 * 10 = 50
 
     let bad = handle (handle scale(0) {
-        fail(m) resume => 0 - 1,
+        fail(m) => 0 - 1,
         return(n) => n,
     }) {
-        config() resume => resume(10),
+        config(): resume => resume(10),
         return(n) => n,
     };
     println(bad);                       // failed → -1

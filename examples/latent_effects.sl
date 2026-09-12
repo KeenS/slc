@@ -60,15 +60,15 @@ command main | (exit: -i32) {
     let f = checked(21);
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.
-    println(handle f.value { throw(m) resume => 0 - 1, return(n) => n });
-    println(handle f.doubled { throw(m) resume => 0 - 1, return(n) => n });
-    println(handle checked(0 - 5).value { throw(m) resume => 0 - 1, return(n) => n });
+    println(handle f.value { throw(m) => 0 - 1, return(n) => n });
+    println(handle f.doubled { throw(m) => 0 - 1, return(n) => n });
+    println(handle checked(0 - 5).value { throw(m) => 0 - 1, return(n) => n });
 
     // A consumer carries a latent row too: `then(risky, out)` performs
     // nothing when called — `(-A / {..E})` says the row fires when the
     // consumer is FED, so the handler belongs around the cut.
     let n = handle (mu i64 { out <= 5 @ then(risky, out) }) {
-        throw(m) resume => 0 - 1,
+        throw(m) => 0 - 1,
         return(x) => x,
     };
     println(n);
@@ -77,17 +77,17 @@ command main | (exit: -i32) {
     // differently under different handlers — dispatch is chosen per
     // demand by the dynamic context, not sealed into the type.
     let s = scaled(7);
-    println(handle s.amount { config() resume => resume(10), return(n) => n });
-    println(handle s.amount { config() resume => resume(100), return(n) => n });
+    println(handle s.amount { config(): resume => resume(10), return(n) => n });
+    println(handle s.amount { config(): resume => resume(100), return(n) => n });
 
     // Feeding a rowed form under a handler: the arm's throw fires at the
     // feed, in this extent, and lands in this handler.
     println(handle (mu i64 { k <= Validated { age: 21, out: k } @ admit() }) {
-        throw(m) resume => 0 - 1,
+        throw(m) => 0 - 1,
         return(n) => n,
     });
     println(handle (mu i64 { k <= Validated { age: 15, out: k } @ admit() }) {
-        throw(m) resume => 0 - 1,
+        throw(m) => 0 - 1,
         return(n) => n,
     });
     0 @ exit

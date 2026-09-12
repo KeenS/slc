@@ -697,8 +697,9 @@ supertraits are not yet provided.
 
 An `effect` names operations a computation may perform; a `handle` answers
 them. Performing an operation suspends the computation and passes control to
-the nearest enclosing handler, whose clause receives `resume`, the captured
-continuation:
+the nearest enclosing handler. An operation is a demand, so its clause binds
+the carried continuation the copattern way — after a colon, under any name
+(`resume` by convention) — or omits it, for a clause that never resumes:
 
 ```sl
 effect Exn    { fn throw(message: +String) -> i64; }
@@ -706,11 +707,11 @@ effect Reader { fn config() -> i64; }
 
 command main | (exit: -i32) {
     let safe = handle checked_div(10, 0) {
-        throw(message) resume => 0 - 1,   // never resumes: an exception
+        throw(message) => 0 - 1,           // never resumes: an exception
         return(n) => n,
     };
     let scaled = handle x * config() {
-        flip() resume => resume(true) + resume(false),  // resumes twice
+        flip(): resume => resume(true) + resume(false),  // resumes twice
         return(n) => n,
     };
     …
@@ -722,7 +723,8 @@ trait is an operation table keyed by a *type* and resolved statically — the
 dictionary travels with the value — while an effect is an operation table
 keyed by the *stack* and resolved dynamically: a handler is installed by
 `handle` (the effect it handles is inferred from its clause operations, not
-written), and its clauses receive `resume`, which no trait has. That mirror
+written), and its clauses bind the captured continuation, which no trait
+has. That mirror
 is static-versus-dynamic provisioning; the *polarity* dual of effects is a
 different axis — latency, below — and the two cross: `impl Trait for Menu`
 is the static column's negative row, latent rows the dynamic column's.

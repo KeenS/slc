@@ -50,20 +50,8 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **Handler clauses bind `resume` the language's own way.** Decided, not
-  yet built: an operation is a demand, and a demand's carried continuation
-  is bound by the copattern convention, not by a bare word between pattern
-  and arrow. Two changes: (1) a clause that never resumes may omit the
-  binder — `throw(m) => -1`; (2) a clause that resumes binds it after a
-  colon, any name — `config(): k => resume-style body` becomes
-  `op(args): k => body`, the copattern shape with `=>` because the body
-  produces the handle's answer. The old `op(args) resume => body` spelling
-  retires. (`mu` cannot subsume the binder: a clause has two continuations
-  — the handle's own, which `mu` would capture, and the suspended
-  computation, which arrives with the demand.)
-
-The rest of the queue came from an audit of the polarity×feature matrix
-(traits and effects against negative functions), in order of depth:
+The queue came from an audit of the polarity×feature matrix (traits and
+effects against negative functions), in order of depth:
 
 - **Lambda annotations lose rigid type parameters.** In
   `fn wrap<T: Display>(x: T) -> String { let f = fn(y: T) { fmt(y) }; f(x) }`
