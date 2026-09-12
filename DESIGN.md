@@ -784,6 +784,25 @@ no further forwarding, and a function laundered through a `let` binding is
 not tracked — though a `let` of a call whose result carries a latent row
 keeps that row on the name.
 
+An operation may take several parameters; since calls are curried, the
+performing value collects them all before suspending. **Operations are
+positive, and need no negative form.** An operation that consumes rather
+than answers is already writable: `A → ⊥` *is* `-A`, so
+`fn drop(x: +i64) -> ⊥;` declares a consumer, and both `drop(42)` and the
+cut `42 @ drop` perform it. Routing to a chosen outcome needs nothing new
+either, now that consumers are values — an operation takes them as
+ordinary parameters, and the clause cuts into whichever it picks:
+
+```sl
+effect Judge { fn judge(n: +i64, ok: -String, bad: -String) -> ⊥; }
+…
+judge(n, ok, bad) => if n > 3 { "big" @ ok } else { "small" @ bad },
+```
+
+Demand-time effects are the latent rows above. Between the three, a
+`<- T` operation form would add spelling, not power, so the grammar keeps
+operations to `-> T`.
+
 A clause may resume any number of times — the continuation is a first-class
 value sliced from the one frame stack. Not resuming is an exception; resuming
 once (with work after it, which composes) is a reader or state; resuming

@@ -972,6 +972,27 @@ fn the_prelude_is_available_and_shadowable() {
 }
 
 #[test]
+fn an_operation_may_take_several_parameters() {
+    // Calls are curried, so an operation of several parameters collects
+    // them before performing — otherwise it would perform on its first
+    // argument and apply the rest to the handler's answer.
+    let dir = std::env::temp_dir().join("slc_test_op_arity.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Tag { fn tag(label: +String, n: +i64) -> i64; }
+        command main | (exit: -i32) {
+            println(handle tag("ten", 7) { tag(l, n): k => k(n * 10), return(m) => m });
+            println(handle tag("len", 7) { tag(l, n) => str_len(l) + n, return(m) => m });
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["70", "10"]);
+}
+
+#[test]
 fn the_prelude_provides_all_four_logical_units() {
     let dir = std::env::temp_dir().join("slc_test_prelude_units.sl");
     std::fs::write(

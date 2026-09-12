@@ -548,20 +548,24 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
         Expr::Handle { body, clauses, ret } => {
-            // Each clause → ($str_op ⊗ λarg. λresume. body); the arg binds the
-            // operation's single parameter (or is ignored for a nullary op).
+            // Each clause → ($str_op ⊗ λp1. … λpn. λresume. body): one binder
+            // per operation parameter, then the captured continuation. A
+            // nullary operation still takes one ignored binder, since the
+            // call that performs it applies it to the no-arguments marker.
             let mut encoded = Term::Var("$unit".into());
             for clause in clauses.iter().rev() {
                 let mut body_scope = continuations.to_vec();
                 body_scope.push(clause.resume.clone());
                 body_scope.extend(clause.params.iter().cloned());
                 let inner = lower_expr(&clause.body, &body_scope)?;
-                let arg_binder =
-                    clause.params.first().cloned().unwrap_or_else(|| "__op_arg".into());
-                let closure = Term::Lam(
-                    arg_binder,
-                    Box::new(Term::Lam(clause.resume.clone(), Box::new(inner))),
-                );
+                let mut closure = Term::Lam(clause.resume.clone(), Box::new(inner));
+                if clause.params.is_empty() {
+                    closure = Term::Lam("__op_arg".into(), Box::new(closure));
+                } else {
+                    for param in clause.params.iter().rev() {
+                        closure = Term::Lam(param.clone(), Box::new(closure));
+                    }
+                }
                 let pair = Term::Pair(
                     Box::new(Term::Var(format!("$str_\"{}\"", clause.op))),
                     Box::new(closure),

@@ -192,6 +192,8 @@ fn run_program(
                     slc_runtime::value::Value::Operation {
                         effect: name.clone(),
                         op: op.name.clone(),
+                        arity: op.params.len(),
+                        collected: Vec::new(),
                     },
                 );
             }

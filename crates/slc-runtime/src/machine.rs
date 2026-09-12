@@ -466,7 +466,13 @@ fn step_apply(
         }
         // Performing an operation: find the nearest handler, capture the
         // delimited continuation, and run the matching clause with `resume`.
-        Value::Operation { op, .. } => {
+        Value::Operation { effect, op, arity, mut collected } => {
+            collected.push(arg);
+            // Not all its parameters yet: keep collecting, the way a partial
+            // builtin does. A nullary or unary operation performs at once.
+            if collected.len() < arity {
+                return Ok(State::Return(Value::Operation { effect, op, arity, collected }));
+            }
             // Split at the handler: the captured continuation includes the
             // Prompt, so resuming re-installs it (a deep handler); the clause
             // runs below it.
@@ -474,9 +480,13 @@ fn step_apply(
                 return Err(EvalError::TypeMismatch(format!("no handler for operation `{op}`")));
             };
             let resume = Value::Resume(captured);
-            // clause is `λarg. λresume. body`: apply to arg, then to resume.
+            // clause is `λp1. … λpn. λresume. body`: apply to each parameter
+            // in turn, then to resume — so the frames go on in reverse.
             kont.push(Frame::ApplyTo(resume));
-            State::Apply { callee: clause, arg }
+            for value in collected.drain(1..).rev() {
+                kont.push(Frame::ApplyTo(value));
+            }
+            State::Apply { callee: clause, arg: collected.remove(0) }
         }
         // Resuming a delimited continuation: run the captured work (with its
         // reinstated handler) to a value and deliver that. A nested run is

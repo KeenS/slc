@@ -125,10 +125,15 @@ pub enum Value {
     /// produced by `open_file` and spent by `close_file`.
     File(u64),
     /// An effect operation: applying it performs the effect, capturing the
-    /// continuation up to the nearest handler for `effect`.
+    /// continuation up to the nearest handler for `effect`. An operation of
+    /// several parameters collects them first — calls are curried, so it
+    /// would otherwise perform on its first argument and apply the rest to
+    /// the handler's answer.
     Operation {
         effect: String,
         op: String,
+        arity: usize,
+        collected: Vec<Value>,
     },
     /// A delimited, composable continuation — a handler's `resume`. Applying
     /// it prepends its captured frames onto the current stack, so control

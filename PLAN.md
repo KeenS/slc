@@ -24,6 +24,15 @@ feature is mid-flight; what remains open is below.
 
 ## Known limits
 
+- **No partial application.** `f(a)` of a two-parameter `f` does not
+  produce a function awaiting the second argument: the call's type is the
+  full result, so `7 @ route("high")` is refused even though
+  `route(tag, x) -> ⊥` would make the partial application a consumer of
+  `+i64`. Calls are curried in the core and the runtime accumulates
+  arguments, so this is a checker-side gap — the type of an
+  under-applied call — not a representational one. (Found while
+  establishing that operations need no negative form.)
+
 - **A file handle's close is not enforced.** `+File` is the first resource
   with a lifetime, and nothing checks it: an unclosed handle leaks until the
   program ends, and only a read after `close_file` fails. Enforcing it would
@@ -57,23 +66,6 @@ same way, unlisted: `cargo fmt`, `cargo clippy --workspace --all-targets --
 (every `examples/*.sl` runs; `*_error.sl` and `command_falls_through.sl`
 must fail), DESIGN.md updated where behaviour changed, and the entry
 retired from this file.
-
-- **Negative operations in effects.** Design before code: the grammar
-  rejects `<-` in an operation declaration, and nothing yet says what an
-  operation that consumes rather than returns *means*.
-
-  - [ ] Write the candidate semantics down: performing as a cut into the
-        operation (`v @ op(args)`), what the clause binds (the value? a
-        continuation? both?), and the machine transition it needs.
-  - [ ] Find a program a positive operation cannot already express —
-        `yield` is `fn yield(x: +i64) -> unit;` today, and ask-style
-        operations are positive returns; latent rows cover
-        demand-time effects. If every candidate collapses into these,
-        close the item as subsumed, with a DESIGN note saying why.
-  - [ ] Only if a real use survives: extend the operation grammar
-        (`parse_effect` in `crates/slc-syntax/src/parser.rs`), the clause
-        shape, `check_effects`, and the runtime's perform path, each with
-        tests; example alongside `examples/effects.sl`.
 
 ## Deferred, for discussion
 
