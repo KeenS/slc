@@ -106,14 +106,6 @@ pub enum Expr {
         /// `⟩`: the last stage consumes, so the chain delivers.
         into_consumer: bool,
     },
-    /// A cut: `v | k` sends the value `v` to the consumer `k`.
-    ///
-    /// A cut is a command, not an application: it has no result and control
-    /// does not return from it. Application is `Call`, at either polarity.
-    Cut {
-        value: Box<Node<Expr>>,
-        consumer: Box<Node<Expr>>,
-    },
     /// `mu T { item: k <= c, … }` — the copattern form of `mu`: a menu
     /// value, branching on the demand the ambient consumer turns out to be.
     /// The mirror of `select` over a data type: `select` answers data, `mu`
@@ -190,7 +182,6 @@ impl Expr {
                 .chain(otherwise.iter().map(|e| &**e))
                 .collect(),
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
-            Expr::Cut { value, consumer } => vec![value, consumer],
             Expr::Project { base, .. } => vec![base],
             Expr::Request { arg, .. } => vec![arg],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)

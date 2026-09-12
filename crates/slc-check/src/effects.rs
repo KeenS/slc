@@ -449,14 +449,6 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
                 collect(stage, ctx, out);
             }
         }
-        // A cut runs the negative side's work: feeding a rowed form incurs
-        // its row, and a consumer built by a call incurs the callee's
-        // latent result row, its variables instantiated from the call.
-        Expr::Cut { value, consumer } => {
-            charge_cut(value, consumer, ctx, out);
-            collect(value, ctx, out);
-            collect(consumer, ctx, out);
-        }
         // A `let` remembers the latent row of what it binds, so a consumer
         // built by a call and fed later is still charged at its cut.
         Expr::Let { name, value, body, .. } => {

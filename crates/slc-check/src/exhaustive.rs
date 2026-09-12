@@ -201,10 +201,6 @@ fn check_expr(
                 check_expr(rbody, enums, bindings, diags);
             }
         }
-        Expr::Cut { value, consumer } => {
-            check_expr(value, enums, bindings, diags);
-            check_expr(consumer, enums, bindings, diags);
-        }
         Expr::Block(exprs) => {
             for ex in exprs {
                 check_expr(ex, enums, bindings, diags);

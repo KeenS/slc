@@ -552,40 +552,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
             }
             for stage in stages {
-                // A bare name the checker resolved as a trait method is
-                // that dispatch. A call already resolves its own — the span
-                // it is keyed by is the call's.
-                let dispatch =
-                    matches!(stage.kind, Expr::Ident(_)).then(|| method_dispatch(stage.span));
-                let mut term = match dispatch.flatten() {
-                    Some(MethodDispatch::Static(mangled)) => Term::Var(mangled),
-                    Some(MethodDispatch::Dict { dict_var, index, count }) => {
-                        dict_projection(&dict_var, index, count)
-                    }
-                    None => lower_expr(stage, continuations)?,
-                };
-                // A bounded stage takes its dictionaries first, as a bounded
-                // call does — but only when the stage *is* the bare name: a
-                // call already carries its own.
-                if matches!(stage.kind, Expr::Ident(_))
-                    && let Some(dicts) = call_dicts(stage.span)
-                {
-                    term = call_curried(term, dicts.iter().map(dict_term).collect());
-                }
-                lowered.push(term);
-            }
-            // A command takes two groups: what flowed in, then the menu of
-            // exits the rest of the chain is. The call ends the chain.
-            if let Some(at) = shape.row_stage.map(|i| i + usize::from(shape.eta))
-                && at + 1 < lowered.len()
-            {
-                let row = lowered[at + 1].clone();
-                let callee = lowered[at].clone();
-                let mut acc = lowered.remove(0);
-                for stage in &lowered[..at.saturating_sub(1)] {
-                    acc = call_curried(stage.clone(), vec![acc]);
-                }
-                return Ok(call_curried(callee, vec![acc, row]));
+                lowered.push(lower_flow_stage(stage, continuations)?);
             }
             // A command takes both its groups from the chain: what flowed
             // in that far is its values, and the closing stage its menu of
@@ -649,24 +616,6 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 }
             };
             Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
-        }
-        Expr::Cut { value, consumer } => {
-            // `v | k` is the cut ⟨v ∥ k⟩: a command, not an application. It
-            // is wrapped in a μ binder that its body never mentions, because
-            // a command has no result and control does not return from it.
-            let v = lower_expr(value, continuations)?;
-            let command = match named_consumer(&consumer.kind) {
-                // A named consumer is a co-variable, so the cut is direct.
-                Some(name) => Command::Cut(v, CoTerm::Covar(name.clone())),
-                // Any other consumer is an expression that produces one:
-                // evaluate it, then apply it to the value — the same shape
-                // as an application, ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩.
-                _ => Command::Cut(
-                    lower_expr(consumer, continuations)?,
-                    CoTerm::App(v, Box::new(CoTerm::Covar("__tail".into()))),
-                ),
-            };
-            Ok(Term::Mu(cut_binder(&consumer.kind), Box::new(command)))
         }
         Expr::Mu { continuation_params, body, .. } => {
             let mut body_scope = continuations.to_vec();
@@ -1434,10 +1383,8 @@ fn lower_match_canonical(
 /// own continuation, unless the arm is already a cut against a named
 /// consumer, which stands as written.
 fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Command, LowerError> {
-    if let Expr::Cut { value, consumer } = &body.kind
-        && let Some(name) = named_consumer(&consumer.kind)
-    {
-        return Ok(Command::Cut(lower_expr(value, continuations)?, CoTerm::Covar(name.clone())));
+    if let Some(command) = lower_closed_flow(body, continuations)? {
+        return Ok(command);
     }
     Ok(Command::Cut(lower_expr(body, continuations)?, CoTerm::Covar(MATCH_COVAR.into())))
 }
@@ -1557,25 +1504,59 @@ fn lower_select_command(
     command: &Node<Expr>,
     continuations: &[String],
 ) -> Result<Command, LowerError> {
-    if let Expr::Cut { value, consumer } = &command.kind
-        && let Some(name) = named_consumer(&consumer.kind)
-    {
-        return Ok(Command::Cut(lower_expr(value, continuations)?, CoTerm::Covar(name.clone())));
-    }
-    // The same, written as a flow: everything before the closing consumer
-    // is what flows in, and it is cut against that consumer directly.
-    if let Expr::Flow { stages, into_consumer: true, .. } = &command.kind
-        && let Some((closing, flowing)) = stages.split_last()
-        && let Some(name) = named_consumer(&closing.kind)
-        && let Some((first, rest)) = flowing.split_first()
-    {
-        let mut value = lower_expr(first, continuations)?;
-        for stage in rest {
-            value = call_curried(lower_expr(stage, continuations)?, vec![value]);
-        }
-        return Ok(Command::Cut(value, CoTerm::Covar(name.clone())));
+    if let Some(command) = lower_closed_flow(command, continuations)? {
+        return Ok(command);
     }
     Ok(Command::Cut(lower_expr(command, continuations)?, CoTerm::Covar(ARM_COVAR.into())))
+}
+
+/// One stage of a chain. A bare name the checker resolved as a trait method
+/// is that dispatch, and a bounded one takes its dictionaries first, as a
+/// bounded call does — but only when the stage *is* the bare name: a call
+/// already carries its own, keyed by the call's span.
+fn lower_flow_stage(stage: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
+    let dispatch = matches!(stage.kind, Expr::Ident(_)).then(|| method_dispatch(stage.span));
+    let mut term = match dispatch.flatten() {
+        Some(MethodDispatch::Static(mangled)) => Term::Var(mangled),
+        Some(MethodDispatch::Dict { dict_var, index, count }) => {
+            dict_projection(&dict_var, index, count)
+        }
+        None => lower_expr(stage, continuations)?,
+    };
+    if matches!(stage.kind, Expr::Ident(_))
+        && let Some(dicts) = call_dicts(stage.span)
+    {
+        term = call_curried(term, dicts.iter().map(dict_term).collect());
+    }
+    Ok(term)
+}
+
+/// A plain chain that closes against a named consumer, as the command it
+/// already is: everything before the closing stage is what flows in, and it
+/// is cut against that consumer directly rather than through a μ binder
+/// nothing returns to. Anything the general arm reads specially — an
+/// eta-expanded chain, a commuted stage, a `command`'s row — is left to it.
+fn lower_closed_flow(
+    command: &Node<Expr>,
+    continuations: &[String],
+) -> Result<Option<Command>, LowerError> {
+    let Expr::Flow { stages, into_consumer: true, .. } = &command.kind else {
+        return Ok(None);
+    };
+    let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).copied()).is_none_or(|shape| {
+        !shape.eta && shape.commuted_from.is_none() && shape.row_stage.is_none()
+    });
+    if !plain {
+        return Ok(None);
+    }
+    let Some((closing, flowing)) = stages.split_last() else { return Ok(None) };
+    let Some(name) = named_consumer(&closing.kind) else { return Ok(None) };
+    let Some((first, rest)) = flowing.split_first() else { return Ok(None) };
+    let mut value = lower_flow_stage(first, continuations)?;
+    for stage in rest {
+        value = call_curried(lower_flow_stage(stage, continuations)?, vec![value]);
+    }
+    Ok(Some(Command::Cut(value, CoTerm::Covar(name.clone()))))
 }
 
 /// The binder a parameterless declaration introduces for the unit its

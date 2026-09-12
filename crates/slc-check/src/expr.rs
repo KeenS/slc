@@ -336,14 +336,9 @@ fn infer_param_type(
     {
         return Some(ty);
     }
-    if let Expr::Cut { value, consumer } = &body.kind
-        && matches!(&consumer.kind, Expr::Ident(x) if x == name)
-    {
-        // `v | k` makes `k` the consumer of whatever `v` is. The value is
-        // checked again in place, so these diagnostics are thrown away.
-        return check_expr(value, enums, env, &mut Vec::new()).map(|ty| ty.dual());
-    }
-    // The same, written as a flow: a cut of two ending in the binder.
+    // A cut of two ending in the binder: `v | k⟩` makes `k` the consumer of
+    // whatever `v` is. The value is checked again in place, so these
+    // diagnostics are thrown away.
     if let Expr::Flow { stages, into_consumer: true, .. } = &body.kind
         && let [value, consumer] = stages.as_slice()
         && matches!(&consumer.kind, Expr::Ident(x) if x == name)
@@ -2749,56 +2744,6 @@ fn check_expr_unapplied(
                 },
             );
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
-        }
-        Expr::Cut { value, consumer } => {
-            // `v | k` is a command: it sends `v` to the consumer `k` and does
-            // not return, so its type is bottom. A cut is well typed when the
-            // two sides are dual — that is what makes the interaction fit,
-            // and with `A → B` being `-A ⅋ B` it is the whole rule: which
-            // side is written negatively is not itself the question.
-            let value_ty = check_expr(value, enums, env, diags);
-            let consumer_ty = check_expr(consumer, enums, env, diags);
-            // The cut stays oriented: the left is the value side. A raw
-            // consumer may be stored and passed — but not sit here, because
-            // `dual` being an involution would otherwise let any positive
-            // value pass for a consumer of consumers, and the machine only
-            // runs cuts whose right side really consumes. A continuation
-            // travels by application instead: `handle(k)`.
-            if let Some(value_ty) = &value_ty
-                && value_ty.is_negative()
-                // An unsolved variable is not yet anything; the duality
-                // check below still constrains it.
-                && !contains_var(value_ty)
-                // A menu or a form is a negative *value*, not a boxed
-                // consumer: a declared name cannot be confused with the data
-                // it consumes, and the duality check below still applies.
-                && !enums.is_negative_value(value_ty)
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "the left of `@` is the value side, and this has type {value_ty}; \
-                         pass a continuation as an argument instead"
-                    ),
-                    span: value.span,
-                });
-                return Some(Type::Bottom);
-            }
-            if let (Some(value_ty), Some(consumer_ty)) = (&value_ty, &consumer_ty)
-                // The ⊥/1 corner: `-⊥` resolves to `1`, so the idiomatic
-                // `() | k` against it is unit meeting unit.
-                && !(value_ty == &Type::One && consumer_ty == &Type::One)
-                && !fits(env, &consumer_ty.dual(), value_ty, &value.kind)
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "`@` sends a value to a consumer of it: {consumer_ty} accepts {}, \
-                         and the value has type {value_ty}",
-                        consumer_ty.dual()
-                    ),
-                    span: e.span,
-                });
-            }
-            Some(Type::Bottom)
         }
         Expr::Mu { continuation_params, body, .. } => {
             env.push();

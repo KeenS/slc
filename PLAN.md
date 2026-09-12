@@ -84,12 +84,6 @@ feature is mid-flight; what remains open is below.
         Example and DESIGN note; MIGRATION needs nothing, since names stay
         the trivial pattern.
 
-- **Retire `Expr::Cut`.** Nothing constructs it now that `@` is gone —
-  a closed flow is the cut — but the node and its arms remain in the AST,
-  the checker, the effect checker, and lowering. Delete it, or keep it as
-  the internal representation a closed chain lowers *through* rather than
-  a parallel form.
-
 ## Deferred, for discussion
 
 - **A surface spelling for `0`.** ⊤'s value is settled as `(&)` (above).

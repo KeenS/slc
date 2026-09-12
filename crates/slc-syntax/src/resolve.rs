@@ -499,10 +499,6 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
             resolve_expr(&mut body.kind, stack, locals);
         }
-        Expr::Cut { value, consumer } => {
-            resolve_expr(&mut value.kind, stack, locals);
-            resolve_expr(&mut consumer.kind, stack, locals);
-        }
         Expr::Handle { body, clauses, ret } => {
             resolve_expr(&mut body.kind, stack, locals);
             for c in clauses.iter_mut() {
@@ -704,10 +700,6 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
         Expr::BinOp { lhs, rhs, .. } => {
             rewrite_expr_imports(&mut lhs.kind, imported);
             rewrite_expr_imports(&mut rhs.kind, imported);
-        }
-        Expr::Cut { value, consumer } => {
-            rewrite_expr_imports(&mut value.kind, imported);
-            rewrite_expr_imports(&mut consumer.kind, imported);
         }
         Expr::Request { arg: expr, .. } => rewrite_expr_imports(&mut expr.kind, imported),
         Expr::Project { base, .. } => rewrite_expr_imports(&mut base.kind, imported),
