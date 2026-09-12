@@ -128,7 +128,10 @@ impl Unification {
             },
             Type::Tensor(a, b) => Type::Tensor(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Par(a, b) => Type::Par(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            Type::Dual(t) => Type::Dual(Box::new(self.apply(t))),
+            // Dual is an involution, so the substitution reduces it: once
+            // `?a` is known to be `-i64`, `dual(?a)` *is* `+i64`, and only a
+            // still-unknown inner keeps the wrapper.
+            Type::Dual(t) => self.apply(t).dual(),
             Type::With(a, b) => Type::With(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Named(name, args) => {

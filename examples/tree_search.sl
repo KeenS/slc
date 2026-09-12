@@ -25,9 +25,9 @@ command walk(t: Tree, target: +i64) | (jump: -i64 & done: -unit) {
                 // every enclosing walk, straight to the captured `k`.
                 value | jump⟩
             } else {
-                walk(left, target, jump, select +unit {
-                    finished_left => walk(right, target, jump, done),
-                })
+                (left, target) | walk | (jump & select +unit {
+                    finished_left => (right, target) | walk | (jump & done)⟩,
+                })⟩
             }
         },
     }
@@ -41,11 +41,11 @@ command main | (exit: -i32) {
     );
 
     // Found: the walk stops the moment it hits, and `done` never fires.
-    let hit = mu { k <= walk(tree, 2, k, select +unit { exhausted => -1 | k⟩ }) };
+    let hit = mu { k <= (tree, 2) | walk | (k & select +unit { exhausted => -1 | k⟩ })⟩ };
     "found: " + (hit | int_to_str) | println;
 
     // Absent: the walk exhausts the tree, and the `done` chain delivers -1.
-    let missing = mu { k <= walk(tree, 99, k, select +unit { exhausted => -1 | k⟩ }) };
+    let missing = mu { k <= (tree, 99) | walk | (k & select +unit { exhausted => -1 | k⟩ })⟩ };
     "missing: " + (missing | int_to_str) | println;
 
     0 | exit⟩

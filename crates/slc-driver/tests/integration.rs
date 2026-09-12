@@ -407,7 +407,7 @@ fn named_error_propagation_success_path() {
         command main | (exit: -i32) {
             let ok = fn(value: +String) -> i32 { println("ok: " + value); 0 | exit⟩ };
             let err = fn(message: +String) -> i32 { println("err: " + message); 1 | exit⟩ };
-            parse("ok", ok, err)
+            "ok" | parse | (ok & err)⟩
         }"#,
     )
     .unwrap();
@@ -427,7 +427,7 @@ fn named_error_propagation_error_path() {
         command main | (exit: -i32) {
             let ok = fn(value: +String) -> i32 { println("ok: " + value); 0 | exit⟩ };
             let err = fn(message: +String) -> i32 { println("err: " + message); 1 | exit⟩ };
-            parse("bad", ok, err)
+            "bad" | parse | (ok & err)⟩
         }"#,
     )
     .unwrap();
@@ -442,8 +442,8 @@ fn json_selected_error_continuation_reports_parse_error() {
     std::fs::write(
         &dir,
         r#"command parse_json(input: +String) | (ok: -String & err: -String) {
-            let start = skip_ws(input, 0);
-            if start < str_len(input) {
+            let start = (input, 0) | skip_ws;
+            if start < (input | str_len) {
                 match input[start] {
                     '0'..='9' => input[start..start + 1] | ok⟩,
                     _ => "expected JSON value" | err⟩
@@ -455,7 +455,7 @@ fn json_selected_error_continuation_reports_parse_error() {
         command main | (exit: -i32) {
             let ok = fn(value: +String) -> i32 { println("parsed: " + value); 0 | exit⟩ };
             let err = fn(message: +String) -> i32 { println("error: " + message); 1 | exit⟩ };
-            parse_json("x", ok, err)
+            "x" | parse_json | (ok & err)⟩
         }"#,
     )
     .unwrap();
@@ -482,7 +482,7 @@ fn select_dispatches_to_matching_enum_variant() {
             }}
         }}
         command main | (exit: -i32) {{
-            println(mu i32 {{ out <= Color::{variant} | k(out)⟩ }});
+            mu i32 {{ out <= Color::{variant} | k | out⟩ }} | println;
             0 | exit⟩
         }}"#
             ),
@@ -502,20 +502,20 @@ fn activating_one_select_arm_does_not_activate_other_arms() {
         r#"enum Color { Red, Green, Blue }
 
         fn shout(name: +String, code: +i32) -> i32 {
-            println(name);
+            name | println;
             code
         }
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                Red => (("red", 0) | shout) | k⟩,
-                Green => (("green", 1) | shout) | k⟩,
-                Blue => (("blue", 2) | shout) | k⟩,
+                Red => ("red", 0) | shout | k⟩,
+                Green => ("green", 1) | shout | k⟩,
+                Blue => ("blue", 2) | shout | k⟩,
             }
         }
 
         command main | (exit: -i32) {
-            println(mu i32 { out <= Color::Green | dispatch(out)⟩ });
+            mu i32 { out <= Color::Green | dispatch | out⟩ } | println;
             0 | exit⟩
         }"#,
     )
@@ -545,17 +545,17 @@ fn constructing_select_does_not_activate_any_arm() {
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                Red => (3 | boom) | k⟩,
-                Green => (4 | boom) | k⟩,
-                Blue => (5 | boom) | k⟩,
+                Red => 3 | boom | k⟩,
+                Green => 4 | boom | k⟩,
+                Blue => 5 | boom | k⟩,
             }
         }
 
         command main | (exit: -i32) {
-            println(mu i32 { out <= {
-                let consumer = dispatch(out);
+            mu i32 { out <= {
+                let consumer = out | dispatch;
                 7
-            } });
+            } } | println;
             0 | exit⟩
         }"#,
     )
@@ -657,7 +657,7 @@ fn select_builds_the_consumer_of_a_product() {
 
         fn show(out: -String) <- Reading {
             select Reading {
-                Reading { value, unit } => (int_to_str(value) + unit) | out⟩,
+                Reading { value, unit } => ((value | int_to_str) + unit) | out⟩,
             }
         }
 
@@ -668,8 +668,8 @@ fn select_builds_the_consumer_of_a_product() {
         }
 
         command main | (exit: -i32) {
-            println(mu i64 { answer <= (2, 40) | (answer | total)⟩ });
-            println(mu String { answer <= Reading { value: 42, unit: "m" } | show(answer)⟩ });
+            mu i64 { answer <= (2, 40) | (answer | total)⟩ } | println;
+            mu String { answer <= Reading { value: 42, unit: "m" } | show | answer⟩ } | println;
             0 | exit⟩
         }"#,
     )
@@ -750,7 +750,7 @@ fn a_computed_consumer_receives_the_value() {
         }
 
         command main | (exit: -i32) {
-            println(mu i64 { answer <= Color::Blue | code(answer)⟩ });
+            mu i64 { answer <= Color::Blue | code | answer⟩ } | println;
             0 | exit⟩
         }"#,
     )
@@ -1006,10 +1006,10 @@ fn a_function_headed_chain_composes_unless_marked() {
             fn(f: (+i64 -> +i64)) { "a function" | out⟩ }
         }
         command main | (exit: -i32) {
-            println(21 | double);              // a value heads it: apply
+            21 | double | println;             // a value heads it: apply
             let quadruple = double | double;   // a function heads it: compose
-            println(5 | quadruple);
-            println(mu String { s <= ⟨double | describe(s)⟩ });
+            5 | quadruple | println;
+            mu String { s <= ⟨double | describe | s⟩ } | println;
             0 | exit⟩
         }"#,
     )
@@ -1020,28 +1020,27 @@ fn a_function_headed_chain_composes_unless_marked() {
 }
 
 #[test]
-fn a_row_arrives_spread_or_whole() {
-    // A menu of exits may be written one argument per exit, or passed as
-    // one bundle — the same call either way — and a row is first class: a
-    // command can take one and hand it on.
+fn a_row_closes_the_chain_and_travels_whole() {
+    // A command's exits are the chain's closing stage, written as one
+    // bundle — and a row is first class: a command can take one and hand
+    // it on unopened.
     let dir = std::env::temp_dir().join("slc_test_row_forms.sl");
     std::fs::write(
         &dir,
         r#"command classify(n: i64) | (found: i64 & missing: String) {
             if n > 0 { n | found⟩ } else { "negative" | missing⟩ }
         }
-        command forward(n: i64) | (row: (-i64 & -String)) { classify(n, row) }
+        command forward(n: i64) | (row: (-i64 & -String)) { n | classify | row⟩ }
         command main | (exit: -i32) {
-            println(mu i64 { ok <= classify(7, ok, select +String { s => str_len(s) | ok⟩ }) });
-            println(mu i64 { ok <= classify(7, (ok & select +String { s => str_len(s) | ok⟩ })) });
-            println(mu i64 { ok <= forward(0 - 1, (ok & select +String { s => str_len(s) | ok⟩ })) });
+            mu i64 { ok <= 7 | classify | (ok & select +String { s => s | str_len | ok⟩ })⟩ } | println;
+            mu i64 { ok <= 0 - 1 | forward | (ok & select +String { s => s | str_len | ok⟩ })⟩ } | println;
             0 | exit⟩
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["7", "7", "8"]);
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["7", "8"]);
 }
 
 #[test]

@@ -28,7 +28,7 @@ command classify(n: i64) | (found: i64 & missing: String) {
 
 // A row is a value: this one takes the whole menu and hands it on.
 command forward(n: i64) | (row: (-i64 & -String)) {
-    classify(n, row)
+    n | classify | row⟩
 }
 
 command main | (exit: -i32) {
@@ -49,9 +49,9 @@ command main | (exit: -i32) {
     5 | quadruple | println;
 
     // a two-exit command: its exits spread, then bundled, then forwarded
-    (mu i64 { ok <= classify(7, ok, select +String { s => s | str_len | ok⟩ }) } | println);
-    (mu i64 { ok <= classify(0 - 1, (ok & select +String { s => s | str_len | ok⟩ })) } | println);
-    (mu i64 { ok <= forward(0 - 1, (ok & select +String { s => s | str_len | ok⟩ })) } | println);
+    (mu i64 { ok <= 7 | classify | (ok & select +String { s => s | str_len | ok⟩ })⟩ } | println);
+    (mu i64 { ok <= 0 - 1 | classify | (ok & select +String { s => s | str_len | ok⟩ })⟩ } | println);
+    (mu i64 { ok <= 0 - 1 | forward | (ok & select +String { s => s | str_len | ok⟩ })⟩ } | println);
 
     0 | exit⟩
 }

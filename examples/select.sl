@@ -49,8 +49,8 @@ fn twice(out: -i64) <- +i64 {
 }
 
 command main | (exit: -i32) {
-    (mu i32 { answer <= Color::Green | code(answer)⟩ } | println);
-    (mu i64 { answer <= Reading::Measured(42) | report(answer, answer)⟩ } | println);
-    (mu i64 { answer <= 50 | twice(answer)⟩ } | println);
+    (mu i32 { answer <= Color::Green | (answer | code)⟩ } | println);
+    (mu i64 { answer <= Reading::Measured(42) | ((answer, answer) | report)⟩ } | println);
+    (mu i64 { answer <= 50 | (answer | twice)⟩ } | println);
     0 | exit⟩
 }

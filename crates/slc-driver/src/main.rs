@@ -251,10 +251,14 @@ fn run_program(
     }
 
     // The program's exit continuation is `EXIT`: supplying it to `main` runs
-    // the program, and the cut that reaches it is what ends it.
+    // the program, and the cut that reaches it is what ends it. `main` is a
+    // command like any other, so it takes both groups — the empty value
+    // group first, as the unit, then the menu of exits.
     let mut fuel = 1_000_000;
     let entry =
         slc_runtime::eval::run_node(main_root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
+    let entry = slc_runtime::eval::apply_value(entry, slc_runtime::value::Value::Unit, &mut fuel)
+        .map_err(|e| e.to_string())?;
     match slc_runtime::eval::apply_value(
         entry,
         slc_runtime::value::Value::Builtin("EXIT".into()),

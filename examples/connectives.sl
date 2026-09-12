@@ -122,22 +122,22 @@ command main | (exit: -i32) {
 
     // ⅋ : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
-    (mu i64 { answer <= Pair { left: 2, right: 40 } | report_sum(answer)⟩ } | println);
+    (mu i64 { answer <= Pair { left: 2, right: 40 } | (answer | report_sum)⟩ } | println);
     (mu i64 { answer <= Total { left: 2, right: 40 } | (answer | total)⟩ } | println);
-    (mu i64 { answer <= (7, "ignored") | report_first(answer)⟩ } | println);
+    (mu i64 { answer <= (7, "ignored") | (answer | report_first)⟩ } | println);
 
     // ⊕ : build one variant, then branch on it.
     Colour::Green | name | println;
 
     // & : hand the consumer one variant; only its branch runs.
-    (mu i64 { answer <= Colour::Green | code(answer)⟩ } | println);
+    (mu i64 { answer <= Colour::Green | (answer | code)⟩ } | println);
 
     // codata: demand one item of the menu. The other is never computed.
     config().retries | println;
     config().name | println;
 
     // 1 and ⊥.
-    mu ⊥ { k <= done(k) } | println;
+    mu ⊥ { k <= (k | done) } | println;
 
     0 | exit⟩
 }

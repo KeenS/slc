@@ -156,6 +156,51 @@ fn check_trait_method_call(
     }
 }
 
+/// Would these meet, if we tried? The attempt runs on a copy of the
+/// unification state, so a stage can ask before committing — a declared
+/// callee whose parameters do not take what flows in may still read the
+/// other way round, as `⅋` being commutative allows.
+fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> bool {
+    if actual == &Type::Bottom {
+        return true;
+    }
+    let mut probe = env.uni.clone();
+    if probe.unify(expected, actual).is_ok() {
+        return true;
+    }
+    expr.is_some_and(is_integer_literal)
+        && is_numeric(&env.uni.apply(expected))
+        && is_numeric(actual)
+}
+
+/// A tuple written in place, weighed component by component against a
+/// callee's parameters: an integer literal then takes the width its own
+/// slot requires, not the one the whole product happens to have. Like
+/// `would_fit`, this commits nothing.
+fn fits_piecewise(
+    uni: &slc_core::typing::Unification,
+    params: &[Type],
+    actual: &Type,
+    shape: &Expr,
+) -> bool {
+    let Expr::Pair(items) = shape else { return false };
+    let components = tensor_spine(&uni.apply(actual));
+    if items.len() != params.len() || items.len() != components.len() {
+        return false;
+    }
+    let mut probe = uni.clone();
+    for ((item, actual), param) in items.iter().zip(&components).zip(params) {
+        if probe.unify(param, actual).is_ok() {
+            continue;
+        }
+        if is_integer_literal(&item.kind) && is_numeric(&probe.apply(param)) && is_numeric(actual) {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
 /// A trait method as a pipeline stage: what flows in is the receiver, so
 /// dispatch resolves against its type and the stage's result is the
 /// method's. Nothing else about a method changes — it is the same static
@@ -1657,13 +1702,10 @@ fn check_expr_unapplied(
                     }
                 }
                 // A function is applied by flowing into it: `x | f`, not
-                // `f(x)`. Constructors build rather than apply, and a
-                // callee that takes continuations is not yet a stage, so
-                // both keep the call form.
-                if !args.is_empty()
-                    && !signature.continuations.iter().any(|c| *c)
-                    && !is_builtin(name)
-                {
+                // `f(x)`. A command takes both its groups from the chain —
+                // `(xs, i) | nth | (found & missing)⟩` — and a constructor
+                // builds rather than applies, so only those keep parens.
+                if !args.is_empty() && !is_builtin(name) {
                     let piped = if args.len() == 1 {
                         format!("{} | {name}", "argument")
                     } else {
@@ -2462,11 +2504,68 @@ fn check_expr_unapplied(
             // one — everything later is the result of a step.
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
             let mut commuted_from: Option<usize> = None;
+            let mut row_stage: Option<usize> = None;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
                 let last = index + 1 == types.len();
                 let unknown = env.uni.fresh_var();
                 let ty = ty.as_ref().unwrap_or(&unknown);
                 let shape = flowing.unwrap_or(&e.kind);
+                // A command takes two groups, so a chain hands it both:
+                // what flows in is its values, and the rest of the chain —
+                // the closing stage — is its menu of exits. The chain ends
+                // there, in a call, and its type is `⊥`.
+                if *into_consumer
+                    && index + 2 == types.len()
+                    && let Expr::Ident(name) = &stages[index].kind
+                    && env.lookup(name).is_none()
+                    && !env.traits.is_method(name)
+                    && let Some(signature) = env.functions.get(name)
+                    && signature.continuations.iter().any(|c| *c)
+                    // Only a command: it answers `⊥`, so the chain ends
+                    // in it. A negative function also carries a continuation
+                    // but answers a consumer, and composes on — that is the
+                    // commuted ⅋ reading below.
+                    && signature.result.as_ref() == Some(&Type::Bottom)
+                {
+                    let (signature, _) = instantiate(signature, &mut env.uni);
+                    let split = signature.continuations.iter().filter(|c| !**c).count();
+                    let values = signature.params[..split]
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                        .unwrap_or(Type::One);
+                    let row = signature.params[split..]
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)))
+                        .unwrap_or(Type::One);
+                    if !is_builtin(name) && !fits(env, &values, &acc, shape) {
+                        let values = env.uni.apply(&values);
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "`{name}` takes {values}, and what flows in has type {acc}"
+                            ),
+                            span: stages[index].span,
+                        });
+                    }
+                    if let Some(exits) = types[index + 1].as_ref()
+                        && !is_builtin(name)
+                        && !fits(env, &row, exits, &stages[index + 1].kind)
+                    {
+                        let row = env.uni.apply(&row);
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "`{name}` offers the exits {row}, and this menu has type {exits}"
+                            ),
+                            span: stages[index + 1].span,
+                        });
+                    }
+                    row_stage = Some(index);
+                    acc = Type::Bottom;
+                    break;
+                }
                 // A declared function is checked through its signature, as
                 // a call is: `x | f` *is* `f(x)`, so its parameters pack the
                 // same way and its bounds are discharged the same way.
@@ -2476,8 +2575,28 @@ fn check_expr_unapplied(
                     // A trait method dispatches instead; that is the arm below.
                     && !env.traits.is_method(name)
                     && let Some(signature) = env.functions.get(name)
-                    && !signature.continuations.iter().any(|c| *c)
                     && !signature.params.is_empty()
+                    && {
+                        // Only when its parameters take what flows in: a
+                        // negative function may instead read the other way
+                        // round, and that is the general arm below.
+                        // The signature's template variables are fresh per
+                        // call, so probe with an instantiated copy.
+                        let mut probe = env.uni.clone();
+                        let fresh = instantiate(signature, &mut probe).0;
+                        let packed = fresh
+                            .params
+                            .iter()
+                            .rev()
+                            .cloned()
+                            .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                            .expect("a stage with parameters");
+                        let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
+                        let probe = Env { uni: probe, ..env.clone() };
+                        is_builtin(name)
+                            || piecewise
+                            || would_fit(&probe, &packed, &acc, Some(shape))
+                    }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
                     let packed = signature
@@ -2622,7 +2741,12 @@ fn check_expr_unapplied(
             // so lowering is told.
             env.dispatch.flows.insert(
                 e.span,
-                slc_syntax::lower::FlowShape { eta: opens, cut: *into_consumer, commuted_from },
+                slc_syntax::lower::FlowShape {
+                    eta: opens,
+                    cut: *into_consumer,
+                    commuted_from,
+                    row_stage,
+                },
             );
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
         }
@@ -3042,7 +3166,7 @@ mod tests {
                      }
                  }
                  fn main() -> i64 {
-                     mu i64 { answer <= Color::Green | code(answer)⟩ }
+                     mu i64 { answer <= Color::Green | code | answer⟩ }
                  }"
             )
             .is_ok()
@@ -3054,7 +3178,7 @@ mod tests {
         assert!(
             check(
                 "command route(x: +i32) | (k: -i32) { x | k⟩ }
-                 fn main() -> i32 { mu i32 { out <= route(1, out) } }"
+                 fn main() -> i32 { mu i32 { out <= 1 | route | out⟩ } }"
             )
             .is_ok()
         );
@@ -3555,14 +3679,14 @@ mod tests {
         let prelude = "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
              impl Show for bool { fn show(self: +bool) -> String { \"b\" } }
-             fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) | out⟩ } }\n";
+             fn emit<T: Show>(out: -String) <- T { fn(x: T) { x | show | out⟩ } }\n";
         // Nothing the call receives mentions T; the cut fixes it, at two
         // different types in the same declaration.
         assert!(
             check(&format!(
                 "{prelude} command main | (exit: -i32) {{
-                     println(mu String {{ s <= 42 | emit(s)⟩ }});
-                     println(mu String {{ s <= true | emit(s)⟩ }});
+                     mu String {{ s <= 42 | emit | s⟩ }} | println;
+                     mu String {{ s <= true | emit | s⟩ }} | println;
                      0 | exit⟩
                  }}"
             ))

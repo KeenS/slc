@@ -47,7 +47,7 @@ command main | (exit: -i32) {
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
-    twice(50, select +i64 { n => n | println });
+    50 | twice | select +i64 { n => n | println }⟩;
 
     0 | exit⟩
 }

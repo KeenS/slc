@@ -91,16 +91,16 @@ command main | (exit: -i32) {
     // Negative: the same computations, written in the order the value
     // travels. `mu` names the hole the answer comes back through.
     (mu i64 { answer <= {
-        Point { x: 10, y: 20 } | area_of(answer)⟩    // 200
+        Point { x: 10, y: 20 } | (answer | area_of)⟩    // 200
     } } | println);
 
-    let r = mu Point { answer <= Point { x: 1, y: 2 } | reflect(answer)⟩ };
+    let r = mu Point { answer <= Point { x: 1, y: 2 } | (answer | reflect)⟩ };
     r.x | println;                                   // 2
 
     // `overshoot_of(answer)` is a consumer of `Size`, exactly what
     // `classify_to` wants: the enum passes between them without a name.
     (mu i64 { answer <= {
-        150 | classify_to(overshoot_of(answer))⟩     // 50
+        150 | ((answer | overshoot_of) | classify_to)⟩     // 50
     } } | println);
 
     0 | exit⟩

@@ -89,7 +89,7 @@ command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String) {
     match xs {
         Nil => "nothing at that index" | missing⟩,
         Cons(h, rest) => {
-            if i == 0 { h | found⟩ } else { nth(rest, i - 1, found, missing) }
+            if i == 0 { h | found⟩ } else { (rest, i - 1) | nth | (found & missing)⟩ }
         },
     }
 }

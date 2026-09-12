@@ -25,7 +25,7 @@ command main | (exit: -i32) {
     (xs, xs) | append | sum | println;           // 84
 
     // nth offers its outcomes; `defaulting` answers the miss.
-    mu i64 { out <= nth(xs, 2, out, (0, out) | defaulting) } | println;   // 39
-    mu i64 { out <= nth(xs, 9, out, (0, out) | defaulting) } | println;   // 0
+    mu i64 { out <= (xs, 2) | nth | (out & (0, out) | defaulting)⟩ } | println;   // 39
+    mu i64 { out <= (xs, 9) | nth | (out & (0, out) | defaulting)⟩ } | println;   // 0
     0 | exit⟩
 }

@@ -24,13 +24,13 @@ feature is mid-flight; what remains open is below.
 
 ## Known limits
 
-- **No partial application.** `f(a)` of a two-parameter `f` does not
-  produce a function awaiting the second argument: the call's type is the
-  full result, so `7 @ route("high")` is refused even though
-  `route(tag, x) -> ⊥` would make the partial application a consumer of
-  `+i64`. Calls are curried in the core and the runtime accumulates
-  arguments, so this is a checker-side gap — the type of an
-  under-applied call — not a representational one. (Found while
+- **No partial application.** A stage supplies a callee's whole value
+  group: `"high" | route` of a two-parameter `route` does not produce a
+  function awaiting the second argument, so `7 | ("high" | route)⟩` is
+  refused even though `route(tag, x) -> ⊥` would make the partial
+  application a consumer of `+i64`. Calls are curried in the core and the
+  runtime accumulates arguments, so this is a checker-side gap — the type
+  of an under-applied call — not a representational one. (Found while
   establishing that operations need no negative form.)
 
 - **A file handle's close is not enforced.** `+File` is the first resource
@@ -39,7 +39,7 @@ feature is mid-flight; what remains open is below.
   take a dedicated resource/ownership check (the value side of the language is
   otherwise unrestricted — see `DESIGN.md` §4). Until then the idiom is
   composition at the door: shadow `exit` with
-  `select +i32 { status => { close_file(handle); status @ exit } }` where the
+  `select +i32 { status => { handle | close_file; status | exit⟩ } }` where the
   handle comes into scope, and no later path can leave the file open —
   `examples/file_io.sl` does exactly this.
 

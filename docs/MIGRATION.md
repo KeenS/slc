@@ -314,7 +314,7 @@ it is in scope.
 fn die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
 
 command main | (exit: -i32) {                            // new
-    let die = select { m => { println(m); 1 | exit } };
+    let die = select { m => { m | println; 1 | exit⟩ } };
     …
 }
 ```
@@ -331,8 +331,8 @@ fn main() -> i32 {          // old
 }
 
 command main | (exit: -i32) {  // new
-    println("hi");
-    0 | exit
+    "hi" | println;
+    0 | exit⟩
 }
 ```
 
@@ -349,16 +349,16 @@ given, so a `main` that never reaches `exit` is a linearity error.
 
 ```sl
 select Color {                     // one arm per variant — the negative additive
-    Red => 0 | return,
-    Green => 1 | return,
+    Red => 0 | return⟩,
+    Green => 1 | return⟩,
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } => (int_to_str(value) + unit) | out,
+    Reading { value, unit } => ((value | int_to_str) + unit) | out⟩,
 }
 
 select (+i64 ⊗ +i64) {             // a bare product names its type
-    (left, right) => (left + right) | out,
+    (left, right) => (left + right) | out⟩,
 }
 ```
 
@@ -476,9 +476,14 @@ add(a, b)                              // old
 (a, b) | add                           // new
 ```
 
-Constructors still build — `Cons(h, t)` is unchanged — and a callee that
-takes continuations keeps its call form, since a row cannot yet be a
-pipeline stage: `nth(xs, 2, found, missing)`.
+Constructors still build — `Cons(h, t)` is unchanged. Everything else
+flows, a `command` included: its values come from the chain and its exits
+are the closing stage.
+
+```sl
+nth(xs, 2, found, missing)             // old
+(xs, 2) | nth | (found & missing)⟩     // new
+```
 
 ## Calls and rows are unary
 
@@ -490,9 +495,10 @@ be passed whole:
 ```sl
 command nth(xs: List<T>, i: +i64) | (found: -T & missing: -String)
 
-nth(xs, 2, found, missing)             // the exits spread
-nth(xs, 2, (found & missing))          // or handed over as one bundle
-command forward(…) | (row: (-T & -String)) { nth(xs, 2, row) }
+(xs, 2) | nth | (found & missing)⟩            // the exits, as one menu
+command forward(…) | (row: (-T & -String)) {  // or handed on unopened
+    (xs, 2) | nth | row⟩
+}
 ```
 
 ## Handler clauses bind their continuation after a colon

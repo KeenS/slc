@@ -97,8 +97,8 @@ command main | (exit: -i32) {
     keeper() | label | println;
 
     // the bounded negative function, at three different types
-    (mu String { s <= 42 | emit(s)⟩ } | println);
-    (mu String { s <= Cons(1, Cons(2, Nil)) | emit(s)⟩ } | println);
+    (mu String { s <= 42 | (s | emit)⟩ } | println);
+    (mu String { s <= Cons(1, Cons(2, Nil)) | (s | emit)⟩ } | println);
 
     // the Self-consuming method, dispatched by what the cut sends
     (mu String { s <= 42 | deliver(s)⟩ } | println);

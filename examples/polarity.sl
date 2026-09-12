@@ -50,7 +50,7 @@ command retries | (provider: -Request & answer: -i64) {
 }
 
 command main | (exit: -i32) {
-    mu i64 { answer <= retries(config, answer) } | println;
+    mu i64 { answer <= (,) | retries | (config & answer)⟩ } | println;
     mu String { note <= (1, note) | describe } | println;
     0 | exit⟩
 }

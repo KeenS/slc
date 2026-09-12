@@ -88,6 +88,10 @@ pub struct FlowShape {
     pub eta: bool,
     /// The chain ends in a consumer, so its last step is the cut.
     pub cut: bool,
+    /// A stage that is a command: it takes what flows in as its values and
+    /// the rest of the chain as its menu of exits, so the chain ends there
+    /// in a two-group call rather than a cut.
+    pub row_stage: Option<usize>,
     /// The stage at which the chain turns around. `⅋` is commutative, so a
     /// stage may read as a consumer transformer instead of a function —
     /// `area_of(out: -i64) <- Shape` takes the *rest of the chain* as its
@@ -536,9 +540,13 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // the checker reports it. A chain a function heads denotes one
             // that would take a value — `f | k⟩` is `λx. x | f | k⟩` — and
             // eta-expanding leaves every middle step an application.
-            let shape = FLOWS
-                .with(|cell| cell.borrow().get(&e.span).copied())
-                .unwrap_or(FlowShape { eta: false, cut: *into_consumer, commuted_from: None });
+            let shape =
+                FLOWS.with(|cell| cell.borrow().get(&e.span).copied()).unwrap_or(FlowShape {
+                    eta: false,
+                    cut: *into_consumer,
+                    commuted_from: None,
+                    row_stage: None,
+                });
             let mut lowered = Vec::new();
             if shape.eta {
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
@@ -565,6 +573,37 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     term = call_curried(term, dicts.iter().map(dict_term).collect());
                 }
                 lowered.push(term);
+            }
+            // A command takes two groups: what flowed in, then the menu of
+            // exits the rest of the chain is. The call ends the chain.
+            if let Some(at) = shape.row_stage.map(|i| i + usize::from(shape.eta))
+                && at + 1 < lowered.len()
+            {
+                let row = lowered[at + 1].clone();
+                let callee = lowered[at].clone();
+                let mut acc = lowered.remove(0);
+                for stage in &lowered[..at.saturating_sub(1)] {
+                    acc = call_curried(stage.clone(), vec![acc]);
+                }
+                return Ok(call_curried(callee, vec![acc, row]));
+            }
+            // A command takes both its groups from the chain: what flowed
+            // in that far is its values, and the closing stage its menu of
+            // exits. That is a call, not a cut — a partially applied
+            // command is a closure, whatever its type says.
+            if let Some(at) = shape.row_stage.map(|i| i + usize::from(shape.eta)) {
+                let row = lowered.pop().expect("a row stage has a closing menu");
+                let callee = lowered.remove(at);
+                let mut values = lowered.remove(0);
+                for stage in lowered {
+                    values = call_curried(stage, vec![values]);
+                }
+                let term = call_curried(callee, vec![values, row]);
+                return Ok(if shape.eta {
+                    Term::Lam(FLOW_ARGUMENT.into(), Box::new(term))
+                } else {
+                    term
+                });
             }
             // Where the chain turns around, the stages after it fold the
             // other way: each takes the consumer the rest builds, and what
@@ -1047,6 +1086,11 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 // menu of exits, each destructured when it holds several.
                 term = bind_group(continuation_params, "row", term);
                 term = bind_group(value_params, "values", term);
+                // The value group is a group even when it is empty: a caller
+                // writes `(,) | retries | …`, so the unit still arrives.
+                if value_params.is_empty() {
+                    term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
+                }
                 term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
