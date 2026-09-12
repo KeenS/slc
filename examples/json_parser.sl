@@ -63,7 +63,7 @@ fn is_hex(c: +char) -> bool {
     }
 }
 
-command parse_json(input: +String) | (parsed: -String, failed: -String) {
+command parse_json(input: +String) | (parsed: -String & failed: -String) {
     let start = skip_ws(input, 0);
     if start < str_len(input) {
         let end = mu { k <= parse_value(input, start, k, failed) };
@@ -77,7 +77,7 @@ command parse_json(input: +String) | (parsed: -String, failed: -String) {
     }
 }
 
-command parse_value(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     match at(input, pos) {
         '0'..='9' | '-' => parse_number(input, pos, ok, failed),
         QUOTE => parse_string(input, pos, ok, failed),
@@ -90,7 +90,7 @@ command parse_value(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_number(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let after_sign = if at(input, pos) == '-' {
         pos + 1
     } else {
@@ -104,7 +104,7 @@ command parse_number(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_number_tail(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if at(input, pos) == '.' {
         let after_fraction = mu { k <= parse_fraction(input, pos + 1, k, failed) };
         parse_exponent(input, after_fraction, ok, failed)
@@ -113,7 +113,7 @@ command parse_number_tail(input: +String, pos: +i64) | (ok: -i64, failed: -Strin
     }
 }
 
-command parse_fraction(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_fraction(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if is_digit(at(input, pos)) {
         parse_digits(input, pos) @ ok
     } else {
@@ -121,7 +121,7 @@ command parse_fraction(input: +String, pos: +i64) | (ok: -i64, failed: -String) 
     }
 }
 
-command parse_exponent(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let ch = at(input, pos);
     if ch == 'e' || ch == 'E' {
         parse_exponent_tail(input, pos + 1, ok, failed)
@@ -130,7 +130,7 @@ command parse_exponent(input: +String, pos: +i64) | (ok: -i64, failed: -String) 
     }
 }
 
-command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let after_sign = if at(input, pos) == '-' || at(input, pos) == '+' {
         pos + 1
     } else {
@@ -143,11 +143,11 @@ command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64, failed: -Str
     }
 }
 
-command parse_string(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_string(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     parse_string_tail(input, pos + 1, ok, failed)
 }
 
-command parse_string_tail(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if pos >= str_len(input) {
         "unterminated JSON string" @ failed
     } else {
@@ -164,7 +164,7 @@ command parse_string_tail(input: +String, pos: +i64) | (ok: -i64, failed: -Strin
     }
 }
 
-command parse_escape(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     match at(input, pos) {
         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => {
             parse_string_tail(input, pos + 1, ok, failed)
@@ -174,7 +174,7 @@ command parse_escape(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_hex4(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if is_hex(at(input, pos))
         && is_hex(at(input, pos + 1))
         && is_hex(at(input, pos + 2))
@@ -186,7 +186,7 @@ command parse_hex4(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64, failed: -String) {
+command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & failed: -String) {
     let end = pos + str_len(text);
     if end <= str_len(input) && input[pos..end] == text {
         end @ ok
@@ -195,7 +195,7 @@ command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64, fai
     }
 }
 
-command parse_array(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACKET {
         first + 1 @ ok
@@ -204,7 +204,7 @@ command parse_array(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_array_body(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let value_end = mu { k <= parse_value(input, pos, k, failed) };
     let after_value = skip_ws(input, value_end);
     let ch = at(input, after_value);
@@ -222,7 +222,7 @@ command parse_array_body(input: +String, pos: +i64) | (ok: -i64, failed: -String
     }
 }
 
-command parse_object(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACE {
         first + 1 @ ok
@@ -231,7 +231,7 @@ command parse_object(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     }
 }
 
-command parse_object_body(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
+command parse_object_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if at(input, pos) == QUOTE {
         let key_end = mu { k <= parse_string(input, pos, k, failed) };
         let after_key = skip_ws(input, key_end);

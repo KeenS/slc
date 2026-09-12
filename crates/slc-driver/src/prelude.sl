@@ -91,7 +91,7 @@ fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
 
 // Indexing can find nothing, so it offers its outcomes to continuations,
 // the way the lookup builtins do.
-command nth<T>(xs: List<T>, i: +i64) | (found: -T, missing: -String) {
+command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String) {
     match xs {
         Nil => "nothing at that index" @ missing,
         Cons(h, rest) => {

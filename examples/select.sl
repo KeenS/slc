@@ -31,7 +31,7 @@ enum Reading {
     Missing,
 }
 
-fn report(value: -i64, absent: -i64) <- Reading {
+fn report(value: -i64 & absent: -i64) <- Reading {
     select Reading {
         Measured(measurement) => measurement @ value,
         Missing => -1 @ absent,

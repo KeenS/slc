@@ -43,7 +43,7 @@ fn config() <- Request {
 // (4) NEGATIVE TYPE, CONTINUATION POSITION — the second parameter group is
 //     the continuation row: control leaves this command through one of them.
 //     `provider` is codata, so it is negative and belongs here too.
-command retries | (provider: -Request, answer: -i64) {
+command retries | (provider: -Request & answer: -i64) {
     // Consuming codata is the dual of consuming data: the provider is on the
     // consumer side of the cut, and the *positive* request drives it.
     Request::Retries(answer) @ provider

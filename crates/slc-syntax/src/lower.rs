@@ -1572,7 +1572,7 @@ mod tests {
     #[test]
     fn lower_block_sequence_names_cannot_capture_user_continuations() {
         let out = lower_str(
-            "fn f(__seq0: -i32, __ret0: -i32) <- i32 {
+            "fn f(__seq0: -i32 & __ret0: -i32) <- i32 {
                 println(1);
                 println(2);
                 __seq0(1)
@@ -1865,7 +1865,7 @@ mod tests {
         // A continuation is a value like any other, so a negative function's
         // continuation parameters are ordinary λ binders, nested in
         // declaration order.
-        let out = lower_str("fn k(return: -i32, other: -bool) <- bool { return(0) }");
+        let out = lower_str("fn k(return: -i32 & other: -bool) <- bool { return(0) }");
         let term = &out[0].1;
         let Term::Lam(first, rest) = term else {
             panic!("continuation parameter must be a λ binder: {term}");

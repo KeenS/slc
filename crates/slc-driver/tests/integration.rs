@@ -76,7 +76,7 @@ fn the_accepted_entry_point_is_a_command_with_one_exit_continuation() {
     // A value parameter, or a row that is not one exit status, is rejected.
     for rejected in [
         "command main(x: +i32) | (exit: -i32) { 0 @ exit }",
-        "command main | (a: -i32, b: -i32) { if true { 0 @ a } else { 1 @ b } }",
+        "command main | (a: -i32 & b: -i32) { if true { 0 @ a } else { 1 @ b } }",
         "command main | (exit: -String) { \"done\" @ exit }",
     ] {
         std::fs::write(&dir, rejected).unwrap();
@@ -115,7 +115,7 @@ fn polarity_error() {
     // A consumer value parameter is fine now; a positive continuation
     // parameter is the polarity error that remains.
     let dir = std::env::temp_dir().join("slc_test_pol.sl");
-    std::fs::write(&dir, "command bad | (j: +i32, k: -i32) { 0 @ k }").unwrap();
+    std::fs::write(&dir, "command bad | (j: +i32 & k: -i32) { 0 @ k }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("polarity"));
@@ -131,7 +131,7 @@ fn checker_diagnostics_include_source_locations() {
         ),
         (
             "slc_test_location_polarity.sl",
-            "command bad | (j: +i32, k: -i32) { 0 @ k }",
+            "command bad | (j: +i32 & k: -i32) { 0 @ k }",
             ["polarity:", "1:1", "`command`"],
         ),
         (
@@ -401,7 +401,7 @@ fn named_error_propagation_success_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_ok.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String) | (ok: -String, err: -String) {
+        r#"command parse(input: +String) | (ok: -String & err: -String) {
             if input == "ok" { "parsed" @ ok } else { "failed" @ err }
         }
         command main | (exit: -i32) {
@@ -421,7 +421,7 @@ fn named_error_propagation_error_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_err.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String) | (ok: -String, err: -String) {
+        r#"command parse(input: +String) | (ok: -String & err: -String) {
             if input == "ok" { "parsed" @ ok } else { "failed" @ err }
         }
         command main | (exit: -i32) {
@@ -441,7 +441,7 @@ fn json_selected_error_continuation_reports_parse_error() {
     let dir = std::env::temp_dir().join("slc_test_json_selected_error.sl");
     std::fs::write(
         &dir,
-        r#"command parse_json(input: +String) | (ok: -String, err: -String) {
+        r#"command parse_json(input: +String) | (ok: -String & err: -String) {
             let start = skip_ws(input, 0);
             if start < str_len(input) {
                 match input[start] {

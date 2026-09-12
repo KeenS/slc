@@ -450,19 +450,10 @@ impl Parser {
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
-        let params = self.parse_params()?;
+        let (params, separator) = self.parse_params_with()?;
         let (polarity, return_type) = self.parse_fn_arrow()?;
         let effects = self.parse_effect_row()?;
-        let params = match polarity {
-            FunctionPolarity::Positive => params,
-            FunctionPolarity::Negative => params
-                .into_iter()
-                .map(|mut p| {
-                    p.is_continuation = true;
-                    p
-                })
-                .collect(),
-        };
+        let params = Self::group_for_polarity(params, separator, polarity, t.span)?;
         let body = self.parse_block()?;
         Ok(Node {
             span: t.span,
@@ -565,7 +556,18 @@ impl Parser {
     /// `mu f(x)` takes no continuations, and an empty group is not written.
     fn parse_command_params(&mut self) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
         let value_params = match self.peek_kind() {
-            Some(TokenKind::LParen) => self.parse_group("value")?,
+            Some(TokenKind::LParen) => {
+                let (params, separator) = self.parse_group("value")?;
+                if separator.as_ref() == Some(&TokenKind::Amp) {
+                    return Err(ParseError {
+                        message: "a value group is a product, separated by `,`; `&` makes \
+                                  the menu of exits, which is the second group"
+                            .into(),
+                        span: Span { start: 0, end: self.span_end() },
+                    });
+                }
+                params
+            }
             _ => Vec::new(),
         };
         if !self.eat(&TokenKind::Pipe) {
@@ -573,29 +575,28 @@ impl Parser {
         }
         // A parameter in the second group is a continuation parameter because
         // of where it is declared, not because of anything that follows it.
-        let continuation_params = self
-            .parse_group("continuation")?
-            .into_iter()
-            .map(|mut p| {
-                p.is_continuation = true;
-                p
-            })
-            .collect();
-        Ok((value_params, continuation_params))
+        let (params, separator) = self.parse_group("continuation")?;
+        if params.len() > 1 && separator.as_ref() != Some(&TokenKind::Amp) {
+            return Err(ParseError {
+                message: "a continuation group is a menu of exits, separated by `&`".into(),
+                span: Span { start: 0, end: self.span_end() },
+            });
+        }
+        Ok((value_params, Self::imply_continuation_signs(params)))
     }
 
     /// One group, which must hold something: an empty group is written by
     /// leaving it out.
-    fn parse_group(&mut self, which: &str) -> Result<Vec<Param>, ParseError> {
+    fn parse_group(&mut self, which: &str) -> Result<(Vec<Param>, Option<TokenKind>), ParseError> {
         let start = self.span_start();
-        let params = self.parse_params_with()?;
+        let (params, separator) = self.parse_params_with()?;
         if params.is_empty() {
             return Err(ParseError {
                 message: format!("a group with no {which} parameters is not written"),
                 span: Span { start, end: self.span_end() },
             });
         }
-        Ok(params)
+        Ok((params, separator))
     }
 
     fn parse_mod_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -699,17 +700,16 @@ impl Parser {
             Some(TokenKind::Fn) => {
                 self.pos += 1;
                 let name = self.expect_ident("method name")?;
-                let params = self.parse_params()?;
+                let (params, separator) = self.parse_params_with()?;
                 let (polarity, return_type) = self.parse_fn_arrow()?;
                 let value_params = match polarity {
                     FunctionPolarity::Positive => params,
-                    FunctionPolarity::Negative => params
-                        .into_iter()
-                        .map(|mut p| {
-                            p.is_continuation = true;
-                            p
-                        })
-                        .collect(),
+                    FunctionPolarity::Negative => Self::group_for_polarity(
+                        params,
+                        separator,
+                        polarity,
+                        Span { start: 0, end: 0 },
+                    )?,
                 };
                 self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
                 Ok(TraitMethod {
@@ -786,11 +786,15 @@ impl Parser {
     /// written. A local `mu` is not an interface: its types may be left to
     /// the body that uses them.
     fn parse_params(&mut self) -> Result<Vec<Param>, ParseError> {
-        self.parse_params_with()
+        Ok(self.parse_params_with()?.0)
     }
 
-    fn parse_params_with(&mut self) -> Result<Vec<Param>, ParseError> {
+    /// A parameter group, and the separator it used. `,` makes a product of
+    /// values, `&` a menu of exits; which one is written says which group
+    /// this is, and a group of one leaves it unsaid.
+    fn parse_params_with(&mut self) -> Result<(Vec<Param>, Option<TokenKind>), ParseError> {
         let mut params = Vec::new();
+        let mut separator = None;
         self.expect(TokenKind::LParen, "`(`")?;
         loop {
             if self.eat(&TokenKind::RParen) {
@@ -800,12 +804,91 @@ impl Parser {
             self.expect(TokenKind::Colon, "`:` — a declaration's parameters carry types")?;
             let ty = Some(self.parse_type()?.kind);
             params.push(Param { name, ty, is_continuation: false });
-            if !self.eat(&TokenKind::Comma) {
-                self.expect(TokenKind::RParen, "`)`")?;
-                break;
+            let next = match self.peek_kind() {
+                Some(kind @ (TokenKind::Comma | TokenKind::Amp)) => kind.clone(),
+                _ => {
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    break;
+                }
+            };
+            if let Some(first) = &separator
+                && first != &next
+            {
+                return Err(ParseError {
+                    message: "a group separates its parameters one way: `,` for a product \
+                              of values, `&` for a menu of exits"
+                        .into(),
+                    span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                });
+            }
+            separator = Some(next);
+            self.pos += 1;
+        }
+        Ok((params, separator))
+    }
+
+    /// A `fn`'s one group, checked against the arrow that follows it: a
+    /// positive function takes a product of values (`,`), a negative one a
+    /// menu of exits (`&`), whose signs the group implies.
+    fn group_for_polarity(
+        params: Vec<Param>,
+        separator: Option<TokenKind>,
+        polarity: FunctionPolarity,
+        span: Span,
+    ) -> Result<Vec<Param>, ParseError> {
+        match polarity {
+            FunctionPolarity::Positive => {
+                if separator.as_ref() == Some(&TokenKind::Amp) {
+                    return Err(ParseError {
+                        message: "`&` makes a menu of exits, so this group belongs to a \
+                                  negative function — one written `<-`"
+                            .into(),
+                        span,
+                    });
+                }
+                Ok(params)
+            }
+            FunctionPolarity::Negative => {
+                if params.len() > 1 && separator.as_ref() != Some(&TokenKind::Amp) {
+                    return Err(ParseError {
+                        message: "a negative function's parameters are its exits, a menu \
+                                  separated by `&`"
+                            .into(),
+                        span,
+                    });
+                }
+                Ok(Self::imply_continuation_signs(params))
             }
         }
-        Ok(params)
+    }
+
+    /// A continuation parameter's written type names what *reaches* it, so
+    /// the group implies the sign: `(found: i64 & missing: String)` binds
+    /// consumers of `i64` and `String`. A written sign stays legal.
+    fn imply_continuation_signs(params: Vec<Param>) -> Vec<Param> {
+        params
+            .into_iter()
+            .map(|mut p| {
+                p.is_continuation = true;
+                p.ty = p.ty.map(|ty| match ty {
+                    // The sign is implied only where nothing was written and
+                    // the shape itself does not carry one: a name, an applied
+                    // declaration, a product, unit. A signed type, and any
+                    // shape that is already a consumer — `⅋`, `&`, an arrow,
+                    // `⊥`, a `dual` — says its own polarity and is left
+                    // exactly as written.
+                    TypeExpr::Base(_)
+                    | TypeExpr::Apply(..)
+                    | TypeExpr::Tensor(..)
+                    | TypeExpr::Unit => TypeExpr::Negative(Box::new(Node {
+                        span: Span { start: 0, end: 0 },
+                        kind: ty,
+                    })),
+                    signed => signed,
+                });
+                p
+            })
+            .collect()
     }
 
     fn parse_data_expr_fields(&mut self) -> Result<Vec<(String, Node<Expr>)>, ParseError> {

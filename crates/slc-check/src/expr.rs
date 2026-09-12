@@ -2414,7 +2414,7 @@ mod tests {
         // The core is classical: reaching one continuation is enough, so a
         // declared continuation the body never triggers is not an error.
         assert!(
-            check("command f(x: +i32) | (ok: -i32, err: -i32) { x @ ok }").is_ok(),
+            check("command f(x: +i32) | (ok: -i32 & err: -i32) { x @ ok }").is_ok(),
             "dropping a continuation should be allowed"
         );
     }
@@ -2608,7 +2608,7 @@ mod tests {
         assert!(
             check(
                 "enum R { Some(i64), None }
-                 fn k(ok: -i64, absent: -i64) <- R {
+                 fn k(ok: -i64 & absent: -i64) <- R {
                      select R {
                          Some(value) => value @ ok,
                          None => 0 @ absent,
@@ -2623,7 +2623,7 @@ mod tests {
     fn select_arm_must_bind_a_declared_payload() {
         let diags = check(
             "enum R { Some(i64), None }
-             fn k(ok: -i64, absent: -i64) <- R {
+             fn k(ok: -i64 & absent: -i64) <- R {
                  select R {
                      Some => 0 @ ok,
                      None => 0 @ absent,
@@ -2760,8 +2760,8 @@ mod tests {
         // The row is ordered: swapping two continuations of different types
         // is rejected even though both types appear in the declaration.
         let diags = check(
-            "command route(a: -i32, b: -bool) | (c: -i32, d: -bool) { 0 @ c }
-             command caller | (first: -i32, second: -bool) { route(0, true, second, first) }",
+            "command route(a: -i32, b: -bool) | (c: -i32 & d: -bool) { 0 @ c }
+             command caller | (first: -i32 & second: -bool) { route(0, true, second, first) }",
         )
         .unwrap_err();
         assert!(
@@ -3051,14 +3051,14 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-                 fn emit<T: Show>(out: -String, v: +T) <- i64 { show(v) @ out }"
+                 fn emit<T: Show>(out: -String & v: +T) <- i64 { show(v) @ out }"
             )
             .is_ok()
         );
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             fn emit<T>(out: -String, v: +T) <- i64 { show(v) @ out }",
+             fn emit<T>(out: -String & v: +T) <- i64 { show(v) @ out }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");

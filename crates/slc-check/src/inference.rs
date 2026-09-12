@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(singleton, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
         let multi =
-            infer("fn k(ok: -i32, err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
+            infer("fn k(ok: -i32 & err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
         assert_eq!(
             multi,
             Type::arrow(
