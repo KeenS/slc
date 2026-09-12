@@ -77,7 +77,19 @@ feature is mid-flight; what remains open is below.
   exactly one, and `dual(-A & -B) = A ⊕ B` says a two-exit command yields
   one of two outcomes. A row is therefore an *anonymous menu of
   consumers*, and `| (found, missing)` is its copattern, as `(x, y)` is a
-  tuple's. Spellings: `&` is lexed; the anonymous type is `(A & B)`; the
+  tuple's. **Headers omit signs where the position decides them**: the
+  value group `(v1: T1, v2: T2)` is `T1 ⊗ T2`, and the continuation group
+  `(k1: T1 & k2: T2)` names what *reaches* each exit — its type is
+  `-T1 & -T2`, the sign implied by the group, the way a `menu` lists what
+  each item answers. So `command c(v1: T1, v2: T2) | (k1: T3 & k2: T4)`
+  has type `(T1 ⊗ T2) → (T3 ⊕ T4)`, and a negative function
+  `fn f(k1: T1 & k2: T2) <- T3` — no value group, only the bundle — is
+  `T3 → (T1 ⊕ T2)` by involution: it takes a `T3` and delivers to one
+  exit. A one-exit command is then the positive function's type exactly,
+  which is the two-styles story already told. Written as a standalone
+  *type expression*, `&` stays the plain connective and a bundle of
+  exits is `(-A & -B)` with its signs; only header groups imply them.
+  Spellings: `&` is lexed; the anonymous type is `(A & B)`; the
   bundle literal is `(k1 & … & kn)` for two or more exits (a `mu` cannot
   forward an existing continuation as an item — the arm would put a
   consumer on the value side of a cut); one exit is the continuation
@@ -96,12 +108,17 @@ feature is mid-flight; what remains open is below.
         positionally (`out.0`, `out.1`) through `Expr::Project`, so
         `n @ out.0` takes an exit. Runtime: a bundle is a pair chain, as a
         tuple is — the machine is untyped.
-  - [ ] Retype rows: a command's continuation group of n > 1 parameters
-        is one `With`; the polarity rule accepts a `With` of consumers as
-        a continuation parameter; the copattern `| (a, b)` binds its
+  - [ ] Retype rows: a command's continuation group `(k1: T1 & k2: T2)`
+        is one parameter of type `-T1 & -T2` — the group's `&` separates
+        components and implies their sign; a negative fn's group is the
+        same, and the polarity rule accepts a `With` of consumers as a
+        continuation parameter. The copattern `| (a & b)` binds the
         components. Call sites pass a bundle; the positional per-slot
-        check becomes one type check. DESIGN's "row" wording moves from
-        positional to `&`.
+        check becomes one type check. Headers: `(v: T)` in a value group
+        and `(k: T)` in a continuation group both omit the sign; a sign
+        stays legal and must agree. DESIGN's "row" wording moves from
+        positional to `&`, and its polarity section states the rule that
+        signs are written only where position does not decide.
   - [ ] Unary values: `f(a, b)` packs a tensor and the declaration
         destructures it (`μ̃(x, y)`), replacing curried lowering; function
         values then have single-argument types, and `parse_int`-style
