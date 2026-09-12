@@ -1618,6 +1618,33 @@ impl Parser {
             }
             Some(TokenKind::LParen) => {
                 self.pos += 1;
+                // Inside parentheses a `{` can only open a record literal,
+                // never the block a scrutinee position guards against.
+                let outer_no_struct_literal = self.no_struct_literal;
+                self.no_struct_literal = false;
+                let parsed = self.parse_paren_expr(start);
+                self.no_struct_literal = outer_no_struct_literal;
+                parsed
+            }
+            Some(TokenKind::LBrace) => self.parse_block(),
+            other => {
+                let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
+                Err(ParseError {
+                    message: format!(
+                        "expected expression, found {}",
+                        other.map(|k| format!("{k}")).unwrap_or_else(|| "end of input".into())
+                    ),
+                    span,
+                })
+            }
+        }
+    }
+
+    /// The body of a parenthesised expression, after the `(`: `()`, `(e)`,
+    /// or `(e1, e2, …)`.
+    fn parse_paren_expr(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+        {
+            {
                 // () or (e) or (e1, e2)
                 if self.eat(&TokenKind::RParen) {
                     // `()` is the unit value: the empty product.
@@ -1644,17 +1671,6 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)`")?;
                     Ok(Node { span: Span { start, end: self.span_end() }, kind: first.kind })
                 }
-            }
-            Some(TokenKind::LBrace) => self.parse_block(),
-            other => {
-                let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
-                Err(ParseError {
-                    message: format!(
-                        "expected expression, found {}",
-                        other.map(|k| format!("{k}")).unwrap_or_else(|| "end of input".into())
-                    ),
-                    span,
-                })
             }
         }
     }
