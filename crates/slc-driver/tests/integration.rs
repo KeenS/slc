@@ -508,9 +508,9 @@ fn activating_one_select_arm_does_not_activate_other_arms() {
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                Red => shout("red", 0) | k⟩,
-                Green => shout("green", 1) | k⟩,
-                Blue => shout("blue", 2) | k⟩,
+                Red => (("red", 0) | shout) | k⟩,
+                Green => (("green", 1) | shout) | k⟩,
+                Blue => (("blue", 2) | shout) | k⟩,
             }
         }
 
@@ -545,9 +545,9 @@ fn constructing_select_does_not_activate_any_arm() {
 
         fn dispatch(k: -i32) <- Color {
             select Color {
-                Red => boom(3) | k⟩,
-                Green => boom(4) | k⟩,
-                Blue => boom(5) | k⟩,
+                Red => (3 | boom) | k⟩,
+                Green => (4 | boom) | k⟩,
+                Blue => (5 | boom) | k⟩,
             }
         }
 
@@ -631,12 +631,12 @@ fn lookup_builtins_offer_both_outcomes() {
             char_at("slant", 1, fn(second: +char) -> ⊥ {
                 println(second);
                 char_at("slant", 9, fn(unexpected: +char) -> ⊥ {
-                    report("unexpectedly found something")
+                    ("unexpectedly found something" | report)
                 }, fn(message: +String) -> ⊥ {
                     println(message);
                     0 | exit⟩
                 })
-            }, fn(message: +String) -> ⊥ { report(message) })
+            }, fn(message: +String) -> ⊥ { (message | report) })
         }"#,
     )
     .unwrap();
@@ -668,7 +668,7 @@ fn select_builds_the_consumer_of_a_product() {
         }
 
         command main | (exit: -i32) {
-            println(mu i64 { answer <= (2, 40) | total(answer)⟩ });
+            println(mu i64 { answer <= (2, 40) | (answer | total)⟩ });
             println(mu String { answer <= Reading { value: 42, unit: "m" } | show(answer)⟩ });
             0 | exit⟩
         }"#,
@@ -698,7 +698,7 @@ fn a_struct_is_built_and_taken_apart_anywhere() {
 
         command main | (exit: -i32) {
             let d = D { left: 10, right: 20 };
-            println(sum(d));
+            println((d | sum));
             0 | exit⟩
         }"#,
     )
@@ -931,9 +931,9 @@ fn the_prelude_is_available_and_shadowable() {
         &dir,
         r#"fn double(n: +i64) -> i64 { n * 2 }
         command main | (exit: -i32) {
-            println(min(3, 7));
-            println(max(3, 7));
-            println(abs(0 - 42));
+            println(((3, 7) | min));
+            println(((3, 7) | max));
+            println((0 - 42 | abs));
             println(mu i64 { out <= 21 | double | out⟩ });
             0 | exit⟩
         }"#,
@@ -948,7 +948,7 @@ fn the_prelude_is_available_and_shadowable() {
     std::fs::write(
         &dir,
         r#"fn min(a: +i64, b: +i64) -> i64 { a + 100 }
-        command main | (exit: -i32) { println(min(3, 7)); 0 | exit⟩ }"#,
+        command main | (exit: -i32) { println(((3, 7) | min)); 0 | exit⟩ }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
@@ -981,10 +981,10 @@ fn a_multi_parameter_function_travels_as_a_value() {
         r#"fn plus(a: i64, b: i64) -> i64 { a + b }
         fn apply2(f: ((+i64 ⊗ +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
         command main | (exit: -i32) {
-            println(plus(1, 2));
+            println(((1, 2) | plus));
             let g = plus;
             println(g(10, 20));
-            println(apply2(plus, 3, 4));
+            println(((plus, 3, 4) | apply2));
             0 | exit⟩
         }"#,
     )
@@ -1054,8 +1054,8 @@ fn an_operation_may_take_several_parameters() {
         &dir,
         r#"effect Tag { fn tag(label: +String, n: +i64) -> i64; }
         command main | (exit: -i32) {
-            println(handle tag("ten", 7) { tag(l, n): k => k(n * 10), return(m) => m });
-            println(handle tag("len", 7) { tag(l, n) => str_len(l) + n, return(m) => m });
+            handle (("ten", 7) | tag) { tag(l, n): k => (n * 10 | k), return(m) => m } | println;
+            handle (("len", 7) | tag) { tag(l, n) => (l | str_len) + n, return(m) => m } | println;
             0 | exit⟩
         }"#,
     )
@@ -1082,7 +1082,7 @@ fn the_prelude_provides_all_four_logical_units() {
             match unit_value() { Unit {} => println("unit") };
             match builtin_unit_value() { (,) => println("unit again") };
             println(mu i64 {
-                out <= use_bottom(select Bottom { Bottom {} => 42 | out⟩ }) | out⟩
+                out <= (select Bottom { Bottom {} => 42 | out⟩ } | use_bottom) | out⟩
             });
             println(mu i64 {
                 out <= Bottom {} | select Bottom { (,) => 43 | out⟩ }⟩
@@ -1102,12 +1102,12 @@ fn the_prelude_consumer_combinators_compose_with_builtins() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) {
-            println(mu i64 { out <= 42 | traced("answer", out)⟩ });
+            println(mu i64 { out <= 42 | (("answer", out) | traced)⟩ });
             println(mu i64 { out <=
-                parse_int("nope", out, defaulting(7, out), defaulting(9, out))
+                parse_int("nope", out, ((7, out) | defaulting), ((9, out) | defaulting))
             });
             println(mu i64 { out <=
-                parse_int("35", out, defaulting(7, out), defaulting(9, out))
+                parse_int("35", out, ((7, out) | defaulting), ((9, out) | defaulting))
             });
             0 | exit⟩
         }"#,
@@ -1130,10 +1130,10 @@ fn display_formats_through_bounded_impls() {
             println(fmt(42));
             println(fmt("plain"));
             println(fmt(false));
-            println(to_string(7));
+            println((7 | to_string));
             let xs = List::Cons(1, List::Cons(2, List::Nil));
             println(fmt(xs));
-            println(to_string(xs));
+            println((xs | to_string));
             println(fmt(List::Cons(xs, List::Cons(List::Nil, List::Nil))));
             0 | exit⟩
         }"#,
@@ -1178,9 +1178,9 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
         r#"use List::*;
         enum Mine { Nil, Cons(i64, Mine) }
         fn total(xs: List<i64>) -> i64 {
-            match xs { Nil => 0, Cons(n, rest) => n + total(rest) }
+            match xs { Nil => 0, Cons(n, rest) => n + (rest | total) }
         }
-        command main | (exit: -i32) { println(total(Cons(40, Cons(2, Nil)))); 0 | exit⟩ }"#,
+        command main | (exit: -i32) { Cons(40, Cons(2, Nil)) | total | println; 0 | exit⟩ }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1258,10 +1258,10 @@ fn traits_dispatch_on_menu_and_form_receivers() {
 
         command main | (exit: -i32) {
             println(describe(config()));
-            println(describe(printer(exit)));
+            println(describe((exit | printer)));
             println(describe(ones()));
-            println(label(config()));
-            println(label(printer(exit)));
+            config() | label | println;
+            (exit | printer) | label | println;
             0 | exit⟩
         }"#,
     )

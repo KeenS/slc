@@ -6,17 +6,17 @@
 // impl is chosen once, by whoever knew the concrete type.
 
 trait Show { fn show(self: +Self) -> String; }
-impl Show for i64  { fn show(self: +i64)  -> String { int_to_str(self) } }
+impl Show for i64  { fn show(self: +i64)  -> String { self | int_to_str } }
 impl Show for bool { fn show(self: +bool) -> String { if self { "T" } else { "F" } } }
 
 // Polymorphic: `show` here projects from `twice`'s dictionary parameter.
-fn twice<T: Show>(x: +T) -> String { show(x) + show(x) }
+fn twice<T: Show>(x: +T) -> String { (x | show) + (x | show) }
 // Forwards its dictionary one level deeper, into `twice`.
-fn relay<T: Show>(x: +T) -> String { "[" + twice(x) + "]" }
+fn relay<T: Show>(x: +T) -> String { "[" + (x | twice) + "]" }
 
 command main | (exit: -i32) {
-    println(show(42));      // 42  — concrete receiver, a direct impl call
-    println(relay(7));      // [77] — i64 dictionary threaded through relay→twice
-    println(relay(true));   // [TT] — bool dictionary, same code
+    42 | show | println;      // 42  — concrete receiver, a direct impl call
+    7 | relay | println;      // [77] — i64 dictionary threaded through relay→twice
+    true | relay | println;   // [TT] — bool dictionary, same code
     0 | exit⟩
 }

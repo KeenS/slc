@@ -2,8 +2,8 @@
 
 command main | (exit: -i32) {
     let text: +String = "Hello, " + "world!";
-    println(text);
-    println(text[0]);
-    println(text[7..12]);
+    text | println;
+    text[0] | println;
+    text[7..12] | println;
     0 | exit⟩
 }

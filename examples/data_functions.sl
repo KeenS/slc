@@ -84,24 +84,24 @@ fn overshoot_of(out: -i64) <- Size {
 
 command main | (exit: -i32) {
     // Positive: data flows inward through the calls and back out.
-    let p = translate(Point { x: 3, y: 4 }, 7, 16); // Point { x: 10, y: 20 }
-    println(p.x);                                   // 10
-    println(overshoot(classify(p)));                // 100 = 10 * 20 - 100
+    let p = (Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
+    p.x | println;                                   // 10
+    p | classify | overshoot | println;                // 100 = 10 * 20 - 100
 
     // Negative: the same computations, written in the order the value
     // travels. `mu` names the hole the answer comes back through.
-    println(mu i64 { answer <= {
+    (mu i64 { answer <= {
         Point { x: 10, y: 20 } | area_of(answer)⟩    // 200
-    } });
+    } } | println);
 
     let r = mu Point { answer <= Point { x: 1, y: 2 } | reflect(answer)⟩ };
-    println(r.x);                                   // 2
+    r.x | println;                                   // 2
 
     // `overshoot_of(answer)` is a consumer of `Size`, exactly what
     // `classify_to` wants: the enum passes between them without a name.
-    println(mu i64 { answer <= {
+    (mu i64 { answer <= {
         150 | classify_to(overshoot_of(answer))⟩     // 50
-    } });
+    } } | println);
 
     0 | exit⟩
 }

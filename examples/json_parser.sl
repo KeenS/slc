@@ -41,7 +41,7 @@ const BACKSLASH: +char = '\\';
 // the end of the input cannot continue a JSON value. `at` reports a space
 // there, which no JSON value accepts and every value may be followed by.
 fn at(input: +String, pos: +i64) -> char {
-    if pos < str_len(input) {
+    if pos < (input | str_len) {
         input[pos]
     } else {
         ' '
@@ -49,8 +49,8 @@ fn at(input: +String, pos: +i64) -> char {
 }
 
 fn parse_digits(input: +String, pos: +i64) -> i64 {
-    if pos < str_len(input) && is_digit(at(input, pos)) {
-        parse_digits(input, pos + 1)
+    if pos < (input | str_len) && ((input, pos) | at | is_digit) {
+        (input, pos + 1) | parse_digits
     } else {
         pos
     }
@@ -64,10 +64,10 @@ fn is_hex(c: +char) -> bool {
 }
 
 command parse_json(input: +String) | (parsed: -String & failed: -String) {
-    let start = skip_ws(input, 0);
-    if start < str_len(input) {
+    let start = (input, 0) | skip_ws;
+    if start < (input | str_len) {
         let end = mu { k <= parse_value(input, start, k, failed) };
-        if skip_ws(input, end) == str_len(input) {
+        if ((input, end) | skip_ws) == (input | str_len) {
             input[start..end] | parsed⟩
         } else {
             "trailing characters after JSON value" | failed⟩
@@ -78,7 +78,7 @@ command parse_json(input: +String) | (parsed: -String & failed: -String) {
 }
 
 command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    match at(input, pos) {
+    match ((input, pos) | at) {
         '0'..='9' | '-' => parse_number(input, pos, ok, failed),
         QUOTE => parse_string(input, pos, ok, failed),
         OPEN_BRACKET => parse_array(input, pos, ok, failed),
@@ -91,12 +91,12 @@ command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    let after_sign = if at(input, pos) == '-' {
+    let after_sign = if ((input, pos) | at) == '-' {
         pos + 1
     } else {
         pos
     };
-    let integer_end = parse_digits(input, after_sign);
+    let integer_end = (input, after_sign) | parse_digits;
     if integer_end > after_sign {
         parse_number_tail(input, integer_end, ok, failed)
     } else {
@@ -105,7 +105,7 @@ command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    if at(input, pos) == '.' {
+    if ((input, pos) | at) == '.' {
         let after_fraction = mu { k <= parse_fraction(input, pos + 1, k, failed) };
         parse_exponent(input, after_fraction, ok, failed)
     } else {
@@ -114,15 +114,15 @@ command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
 }
 
 command parse_fraction(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    if is_digit(at(input, pos)) {
-        parse_digits(input, pos) | ok⟩
+    if ((input, pos) | at | is_digit) {
+        (input, pos) | parse_digits | ok⟩
     } else {
         "expected digit after decimal point" | failed⟩
     }
 }
 
 command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    let ch = at(input, pos);
+    let ch = (input, pos) | at;
     if ch == 'e' || ch == 'E' {
         parse_exponent_tail(input, pos + 1, ok, failed)
     } else {
@@ -131,13 +131,13 @@ command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String)
 }
 
 command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    let after_sign = if at(input, pos) == '-' || at(input, pos) == '+' {
+    let after_sign = if ((input, pos) | at) == '-' || ((input, pos) | at) == '+' {
         pos + 1
     } else {
         pos
     };
-    if is_digit(at(input, after_sign)) {
-        parse_digits(input, after_sign) | ok⟩
+    if ((input, after_sign) | at | is_digit) {
+        (input, after_sign) | parse_digits | ok⟩
     } else {
         "expected digit in exponent" | failed⟩
     }
@@ -148,10 +148,10 @@ command parse_string(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    if pos >= str_len(input) {
+    if pos >= (input | str_len) {
         "unterminated JSON string" | failed⟩
     } else {
-        let ch = at(input, pos);
+        let ch = (input, pos) | at;
         if ch == QUOTE {
             pos + 1 | ok⟩
         } else if ch == BACKSLASH {
@@ -165,7 +165,7 @@ command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
 }
 
 command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    match at(input, pos) {
+    match ((input, pos) | at) {
         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => {
             parse_string_tail(input, pos + 1, ok, failed)
         }
@@ -175,10 +175,10 @@ command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    if is_hex(at(input, pos))
-        && is_hex(at(input, pos + 1))
-        && is_hex(at(input, pos + 2))
-        && is_hex(at(input, pos + 3))
+    if ((input, pos) | at | is_hex)
+        && ((input, pos + 1) | at | is_hex)
+        && ((input, pos + 2) | at | is_hex)
+        && ((input, pos + 3) | at | is_hex)
     {
         parse_string_tail(input, pos + 4, ok, failed)
     } else {
@@ -187,8 +187,8 @@ command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & failed: -String) {
-    let end = pos + str_len(text);
-    if end <= str_len(input) && input[pos..end] == text {
+    let end = pos + (text | str_len);
+    if end <= (input | str_len) && input[pos..end] == text {
         end | ok⟩
     } else {
         "invalid JSON literal" | failed⟩
@@ -196,8 +196,8 @@ command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & fa
 }
 
 command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    let first = skip_ws(input, pos + 1);
-    if at(input, first) == CLOSE_BRACKET {
+    let first = (input, pos + 1) | skip_ws;
+    if ((input, first) | at) == CLOSE_BRACKET {
         first + 1 | ok⟩
     } else {
         parse_array_body(input, first, ok, failed)
@@ -206,11 +206,11 @@ command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 
 command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let value_end = mu { k <= parse_value(input, pos, k, failed) };
-    let after_value = skip_ws(input, value_end);
-    let ch = at(input, after_value);
+    let after_value = (input, value_end) | skip_ws;
+    let ch = (input, after_value) | at;
     if ch == COMMA {
-        let next = skip_ws(input, after_value + 1);
-        if at(input, next) == CLOSE_BRACKET {
+        let next = (input, after_value + 1) | skip_ws;
+        if ((input, next) | at) == CLOSE_BRACKET {
             "trailing comma in array" | failed⟩
         } else {
             parse_array_body(input, next, ok, failed)
@@ -223,8 +223,8 @@ command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -Strin
 }
 
 command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    let first = skip_ws(input, pos + 1);
-    if at(input, first) == CLOSE_BRACE {
+    let first = (input, pos + 1) | skip_ws;
+    if ((input, first) | at) == CLOSE_BRACE {
         first + 1 | ok⟩
     } else {
         parse_object_body(input, first, ok, failed)
@@ -232,16 +232,16 @@ command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 }
 
 command parse_object_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
-    if at(input, pos) == QUOTE {
+    if ((input, pos) | at) == QUOTE {
         let key_end = mu { k <= parse_string(input, pos, k, failed) };
-        let after_key = skip_ws(input, key_end);
-        if at(input, after_key) == COLON {
-            let value_end = mu { k <= parse_value(input, skip_ws(input, after_key + 1), k, failed) };
-            let after_value = skip_ws(input, value_end);
-            let ch = at(input, after_value);
+        let after_key = (input, key_end) | skip_ws;
+        if ((input, after_key) | at) == COLON {
+            let value_end = mu { k <= parse_value(input, (input, after_key + 1) | skip_ws, k, failed) };
+            let after_value = (input, value_end) | skip_ws;
+            let ch = (input, after_value) | at;
             if ch == COMMA {
-                let next = skip_ws(input, after_value + 1);
-                if at(input, next) == CLOSE_BRACE {
+                let next = (input, after_value + 1) | skip_ws;
+                if ((input, next) | at) == CLOSE_BRACE {
                     "trailing comma in object" | failed⟩
                 } else {
                     parse_object_body(input, next, ok, failed)
@@ -265,13 +265,13 @@ command main | (exit: -i32) {
     // One consumer per outcome, each ending in a cut against `exit`.
     let parsed = select +String {
         value => {
-            println("parsed: " + value);
+            "parsed: " + value | println;
             0 | exit⟩
         },
     };
     let failed = select +String {
         message => {
-            println("error: " + message);
+            "error: " + message | println;
             1 | exit⟩
         },
     };

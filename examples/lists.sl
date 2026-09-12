@@ -13,19 +13,19 @@ fn double(n: +i64) -> i64 { n * 2 }
 fn sum(xs: List<i64>) -> i64 {
     match xs {
         Nil => 0,
-        Cons(n, rest) => n + sum(rest),
+        Cons(n, rest) => n + (rest | sum),
     }
 }
 
 command main | (exit: -i32) {
     let xs = List::Cons(1, List::Cons(2, List::Cons(39, List::Nil)));
-    println(length(xs));                    // 3
-    println(sum(xs));                       // 42
-    println(sum(map(double, xs)));          // 84
-    println(sum(append(xs, xs)));           // 84
+    xs | length | println;                    // 3
+    xs | sum | println;                       // 42
+    (double, xs) | map | sum | println;          // 84
+    (xs, xs) | append | sum | println;           // 84
 
     // nth offers its outcomes; `defaulting` answers the miss.
-    println(mu i64 { out <= nth(xs, 2, out, defaulting(0, out)) });   // 39
-    println(mu i64 { out <= nth(xs, 9, out, defaulting(0, out)) });   // 0
+    mu i64 { out <= nth(xs, 2, out, (0, out) | defaulting) } | println;   // 39
+    mu i64 { out <= nth(xs, 9, out, (0, out) | defaulting) } | println;   // 0
     0 | exit⟩
 }

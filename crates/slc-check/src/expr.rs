@@ -156,6 +156,31 @@ fn check_trait_method_call(
     }
 }
 
+/// A trait method as a pipeline stage: what flows in is the receiver, so
+/// dispatch resolves against its type and the stage's result is the
+/// method's. Nothing else about a method changes — it is the same static
+/// resolution a call gets, keyed on the stage rather than the call.
+fn check_method_stage(
+    method: &str,
+    receiver: &Type,
+    span: Span,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let sig = env.traits.method_sig(method)?.clone();
+    let trait_name = env.traits.method_owner.get(method)?.clone();
+    let target = env.uni.apply(receiver);
+    resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
+    if sig.is_command {
+        return Some(Type::Bottom);
+    }
+    match &sig.return_type {
+        Some(ty) => resolve_with_self(ty, &target, enums).map(|t| env.uni.apply(&t)),
+        None => Some(Type::One),
+    }
+}
+
 /// Record how a trait-method call dispatches, once `Self` is known: a
 /// concrete receiver calls the impl directly, a bounded type parameter
 /// projects the method from the enclosing function's dictionary.
@@ -1631,6 +1656,27 @@ fn check_expr_unapplied(
                         }
                     }
                 }
+                // A function is applied by flowing into it: `x | f`, not
+                // `f(x)`. Constructors build rather than apply, and a
+                // callee that takes continuations is not yet a stage, so
+                // both keep the call form.
+                if !args.is_empty()
+                    && !signature.continuations.iter().any(|c| *c)
+                    && !is_builtin(name)
+                {
+                    let piped = if args.len() == 1 {
+                        format!("{} | {name}", "argument")
+                    } else {
+                        format!("(…, …) | {name}")
+                    };
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`{name}` is a function, and a function is applied by flowing \
+                             into it: write `{piped}`"
+                        ),
+                        span: e.span,
+                    });
+                }
                 check_call_arguments(name, &signature, args, enums, env, diags);
                 // Say where the value product ends and the menu of exits
                 // begins, so lowering packs each group into one argument.
@@ -2421,6 +2467,81 @@ fn check_expr_unapplied(
                 let unknown = env.uni.fresh_var();
                 let ty = ty.as_ref().unwrap_or(&unknown);
                 let shape = flowing.unwrap_or(&e.kind);
+                // A declared function is checked through its signature, as
+                // a call is: `x | f` *is* `f(x)`, so its parameters pack the
+                // same way and its bounds are discharged the same way.
+                if !(last && *into_consumer)
+                    && let Expr::Ident(name) = &stages[index].kind
+                    && env.lookup(name).is_none()
+                    // A trait method dispatches instead; that is the arm below.
+                    && !env.traits.is_method(name)
+                    && let Some(signature) = env.functions.get(name)
+                    && !signature.continuations.iter().any(|c| *c)
+                    && !signature.params.is_empty()
+                {
+                    let (signature, seen) = instantiate(signature, &mut env.uni);
+                    let packed = signature
+                        .params
+                        .iter()
+                        .rev()
+                        .cloned()
+                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                        .expect("a stage with parameters");
+                    // A tuple written in place is checked component by
+                    // component, so an integer literal still takes the
+                    // width its slot requires.
+                    let written = match shape {
+                        Expr::Pair(items) if items.len() == signature.params.len() => Some(items),
+                        _ => None,
+                    };
+                    let components = tensor_spine(&env.uni.apply(&acc));
+                    let piecewise = written.is_some_and(|items| {
+                        items.len() == components.len()
+                            && items
+                                .iter()
+                                .zip(components.iter())
+                                .zip(signature.params.iter())
+                                .all(|((item, actual), param)| fits(env, param, actual, &item.kind))
+                    });
+                    if !piecewise && !is_builtin(name) && !fits(env, &packed, &acc, shape) {
+                        let packed = env.uni.apply(&packed);
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "`{name}` takes {packed}, and what flows in has type {acc}"
+                            ),
+                            span: stages[index].span,
+                        });
+                    }
+                    if !signature.bounds.is_empty() {
+                        let bounds = signature
+                            .bounds
+                            .iter()
+                            .filter_map(|(position, trait_name)| {
+                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
+                            })
+                            .collect();
+                        env.pending_dicts.push(crate::env::PendingDicts {
+                            span: stages[index].span,
+                            callee: name.clone(),
+                            bounds,
+                        });
+                    }
+                    acc = signature.result.map(|ty| env.uni.apply(&ty)).unwrap_or(Type::One);
+                    flowing = None;
+                    continue;
+                }
+                // A trait method takes what flows in as its receiver, and
+                // dispatches on it exactly as a call would.
+                if !(last && *into_consumer)
+                    && let Expr::Ident(name) = &stages[index].kind
+                    && env.traits.is_method(name)
+                    && let Some(result) =
+                        check_method_stage(name, &acc, stages[index].span, enums, env, diags)
+                {
+                    acc = result;
+                    flowing = None;
+                    continue;
+                }
                 // The closing stage consumes; every other one is a function.
                 if last && *into_consumer {
                     // The orientation rule: a consumer stands only at the
@@ -3191,9 +3312,9 @@ mod tests {
         assert!(
             check(
                 "trait Show { fn show(self: +Self) -> String; }
-                 impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-                 fn label<T: Show>(x: +T) -> String { show(x) }
-                 command main | (exit: -i32) { println(label(1)); 0 | exit⟩ }"
+                 impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
+                 fn label<T: Show>(x: +T) -> String { x | show }
+                 command main | (exit: -i32) { 1 | label | println; 0 | exit⟩ }"
             )
             .is_ok()
         );
@@ -3211,8 +3332,8 @@ mod tests {
         };
         let mono = resolve(
             "trait Show { fn show(self: +Self) -> String; }
-             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) { println(show(1)); 0 | exit⟩ }",
+             impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
+             command main | (exit: -i32) { 1 | show | println; 0 | exit⟩ }",
         );
         assert_eq!(mono.methods.len(), 1, "one method call should resolve: {mono:?}");
         assert!(
@@ -3225,9 +3346,9 @@ mod tests {
 
         let poly = resolve(
             "trait Show { fn show(self: +Self) -> String; }
-             impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             fn label<T: Show>(x: +T) -> String { show(x) }
-             command main | (exit: -i32) { println(label(1)); 0 | exit⟩ }",
+             impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
+             fn label<T: Show>(x: +T) -> String { x | show }
+             command main | (exit: -i32) { 1 | label | println; 0 | exit⟩ }",
         );
         // `show(x)` inside `label` projects from the dictionary parameter;
         // `label(1)` passes the concrete i64 dictionary.
@@ -3388,8 +3509,8 @@ mod tests {
             check(
                 "fn id<T>(x: T) -> T { x }
                  command main | (exit: -i32) {
-                     println(id(42) + 1);
-                     println(str_len(id(\"each call its own T\")));
+                     (42 | id) + 1 | println;
+                     \"each call its own T\" | id | str_len | println;
                      0 | exit⟩
                  }"
             )
@@ -3547,7 +3668,7 @@ mod tests {
         assert!(
             check(
                 "fn dne<T>(t: -(-T)) -> T { t }
-                 command main | (exit: -i32) { println(dne(42)); 0 | exit⟩ }",
+                 command main | (exit: -i32) { 42 | dne | println; 0 | exit⟩ }",
             )
             .is_ok()
         );

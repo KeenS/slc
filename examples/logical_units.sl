@@ -22,8 +22,8 @@ fn top_value() -> Top {
 }
 
 command main | (exit: -i32) -> Bottom {
-    println(unit_value());
-    println(bottom_demand());
+    unit_value() | println;
+    bottom_demand() | println;
     top_value();
     0 | exit⟩
 }

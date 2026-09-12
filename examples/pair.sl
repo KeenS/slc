@@ -4,6 +4,6 @@
 
 command main | (exit: -i32) {
     let x = 10;
-    println(add(x, 20));
+    (x, 20) | add | println;
     0 | exit⟩
 }

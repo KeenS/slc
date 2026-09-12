@@ -18,7 +18,7 @@
 command main | (exit: -i32) {
     let complain = select +String {
         message => {
-            println("cannot read: " + message);
+            "cannot read: " + message | println;
             1 | exit⟩
         },
     };
@@ -26,7 +26,7 @@ command main | (exit: -i32) {
     // Whole-file reading. `k` is the continuation of the `let`, captured by
     // `mu` — the language's `call/cc` — so the program stays flat.
     let source = mu { k <= read_file("examples/hello.sl", k, complain) };
-    print(source);
+    source | print;
 
     // Line reading, through a file.
     let file = mu { k <= open_file("examples/hello.sl", k, complain) };
@@ -36,15 +36,15 @@ command main | (exit: -i32) {
     // door. No path past this line can end the program with the file open.
     let exit = select +i32 {
         status => {
-            close_file(file);
+            file | close_file;
             status | exit⟩
         },
     };
 
     let first = mu { k <= {
-        read_line(file, k, select +unit { end => { println("empty file"); 1 | exit⟩ } })
+        read_line(file, k, select +unit { end => { "empty file" | println; 1 | exit⟩ } })
     } };
-    println("first line: " + first);
+    "first line: " + first | println;
 
     // The failure path: exactly one of the two consumers runs, and this
     // file does not exist. Both consumers leave through the composed exit,
@@ -53,13 +53,13 @@ command main | (exit: -i32) {
         "examples/missing.sl",
         select +File {
             unexpected => {
-                println("unexpectedly opened");
+                "unexpectedly opened" | println;
                 1 | exit⟩
             },
         },
         select +String {
             message => {
-                println("cannot open: " + message);
+                "cannot open: " + message | println;
                 0 | exit⟩
             },
         },

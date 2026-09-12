@@ -27,7 +27,7 @@ fn lem() -> Choice {
 
 command main | (exit: -i32) {
     // ¬¬A → A is definitional now: `-(-i64)` and `+i64` are one type.
-    println(dne(42));
+    42 | dne | println;
 
     // A ⊕ ¬A. `lem()` answers `Refutes` — and taking the offer sends 42
     // back through the continuation `lem` captured, re-entering this same
@@ -39,11 +39,11 @@ command main | (exit: -i32) {
     // classical reading of ⊕ promises.
     match lem() {
         Holds(n) => {
-            println("holds: " + int_to_str(n));
+            "holds: " + (n | int_to_str) | println;
             0 | exit⟩
         },
         Refutes(r) => {
-            println("refuted — taking the offer");
+            "refuted — taking the offer" | println;
             42 | r⟩
         },
     }

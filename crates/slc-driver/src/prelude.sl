@@ -38,7 +38,7 @@ fn abs(n: +i64) -> i64 {
 
 // A tap: log a label and the value passing through, then forward it.
 fn traced<T>(label: +String, k: -T) -> -T {
-    fn(x: T) { println(label); println(x); x | k⟩ }
+    fn(x: T) { label | println; x | println; x | k⟩ }
 }
 
 // A failure consumer that discards the message and sends `fallback` onward
@@ -65,21 +65,21 @@ use List::*;
 fn length<T>(xs: List<T>) -> i64 {
     match xs {
         Nil => 0,
-        Cons(_, rest) => 1 + length(rest),
+        Cons(_, rest) => 1 + (rest | length),
     }
 }
 
 fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
     match xs {
         Nil => ys,
-        Cons(h, rest) => Cons(h, append(rest, ys)),
+        Cons(h, rest) => Cons(h, (rest, ys) | append),
     }
 }
 
 fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
     match xs {
         Nil => Nil,
-        Cons(h, rest) => Cons(f(h), map(f, rest)),
+        Cons(h, rest) => Cons(h | f, (f, rest) | map),
     }
 }
 
@@ -105,7 +105,7 @@ trait Display {
 }
 
 impl Display for i64 {
-    fn fmt(self: +i64) -> String { int_to_str(self) }
+    fn fmt(self: +i64) -> String { self | int_to_str }
 }
 
 impl Display for String {
@@ -116,18 +116,18 @@ impl Display for bool {
     fn fmt(self: +bool) -> String { if self { "true" } else { "false" } }
 }
 
-fn to_string<T: Display>(x: T) -> String { fmt(x) }
+fn to_string<T: Display>(x: T) -> String { x | fmt }
 
 fn fmt_items<T: Display>(xs: List<T>) -> String {
     match xs {
         Nil => "",
-        Cons(h, Nil) => fmt(h),
-        Cons(h, rest) => fmt(h) + ", " + fmt_items(rest),
+        Cons(h, Nil) => h | fmt,
+        Cons(h, rest) => (h | fmt) + ", " + (rest | fmt_items),
     }
 }
 
 impl<T: Display> Display for List<T> {
-    fn fmt(self: +List<T>) -> String { "[" + fmt_items(self) + "]" }
+    fn fmt(self: +List<T>) -> String { "[" + (self | fmt_items) + "]" }
 }
 
 // ── The negative side: Stream and Lazy ───────────────────────────────────
@@ -146,27 +146,27 @@ menu Stream<T> {
 fn repeat<T>(x: T) -> Stream<T> {
     mu Stream {
         head <= x | head⟩,
-        tail <= repeat(x) | tail⟩,
+        tail <= x | repeat | tail⟩,
     }
 }
 
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
         head <= n | head⟩,
-        tail <= count_from(n + 1) | tail⟩,
+        tail <= n + 1 | count_from | tail⟩,
     }
 }
 
 fn map_stream<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
     mu Stream {
-        head <= f(s.head) | head⟩,
-        tail <= map_stream(f, s.tail) | tail⟩,
+        head <= s.head | f | head⟩,
+        tail <= (f, s.tail) | map_stream | tail⟩,
     }
 }
 
 // The bridge back to data: the first `n` elements, as a list.
 fn take<T>(s: Stream<T>, n: +i64) -> List<T> {
-    if n <= 0 { Nil } else { Cons(s.head, take(s.tail, n - 1)) }
+    if n <= 0 { Nil } else { Cons(s.head, (s.tail, n - 1) | take) }
 }
 
 // A one-item menu is a by-name thunk: `.force` re-runs its arm at every

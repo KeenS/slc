@@ -17,7 +17,7 @@ trait Show {
 }
 
 impl Show for i64 {
-    fn show(self: +i64) -> String { int_to_str(self) }
+    fn show(self: +i64) -> String { self | int_to_str }
 }
 
 impl Show for bool {
@@ -34,7 +34,7 @@ impl Show for IntList {
             // Qualified: the prelude's List also has Nil and Cons, so the
             // bare names are ambiguous here.
             IntList::Nil => "nil",
-            IntList::Cons(h, t) => show(h) + " :: " + show(t),
+            IntList::Cons(h, t) => (h | show) + " :: " + (t | show),
         }
     }
 }
@@ -42,20 +42,20 @@ impl Show for IntList {
 // A bound generic: `T: Show` lets it call `show` on a value whose type is not
 // known here, discharged to a real impl at each call.
 fn labelled<T: Show>(label: +String, x: +T) -> String {
-    label + ": " + show(x)
+    label + ": " + (x | show)
 }
 
 command main | (exit: -i32) {
     // dispatch on the argument's type
-    println(show(42));
-    println(show(true));
+    42 | show | println;
+    true | show | println;
 
     // the generic, at two types
-    println(labelled("int", 7));
-    println(labelled("bool", false));
+    ("int", 7) | labelled | println;
+    ("bool", false) | labelled | println;
 
     // recursive dispatch: the list impl calls show on each element
-    println(show(IntList::Cons(1, IntList::Cons(2, IntList::Nil))));
+    IntList::Cons(1, IntList::Cons(2, IntList::Nil)) | show | println;
 
     0 | exit⟩
 }

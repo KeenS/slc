@@ -107,15 +107,21 @@ since nothing flows out of one.
 
 Two operations look alike in most languages and are different here.
 
-**Application** `f(a)` supplies an argument to an abstraction and gets a
-result: control returns. It works at either polarity, because the callee's
-declaration already says what each argument slot takes. Supplying a
-continuation to a negative function is therefore ordinary application —
-nothing new is needed to apply a function to a continuation:
+**Application** is flow: `a | f` supplies an argument to a function and
+gets a result, and it is the *only* way to apply one — `f(a)` is refused,
+with the pipeline spelled out. Several arguments are the product they
+always were, written as one: `(a, b) | f`. So a call and a chain are not
+two things to learn, and reading either goes left to right:
 
 ```sl
-deliver(ok, err)        // `deliver` declares a row of two consumers
+21 | double | label | println          // apply, four times over
+(xs, 2) | index_or_zero                // several arguments, one product
 ```
+
+The call form survives where a callee is not a function of values: a
+variant constructor `Cons(h, t)` *builds*, and a callee that takes
+continuations — a `command`'s row, a negative function's exits — is not
+yet a stage, so `nth(xs, 2, found, missing)` keeps its parentheses.
 
 **A cut** `⟨v | k⟩` sends the value `v` to the consumer `k`. It is the surface
 spelling of the core's `⟨ v ∥ k ⟩`, and it is a *command*, not an expression

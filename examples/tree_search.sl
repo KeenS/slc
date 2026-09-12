@@ -19,7 +19,7 @@ command walk(t: Tree, target: +i64) | (jump: -i64 & done: -unit) {
     match t {
         Leaf => (,) | done⟩,
         Node(left, value, right) => {
-            println("visiting " + int_to_str(value));
+            "visiting " + (value | int_to_str) | println;
             if value == target {
                 // The non-local jump: past this walk's own frames, past
                 // every enclosing walk, straight to the captured `k`.
@@ -42,11 +42,11 @@ command main | (exit: -i32) {
 
     // Found: the walk stops the moment it hits, and `done` never fires.
     let hit = mu { k <= walk(tree, 2, k, select +unit { exhausted => -1 | k⟩ }) };
-    println("found: " + int_to_str(hit));
+    "found: " + (hit | int_to_str) | println;
 
     // Absent: the walk exhausts the tree, and the `done` chain delivers -1.
     let missing = mu { k <= walk(tree, 99, k, select +unit { exhausted => -1 | k⟩ }) };
-    println("missing: " + int_to_str(missing));
+    "missing: " + (missing | int_to_str) | println;
 
     0 | exit⟩
 }

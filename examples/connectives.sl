@@ -118,26 +118,26 @@ fn done(k: -⊥) <- unit {
 
 command main | (exit: -i32) {
     // ⊗ : build every part, then take them apart.
-    println(sum(Pair { left: 2, right: 40 }));
+    Pair { left: 2, right: 40 } | sum | println;
 
     // ⅋ : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
-    println(mu i64 { answer <= Pair { left: 2, right: 40 } | report_sum(answer)⟩ });
-    println(mu i64 { answer <= Total { left: 2, right: 40 } | total(answer)⟩ });
-    println(mu i64 { answer <= (7, "ignored") | report_first(answer)⟩ });
+    (mu i64 { answer <= Pair { left: 2, right: 40 } | report_sum(answer)⟩ } | println);
+    (mu i64 { answer <= Total { left: 2, right: 40 } | (answer | total)⟩ } | println);
+    (mu i64 { answer <= (7, "ignored") | report_first(answer)⟩ } | println);
 
     // ⊕ : build one variant, then branch on it.
-    println(name(Colour::Green));
+    Colour::Green | name | println;
 
     // & : hand the consumer one variant; only its branch runs.
-    println(mu i64 { answer <= Colour::Green | code(answer)⟩ });
+    (mu i64 { answer <= Colour::Green | code(answer)⟩ } | println);
 
     // codata: demand one item of the menu. The other is never computed.
-    println(config().retries);
-    println(config().name);
+    config().retries | println;
+    config().name | println;
 
     // 1 and ⊥.
-    println(mu ⊥ { k <= done(k) });
+    mu ⊥ { k <= done(k) } | println;
 
     0 | exit⟩
 }

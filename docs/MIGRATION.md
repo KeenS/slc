@@ -463,6 +463,23 @@ instead — `f | k⟩` composes into `k`, while `⟨f | k⟩` sends `f` to it. A
 chain is flat, because composition is associative. `@` keeps its other
 job, the as-pattern binder `c @ '0'..='9'`.
 
+## A function is applied by flowing into it
+
+`f(a)` is gone: an application is `a | f`, and several arguments are the
+product they always were.
+
+```sl
+println(label(area(shape)))            // old
+shape | area | label | println         // new
+
+add(a, b)                              // old
+(a, b) | add                           // new
+```
+
+Constructors still build — `Cons(h, t)` is unchanged — and a callee that
+takes continuations keeps its call form, since a row cannot yet be a
+pipeline stage: `nth(xs, 2, found, missing)`.
+
 ## Calls and rows are unary
 
 A declaration binds one argument per group, so the parameters of a group

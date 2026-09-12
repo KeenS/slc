@@ -20,7 +20,7 @@ form Report { value: i64, label: String }
 fn printer(out: -i64) -> Report {
     select Report {
         Report { value, label } => {
-            println(label);
+            label | println;
             value | out⟩
         },
     }
@@ -37,9 +37,9 @@ command main | (exit: -i32) {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.
-    println(mu i64 { a <= Report { value: 42, label: "answer" } | printer(a)⟩ });
+    (mu i64 { a <= Report { value: 42, label: "answer" } | (a | printer)⟩ } | println);
 
-    println(mu i64 { a <= Report { value: 7, label: "relabelled" } | shouting(printer(a))⟩ });
+    (mu i64 { a <= Report { value: 7, label: "relabelled" } | (a | printer | shouting)⟩ } | println);
 
     // What a form cannot do is give up one field: from `-A ⅋ -B` there is no
     // `-A` to be had, the way `A ⊗ B` yields its `A`. Reading `p.x` off a

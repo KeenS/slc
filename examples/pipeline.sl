@@ -33,25 +33,25 @@ command forward(n: i64) | (row: (-i64 & -String)) {
 
 command main | (exit: -i32) {
     // a value flowing through functions, awaiting a continuation
-    println(21 | double);
-    println(3 | double | incr | double);
+    21 | double | println;
+    3 | double | incr | double | println;
 
     // the cut — closed at both ends
-    println(mu i64 { out <= 21 | double | out⟩ });
+    (mu i64 { out <= 21 | double | out⟩ } | println);
 
     // the same chain, split: `double | k⟩` is a consumer on its own, so
     // feeding it is the same command
-    println(mu i64 { out <= 5 | double | incr | out⟩ });
-    println(mu i64 { out <= 5 | doubling(out)⟩ });
+    (mu i64 { out <= 5 | double | incr | out⟩ } | println);
+    (mu i64 { out <= 5 | (out | doubling)⟩ } | println);
 
     // plain composition: two functions make a function
     let quadruple = double | double;
-    println(5 | quadruple);
+    5 | quadruple | println;
 
     // a two-exit command: its exits spread, then bundled, then forwarded
-    println(mu i64 { ok <= classify(7, ok, select +String { s => str_len(s) | ok⟩ }) });
-    println(mu i64 { ok <= classify(0 - 1, (ok & select +String { s => str_len(s) | ok⟩ })) });
-    println(mu i64 { ok <= forward(0 - 1, (ok & select +String { s => str_len(s) | ok⟩ })) });
+    (mu i64 { ok <= classify(7, ok, select +String { s => s | str_len | ok⟩ }) } | println);
+    (mu i64 { ok <= classify(0 - 1, (ok & select +String { s => s | str_len | ok⟩ })) } | println);
+    (mu i64 { ok <= forward(0 - 1, (ok & select +String { s => s | str_len | ok⟩ })) } | println);
 
     0 | exit⟩
 }

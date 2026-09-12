@@ -28,7 +28,7 @@ trait Describe {
 
 impl Describe for Config {
     fn describe(self: +Config) -> String {
-        self.name + " with " + fmt(self.retries) + " retries"
+        self.name + " with " + (self.retries | fmt) + " retries"
     }
 }
 
@@ -42,7 +42,7 @@ impl Describe for Sink {
 // displayable, and the dictionary composes at the use.
 impl<T: Display> Describe for Stream<T> {
     fn describe(self: +Stream<T>) -> String {
-        "stream starting " + fmt(self.head)
+        "stream starting " + (self.head | fmt)
     }
 }
 
@@ -62,13 +62,13 @@ fn keeper() -> Sink {
 // A bound discharged at codata types: `label` never knows its argument is
 // a menu or a form.
 fn label<T: Describe>(x: T) -> String {
-    describe(x)
+    x | describe
 }
 
 // A bounded negative function: `T` is fixed by the cut, and `fmt`'s
 // dictionary travels in from the caller's side.
 fn emit<T: Display>(out: -String) <- T {
-    fn(x: T) { fmt(x) | out⟩ }
+    fn(x: T) { x | fmt | out⟩ }
 }
 
 // A trait method that consumes `Self`. Dispatch reads the type the cut
@@ -79,7 +79,7 @@ trait Deliver {
 
 impl Deliver for i64 {
     fn deliver(out: -String) <- i64 {
-        fn(n: +i64) { "the number " + fmt(n) | out⟩ }
+        fn(n: +i64) { "the number " + (n | fmt) | out⟩ }
     }
 }
 
@@ -90,18 +90,18 @@ impl Deliver for bool {
 }
 
 command main | (exit: -i32) {
-    println(describe(config()));
-    println(describe(keeper()));
-    println(describe(count_from(7)));
-    println(label(config()));
-    println(label(keeper()));
+    config() | describe | println;
+    keeper() | describe | println;
+    7 | count_from | describe | println;
+    config() | label | println;
+    keeper() | label | println;
 
     // the bounded negative function, at three different types
-    println(mu String { s <= 42 | emit(s)⟩ });
-    println(mu String { s <= Cons(1, Cons(2, Nil)) | emit(s)⟩ });
+    (mu String { s <= 42 | emit(s)⟩ } | println);
+    (mu String { s <= Cons(1, Cons(2, Nil)) | emit(s)⟩ } | println);
 
     // the Self-consuming method, dispatched by what the cut sends
-    println(mu String { s <= 42 | deliver(s)⟩ });
-    println(mu String { s <= true | deliver(s)⟩ });
+    (mu String { s <= 42 | deliver(s)⟩ } | println);
+    (mu String { s <= true | deliver(s)⟩ } | println);
     0 | exit⟩
 }

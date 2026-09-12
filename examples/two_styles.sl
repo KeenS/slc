@@ -75,14 +75,14 @@ fn label_of(out: -String) <- +i64 {
 
 command main | (exit: -i32) {
     // Value-first: the shape flows through `area`, then `label`.
-    println(Shape::Circle(5) | area | label);
-    println(Shape::Rect(6, 7) | area | label);
+    Shape::Circle(5) | area | label | println;
+    Shape::Rect(6, 7) | area | label | println;
 
     // Continuation-first: the same chain, stage for stage. Each `_of` is a
     // consumer transformer, and a pipeline reads it as the function it
     // equally is — so nothing nests and nothing is written backwards.
-    println(mu String { out <= Shape::Circle(5) | area_of | label_of | out⟩ });
-    println(mu String { out <= Shape::Rect(6, 7) | area_of | label_of | out⟩ });
+    (mu String { out <= Shape::Circle(5) | area_of | label_of | out⟩ } | println);
+    (mu String { out <= Shape::Rect(6, 7) | area_of | label_of | out⟩ } | println);
 
     // Where the two differ is what they *are*: the value-first chain
     // returns a String, and the continuation-first one ends in a cut. The
@@ -90,7 +90,7 @@ command main | (exit: -i32) {
     // the rest of the program is written inside the last consumer.
     Shape::Circle(5) | area_of | label_of | select +String {
         answer => {
-            println("and directly: " + answer);
+            "and directly: " + answer | println;
             0 | exit⟩
         },
     }⟩

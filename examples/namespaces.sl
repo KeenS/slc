@@ -33,7 +33,7 @@ mod geometry {
 mod physics {
     // A sibling module reaches another through its path.
     fn weight(s: geometry::Shape) -> i64 {
-        geometry::area(s) * 10
+        (s | geometry::area) * 10
     }
 }
 
@@ -41,10 +41,10 @@ mod physics {
 use geometry::area;
 
 command main | (exit: -i32) {
-    println(area(geometry::Shape::Circle(5)));
-    println(physics::weight(geometry::Shape::Rect(6, 7)));
+    geometry::Shape::Circle(5) | area | println;
+    geometry::Shape::Rect(6, 7) | physics::weight | println;
     match geometry::origin() {
-        geometry::Point { x, y } => println(x + y),
+        geometry::Point { x, y } => x + y | println,
     };
     0 | exit⟩
 }

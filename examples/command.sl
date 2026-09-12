@@ -6,6 +6,6 @@ command echo(x: +i32) | (k: -i32) {
 }
 
 command main | (exit: -i32) {
-    println(mu i32 { answer <= echo(42, answer) });
+    mu i32 { answer <= echo(42, answer) } | println;
     0 | exit⟩
 }

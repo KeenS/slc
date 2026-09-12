@@ -544,7 +544,27 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
             }
             for stage in stages {
-                lowered.push(lower_expr(stage, continuations)?);
+                // A bare name the checker resolved as a trait method is
+                // that dispatch. A call already resolves its own — the span
+                // it is keyed by is the call's.
+                let dispatch =
+                    matches!(stage.kind, Expr::Ident(_)).then(|| method_dispatch(stage.span));
+                let mut term = match dispatch.flatten() {
+                    Some(MethodDispatch::Static(mangled)) => Term::Var(mangled),
+                    Some(MethodDispatch::Dict { dict_var, index, count }) => {
+                        dict_projection(&dict_var, index, count)
+                    }
+                    None => lower_expr(stage, continuations)?,
+                };
+                // A bounded stage takes its dictionaries first, as a bounded
+                // call does — but only when the stage *is* the bare name: a
+                // call already carries its own.
+                if matches!(stage.kind, Expr::Ident(_))
+                    && let Some(dicts) = call_dicts(stage.span)
+                {
+                    term = call_curried(term, dicts.iter().map(dict_term).collect());
+                }
+                lowered.push(term);
             }
             // Where the chain turns around, the stages after it fold the
             // other way: each takes the consumer the rest builds, and what

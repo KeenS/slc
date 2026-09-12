@@ -55,7 +55,7 @@ fn handler() -> Handler {
     select Handler {
         Handler { cmd, out } => match cmd {
             Quit => "quit" | out⟩,
-            Step(k) => to_string(k) | out⟩,
+            Step(k) => k | to_string | out⟩,
         },
     }
 }
@@ -70,23 +70,23 @@ command main | (exit: -i32) {
     let app = App { title: "demo", config: defaults() };
     match app {
         App { title, config } => {
-            println(title);
-            println(config.name);
+            title | println;
+            config.name | println;
         },
     };
 
-    let s = session(2);
-    println(s.config.retries);
+    let s = 2 | session;
+    s.config.retries | println;
     match s.next {
-        Quit => println("quit"),
-        Step(k) => println(k),
+        Quit => "quit" | println,
+        Step(k) => k | println,
     };
 
-    println(mu String { ans <= Handler { cmd: Step(7), out: ans } | handler()⟩ });
+    (mu String { ans <= Handler { cmd: Step(7), out: ans } | handler()⟩ } | println);
 
     match Holds(handler()) {
-        Vacant => println("idle"),
-        Holds(h) => println(mu String { ans <= Handler { cmd: Quit, out: ans } | h⟩ }),
+        Vacant => "idle" | println,
+        Holds(h) => (mu String { ans <= Handler { cmd: Quit, out: ans } | h⟩ } | println),
     };
 
     0 | exit⟩

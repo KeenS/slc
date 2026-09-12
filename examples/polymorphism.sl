@@ -15,27 +15,27 @@ fn id<T>(x: T) -> T { x }
 
 command main | (exit: -i32) {
     // A generic declaration: every call chooses its own `T`.
-    println(id(7) + 1);
-    println(str_len(id("seven")));
+    (7 | id) + 1 | println;
+    "seven" | id | str_len | println;
 
     // A generalized `let`: one binding, three instantiations — one through
     // an alias, since a plain name is a value form too.
     let same = fn(x) { x };
-    println(same(2) * 10);
-    println(same("both") + "!");
+    (2 | same) * 10 | println;
+    ("both" | same) + "!" | println;
     let also = same;
-    println(also(true));
+    true | also | println;
 
     // The by-name idiom. `fresh` is a lambda, hence a value, hence
     // polymorphic — and every use runs its own capture.
     let fresh = fn(u) {
         mu { k <= {
-            println("capturing");
+            "capturing" | println;
             ⟨fn(x) { x } | k⟩
         } }
     };
-    println(fresh((,))(1) + 1);
-    println(str_len(fresh((,))("again")));
+    ((,) | fresh)(1) + 1 | println;
+    ((,) | fresh)("again") | str_len | println;
 
     0 | exit⟩
 }

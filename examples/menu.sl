@@ -51,14 +51,14 @@ command main | (exit: -i32) {
     let cfg = config();
 
     // Demand one item off the menu: the mirror of record projection.
-    println(cfg.retries);            // 3
-    println(cfg.name);               // "slant"
-    println(loud(cfg).name);         // "slant!"
+    cfg.retries | println;            // 3
+    cfg.name | println;               // "slant"
+    (cfg | loud).name | println;         // "slant!"
 
     // A cut delivers a request directly: `mu` names where the answer goes.
-    println(mu i32 { a <= {
-        cfg | reroute(.retries(a))⟩   // 3
-    } });
+    (mu i32 { a <= {
+        cfg | (.retries(a) | reroute)⟩   // 3
+    } } | println);
 
     0 | exit⟩
 }
