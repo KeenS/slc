@@ -62,10 +62,16 @@ feature is mid-flight; what remains open is below.
 - **Flow, rows, and the nullary spellings — the composition redesign.**
   Decided in discussion; the decisions first, then the steps.
 
-  *Decisions.* `|` is **flow**: `v | f` applies, `f | g` composes
-  functions, `f | k` composes a function into a consumer (retiring the
-  prelude's `then`); the cut keeps its own glyph, because a cut is the
-  one expression with no result. Calls and rows become **unary**: `f(a, b)`
+  *Decisions.* `|` is **flow**, and it is the only connective: `@` is
+  abandoned. `v | f` applies, `f | g` composes functions, `f | k`
+  composes a function into a consumer (retiring the prelude's `then`),
+  and `v | k` is the cut. A pipeline is named by its hole: `v | f` awaits
+  a continuation (it is a value), `f | k` awaits a value (it is a
+  consumer), and a pipeline closed at both ends — value at the left,
+  consumer at the right — is a command. The pipe reads left to right, so
+  the orientation rule survives as: a consumer may stand only at the
+  right end, and nothing flows out of one (`v | k | x` is refused, as
+  chaining a cut is today). Calls and rows become **unary**: `f(a, b)`
   is `f((a, b))`, and a continuation row is one parameter — a **negative
   additive**, since the caller supplies every exit and the callee takes
   exactly one, and `dual(-A & -B) = A ⊕ B` says a two-exit command yields
@@ -101,17 +107,26 @@ feature is mid-flight; what remains open is below.
         values then have single-argument types, and `parse_int`-style
         builtins take their arguments the same way. This is the step
         that makes every stage of a pipeline one-in, one-out.
-  - [ ] `|`: a binop at a new lowest level (below `||`, above the cut),
-        left-associative. Checker: by the operands' polarity — value into
-        function applies, function into function composes, function into
-        consumer builds a consumer; a value into a consumer is refused
-        with a pointer at the cut glyph. Lowering: application, a
-        composed closure, and the `then` shape respectively.
+  - [ ] `|`: a binop at a new lowest level (below `||`), associative.
+        Checker: by the operands' polarity — value into function applies,
+        function into function composes, function into consumer builds a
+        consumer, value into consumer is the cut (type `⊥`); a consumer
+        anywhere but the right end is refused. Lowering: application, a
+        composed closure, the `then` shape, and today's `Expr::Cut`
+        respectively — the cut node stays internally as the closed case.
+  - [ ] Retire `@`: remove the token and the cut parse path; migrate
+        every `@` in the prelude, examples, tests, DESIGN, and the design
+        notes to `|`. The effect checker's cut-site charging (latent rows
+        at a feed, a rowed consumer parameter, a result-latent call in
+        consumer position) moves to the closed-pipeline case. DESIGN's
+        "the left of `@` is the value side" becomes the pipe's
+        orientation rule.
   - [ ] Delete `then` from the prelude; rewrite its uses as `f | k`.
   - [ ] Examples: `pipeline.sl` showing the three readings and the
         associativity (`v | f | g @ k` and `v @ f | g | k` agree), a
-        two-exit command written unary. MIGRATION: `()` → `(,)`, rows,
-        `then`. DESIGN: the flow operator, rows as `&`, the nullary rule.
+        two-exit command written unary. MIGRATION: `@` → `|`, `()` → `(,)`,
+        rows, `then`. DESIGN: the flow operator and its four readings,
+        rows as `&`, the nullary rule.
 
 ## Deferred, for discussion
 
