@@ -59,57 +59,65 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-The queue is empty: the polarity×feature audit is fully executed — bounds
-and traits now reach negative functions, and operations were settled as
-positive-only. What remains open is the discussions below and the limits
-above.
+- **Flow, rows, and the nullary spellings — the composition redesign.**
+  Decided in discussion; the decisions first, then the steps.
 
-When an item returns here, it ends the same way, unlisted: `cargo fmt`,
-`cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo test --workspace` (19 suites green), the examples loop (every
-`examples/*.sl` runs; `*_error.sl` and `command_falls_through.sl` must
-fail), DESIGN.md updated where behaviour changed, and the entry retired
-from this file.
+  *Decisions.* `|` is **flow**: `v | f` applies, `f | g` composes
+  functions, `f | k` composes a function into a consumer (retiring the
+  prelude's `then`); the cut keeps its own glyph, because a cut is the
+  one expression with no result. Calls and rows become **unary**: `f(a, b)`
+  is `f((a, b))`, and a continuation row is one parameter — a **negative
+  additive**, since the caller supplies every exit and the callee takes
+  exactly one, and `dual(-A & -B) = A ⊕ B` says a two-exit command yields
+  one of two outcomes. A row is therefore an *anonymous menu of
+  consumers*, and `| (found, missing)` is its copattern, as `(x, y)` is a
+  tuple's. Spellings: `&` is lexed; the anonymous type is `(A & B)`; the
+  bundle literal is `(k1 & … & kn)` for two or more exits (a `mu` cannot
+  forward an existing continuation as an item — the arm would put a
+  consumer on the value side of a cut); one exit is the continuation
+  itself (`-A & ⊤ ≅ -A`); and *a paren holding only the separator is the
+  nullary form*: `(&)` is ⊤'s unique value (the empty menu — the prelude's
+  `menu Top {}`, not Bottom, which is the nullary form), `(,)` is unit,
+  replacing `()` as a value; `f()` remains the zero-argument call, which
+  also retires the runtime's separate no-arguments marker.
+
+  - [ ] Lex `&`; parse `(A & B)` as `TypeExpr::With` lowering to
+        `Type::With`, and `(&)` in type position as the prelude's `Top`.
+  - [ ] Parse `(k1 & k2 & …)` to a bundle expression, `(&)` to ⊤'s value,
+        `(,)` to unit; remove `()` as a value expression (keep `f()`), and
+        drop `Value::NoArguments` in favour of unit. Migrate every `()`.
+  - [ ] Type the bundle as `With` of its components' types; project it
+        positionally (`out.0`, `out.1`) through `Expr::Project`, so
+        `n @ out.0` takes an exit. Runtime: a bundle is a pair chain, as a
+        tuple is — the machine is untyped.
+  - [ ] Retype rows: a command's continuation group of n > 1 parameters
+        is one `With`; the polarity rule accepts a `With` of consumers as
+        a continuation parameter; the copattern `| (a, b)` binds its
+        components. Call sites pass a bundle; the positional per-slot
+        check becomes one type check. DESIGN's "row" wording moves from
+        positional to `&`.
+  - [ ] Unary values: `f(a, b)` packs a tensor and the declaration
+        destructures it (`μ̃(x, y)`), replacing curried lowering; function
+        values then have single-argument types, and `parse_int`-style
+        builtins take their arguments the same way. This is the step
+        that makes every stage of a pipeline one-in, one-out.
+  - [ ] `|`: a binop at a new lowest level (below `||`, above the cut),
+        left-associative. Checker: by the operands' polarity — value into
+        function applies, function into function composes, function into
+        consumer builds a consumer; a value into a consumer is refused
+        with a pointer at the cut glyph. Lowering: application, a
+        composed closure, and the `then` shape respectively.
+  - [ ] Delete `then` from the prelude; rewrite its uses as `f | k`.
+  - [ ] Examples: `pipeline.sl` showing the three readings and the
+        associativity (`v | f | g @ k` and `v @ f | g | k` agree), a
+        two-exit command written unary. MIGRATION: `()` → `(,)`, rows,
+        `then`. DESIGN: the flow operator, rows as `&`, the nullary rule.
 
 ## Deferred, for discussion
 
-- **Surface syntax for the additive units `0` and `⊤`.** Their explicit
-  prelude forms now exist: `enum Empty {}` is eliminated by `select Empty {}`,
-  and the unique value of `menu Top {}` is `mu Top {}`. What remains open is
-  whether `Empty` and `Top` should gain symbolic or otherwise concise type and
-  term aliases, analogous to `()`/`Unit` and `⊥`/`Bottom`; settle those
-  spellings later rather than reserving syntax now.
-
-- **Composition syntax: the pipeline cut.** Composing a function with a
-  continuation is one binder away in either spelling today —
-  `select +A { x => f(x) @ k }` or `fn(x: +A) { f(x) @ k }` — and the
-  prelude has `then(f, k)`. The candidate surface syntax under
-  consideration writes the cut as a pipeline, values flowing left through
-  functions into continuations:
-
-  ```sl
-  <(v1, v2) | f1 | f2 | (k1, k2)>
-  ```
-
-  — a surface spelling of the core's own `⟨ t ∥ e ⟩`, with the composition
-  chain written between the sides. The half-open fragments would then
-  denote the sides themselves:
-
-  ```sl
-  <(v1, v2,) | f1 |        // a producer: values piped through f1,
-                           // awaiting its continuation
-  | f2 | (k1, k2)>         // a consumer: pipe through f2, deliver to
-                           // the row — composition of f2 with k, as syntax
-  ```
-
-  To settle before adopting: the meaning of a middle stage (positive
-  functions apply; negative functions and multi-outcome commands would
-  consume the rest of the pipe as their row), whether `(v1, v2)` packs a
-  tensor or spreads arguments and `(k1, k2)` is a row or a single `⅋`
-  consumer, how the half-open forms type (term and co-term of the same
-  pipeline), and the grammar itself — `<` opens type arguments and `|`
-  separates a `command`'s groups, so both need disambiguation in
-  expression position.
+- **A surface spelling for `0`.** ⊤'s value is settled as `(&)` (above).
+  `0` has no values, and its consumer stays `select Empty {}`; whether the
+  empty sum deserves an anonymous type spelling is still open.
 
 ## Deferred, with no accepted replacement
 
