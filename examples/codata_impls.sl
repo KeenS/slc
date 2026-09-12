@@ -89,7 +89,7 @@ impl Deliver for bool {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     config() | describe | println;
     keeper() | describe | println;
     7 | count_from | describe | println;

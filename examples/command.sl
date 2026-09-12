@@ -5,7 +5,7 @@ command echo(x: i32) | (k: i32) {
     x | k⟩
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     mu i32 { answer <= 42 | echo | answer⟩ } | println;
     0 | exit⟩
 }

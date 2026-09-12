@@ -855,8 +855,46 @@ a variable — what the written part covers does not flow through it. A
 rowless arrow in a parameter's type is a promise of purity, enforced at
 the call site: passing `risky` where `(i64 -> i64)` is declared is an
 error at the argument. A handler discharges the effects of the operations
-it answers, and `main`'s row must be empty, so a well-typed program
-performs no unhandled operation.
+it answers, and `main`'s row is `{IO}` or empty, so a well-typed program
+performs no operation the runtime cannot answer.
+
+A stage is a call — `x | f` *is* `f(x)` — so it charges what the call
+charges. Only the first stage's argument is syntax, the rest receiving what
+the stage before them produced, so that is the one whose row variables are
+instantiated; the closing consumer is not applied and charges nothing of
+its own.
+
+#### `IO`: the effect the runtime handles
+
+Reaching outside the program is an effect like any other, declared in the
+prelude:
+
+```sl
+effect IO {
+    fn write(text: String) -> Unit;
+    fn write_line(text: String) -> Unit;
+}
+```
+
+`println` and `print` are the friendly front — they render any value, then
+perform `write_line`/`write` with the text — so a function that prints says
+so in its row, and the row travels up the call graph until something
+handles it. What is special about `IO` is only where it ends: the runtime
+installs a handler around `main`, so `main` may declare `{IO}` and leave it
+undischarged. Nothing else may.
+
+A handler the program installs sits nearer the operation than the
+runtime's, and answers first, which is how a program mocks its own output;
+a clause runs *below* its own prompt, so what the clause itself performs
+escapes outward to the next handler — the runtime's — and a tap can both
+report the write and forward it. `examples/io.sl` writes all three.
+
+The file builtins — `read_file`, `write_file`, `open_file`, `read_line`,
+`close_file`, `file_exists` — charge `{IO}` too, so their rows are honest,
+but they still reach the outside world directly rather than through an
+operation: each offers its outcome to continuations, and an operation that
+carries an outcome needs a type the operation can name. Until then they
+cannot be mocked the way `println` can.
 
 **Latent rows are the dual of effects.** A function's row fires at
 application, because a function is a suspended producer: the work runs

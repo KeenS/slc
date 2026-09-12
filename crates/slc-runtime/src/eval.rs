@@ -55,6 +55,13 @@ pub fn apply_value(value: Value, arg: Value, fuel: &mut usize) -> Result<Value, 
     crate::machine::run_apply(value, arg, fuel)
 }
 
+/// Apply, with the runtime's handler for `IO` installed beneath: the entry
+/// point a program runs under, so an operation it never handles itself
+/// reaches the outside world here.
+pub fn apply_under_io(value: Value, arg: Value, fuel: &mut usize) -> Result<Value, EvalError> {
+    crate::machine::run_apply_under_io(value, arg, fuel)
+}
+
 /// Run the node at `root` of the already-installed chunk. The driver compiles
 /// the whole program into one chunk (`compile::compile_program`), installs it,
 /// and runs each definition and `main` through here so they share it.
@@ -161,6 +168,9 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
         "read_file" | "open_file" | "read_line" => 3,
+        // The runtime's own clauses for `IO`: the payload, then `resume`.
+        "__io_write" | "__io_write_line" => 2,
+        "__io_done" => 1,
         "char_at" | "write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__if_dispatch" => 3,
@@ -188,6 +198,25 @@ pub(crate) fn run_offering_builtin(
     let value = |index: usize| args.get(index).cloned().unwrap_or(Value::Unit);
     let message = |text: String| Value::Str(text);
     match name {
+        // The runtime is the outermost handler for `IO`: these are its
+        // clauses. Each writes, then resumes — the operation answers unit,
+        // and the program carries on where it performed.
+        "__io_write" | "__io_write_line" => {
+            let resume = value(1);
+            let text = match value(0) {
+                Value::Str(text) => text,
+                other => other.display(),
+            };
+            let newline = if name == "__io_write_line" { "\n" } else { "" };
+            {
+                use std::io::Write;
+                let stdout = std::io::stdout();
+                let mut lock = stdout.lock();
+                write!(lock, "{text}{newline}")
+                    .map_err(|e| EvalError::TypeMismatch(e.to_string()))?;
+            }
+            wrap(activate(resume, Value::Unit))
+        }
         "parse_int" => {
             let (ok, invalid, overflow) = (value(1), value(2), value(3));
             wrap(match value(0) {
@@ -301,6 +330,11 @@ pub(crate) fn run_builtin_function(name: &str, args: Vec<Value>) -> Result<Value
                 other.map(|v| v.display()).unwrap_or_else(|| "no argument".into())
             ))),
         };
+    }
+    // The `return` clause of the runtime's `IO` handler: a program's value
+    // passes through it unchanged.
+    if name == "__io_done" {
+        return Ok(args.into_iter().next().unwrap_or(Value::Unit));
     }
     if matches!(name, "file_exists" | "close_file") {
         return crate::builtins::apply_io_builtin(name, &args)

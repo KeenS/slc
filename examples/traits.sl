@@ -45,7 +45,7 @@ fn labelled<T: Show>(label: String, x: T) -> String {
     label + ": " + (x | show)
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // dispatch on the argument's type
     42 | show | println;
     true | show | println;

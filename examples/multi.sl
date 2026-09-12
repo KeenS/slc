@@ -39,7 +39,7 @@ fn scale(x: i64) -> i64 / {Exn, Reader} {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // multiple traits, resolved per argument type
     (42, true) | pair | println;
     ("n", 1234) | show_with_width | println;

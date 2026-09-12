@@ -37,7 +37,7 @@ command nearer((here, there): (Point ⊗ Point)) | (closer: Point) {
     if (here | norm) < (there | norm) { here | closer⟩ } else { there | closer⟩ }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // A tuple binder, and a nested one.
     let (a, b) = (3, 4);
     let ((p, q), r) = ((1, 2), 3);

@@ -116,7 +116,7 @@ fn done(k: -⊥) <- unit {
     (,) | k⟩
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // ⊗ : build every part, then take them apart.
     Pair { left: 2, right: 40 } | sum | println;
 

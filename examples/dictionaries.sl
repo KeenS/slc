@@ -14,7 +14,7 @@ fn twice<T: Show>(x: T) -> String { (x | show) + (x | show) }
 // Forwards its dictionary one level deeper, into `twice`.
 fn relay<T: Show>(x: T) -> String { "[" + (x | twice) + "]" }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     42 | show | println;      // 42  — concrete receiver, a direct impl call
     7 | relay | println;      // [77] — i64 dictionary threaded through relay→twice
     true | relay | println;   // [TT] — bool dictionary, same code

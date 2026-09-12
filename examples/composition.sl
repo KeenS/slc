@@ -66,7 +66,7 @@ enum Slot {
     Holds(Handler),
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let app = App { title: "demo", config: defaults() };
     match app {
         App { title, config } => {

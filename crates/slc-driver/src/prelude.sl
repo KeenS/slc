@@ -28,6 +28,23 @@ fn abs(n: i64) -> i64 {
     if n < 0 { 0 - n } else { n }
 }
 
+// ── IO: the effect the runtime handles ───────────────────────────────────
+//
+// Reaching outside the program is an effect like any other, and this is the
+// one the runtime itself answers: `main` may leave `{IO}` undischarged, and
+// the operation arrives at the handler the runtime installs around it.
+// Nothing else about it is special — a program that installs its own handler
+// sits nearer the operation and answers first, which is how output is
+// mocked (`examples/io.sl`).
+//
+// `println` and `print` are the friendly front: they render any value and
+// then perform `write_line`/`write` with the text.
+
+effect IO {
+    fn write(text: String) -> Unit;
+    fn write_line(text: String) -> Unit;
+}
+
 // ── Consumer combinators ─────────────────────────────────────────────────
 //
 // A combinator that needs value inputs cannot be declared `<- A`: a negative
@@ -37,7 +54,7 @@ fn abs(n: i64) -> i64 {
 // *is* `-A`.
 
 // A tap: log a label and the value passing through, then forward it.
-fn traced<T>(label: String, k: -T) -> -T {
+fn traced<T>(label: String, k: -T) -> -T / {IO} {
     fn(x: T) { label | println; x | println; x | k⟩ }
 }
 

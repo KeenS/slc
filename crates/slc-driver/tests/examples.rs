@@ -132,6 +132,19 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         ("command.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
+        (
+            "io.sl",
+            Expected {
+                success: true,
+                stdout: &[
+                    "\"hello, world\"",
+                    "captured instead:",
+                    "about to write 14 characters",
+                    "\"hello, again\"",
+                ],
+                stderr: &[],
+            },
+        ),
         ("hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
         (
             "json_parser.sl",

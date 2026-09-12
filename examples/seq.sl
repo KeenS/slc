@@ -22,7 +22,7 @@ fn halving(n: i64) -> (i64 ⊗ i64) {
     (n, n / 2)
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let xs = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))));
 
     // Over data, `Seq` is an ordinary lazy pipeline: nothing runs until

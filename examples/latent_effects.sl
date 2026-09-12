@@ -56,7 +56,7 @@ fn admit() -> Validated {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let f = 21 | checked;
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.

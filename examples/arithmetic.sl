@@ -5,7 +5,7 @@
 //   1 / 0    → division by zero
 //   9223372036854775807 + 1 → arithmetic overflow
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     2 + 3 | println;
     10 - 4 | println;
     6 * 7 | println;

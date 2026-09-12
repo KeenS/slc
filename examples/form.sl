@@ -17,7 +17,7 @@ form Report { value: i64, label: String }
 
 // `select` builds the form value, exactly as it builds a menu value: the arm
 // binds the whole demand — every field at once — and runs a command.
-fn printer(out: -i64) -> Report {
+fn printer(out: -i64) -> Report / {IO} {
     select Report {
         Report { value, label } => {
             label | println;
@@ -33,7 +33,7 @@ fn shouting(next: Report) -> Report {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.

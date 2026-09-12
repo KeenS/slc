@@ -498,6 +498,35 @@ command forward(…) | (row: (T & String)) {   // or handed on unopened
 }
 ```
 
+## Printing is an effect
+
+`println` and `print` perform the `IO` effect the prelude declares, so a
+declaration that prints carries `{IO}` in its row — `main` included. The
+runtime installs the handler, so `main` may leave it undischarged and
+nothing else may:
+
+```sl
+command main | (exit: i32) {                    // old
+    "hi" | println;
+    0 | exit⟩
+}
+
+command main | (exit: i32) / {IO} {             // new
+    "hi" | println;
+    0 | exit⟩
+}
+
+fn greet(name: String) -> Unit / {IO} { "hello, " + name | println }
+```
+
+A program can now handle its own output: a `handle` with a `write_line`
+clause sits nearer the operation than the runtime's handler and answers
+first. See `examples/io.sl`.
+
+This bites where it did not before because a pipeline stage now charges
+its effects at all: `x | throw` was silently free, and only the old call
+form `throw(x)` was counted.
+
 ## A binder is a pattern
 
 `let p = e` and a parameter `p: T` take a pattern, as in Rust; a bare name

@@ -3321,7 +3321,7 @@ mod tests {
     fn unit_is_a_type_and_not_a_wildcard() {
         let diags = check(
             "fn wants(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) { println(wants((,))); 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { println(wants((,))); 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(
@@ -3371,7 +3371,7 @@ mod tests {
             check(
                 "effect Ask { fn ask() -> i64; }
                  fn u() -> i64 / {Ask} { ask() + 5 }
-                 command main | (exit: -i32) {
+                 command main | (exit: -i32) / {IO} {
                      let r = handle u() { ask(): resume => 1000 + resume(7), return(n) => n };
                      println(r); 0 | exit⟩
                  }"
@@ -3387,7 +3387,7 @@ mod tests {
             check(
                 "effect C { fn c() -> bool; }
                  fn f() -> i64 / {C} { if c() { 1 } else { 2 } }
-                 command main | (exit: -i32) {
+                 command main | (exit: -i32) / {IO} {
                      let r = handle f() {
                          c(): resume => resume(true) + resume(false),
                          return(n) => n,
@@ -3406,7 +3406,7 @@ mod tests {
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
                  fn label<T: Show>(x: +T) -> String { x | show }
-                 command main | (exit: -i32) { 1 | label | println; 0 | exit⟩ }"
+                 command main | (exit: -i32) / {IO} { 1 | label | println; 0 | exit⟩ }"
             )
             .is_ok()
         );
@@ -3425,7 +3425,7 @@ mod tests {
         let mono = resolve(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
-             command main | (exit: -i32) { 1 | show | println; 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { 1 | show | println; 0 | exit⟩ }",
         );
         assert_eq!(mono.methods.len(), 1, "one method call should resolve: {mono:?}");
         assert!(
@@ -3440,7 +3440,7 @@ mod tests {
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { self | int_to_str } }
              fn label<T: Show>(x: +T) -> String { x | show }
-             command main | (exit: -i32) { 1 | label | println; 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { 1 | label | println; 0 | exit⟩ }",
         );
         // `show(x)` inside `label` projects from the dictionary parameter;
         // `label(1)` passes the concrete i64 dictionary.
@@ -3482,7 +3482,7 @@ mod tests {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) { println(show(true)); 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { println(show(true)); 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("no `impl Show for bool`")), "{diags:?}");
@@ -3505,7 +3505,7 @@ mod tests {
         // identifier is a value form.
         assert!(
             check(
-                "command main | (exit: -i32) {
+                "command main | (exit: -i32) / {IO} {
                      let f = fn(x) { x };
                      println(f(1) + 1);
                      println(str_len(f(\"s\")));
@@ -3524,7 +3524,7 @@ mod tests {
         // would let a continuation captured at one instantiation be re-used
         // at another, so it stays monomorphic and mixed uses are rejected.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  let g = mu { k <= ⟨fn(x) { x } | k⟩ };
                  println(g(1) + 1);
                  println(str_len(g(\"s\")));
@@ -3538,7 +3538,7 @@ mod tests {
         // its result may hold a captured continuation.
         let diags = check(
             "fn id<T>(x: T) -> T { x }
-             command main | (exit: -i32) {
+             command main | (exit: -i32) / {IO} {
                  let h = id(fn(x) { x });
                  println(h(1) + 1);
                  println(str_len(h(\"s\")));
@@ -3555,7 +3555,7 @@ mod tests {
         // re-runs the capture at its own instantiation, visibly.
         assert!(
             check(
-                "command main | (exit: -i32) {
+                "command main | (exit: -i32) / {IO} {
                      let fresh = fn(u) { mu { k <= ⟨fn(x) { x } | k⟩ } };
                      println(fresh((,))(1) + 1);
                      println(str_len(fresh((,))(\"s\")));
@@ -3571,7 +3571,7 @@ mod tests {
         // An unannotated binder is a variable its uses solve together, so
         // two uses cannot disagree.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  let g = fn(x) { x };
                  println(g(1) + str_len(g(1)));
                  0 | exit⟩
@@ -3585,7 +3585,7 @@ mod tests {
 
         // The body constrains the parameter, and the call site honors it.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  println(fn(x) { x + 1 }(\"not a number\"));
                  0 | exit⟩
              }",
@@ -3600,7 +3600,7 @@ mod tests {
         assert!(
             check(
                 "fn id<T>(x: T) -> T { x }
-                 command main | (exit: -i32) {
+                 command main | (exit: -i32) / {IO} {
                      (42 | id) + 1 | println;
                      \"each call its own T\" | id | str_len | println;
                      0 | exit⟩
@@ -3612,7 +3612,7 @@ mod tests {
         // Within one call, T is one type.
         let diags = check(
             "fn id<T>(x: T) -> T { x }
-             command main | (exit: -i32) { println(str_len(id(42))); 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { println(str_len(id(42))); 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
@@ -3652,7 +3652,7 @@ mod tests {
         // different types in the same declaration.
         assert!(
             check(&format!(
-                "{prelude} command main | (exit: -i32) {{
+                "{prelude} command main | (exit: -i32) / {{IO}} {{
                      mu String {{ s <= 42 | emit | s⟩ }} | println;
                      mu String {{ s <= true | emit | s⟩ }} | println;
                      0 | exit⟩
@@ -3662,7 +3662,7 @@ mod tests {
         );
         // A type with no impl is still refused.
         let diags = check(&format!(
-            "{prelude} command main | (exit: -i32) {{
+            "{prelude} command main | (exit: -i32) / {{IO}} {{
                  println(mu String {{ s <= \"text\" | emit(s)⟩ }}); 0 | exit⟩
              }}"
         ))
@@ -3683,7 +3683,7 @@ mod tests {
              }\n";
         assert!(
             check(&format!(
-                "{prelude} command main | (exit: -i32) {{
+                "{prelude} command main | (exit: -i32) / {{IO}} {{
                      println(mu String {{ s <= 42 | deliver(s)⟩ }});
                      println(mu String {{ s <= true | deliver(s)⟩ }});
                      0 | exit⟩
@@ -3692,7 +3692,7 @@ mod tests {
             .is_ok()
         );
         let diags = check(&format!(
-            "{prelude} command main | (exit: -i32) {{
+            "{prelude} command main | (exit: -i32) / {{IO}} {{
                  println(mu String {{ s <= \"text\" | deliver(s)⟩ }}); 0 | exit⟩
              }}"
         ))
@@ -3760,7 +3760,7 @@ mod tests {
         assert!(
             check(
                 "fn dne<T>(t: -(-T)) -> T { t }
-                 command main | (exit: -i32) { 42 | dne | println; 0 | exit⟩ }",
+                 command main | (exit: -i32) / {IO} { 42 | dne | println; 0 | exit⟩ }",
             )
             .is_ok()
         );
@@ -3770,7 +3770,7 @@ mod tests {
     fn value_arguments_are_checked_against_the_declaration() {
         let diags = check(
             "fn f(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) { println(f(42)); 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { println(f(42)); 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(
@@ -3818,7 +3818,7 @@ mod tests {
 
         // Outside one, with no arm naming a type, it has to be written.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  let show = select { n => println(n) };
                  42 | show⟩;
                  0 | exit⟩
@@ -3833,7 +3833,7 @@ mod tests {
         // `k` is handed to a slot `read_file` declares, so it is `-String`,
         // and the `mu` therefore produces a `+String`.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  let complain = select { m => { println(m); 1 | exit⟩ } };
                  let text = mu { k <= read_file(\"in\", k, complain) };
                  println(text + 1);
@@ -3848,7 +3848,7 @@ mod tests {
 
         // A cut says it just as well: `42 | k` makes `k` a consumer of i64.
         let diags = check(
-            "command main | (exit: -i32) {
+            "command main | (exit: -i32) / {IO} {
                  let answer = mu { k <= 42 | k⟩ };
                  println(str_len(answer));
                  0 | exit⟩

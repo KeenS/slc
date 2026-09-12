@@ -50,7 +50,7 @@ fn emit(out: i64) <- i64 / {Reader} {
     fn(x: i64) { x * config() | out⟩ }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // never resumes — the exception replaces the computation
     let safe = handle ((10, 0) | checked_div) { throw(m) => 0 - 1, return(n) => n };
     safe | println;                       // -1

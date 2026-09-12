@@ -22,7 +22,7 @@ fn count_from(n: i64) -> Stream<i64> {
 
 fn double(n: i64) -> i64 { n * 2 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let s = 10 | count_from;
     s.head | println;                            // 10
     s.tail.head | println;                       // 11

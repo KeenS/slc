@@ -1,6 +1,6 @@
 // Comparisons and boolean operators.
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     1 == 1 | println;
     1 != 2 | println;
     3 < 5 | println;

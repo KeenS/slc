@@ -19,8 +19,13 @@
 //!
 //! Every declaration is checked locally against its own row; `handle e
 //! { … }` discharges the effects of the operations its clauses answer, and
-//! `main`'s row must be empty, so a well-typed program performs no
-//! unhandled operation.
+//! `main`'s row is `{IO}` or empty — the runtime is the handler for `IO`
+//! and for nothing else — so a well-typed program performs no operation
+//! that cannot be answered.
+//!
+//! A pipeline stage is a call, and charges as one. Only the first stage's
+//! argument is syntax, so that is the one whose row variables can be
+//! instantiated; the closing consumer is not applied and charges nothing.
 //!
 //! The analysis follows names, conservatively where a function value loses
 //! its name: a lambda's body is charged to the declaration that wrote it, a
@@ -290,13 +295,20 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
                 });
             }
         }
-        if name == "main" && !(allowed.effects.is_empty() && allowed.tails.is_empty()) {
-            ctx.diags.push(Diagnostic {
-                message: "`main` is the root: its row must be empty, so every effect is \
-                          handled before it"
-                    .into(),
-                span: *span,
-            });
+        // `main` is the root, and the runtime is its handler — but the
+        // runtime handles exactly one effect, so `{IO}` is what may reach it
+        // and everything else is handled before.
+        if name == "main" {
+            let unhandled: Vec<&String> =
+                allowed.effects.iter().filter(|e| e.as_str() != IO).collect();
+            if !unhandled.is_empty() || !allowed.tails.is_empty() {
+                ctx.diags.push(Diagnostic {
+                    message: "`main` is the root: the runtime handles `IO`, so its row is \
+                              `{IO}` or empty and every other effect is handled before it"
+                        .into(),
+                    span: *span,
+                });
+            }
         }
     }
     if diags.is_empty() { Ok(()) } else { Err(diags) }
@@ -318,71 +330,106 @@ fn row_of_name(name: &str, ctx: &Ctx) -> Row {
     }
 }
 
+/// What a call to `name` charges: an operation performs its effect, a
+/// parameter its declared row, a global its own — with each row variable of
+/// the callee instantiated from the argument standing where it is mentioned.
+/// A flow stage is a call, so it charges through here too.
+fn charge_call(name: &str, args: &[Node<Expr>], ctx: &mut Ctx, out: &mut Row) {
+    let name = &name.to_string();
+    if let Some(effect) = builtin_effect(name) {
+        out.effects.insert(effect.to_string());
+        return;
+    }
+    if let Some(effect) = ctx.op_effect.get(name) {
+        out.effects.insert(effect.clone());
+    } else if let Some(row) = ctx.params.get(name) {
+        out.extend(&row.clone());
+    } else if let Some(interface) = ctx.interfaces.get(name.as_str()) {
+        out.effects.extend(interface.row.effects.iter().cloned());
+        // Instantiate each row variable of the callee from the
+        // arguments standing at the positions that mention it.
+        for tail in interface.row.tails.clone() {
+            for position in ctx.interfaces[name.as_str()].positions_of(&tail) {
+                if let Some(arg) = args.get(position)
+                    && let Expr::Ident(passed) = &arg.kind
+                {
+                    let declared = &ctx.interfaces[name.as_str()].params[position].1;
+                    let mut arg_row = row_of_name(passed, ctx);
+                    // What the parameter's own row already
+                    // covers does not flow into the variable.
+                    for effect in &declared.effects {
+                        arg_row.effects.remove(effect);
+                    }
+                    out.extend(&arg_row);
+                }
+            }
+        }
+        // A rowless parameter is a promise of purity: check it.
+        for (position, (param, declared)) in interface.params.iter().enumerate() {
+            if let Some(arg) = args.get(position)
+                && let Expr::Ident(passed) = &arg.kind
+            {
+                let arg_row = row_of_name(passed, ctx);
+                if declared.tails.is_empty() {
+                    for effect in &arg_row.effects {
+                        if !declared.effects.contains(effect) {
+                            ctx.diags.push(Diagnostic {
+                                message: format!(
+                                    "`{name}` takes `{param}` with{} but `{passed}` \
+                                             performs `{effect}`",
+                                    if declared.effects.is_empty() {
+                                        " a pure arrow".to_string()
+                                    } else {
+                                        format!(
+                                            " row {{{}}}",
+                                            declared
+                                                .effects
+                                                .iter()
+                                                .cloned()
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
+                                        )
+                                    },
+                                    effect = effect
+                                ),
+                                span: arg.span,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The builtins that reach outside the program. Each performs an operation
+/// of `IO` — `println` performs `write_line`, `read_file` performs `read` —
+/// so calling one charges `{IO}` exactly as a written operation would.
+pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
+    matches!(
+        name,
+        "println"
+            | "print"
+            | "read_file"
+            | "write_file"
+            | "open_file"
+            | "read_line"
+            | "close_file"
+            | "file_exists"
+    )
+    .then_some(IO)
+}
+
+/// The one effect the runtime itself handles: `main` may leave it
+/// undischarged, and nothing else may.
+pub(crate) const IO: &str = "IO";
+
 /// The effects an expression may incur, gathered into `out`.
 fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
     match &e.kind {
         Expr::Call { callee, args } => {
             if let Expr::Ident(name) = &callee.kind {
-                if let Some(effect) = ctx.op_effect.get(name) {
-                    out.effects.insert(effect.clone());
-                } else if let Some(row) = ctx.params.get(name) {
-                    out.extend(&row.clone());
-                } else if let Some(interface) = ctx.interfaces.get(name.as_str()) {
-                    out.effects.extend(interface.row.effects.iter().cloned());
-                    // Instantiate each row variable of the callee from the
-                    // arguments standing at the positions that mention it.
-                    for tail in interface.row.tails.clone() {
-                        for position in ctx.interfaces[name.as_str()].positions_of(&tail) {
-                            if let Some(arg) = args.get(position)
-                                && let Expr::Ident(passed) = &arg.kind
-                            {
-                                let declared = &ctx.interfaces[name.as_str()].params[position].1;
-                                let mut arg_row = row_of_name(passed, ctx);
-                                // What the parameter's own row already
-                                // covers does not flow into the variable.
-                                for effect in &declared.effects {
-                                    arg_row.effects.remove(effect);
-                                }
-                                out.extend(&arg_row);
-                            }
-                        }
-                    }
-                    // A rowless parameter is a promise of purity: check it.
-                    for (position, (param, declared)) in interface.params.iter().enumerate() {
-                        if let Some(arg) = args.get(position)
-                            && let Expr::Ident(passed) = &arg.kind
-                        {
-                            let arg_row = row_of_name(passed, ctx);
-                            if declared.tails.is_empty() {
-                                for effect in &arg_row.effects {
-                                    if !declared.effects.contains(effect) {
-                                        ctx.diags.push(Diagnostic {
-                                            message: format!(
-                                                "`{name}` takes `{param}` with{} but `{passed}` \
-                                                 performs `{effect}`",
-                                                if declared.effects.is_empty() {
-                                                    " a pure arrow".to_string()
-                                                } else {
-                                                    format!(
-                                                        " row {{{}}}",
-                                                        declared
-                                                            .effects
-                                                            .iter()
-                                                            .cloned()
-                                                            .collect::<Vec<_>>()
-                                                            .join(", ")
-                                                    )
-                                                },
-                                                effect = effect
-                                            ),
-                                            span: arg.span,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                charge_call(name, args, ctx, out);
             } else {
                 collect(callee, ctx, out);
             }
@@ -445,6 +492,22 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
             if *into_consumer && let (Some(value), Some(consumer)) = (stages.first(), stages.last())
             {
                 charge_cut(value, consumer, ctx, out);
+            }
+            // A stage is a call: `x | f` *is* `f(x)`, so it charges what the
+            // call charges. Only the first stage's argument is syntax — the
+            // rest receive what the stage before them produced — so that is
+            // the one whose row variables can be instantiated. The closing
+            // consumer is not applied and charges nothing of its own.
+            let applied = stages.len() - usize::from(*into_consumer);
+            for (index, stage) in stages.iter().enumerate().take(applied).skip(1) {
+                if let Expr::Ident(name) = &stage.kind {
+                    let args: &[Node<Expr>] = match (index, &stages[index - 1].kind) {
+                        (1, Expr::Pair(items)) => items,
+                        (1, _) => std::slice::from_ref(&stages[0]),
+                        _ => &[],
+                    };
+                    charge_call(name, args, ctx, out);
+                }
             }
             for stage in stages {
                 collect(stage, ctx, out);
@@ -639,7 +702,7 @@ mod tests {
                 "{EXN} fn app<E>(f: (+i64 -> +i64 / {{..E}}), x: +i64) -> i64 / {{..E}} {{ f(x) }}
                  fn inc(x: +i64) -> i64 {{ x + 1 }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-                 command main | (exit: -i32) {{ {main_body}; 0 | exit⟩ }}"
+                 command main | (exit: -i32) / {{IO}} {{ {main_body}; 0 | exit⟩ }}"
             )
         };
         // A pure argument instantiates E to the empty row.
@@ -662,7 +725,7 @@ mod tests {
         let diags = check(&format!(
             "{EXN} fn app(f: (+i64 -> +i64), x: +i64) -> i64 {{ f(x) }}
              fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-             command main | (exit: -i32) {{ println(app(risky, 1)); 0 | exit⟩ }}"
+             command main | (exit: -i32) / {{IO}} {{ println(app(risky, 1)); 0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(
@@ -700,7 +763,7 @@ mod tests {
                      app(g, app(g, x))
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-                 command main | (exit: -i32) {{
+                 command main | (exit: -i32) / {{IO}} {{
                      let r = handle twice(risky, 8) {{ throw(m) => 0 - 1, return(n) => n }};
                      println(r); 0 | exit⟩
                  }}"
@@ -713,7 +776,7 @@ mod tests {
     fn an_operation_passed_as_a_value_carries_its_effect() {
         let diags = check(&format!(
             "{EXN} fn app<E>(f: (+String -> +i64 / {{..E}}), x: +String) -> i64 / {{..E}} {{ f(x) }}
-             command main | (exit: -i32) {{ println(app(throw, \"m\")); 0 | exit⟩ }}"
+             command main | (exit: -i32) / {{IO}} {{ println(app(throw, \"m\")); 0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
@@ -729,7 +792,7 @@ mod tests {
                      f(x)
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-                 command main | (exit: -i32) {{
+                 command main | (exit: -i32) / {{IO}} {{
                      let r = handle guard(risky, 1) {{ throw(m) => 0 - 1, return(n) => n }};
                      println(r); 0 | exit⟩
                  }}"
@@ -739,7 +802,44 @@ mod tests {
     }
 
     #[test]
-    fn main_must_be_pure() {
+    fn a_flow_stage_charges_what_it_performs() {
+        // A stage is a call, so the effect follows it: `x | throw` is
+        // charged exactly as `throw(x)` is.
+        let diags = check(&format!(
+            "{EXN} fn risky(n: i64) -> i64 {{ if n > 0 {{ n }} else {{ \"no\" | throw }} }}
+             command main | (exit: -i32) / {{IO}} {{ 0 | exit⟩ }}"
+        ))
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`risky` performs `Exn`")), "{diags:?}");
+        assert!(
+            check(&format!(
+                "{EXN} fn risky(n: i64) -> i64 / {{Exn}} {{ if n > 0 {{ n }} else {{ \"no\" | throw }} }}
+                 command main | (exit: -i32) / {{IO}} {{ 0 | exit⟩ }}"
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn printing_performs_io_and_only_main_may_leave_it() {
+        // `println` performs `IO`, so a printing declaration declares it.
+        let diags = check(
+            "fn shout(m: String) -> Unit { m | println }
+             command main | (exit: -i32) / {IO} { 0 | exit⟩ }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`shout` performs `IO`")), "{diags:?}");
+        assert!(
+            check(
+                "fn shout(m: String) -> Unit / {IO} { m | println }
+                 command main | (exit: -i32) / {IO} { \"hi\" | shout; 0 | exit⟩ }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn main_may_leave_only_io_undischarged() {
         let diags = check(&format!(
             "{EXN} command main | (exit: -i32) / {{Exn}} {{ println(throw(\"no\")); 0 | exit⟩ }}"
         ))
@@ -760,7 +860,7 @@ mod tests {
         // `checked` declares no row: the arms belong to Fallible's latent
         // row. The demand is what incurs it — unhandled, it reaches main.
         let diags = check(&format!(
-            "{EXN}{FALLIBLE} command main | (exit: -i32) {{
+            "{EXN}{FALLIBLE} command main | (exit: -i32) / {{IO}} {{
                  println(checked(1).value); 0 | exit⟩
              }}"
         ))
@@ -769,7 +869,7 @@ mod tests {
         // Handled around the demand — the honest extent — main is pure.
         assert!(
             check(&format!(
-                "{EXN}{FALLIBLE} command main | (exit: -i32) {{
+                "{EXN}{FALLIBLE} command main | (exit: -i32) / {{IO}} {{
                      println(handle checked(1).value {{
                          throw(m) => 0 - 1, return(n) => n
                      }});
@@ -804,7 +904,7 @@ mod tests {
              fn guard() -> Guarded {{
                  select Guarded {{ Guarded {{ value }} => throw(\"no\") | EXIT⟩ }}
              }}
-             command main | (exit: -i32) {{
+             command main | (exit: -i32) / {{IO}} {{
                  Guarded {{ value: 1 }} | guard()⟩
              }}"
         ))
@@ -822,7 +922,7 @@ mod tests {
              }
              fn risky(x: +i64) -> i64 / {Exn} { throw(\"late\") }\n";
         let diags = check(&format!(
-            "{EXN}{after} command main | (exit: -i32) {{
+            "{EXN}{after} command main | (exit: -i32) / {{IO}} {{
                  let n = mu i64 {{ out <= {{
                      let c = handle after(risky, out) {{
                          throw(m) => 0 - 1, return(x) => x
@@ -837,7 +937,7 @@ mod tests {
         // Around the cut, it is discharged.
         assert!(
             check(&format!(
-                "{EXN}{after} command main | (exit: -i32) {{
+                "{EXN}{after} command main | (exit: -i32) / {{IO}} {{
                      let n = handle (mu i64 {{ out <= 5 | after(risky, out)⟩ }}) {{
                          throw(m) => 0 - 1, return(x) => x
                      }};
@@ -889,7 +989,7 @@ mod tests {
         // under any name, for one that does.
         assert!(
             check(&format!(
-                "{EXN} command main | (exit: -i32) {{
+                "{EXN} command main | (exit: -i32) / {{IO}} {{
                      let r = handle throw(\"x\") {{ throw(m) => 0 - 1, return(n) => n }};
                      println(r); 0 | exit⟩
                  }}"
@@ -898,7 +998,7 @@ mod tests {
         );
         assert!(
             check(&format!(
-                "{EXN} command main | (exit: -i32) {{
+                "{EXN} command main | (exit: -i32) / {{IO}} {{
                      let r = handle throw(\"x\") {{ throw(m): k => k(9), return(n) => n }};
                      println(r); 0 | exit⟩
                  }}"

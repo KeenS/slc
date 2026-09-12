@@ -604,7 +604,7 @@ mod tests {
             check(
                 "data Point { x: i64, y: i64 }
                  enum Wrapped { Only(i64) }
-                 command main | (exit: -i32) {
+                 command main | (exit: -i32) / {IO} {
                      let (a, b) = (1, 2);
                      let Point { x, y } = Point { x: 3, y: 4 };
                      let Only(n) = Only(5);
@@ -617,7 +617,7 @@ mod tests {
         // A sum of many does not, so it belongs in a `match`.
         let diags = check(
             "enum Shape { Circle(i64), Rect(i64, i64) }
-             command main | (exit: -i32) { let Circle(r) = Circle(5); r | exit⟩ }",
+             command main | (exit: -i32) / {IO} { let Circle(r) = Circle(5); r | exit⟩ }",
         )
         .unwrap_err();
         assert!(
@@ -631,14 +631,14 @@ mod tests {
         assert!(
             check(
                 "fn skew((a, b): (+i64 ⊗ +i64), c: +i64) -> i64 { a * c - b }
-                 command main | (exit: -i32) { ((1, 2), 3) | skew | exit⟩ }"
+                 command main | (exit: -i32) / {IO} { ((1, 2), 3) | skew | exit⟩ }"
             )
             .is_ok()
         );
         // Control leaves through a name, so an exit cannot be taken apart.
         let diags = check(
             "command route(n: +i64) | ((a & b): (-i64 & -i64)) { n | a⟩ }
-             command main | (exit: -i32) { 0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(

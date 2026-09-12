@@ -82,7 +82,7 @@ fn overshoot_of(out: i64) <- Size {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // Positive: data flows inward through the calls and back out.
     let p = (Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
     p.x | println;                                   // 10

@@ -2463,7 +2463,7 @@ mod tests {
     #[test]
     fn a_mu_writes_only_the_parameter_groups_it_has() {
         // No values: the group is left out, not written empty.
-        let p = parse_str("command main | (exit: -i32) { 0 | exit⟩ }");
+        let p = parse_str("command main | (exit: -i32) / {IO} { 0 | exit⟩ }");
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };

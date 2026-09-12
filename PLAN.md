@@ -55,7 +55,19 @@ feature is mid-flight; what remains open is below.
   written, a higher-order global passed as a value forwards nothing
   further, and a function laundered through a `let` binding is not
   tracked. Moving rows into the arrow type itself (unified during
-  inference) is the known upgrade if these bite.
+  inference) is the known upgrade if these bite. A stage's row variables
+  are instantiated only for the first stage of a chain, since that is the
+  only one whose argument is syntax.
+
+- **The file builtins perform `IO` without an operation.** `read_file`,
+  `write_file`, `open_file`, `read_line`, `close_file`, and `file_exists`
+  charge `{IO}`, so their rows are honest, but they reach the outside
+  world directly rather than by performing an operation the way `println`
+  does — so they cannot be mocked by a handler. Each offers its outcome to
+  continuations, and an operation carrying an outcome needs a type the
+  operation can name (a generic `IoOutcome<T>`, or one operation per
+  outcome shape). Doing it needs a resumption point that dispatches on the
+  outcome, which is a frame the machine does not have yet.
 
 ## Next
 

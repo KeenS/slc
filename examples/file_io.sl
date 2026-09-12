@@ -15,7 +15,7 @@
 // a consumer that closes the file and then leaves, and every later
 // `@ exit` goes through the close, unhappy paths included.
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let complain = select String {
         message => {
             "cannot read: " + message | println;

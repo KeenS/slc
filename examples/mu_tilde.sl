@@ -16,7 +16,7 @@ command twice(x: i64) | (k: i64) {
     (x * 2) | k⟩
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet.  v ∥ μ̃x.  rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.

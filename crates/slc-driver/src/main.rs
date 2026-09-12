@@ -9,7 +9,7 @@ enum RunOutcome {
 /// `prelude.sl` for what belongs there.
 const PRELUDE: &str = include_str!("prelude.sl");
 
-const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) { ... }`: a command with no value \
+const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) / {IO} { ... }`: a command with no value \
      parameters and one continuation, the exit status";
 
 fn main() -> ExitCode {
@@ -164,7 +164,7 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         .iter()
         .find(|(name, _)| name == "main")
         .map(|(_, root)| *root)
-        .ok_or("no `main`: define `command main | (exit: -i32) { ... }`")?;
+        .ok_or("no `main`: define `command main | (exit: -i32) / {IO} { ... }`")?;
     let eval_span = slc_core::span!("eval");
     let _eval_guard = eval_span.enter();
 
@@ -259,7 +259,7 @@ fn run_program(
         slc_runtime::eval::run_node(main_root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
     let entry = slc_runtime::eval::apply_value(entry, slc_runtime::value::Value::Unit, &mut fuel)
         .map_err(|e| e.to_string())?;
-    match slc_runtime::eval::apply_value(
+    match slc_runtime::eval::apply_under_io(
         entry,
         slc_runtime::value::Value::Builtin("EXIT".into()),
         &mut fuel,
@@ -283,7 +283,7 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
         .iter()
         .filter(|decl| matches!(&decl.kind, Decl::Command { name, .. } | Decl::Fn { name, .. } if name == "main"));
     let Some(main) = mains.next() else {
-        return Err("no `main`: define `command main | (exit: -i32) { ... }`".into());
+        return Err("no `main`: define `command main | (exit: -i32) / {IO} { ... }`".into());
     };
     if mains.next().is_some() {
         return Err("program contains multiple `main` declarations".into());

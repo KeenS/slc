@@ -283,3 +283,9 @@ pub fn install_stdlib(env: &mut Env) {
         env.define_global(b, Value::Builtin(b.to_string()));
     }
 }
+
+/// The operations of `IO` and the runtime clause that answers each. The
+/// prelude declares the effect; this is the handler the runtime installs
+/// around `main`.
+pub const IO_CLAUSES: [(&str, &str); 2] =
+    [("write", "__io_write"), ("write_line", "__io_write_line")];

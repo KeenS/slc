@@ -259,7 +259,7 @@ command parse_object_body(input: String, pos: i64) | (ok: i64 & failed: String) 
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
 
     // One consumer per outcome, each ending in a cut against `exit`.

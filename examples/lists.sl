@@ -17,7 +17,7 @@ fn sum(xs: List<i64>) -> i64 {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let xs = List::Cons(1, List::Cons(2, List::Cons(39, List::Nil)));
     xs | length | println;                    // 3
     xs | sum | println;                       // 42

@@ -54,7 +54,7 @@ command retries | (provider: -Request & answer: -i64) {
     Request::Retries(answer) | provider⟩
 }
 
-command main | (exit: -i32) {
+command main | (exit: -i32) / {IO} {
     mu i64 { answer <= (,) | retries | (config & answer)⟩ } | println;
     mu String { note <= (1, note) | describe } | println;
     0 | exit⟩

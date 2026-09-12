@@ -171,6 +171,24 @@ pub(crate) fn run_apply(callee: Value, arg: Value, fuel: &mut usize) -> Result<V
     run(State::Apply { callee, arg }, Kont::empty(), fuel)
 }
 
+/// The same, under the runtime's own handler for `IO`. This is what makes
+/// the runtime the outermost handler a program has: `main` may leave `IO`
+/// undischarged, and it arrives here. A handler the program installs sits
+/// nearer the operation and answers first, so `IO` can be mocked.
+pub(crate) fn run_apply_under_io(
+    callee: Value,
+    arg: Value,
+    fuel: &mut usize,
+) -> Result<Value, EvalError> {
+    let clauses: std::collections::HashMap<String, Value> = crate::value::IO_CLAUSES
+        .iter()
+        .map(|(op, clause)| ((*op).to_string(), Value::Builtin((*clause).to_string())))
+        .collect();
+    let mut kont = Kont::empty();
+    kont.push(Frame::Prompt { clauses: Rc::new(clauses), ret: Value::Builtin("__io_done".into()) });
+    run(State::Apply { callee, arg }, kont, fuel)
+}
+
 fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
     let mut state = start;
     let mut kont = kont;
@@ -593,6 +611,21 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
             arms.pop();
         }
         return next_match_arm(scrutinee, arms, kont);
+    }
+    // `println` and `print` reach the outside world, so they do not write:
+    // they render, and then perform the `IO` operation that writes. The
+    // handler is the runtime's own unless the program installed a nearer
+    // one, which is what lets a program mock its output.
+    if let Some(op) = match name {
+        "println" => Some("write_line"),
+        "print" => Some("write"),
+        _ => None,
+    } {
+        let text = args.first().map(|v| v.display()).unwrap_or_default();
+        return Ok(State::Apply {
+            callee: Value::Operation { effect: "IO".into(), op: op.into() },
+            arg: Value::Str(text),
+        });
     }
     // A builtin that offers its outcome activates one of its continuations;
     // the rest return a value.

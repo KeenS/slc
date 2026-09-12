@@ -15,7 +15,7 @@ enum Tree {
     Node(Tree, i64, Tree),
 }
 
-command walk(t: Tree, target: i64) | (jump: i64 & done: unit) {
+command walk(t: Tree, target: i64) | (jump: i64 & done: unit) / {IO} {
     match t {
         Leaf => (,) | done⟩,
         Node(left, value, right) => {
@@ -33,7 +33,7 @@ command walk(t: Tree, target: i64) | (jump: i64 & done: unit) {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     let tree = Tree::Node(
         Tree::Node(Tree::Leaf, 1, Tree::Node(Tree::Leaf, 2, Tree::Leaf)),
         3,

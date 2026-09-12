@@ -15,7 +15,7 @@ fn name(c: Color) -> String {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     Color::Red | name | println;
     0 | exit⟩
 }

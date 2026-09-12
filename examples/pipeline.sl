@@ -31,7 +31,7 @@ command forward(n: i64) | (row: (i64 & String)) {
     n | classify | row⟩
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // a value flowing through functions, awaiting a continuation
     21 | double | println;
     3 | double | incr | double | println;

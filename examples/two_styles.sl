@@ -73,7 +73,7 @@ fn label_of(out: String) <- i64 {
     }
 }
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     // Value-first: the shape flows through `area`, then `label`.
     Shape::Circle(5) | area | label | println;
     Shape::Rect(6, 7) | area | label | println;
