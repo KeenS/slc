@@ -35,6 +35,10 @@ pub enum Expr {
         args: Vec<Node<Expr>>,
     },
     Pair(Vec<Node<Expr>>),
+    /// `(k1 & k2 & …)` — a bundle of exits, the anonymous menu's
+    /// introduction: every component is supplied, and whoever holds it
+    /// takes exactly one. Its type is the `&` of its components'.
+    Bundle(Vec<Node<Expr>>),
     Match {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
@@ -155,7 +159,7 @@ impl Expr {
                 vec![body]
             }
             Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
-            Expr::Pair(items) | Expr::Block(items) => items.iter().collect(),
+            Expr::Pair(items) | Expr::Bundle(items) | Expr::Block(items) => items.iter().collect(),
             Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
                 .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
                 .collect(),
@@ -228,6 +232,9 @@ pub enum TypeExpr {
     Negative(Box<Node<TypeExpr>>),
     Tensor(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Par(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
+    /// The additive conjunction, `(A & B)`: a menu of two items, written
+    /// anonymously. A continuation row is one of these.
+    With(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
     Effectful(Box<Node<TypeExpr>>, EffectRow),
@@ -306,6 +313,9 @@ pub enum Pattern {
     },
     Rest,
     Tuple(Vec<Pattern>),
+    /// `(p & q)` — the bundle copattern: the anonymous menu's counterpart
+    /// to the tuple pattern, binding each exit.
+    Bundle(Vec<Pattern>),
     Data {
         name: String,
         fields: Vec<(String, Pattern)>,

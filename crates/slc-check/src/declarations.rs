@@ -99,6 +99,9 @@ impl Declarations {
             TypeExpr::Par(a, b) => {
                 Type::Par(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
             }
+            TypeExpr::With(a, b) => {
+                Type::With(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
+            }
             // `A → B` is `-A ⅋ B`.
             TypeExpr::Fun(a, b) => Type::arrow(resolve(&a.kind)?, resolve(&b.kind)?),
             // `dual(A)` applies the involution; only a declaration's name

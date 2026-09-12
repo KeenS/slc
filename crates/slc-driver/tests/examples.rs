@@ -31,7 +31,7 @@ fn repository_example_suite_has_expected_results() {
             "arithmetic.sl",
             Expected { success: true, stdout: &["5", "6", "42", "10", "-5"], stderr: &[] },
         ),
-        ("logical_units.sl", Expected { success: true, stdout: &["()", "()"], stderr: &[] }),
+        ("logical_units.sl", Expected { success: true, stdout: &["(,)", "(,)"], stderr: &[] }),
         (
             "composition.sl",
             Expected {
@@ -109,7 +109,7 @@ fn repository_example_suite_has_expected_results() {
                 success: true,
                 // ⊗, then ⅋ three ways, then ⊕, &, a menu's two items, and
                 // the units.
-                stdout: &["42", "7", "\"green\"", "1", "3", "\"slant\"", "()"],
+                stdout: &["42", "7", "\"green\"", "1", "3", "\"slant\"", "(,)"],
                 stderr: &[],
             },
         ),

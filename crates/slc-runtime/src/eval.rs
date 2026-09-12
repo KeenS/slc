@@ -96,7 +96,6 @@ pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> 
         // Only the `$`-prefixed encodings are reserved: they cannot be
         // written in the surface, so they never shadow a binding.
         "$unit" => return Ok(Value::Unit),
-        "$no_args" => return Ok(Value::NoArguments),
         _ => {}
     }
     env.lookup(x).ok_or_else(|| EvalError::Unbound(x.to_string()))
@@ -145,9 +144,6 @@ pub(crate) fn collect_args(v: &Value, out: &mut Vec<Value>) {
             collect_args(a, out);
             collect_args(b, out);
         }
-        // A call with no arguments contributes none; unit is a value like
-        // any other and contributes one.
-        Value::NoArguments => {}
         other => out.push(other.clone()),
     }
 }

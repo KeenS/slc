@@ -113,7 +113,7 @@ fn config() -> Config {
 // have no variants to write and so no surface form.)
 
 fn done(k: -⊥) <- unit {
-    () @ k
+    (,) @ k
 }
 
 command main | (exit: -i32) {

@@ -9,7 +9,7 @@
 // ── Logical units ───────────────────────────────────────────────────────
 //
 // Empty and Top remain ordinary nominal declarations. Unit and Bottom give
-// names to the existing `()`/`1` and `⊥` units respectively.
+// names to the existing `(,)`/`1` and `⊥` units respectively.
 
 data Unit {}
 form Bottom {}

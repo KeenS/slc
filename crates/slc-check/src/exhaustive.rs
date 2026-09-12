@@ -154,7 +154,7 @@ fn check_expr(
                 check_expr(a, enums, bindings, diags);
             }
         }
-        Expr::Pair(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) => {
             for i in items {
                 check_expr(i, enums, bindings, diags);
             }
@@ -222,7 +222,9 @@ fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
         // A name that is not a variant is a binding, so it matches anything.
         Pattern::Ident(name) => enums.payload_arity(name).is_none(),
         Pattern::Binding { pattern, .. } => is_irrefutable(pattern, enums),
-        Pattern::Tuple(items) => items.iter().all(|item| is_irrefutable(item, enums)),
+        Pattern::Tuple(items) | Pattern::Bundle(items) => {
+            items.iter().all(|item| is_irrefutable(item, enums))
+        }
         Pattern::Data { name, fields } => {
             enums.declares(name) && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
         }
@@ -391,7 +393,7 @@ fn check_pattern_arity(
                 check_pattern_arity(alternative, enums, span, diags);
             }
         }
-        Pattern::Tuple(items) => {
+        Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 check_pattern_arity(item, enums, span, diags);
             }

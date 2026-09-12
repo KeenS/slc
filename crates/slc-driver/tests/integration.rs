@@ -997,7 +997,7 @@ fn the_prelude_provides_all_four_logical_units() {
     let dir = std::env::temp_dir().join("slc_test_prelude_units.sl");
     std::fs::write(
         &dir,
-        r#"fn unit_value() -> Unit { () }
+        r#"fn unit_value() -> Unit { (,) }
         fn builtin_unit_value() -> unit { Unit {} }
         fn top_value() -> Top { mu Top {} }
         fn use_empty<T>(empty: Empty) -> T { match empty {} }
@@ -1007,12 +1007,12 @@ fn the_prelude_provides_all_four_logical_units() {
         command bottom_command | (exit: -i32) -> Bottom { 0 @ exit }
         command main | (exit: -i32) {
             match unit_value() { Unit {} => println("unit") };
-            match builtin_unit_value() { () => println("unit again") };
+            match builtin_unit_value() { (,) => println("unit again") };
             println(mu i64 {
                 out <= use_bottom(select Bottom { Bottom {} => 42 @ out }) @ out
             });
             println(mu i64 {
-                out <= Bottom {} @ select Bottom { () => 43 @ out }
+                out <= Bottom {} @ select Bottom { (,) => 43 @ out }
             });
             0 @ exit
         }"#,

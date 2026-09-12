@@ -896,6 +896,22 @@ impl Parser {
             }
             Some(TokenKind::LParen) => {
                 self.pos += 1;
+                // A paren holding only the separator is the nullary form:
+                // `(&)` is the empty menu, ⊤, and `(,)` the empty tuple.
+                if self.eat(&TokenKind::Amp) {
+                    self.expect(TokenKind::RParen, "`)` after `(&`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: TypeExpr::Base("Top".into()),
+                    });
+                }
+                if self.eat(&TokenKind::Comma) {
+                    self.expect(TokenKind::RParen, "`)` after `(,`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: TypeExpr::Unit,
+                    });
+                }
                 let left = self.parse_type()?;
                 if self.eat(&TokenKind::Arrow) {
                     let right = self.parse_type()?;
@@ -923,6 +939,16 @@ impl Parser {
                     let right = self.parse_type()?;
                     self.expect(TokenKind::RParen, "`)`")?;
                     TypeExpr::Tensor(
+                        Box::new(left),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
+                    )
+                } else if self.eat(&TokenKind::Amp) {
+                    let right = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    TypeExpr::With(
                         Box::new(left),
                         Box::new(Node {
                             span: Span { start, end: self.span_end() },
@@ -1660,20 +1686,56 @@ impl Parser {
         }
     }
 
-    /// The body of a parenthesised expression, after the `(`: `()`, `(e)`,
-    /// or `(e1, e2, …)`.
+    /// The body of a parenthesised expression, after the `(`: the nullary
+    /// forms `(,)` and `(&)`, a grouping `(e)`, a tuple `(e1, e2, …)`, or a
+    /// bundle of exits `(k1 & k2 & …)`.
     fn parse_paren_expr(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
         {
             {
-                // () or (e) or (e1, e2)
-                if self.eat(&TokenKind::RParen) {
-                    // `()` is the unit value: the empty product.
+                // A paren holding only the separator is the nullary form of
+                // that connective: `(,)` the empty tuple, `(&)` the empty
+                // menu — ⊤, whose value is unique.
+                if self.eat(&TokenKind::Comma) {
+                    self.expect(TokenKind::RParen, "`)` after `(,`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
                         kind: Expr::Pair(Vec::new()),
                     });
                 }
+                if self.eat(&TokenKind::Amp) {
+                    self.expect(TokenKind::RParen, "`)` after `(&`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::CoMatch {
+                            ty: Some(Box::new(Node {
+                                span: Span { start, end: self.span_end() },
+                                kind: TypeExpr::Base("Top".into()),
+                            })),
+                            arms: Vec::new(),
+                        },
+                    });
+                }
+                if self.peek_kind() == Some(&TokenKind::RParen) {
+                    return Err(ParseError {
+                        message: "`()` is not a value; the empty tuple is `(,)` and the \
+                                  empty menu `(&)`"
+                            .into(),
+                        span: Span { start, end: self.span_end() },
+                    });
+                }
                 let first = self.parse_expr()?;
+                // `(k1 & k2 & …)` — a bundle of exits.
+                if self.peek_kind() == Some(&TokenKind::Amp) {
+                    let mut items = vec![first];
+                    while self.eat(&TokenKind::Amp) {
+                        items.push(self.parse_expr()?);
+                    }
+                    self.expect(TokenKind::RParen, "`)` after a bundle")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Bundle(items),
+                    });
+                }
                 if self.eat(&TokenKind::Comma) {
                     let mut items = vec![first];
                     loop {
@@ -1916,16 +1978,46 @@ impl Parser {
             }
             Some(TokenKind::LParen) => {
                 self.pos += 1;
-                let mut items = Vec::new();
-                loop {
-                    if self.eat(&TokenKind::RParen) {
-                        break;
+                // The nullary forms, as in expressions: `(,)` matches unit,
+                // `(&)` the empty menu. Both bind nothing.
+                if self.eat(&TokenKind::Comma) {
+                    self.expect(TokenKind::RParen, "`)` after `(,`")?;
+                    return Ok(Pattern::Tuple(Vec::new()));
+                }
+                if self.eat(&TokenKind::Amp) {
+                    self.expect(TokenKind::RParen, "`)` after `(&`")?;
+                    return Ok(Pattern::Bundle(Vec::new()));
+                }
+                if self.peek_kind() == Some(&TokenKind::RParen) {
+                    return Err(ParseError {
+                        message: "`()` is not a pattern; the empty tuple is `(,)` and the \
+                                  empty menu `(&)`"
+                            .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                }
+                let mut items = vec![self.parse_pattern()?];
+                // `(p & q)` — the bundle copattern, binding each exit.
+                if self.peek_kind() == Some(&TokenKind::Amp) {
+                    while self.eat(&TokenKind::Amp) {
+                        items.push(self.parse_pattern()?);
                     }
-                    items.push(self.parse_pattern()?);
-                    if !self.eat(&TokenKind::Comma) {
-                        self.expect(TokenKind::RParen, "`)`")?;
-                        break;
+                    self.expect(TokenKind::RParen, "`)` after a bundle pattern")?;
+                    return Ok(Pattern::Bundle(items));
+                }
+                if self.eat(&TokenKind::Comma) {
+                    loop {
+                        if self.eat(&TokenKind::RParen) {
+                            break;
+                        }
+                        items.push(self.parse_pattern()?);
+                        if !self.eat(&TokenKind::Comma) {
+                            self.expect(TokenKind::RParen, "`)`")?;
+                            break;
+                        }
                     }
+                } else {
+                    self.expect(TokenKind::RParen, "`)`")?;
                 }
                 Ok(Pattern::Tuple(items))
             }

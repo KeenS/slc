@@ -17,7 +17,7 @@ enum Tree {
 
 command walk(t: Tree, target: +i64) | (jump: -i64, done: -unit) {
     match t {
-        Leaf => () @ done,
+        Leaf => (,) @ done,
         Node(left, value, right) => {
             println("visiting " + int_to_str(value));
             if value == target {

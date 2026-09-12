@@ -309,6 +309,10 @@ fn resolve_rigid(
             Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
             Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
         )),
+        T::With(a, b) => Some(Type::With(
+            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
+            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
+        )),
         T::Apply(name, args) => {
             let args = args
                 .iter()
@@ -559,7 +563,9 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Ident(_)
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
-        Expr::Pair(items) => items.iter().all(|item| is_value_form(&item.kind, enums)),
+        Expr::Pair(items) | Expr::Bundle(items) => {
+            items.iter().all(|item| is_value_form(&item.kind, enums))
+        }
         Expr::Data { fields, .. } => {
             fields.iter().all(|(_, value)| is_value_form(&value.kind, enums))
         }
@@ -738,7 +744,7 @@ fn check_pattern(
         Pattern::Binding { pattern, .. } => {
             check_pattern(pattern, expected, declarations, span, diags)
         }
-        Pattern::Tuple(items) => {
+        Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 check_pattern(item, expected, declarations, span, diags);
             }
@@ -1018,6 +1024,14 @@ fn bind_match_pattern(
                 bind_match_pattern(item, ty, enums, env);
             }
         }
+        // A bundle binds the exits of an anonymous menu, as a tuple binds
+        // the components of a product.
+        Pattern::Bundle(items) => {
+            let components = flatten_with(scrutinee);
+            for (item, ty) in items.iter().zip(components.iter()) {
+                bind_match_pattern(item, ty, enums, env);
+            }
+        }
         // A variant with no known payload types, or literals/ranges/wildcards
         // that bind nothing; an `Or` binds the same names in each branch, so
         // the first suffices.
@@ -1214,6 +1228,8 @@ fn bind_select_arm(
         }
         // A tensor: its components, flattened right-nested.
         (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
+        // A menu of exits: its items, likewise.
+        (Type::With(..), Pattern::Bundle(_)) => flatten_with(consumed),
         _ => {
             diags.push(Diagnostic {
                 message: format!("a `select {consumed}` arm must cover a shape of {consumed}"),
@@ -1302,6 +1318,18 @@ fn flatten_tensor(ty: &Type) -> Vec<Type> {
     }
 }
 
+/// The items of a `&`, flattened right-nested — the exits a bundle holds.
+fn flatten_with(ty: &Type) -> Vec<Type> {
+    match ty {
+        Type::With(a, b) => {
+            let mut items = vec![(**a).clone()];
+            items.extend(flatten_with(b));
+            items
+        }
+        other => vec![other.clone()],
+    }
+}
+
 fn infer_expr(
     e: &Node<Expr>,
     enums: &Declarations,
@@ -1327,15 +1355,24 @@ fn check_expr(
 /// The components of a right-nested product, flattened along the spine, so
 /// `A ⊗ (B ⊗ C)` is `[A, B, C]` — matching the runtime projection walk. A
 /// non-product is a single component.
+/// The components a positional projection can reach: a product's, and a
+/// menu-of-exits' — taking an exit is projecting an item of a `&`, which
+/// the runtime holds as the same right-nested pair.
 fn tensor_spine(ty: &Type) -> Vec<Type> {
     let mut out = Vec::new();
     let mut current = ty.clone();
-    while let Type::Tensor(a, b) = current {
-        out.push(*a);
-        current = *b;
+    loop {
+        match current {
+            Type::Tensor(a, b) | Type::With(a, b) => {
+                out.push(*a);
+                current = *b;
+            }
+            other => {
+                out.push(other);
+                return out;
+            }
+        }
     }
-    out.push(current);
-    out
 }
 
 fn check_expr_unapplied(
@@ -2231,6 +2268,15 @@ fn check_expr_unapplied(
                 None => Some(body_ty),
             }
         }
+        // A bundle of exits: every component is supplied, and whoever
+        // holds it takes exactly one — the additive conjunction.
+        Expr::Bundle(items) => items
+            .iter()
+            .map(|item| check_expr(item, enums, env, diags))
+            .collect::<Option<Vec<_>>>()
+            .map(|types| {
+                types.into_iter().rev().reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)))
+            })?,
         Expr::Pair(items) if items.is_empty() => Some(Type::One),
         Expr::Pair(items) => items
             .iter()
@@ -2862,7 +2908,7 @@ mod tests {
     fn unit_is_a_type_and_not_a_wildcard() {
         let diags = check(
             "fn wants(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) { println(wants(())); 0 @ exit }",
+             command main | (exit: -i32) { println(wants((,))); 0 @ exit }",
         )
         .unwrap_err();
         assert!(
@@ -2877,12 +2923,12 @@ mod tests {
             check(
                 "data Unit {}
                  form Bottom {}
-                 fn named_unit() -> Unit { () }
+                 fn named_unit() -> Unit { (,) }
                  fn symbolic_unit() -> unit { Unit {} }
                  fn stop(exit: -i32) -> Bottom {
                      select { Bottom {} => 0 @ exit }
                  }
-                 command absorb | (never: -Bottom) { () @ never }
+                 command absorb | (never: -Bottom) { (,) @ never }
                  command halt | (exit: -i32) { 0 @ exit }"
             )
             .is_ok()
@@ -2891,13 +2937,13 @@ mod tests {
 
     #[test]
     fn a_differently_shaped_unit_shadow_stays_nominal() {
-        let diags = check("data Unit { value: i64 } fn not_unit() -> Unit { () }").unwrap_err();
+        let diags = check("data Unit { value: i64 } fn not_unit() -> Unit { (,) }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("initializer") || d.message.contains("body")),
             "{diags:?}"
         );
 
-        let diags = check("data Bottom {} command halt -> Bottom { () }").unwrap_err();
+        let diags = check("data Bottom {} command halt -> Bottom { (,) }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("not the nullary prelude form")),
             "{diags:?}"
@@ -3098,8 +3144,8 @@ mod tests {
             check(
                 "command main | (exit: -i32) {
                      let fresh = fn(u) { mu { k <= fn(x) { x } @ k } };
-                     println(fresh(())(1) + 1);
-                     println(str_len(fresh(())(\"s\")));
+                     println(fresh((,))(1) + 1);
+                     println(str_len(fresh((,))(\"s\")));
                      0 @ exit
                  }"
             )

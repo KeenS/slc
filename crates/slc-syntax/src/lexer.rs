@@ -233,6 +233,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '/' => TokenKind::Slash,
             '%' => TokenKind::Percent,
             '|' => TokenKind::Pipe,
+            '&' => TokenKind::Amp,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
             '=' => TokenKind::Assign,

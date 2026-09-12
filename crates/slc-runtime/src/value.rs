@@ -118,9 +118,7 @@ pub enum Value {
     Kont(crate::machine::Kont),
     Pair(Box<Value>, Box<Value>),
     Builtin(String),
-    /// The marker a call with no arguments applies its callee to. It is not
-    /// unit: `f()` passes nothing, while `f(())` passes the unit value.
-    NoArguments,
+
     /// An open file handle: an id into the runtime's handle registry,
     /// produced by `open_file` and spent by `close_file`.
     File(u64),
@@ -173,7 +171,7 @@ impl PartialEq for Value {
             (Value::Str(a), Value::Str(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Char(a), Value::Char(b)) => a == b,
-            (Value::Unit, Value::Unit) | (Value::NoArguments, Value::NoArguments) => true,
+            (Value::Unit, Value::Unit) => true,
             (Value::File(a), Value::File(b)) => a == b,
             (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
             (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
@@ -200,7 +198,7 @@ impl Value {
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
             Value::Operation { .. } => Type::One,
             Value::Resume(_) => Type::Bottom,
-            Value::Unit | Value::NoArguments => Type::One,
+            Value::Unit => Type::One,
             Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
             Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
             Value::Tagged(label, _) => Type::Named(
@@ -220,8 +218,8 @@ impl Value {
             Value::Str(s) => format!("{s:?}"),
             Value::Bool(b) => format!("{b}"),
             Value::Char(c) => format!("{c:?}"),
-            Value::Unit => "()".to_string(),
-            Value::NoArguments => "<no arguments>".to_string(),
+            Value::Unit => "(,)".to_string(),
+
             Value::File(id) => format!("<file@{id}>"),
             Value::Operation { op, .. } => format!("<operation {op}>"),
             Value::Resume(_) => "<resume>".to_string(),

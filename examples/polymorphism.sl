@@ -34,8 +34,8 @@ command main | (exit: -i32) {
             fn(x) { x } @ k
         } }
     };
-    println(fresh(())(1) + 1);
-    println(str_len(fresh(())("again")));
+    println(fresh((,))(1) + 1);
+    println(str_len(fresh((,))("again")));
 
     0 @ exit
 }

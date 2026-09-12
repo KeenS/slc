@@ -358,7 +358,10 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
             resolve_type(&mut inner.kind, stack)
         }
-        TypeExpr::Tensor(a, b) | TypeExpr::Par(a, b) | TypeExpr::Fun(a, b) => {
+        TypeExpr::Tensor(a, b)
+        | TypeExpr::Par(a, b)
+        | TypeExpr::With(a, b)
+        | TypeExpr::Fun(a, b) => {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
         }
@@ -477,7 +480,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut arg.kind, stack, locals);
             }
         }
-        Expr::Pair(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) => {
             for item in items {
                 resolve_expr(&mut item.kind, stack, locals);
             }
@@ -556,7 +559,7 @@ fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>])
                 resolve_pattern(field, stack, locals);
             }
         }
-        Pattern::Or(items) | Pattern::Tuple(items) => {
+        Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 resolve_pattern(item, stack, locals);
             }
@@ -596,7 +599,7 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
             out.insert(name.clone());
             collect_binders(pattern, out);
         }
-        Pattern::Or(items) | Pattern::Tuple(items) => {
+        Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 collect_binders(item, out);
             }
@@ -672,7 +675,7 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut arg.kind, imported);
             }
         }
-        Expr::Pair(items) | Expr::Block(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) | Expr::Block(items) => {
             for item in items {
                 rewrite_expr_imports(&mut item.kind, imported);
             }
@@ -755,7 +758,7 @@ fn rewrite_pattern_imports(p: &mut Pattern, imported: &HashMap<String, String>) 
             }
         }
         Pattern::Binding { pattern, .. } => rewrite_pattern_imports(pattern, imported),
-        Pattern::Or(items) | Pattern::Tuple(items) => {
+        Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 rewrite_pattern_imports(item, imported);
             }

@@ -1,11 +1,11 @@
 // The four logical units, supplied by the prelude.
 //
-// Unit and Bottom name the multiplicative units already written `()` and
+// Unit and Bottom name the multiplicative units already written `(,)` and
 // `⊥`. Empty and Top are the nullary additive declarations; concise aliases
 // for them remain deliberately unsettled.
 
 fn unit_value() -> Unit {
-    ()
+    (,)
 }
 
 // Bottom's nullary demand is the unit value itself: dual(⊥) = 1.

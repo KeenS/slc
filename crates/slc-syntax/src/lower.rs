@@ -225,6 +225,9 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Par(a, b) => {
             Ok(Type::Par(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
         }
+        TypeExpr::With(a, b) => {
+            Ok(Type::With(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
+        }
         // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
@@ -309,9 +312,9 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             let mut call_args: Vec<Term> =
                 call_dicts(e.span).unwrap_or_default().iter().map(dict_term).collect();
             if args.is_empty() {
-                // A call with no value arguments still applies its callee, to
-                // the marker that carries none.
-                call_args.push(Term::Var(NO_ARGUMENTS.into()));
+                // A call with no value arguments applies its callee to unit,
+                // the empty tuple: `f()` is `f((,))`.
+                call_args.push(Term::Var("$unit".into()));
             } else {
                 for arg in args {
                     call_args.push(lower_expr(arg, continuations)?);
@@ -329,6 +332,21 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             Ok(result)
         }
 
+        // `(k1 & k2 & …)` — a bundle of exits. The runtime holds it as the
+        // same right-nested pair a tuple uses: taking an exit is projecting
+        // a component, and only the checker tells `&` from `⊗`.
+        Expr::Bundle(items) => {
+            let mut terms: Vec<Term> = Vec::new();
+            for item in items {
+                terms.push(lower_expr(item, continuations)?);
+            }
+            let mut it = terms.into_iter().rev();
+            let mut acc = it.next().expect("a bundle has at least two components");
+            for t in it {
+                acc = Term::Pair(Box::new(t), Box::new(acc));
+            }
+            Ok(acc)
+        }
         Expr::Pair(items) => {
             // (e1, e2) → e1' ⊗ e2'
             let mut terms: Vec<Term> = Vec::new();
@@ -884,6 +902,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 if params.is_empty() && *polarity == FunctionPolarity::Positive {
                     term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
                 }
+
                 // A bounded function takes its dictionaries outermost, before
                 // the value arguments.
                 term = bind_dict_params(bounds, term);
@@ -1327,9 +1346,10 @@ fn lower_select_command(
     Ok(Command::Cut(lower_expr(command, continuations)?, CoTerm::Covar(ARM_COVAR.into())))
 }
 
-/// The marker a call with no arguments applies its callee to. It is not unit:
-/// `f()` passes nothing, while `f(())` passes the unit value.
-const NO_ARGUMENTS: &str = "$no_args";
+/// The binder a parameterless declaration introduces for the unit its
+/// callers pass. `f()` is `f((,))`, so there is nothing special about it
+/// beyond the name never being mentioned.
+const NO_ARGUMENTS: &str = "__no_args";
 
 /// A binder a lowered arm introduces but never mentions.
 const UNUSED_BINDER: &str = "__unused";
@@ -1477,7 +1497,9 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 }
                 out.push(')');
             }
-            Pattern::Tuple(items) => {
+            Pattern::Tuple(items) | Pattern::Bundle(items) => {
+                // A bundle is the same right-nested pair a tuple is, so it
+                // matches the same way: the checker tells `&` from `⊗`.
                 out.push('(');
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {
@@ -1612,10 +1634,10 @@ mod tests {
         // A positive function with no parameters binds the marker a call
         // with no arguments supplies, so it stays callable.
         let single = lower_str("fn f() -> i32 { 1 }")[0].1.clone();
-        assert_eq!(single, Term::Lam("$no_args".into(), Box::new(Term::Var("$int_1".into()))));
+        assert_eq!(single, Term::Lam("__no_args".into(), Box::new(Term::Var("$int_1".into()))));
 
         let empty = lower_str("fn f() -> unit { }")[0].1.clone();
-        assert_eq!(empty, Term::Lam("$no_args".into(), Box::new(Term::Var("$unit".into()))));
+        assert_eq!(empty, Term::Lam("__no_args".into(), Box::new(Term::Var("$unit".into()))));
 
         let nested = lower_str(
             "fn f() -> i32 {
@@ -1835,7 +1857,7 @@ mod tests {
     #[test]
     fn lower_int() {
         let out = lower_str("42");
-        assert_eq!(out[0].1, Term::Lam("$no_args".into(), Box::new(Term::Var("$int_42".into()))));
+        assert_eq!(out[0].1, Term::Lam("__no_args".into(), Box::new(Term::Var("$int_42".into()))));
     }
 
     #[test]
