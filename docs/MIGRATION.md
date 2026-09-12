@@ -637,7 +637,7 @@ The final form consumes an existing enum:
 ```sl
 enum Color { Red, Green, Blue }
 
-fn k(return: -i32) <- Color {
+fn k(return: i32) <- Color {
     select Color {
         Red => 0 | return,
         Green => 1 | return,

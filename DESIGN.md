@@ -771,14 +771,14 @@ so.)
 
 A `trait` names operations over an implicit `Self`; an `impl` gives them for a
 type; a bound `<T: Show>` lets a generic use them. A method is a free function
-overloaded on its first argument's type — `show(x)`, never `x.show()`:
+overloaded on its first argument's type — `x | show`, never `x.show()`:
 
 ```sl
-trait Show { fn show(self: +Self) -> String; }
-impl Show for i64  { fn show(self: +i64)  -> String { int_to_str(self) } }
-impl Show for bool { fn show(self: +bool) -> String { if self { "t" } else { "f" } } }
+trait Show { fn show(self: Self) -> String; }
+impl Show for i64  { fn show(self: i64)  -> String { self | int_to_str } }
+impl Show for bool { fn show(self: bool) -> String { if self { "t" } else { "f" } } }
 
-fn labelled<T: Show>(x: +T) -> String { "= " + show(x) }
+fn labelled<T: Show>(x: T) -> String { "= " + (x | show) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -971,7 +971,7 @@ trait Describe { fn describe(self: Self) -> String; }   // receives Self
 trait Deliver  { fn deliver(out: String) <- Self; }     // consumes Self
 ```
 
-A positive method takes `self: +Self` and dispatches on what it receives.
+A positive method takes `self: Self` and dispatches on what it receives.
 A negative method takes no `self` — a negative function's parameters are
 all continuations — so its `Self` is the type it *consumes*, and dispatch
 reads the value the cut sends: `42 | deliver(s)` finds the `i64` impl,
@@ -1187,7 +1187,7 @@ wrong connective: it wants every field at once); the negative side's
 structure cannot print whole and `fmt(take(s, n))` is the honest form —
 **`Seq<T>`**, the finite codata sequence that sits between the two (below),
 and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
-**`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
+**`Display` trait** — `fn fmt(self: Self) -> String`, user-facing
 formatting as in Rust, with impls for `i64`, `String`, `bool`, and
 `List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
 one **tap**, `command traced(label, x) | (k)`, which logs what passes
@@ -1256,7 +1256,7 @@ it composes with an error consumer a program already has.
 
 ```sl
 "input.json" | read_file | (
-    select +String { source => source | parse_json | report⟩ }
+    select String { source => source | parse_json | report⟩ }
     & complain
 )⟩
 ```
