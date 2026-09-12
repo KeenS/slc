@@ -245,7 +245,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             {
                 enums.unit_alias = true;
             }
-            Decl::Form { name, type_params, fields }
+            Decl::Form { name, type_params, fields, .. }
                 if name == "Bottom" && type_params.is_empty() && fields.is_empty() =>
             {
                 enums.bottom_alias = true;
@@ -262,8 +262,8 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         // it. Field types resolve here, in the second pass, so they may
         // name any declaration — and any of the declaration's own
         // parameters.
-        if let Decl::Data { name, type_params, fields } | Decl::Form { name, type_params, fields } =
-            &d.kind
+        if let Decl::Data { name, type_params, fields }
+        | Decl::Form { name, type_params, fields, .. } = &d.kind
         {
             let params = param_scope(type_params);
             enums.records.insert(
@@ -279,7 +279,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         // A menu registers the request view of itself: one "variant" per
         // item, labelled `Menu::item`, whose payload is the consumer of the
         // item's answer — the continuation a request carries.
-        if let Decl::Menu { name, type_params, items } = &d.kind {
+        if let Decl::Menu { name, type_params, items, .. } = &d.kind {
             let params = param_scope(type_params);
             enums.variants.insert(name.clone(), items.iter().map(|(i, _)| i.clone()).collect());
             for (item, answer) in items {

@@ -60,6 +60,10 @@ struct Interface {
     row: Row,
     /// Parameter name → the row of its arrow type, in declaration order.
     params: Vec<(String, Row)>,
+    /// The latent row of the RESULT type — `-> (-A / {..E})`: what running
+    /// the returned value (feeding a consumer, applying a function) may
+    /// perform, as opposed to what the call itself does.
+    latent: Row,
 }
 
 impl Interface {
@@ -84,6 +88,35 @@ fn param_row(ty: &TypeExpr) -> Row {
     }
 }
 
+/// The latent row of a result type — what running the returned value may
+/// perform. The same shape as `param_row`; the name marks the reading.
+fn return_latent(ty: &TypeExpr) -> Row {
+    param_row(ty)
+}
+
+/// Split a body into its returned suspended literal — a `fn`, `select`, or
+/// `mu` in tail position, whose effects belong to the result's latent row —
+/// and the rest. Without a latent row there is nothing to divert.
+fn returned_literal<'a>(
+    body: &'a Node<Expr>,
+    latent: &Row,
+) -> (Option<&'a Node<Expr>>, Vec<&'a Node<Expr>>) {
+    if latent.effects.is_empty() && latent.tails.is_empty() {
+        return (None, vec![body]);
+    }
+    let (tail, rest): (&Node<Expr>, &[Node<Expr>]) = match &body.kind {
+        Expr::Block(exprs) if !exprs.is_empty() => {
+            (exprs.last().unwrap(), &exprs[..exprs.len() - 1])
+        }
+        _ => (body, &[]),
+    };
+    if matches!(tail.kind, Expr::Lambda { .. } | Expr::Select { .. } | Expr::CoMatch { .. }) {
+        (Some(tail), rest.iter().collect())
+    } else {
+        (None, std::iter::once(body).collect())
+    }
+}
+
 struct Ctx<'a> {
     /// Operation name → the effect it belongs to.
     op_effect: &'a HashMap<String, String>,
@@ -91,7 +124,25 @@ struct Ctx<'a> {
     interfaces: &'a HashMap<String, Interface>,
     /// The parameters of the declaration under analysis, name → its row.
     params: &'a HashMap<String, Row>,
+    /// Menu/form declarations carrying a latent row.
+    latent_decls: &'a HashMap<String, Row>,
+    /// Item or field name → its rowed menu/form, for charging demands.
+    latent_items: &'a HashMap<String, String>,
+    /// `let`-bound names whose value carries a latent row — a consumer
+    /// built by a call and bound before being fed. Scoped by hand in the
+    /// `Let` arm.
+    locals: HashMap<String, Row>,
     diags: &'a mut Vec<Diagnostic>,
+}
+
+/// The name a written type is headed by, seen through the signs.
+fn type_head(ty: &TypeExpr) -> Option<&str> {
+    match ty {
+        TypeExpr::Base(name) => Some(name),
+        TypeExpr::Apply(name, _) => Some(name),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) => type_head(&inner.kind),
+        _ => None,
+    }
 }
 
 pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
@@ -104,27 +155,78 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
         }
     }
 
+    // The latent rows of the negative declarations: a menu's row fires per
+    // demand, a form's per feed — codata runs on the consumer's schedule,
+    // so the row belongs to the type. v1 keeps declaration rows concrete;
+    // a row variable on a type is the rows-into-types upgrade, deferred.
+    let mut diags = Vec::new();
+    let mut latent_decls: HashMap<String, Row> = HashMap::new();
+    let mut latent_items: HashMap<String, String> = HashMap::new();
+    for d in &p.decls {
+        let (name, effects, members) = match &d.kind {
+            Decl::Menu { name, effects, items, .. } => (name, effects, items),
+            Decl::Form { name, effects, fields, .. } => (name, effects, fields),
+            _ => continue,
+        };
+        if effects.is_empty() {
+            continue;
+        }
+        if !effects.tails.is_empty() {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{name}` declares a row variable; a declaration's latent row is concrete (row variables on types are not yet supported)"
+                ),
+                span: d.span,
+            });
+        }
+        for (item, _) in members {
+            if let Some(other) = latent_items.insert(item.clone(), name.clone())
+                && other != *name
+            {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "item `{item}` appears in both `{other}` and `{name}`, which carry latent rows; their item names must be distinct so a demand's row is unambiguous"
+                    ),
+                    span: d.span,
+                });
+            }
+        }
+        latent_decls.insert(name.clone(), Row::from_ast(effects));
+    }
+
     let mut decls = Vec::new();
     let mut interfaces: HashMap<String, Interface> = HashMap::new();
     for d in &p.decls {
-        let (name, params, effects, body) = match &d.kind {
-            Decl::Fn { name, params, effects, body, .. } => {
-                (name, params.iter().collect::<Vec<_>>(), effects, body)
+        let (name, params, effects, return_type, body) = match &d.kind {
+            Decl::Fn { name, params, effects, return_type, body, .. } => {
+                (name, params.iter().collect::<Vec<_>>(), effects, return_type, body)
             }
-            Decl::Command { name, value_params, continuation_params, effects, body, .. } => {
-                (name, value_params.iter().chain(continuation_params).collect(), effects, body)
-            }
+            Decl::Command {
+                name,
+                value_params,
+                continuation_params,
+                effects,
+                return_type,
+                body,
+                ..
+            } => (
+                name,
+                value_params.iter().chain(continuation_params).collect(),
+                effects,
+                return_type,
+                body,
+            ),
             _ => continue,
         };
         let params: Vec<(String, Row)> = params
             .iter()
             .map(|p| (p.name.clone(), p.ty.as_ref().map(param_row).unwrap_or_default()))
             .collect();
-        interfaces.insert(name.clone(), Interface { row: Row::from_ast(effects), params });
+        let latent = return_type.as_ref().map(return_latent).unwrap_or_default();
+        interfaces.insert(name.clone(), Interface { row: Row::from_ast(effects), params, latent });
         decls.push((name.clone(), body, d.span));
     }
 
-    let mut diags = Vec::new();
     for (name, body, span) in &decls {
         let interface = &interfaces[name.as_str()];
         let param_rows: HashMap<String, Row> = interface.params.iter().cloned().collect();
@@ -133,17 +235,45 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
             op_effect: &op_effect,
             interfaces: &interfaces,
             params: &param_rows,
+            latent_decls: &latent_decls,
+            latent_items: &latent_items,
+            locals: HashMap::new(),
             diags: &mut diags,
         };
-        collect(body, &mut ctx, &mut incurred);
+        // A declaration whose result carries a latent row may end in the
+        // suspended value itself — a returned literal's effects belong to
+        // that row, not to the call.
+        let (tail, rest) = returned_literal(body, &interface.latent);
+        for e in rest {
+            collect(e, &mut ctx, &mut incurred);
+        }
+        if let Some(tail) = tail {
+            let mut lit = Row::default();
+            collect(tail, &mut ctx, &mut lit);
+            for effect in lit.effects.difference(&interface.latent.effects) {
+                ctx.diags.push(Diagnostic {
+                    message: format!(
+                        "the value `{name}` returns performs `{effect}` when run, beyond its declared latent row"
+                    ),
+                    span: tail.span,
+                });
+            }
+            for t in lit.tails.difference(&interface.latent.tails) {
+                ctx.diags.push(Diagnostic {
+                    message: format!(
+                        "the value `{name}` returns performs the row `..{t}` when run; declare it latent on the result type"
+                    ),
+                    span: tail.span,
+                });
+            }
+        }
 
         let allowed = &interface.row;
         for effect in &incurred.effects {
             if !allowed.effects.contains(effect) {
                 ctx.diags.push(Diagnostic {
                     message: format!(
-                        "`{name}` performs `{effect}` but does not declare it; add \
-                         `/ {{{effect}}}` to its type, or handle it"
+                        "`{name}` performs `{effect}` but does not declare it; add `/ {{{effect}}}` to its type, or handle it"
                     ),
                     span: *span,
                 });
@@ -153,8 +283,7 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
             if !allowed.tails.contains(tail) {
                 ctx.diags.push(Diagnostic {
                     message: format!(
-                        "`{name}` performs the row `..{tail}` of a parameter but does not \
-                         declare it; add `..{tail}` to its row"
+                        "`{name}` performs the row `..{tail}` of a parameter but does not declare it; add `..{tail}` to its row"
                     ),
                     span: *span,
                 });
@@ -280,10 +409,171 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
                 collect(rbody, ctx, out);
             }
         }
+        // A `mu` over a menu with a latent row: the arms' effects belong to
+        // the menu's row — they run per demand, on the demander's schedule —
+        // so they are checked against it here and charged to no one.
+        Expr::CoMatch { ty: Some(ty), arms }
+            if type_head(&ty.kind).and_then(|n| ctx.latent_decls.get(n)).is_some() =>
+        {
+            let menu = type_head(&ty.kind).unwrap().to_string();
+            let allowed = ctx.latent_decls[&menu].clone();
+            check_arms_against_latent(arms, &menu, &allowed, ctx, e.span);
+        }
+        // A `select` over a form with a latent row, likewise: the arms run
+        // when the form is fed.
+        Expr::Select { ty: Some(ty), arms }
+            if type_head(&ty.kind).and_then(|n| ctx.latent_decls.get(n)).is_some() =>
+        {
+            let form = type_head(&ty.kind).unwrap().to_string();
+            let allowed = ctx.latent_decls[&form].clone();
+            check_arms_against_latent(arms, &form, &allowed, ctx, e.span);
+        }
+        // A demand on a rowed menu incurs the menu's latent row: the work
+        // happens now, in this dynamic extent.
+        Expr::Project { base, key } => {
+            if let slc_syntax::ast::ProjKey::Field(field) = key
+                && let Some(decl) = ctx.latent_items.get(field)
+            {
+                out.extend(&ctx.latent_decls[decl].clone());
+            }
+            collect(base, ctx, out);
+        }
+        // A cut runs the negative side's work: feeding a rowed form incurs
+        // its row, and a consumer built by a call incurs the callee's
+        // latent result row, its variables instantiated from the call.
+        Expr::Cut { value, consumer } => {
+            if let Expr::Data { name, .. } = &value.kind
+                && let Some(row) = ctx.latent_decls.get(name)
+            {
+                out.extend(&row.clone());
+            }
+            match &consumer.kind {
+                Expr::Ident(k) => {
+                    if let Some(row) = ctx.locals.get(k) {
+                        out.extend(&row.clone());
+                    } else if let Some(row) = ctx.params.get(k) {
+                        // A parameter whose type carries a latent row: the
+                        // cut is where it fires. (A call-row parameter's
+                        // effects fire at its call instead; the two do not
+                        // overlap, since one wraps an arrow and the other a
+                        // consumer.)
+                        out.extend(&row.clone());
+                    }
+                }
+                Expr::Call { callee, args } => {
+                    if let Expr::Ident(g) = &callee.kind
+                        && let Some(interface) = ctx.interfaces.get(g)
+                    {
+                        let latent = interface.latent.clone();
+                        out.effects.extend(latent.effects.iter().cloned());
+                        for tail in &latent.tails {
+                            for position in ctx.interfaces[g.as_str()].positions_of(tail) {
+                                if let Some(arg) = args.get(position)
+                                    && let Expr::Ident(passed) = &arg.kind
+                                {
+                                    let declared = &ctx.interfaces[g.as_str()].params[position].1;
+                                    let mut arg_row = row_of_name(passed, ctx);
+                                    for effect in &declared.effects {
+                                        arg_row.effects.remove(effect);
+                                    }
+                                    out.extend(&arg_row);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            collect(value, ctx, out);
+            collect(consumer, ctx, out);
+        }
+        // A `let` remembers the latent row of what it binds, so a consumer
+        // built by a call and fed later is still charged at its cut.
+        Expr::Let { name, value, body, .. } => {
+            collect(value, ctx, out);
+            // A block-level `let` has no body of its own — its siblings
+            // follow it — so the binding stays for the rest of the walk.
+            let latent = latent_of_value(value, ctx);
+            if latent.effects.is_empty() && latent.tails.is_empty() {
+                ctx.locals.remove(name);
+            } else {
+                ctx.locals.insert(name.clone(), latent);
+            }
+            if let Some(body) = body {
+                collect(body, ctx, out);
+            }
+        }
         other => {
             for child in other.children() {
                 collect(child, ctx, out);
             }
+        }
+    }
+}
+
+/// The latent row carried by the value of an expression, as far as names
+/// can see: a call's declared result latency (variables instantiated from
+/// its arguments), or a rowed `select` literal.
+fn latent_of_value(e: &Node<Expr>, ctx: &Ctx) -> Row {
+    match &e.kind {
+        Expr::Call { callee, args } => {
+            let Expr::Ident(g) = &callee.kind else { return Row::default() };
+            let Some(interface) = ctx.interfaces.get(g) else { return Row::default() };
+            let mut row = Row { effects: interface.latent.effects.clone(), ..Row::default() };
+            for tail in &interface.latent.tails {
+                for position in interface.positions_of(tail) {
+                    if let Some(arg) = args.get(position)
+                        && let Expr::Ident(passed) = &arg.kind
+                    {
+                        let declared = &interface.params[position].1;
+                        let mut arg_row = row_of_name(passed, ctx);
+                        for effect in &declared.effects {
+                            arg_row.effects.remove(effect);
+                        }
+                        row.extend(&arg_row);
+                    }
+                }
+            }
+            row
+        }
+        Expr::Select { ty: Some(ty), .. } => {
+            type_head(&ty.kind).and_then(|n| ctx.latent_decls.get(n)).cloned().unwrap_or_default()
+        }
+        // A handler discharges only what fires inside it; a latent row has
+        // not fired yet, so it passes through the `return` clause.
+        Expr::Handle { body, .. } => latent_of_value(body, ctx),
+        Expr::Block(exprs) => exprs.last().map(|e| latent_of_value(e, ctx)).unwrap_or_default(),
+        _ => Row::default(),
+    }
+}
+
+/// Check the arms of a suspended literal over a rowed declaration: each
+/// arm's effects must fit the declaration's latent row.
+fn check_arms_against_latent(
+    arms: &[slc_syntax::ast::SelectArm],
+    decl: &str,
+    allowed: &Row,
+    ctx: &mut Ctx,
+    span: slc_syntax::token::Span,
+) {
+    for arm in arms {
+        let mut row = Row::default();
+        collect(&arm.command, ctx, &mut row);
+        for effect in row.effects.difference(&allowed.effects) {
+            ctx.diags.push(Diagnostic {
+                message: format!(
+                    "this arm performs `{effect}`, which `{decl}` does not declare latent; add it: `menu {decl} / {{{effect}}}`"
+                ),
+                span,
+            });
+        }
+        for tail in &row.tails {
+            ctx.diags.push(Diagnostic {
+                message: format!(
+                    "this arm performs the row `..{tail}`, but a declaration's latent row is concrete; `{decl}` cannot absorb a row variable"
+                ),
+                span,
+            });
         }
     }
 }
@@ -442,6 +732,142 @@ mod tests {
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`main` is the root")), "{diags:?}");
+    }
+
+    const FALLIBLE: &str = "menu Fallible / {Exn} { value: i64, doubled: i64 }
+         fn checked(n: +i64) -> Fallible {
+             mu Fallible {
+                 value <= (if n >= 0 { n } else { throw(\"neg\") }) @ value,
+                 doubled <= (if n >= 0 { n * 2 } else { throw(\"neg\") }) @ doubled,
+             }
+         }\n";
+
+    #[test]
+    fn a_rowed_menu_charges_demands_not_the_constructor() {
+        // `checked` declares no row: the arms belong to Fallible's latent
+        // row. The demand is what incurs it — unhandled, it reaches main.
+        let diags = check(&format!(
+            "{EXN}{FALLIBLE} command main | (exit: -i32) {{
+                 println(checked(1).value); 0 @ exit
+             }}"
+        ))
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
+        // Handled around the demand — the honest extent — main is pure.
+        assert!(
+            check(&format!(
+                "{EXN}{FALLIBLE} command main | (exit: -i32) {{
+                     println(handle checked(1).value {{
+                         throw(m) resume => 0 - 1, return(n) => n
+                     }});
+                     0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_mu_arm_beyond_the_latent_row_is_rejected() {
+        let diags = check(&format!(
+            "{EXN} effect Log {{ fn log(m: +String) -> unit; }}
+             menu Fallible / {{Exn}} {{ value: i64 }}
+             fn noisy() -> Fallible {{
+                 mu Fallible {{ value: out <= {{ log(\"x\"); 1 }} @ out }}
+             }}"
+        ))
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("performs `Log`")
+                && d.message.contains("`Fallible` does not declare")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_rowed_form_charges_the_feed() {
+        let diags = check(&format!(
+            "{EXN} form Guarded / {{Exn}} {{ value: i64 }}
+             fn guard() -> Guarded {{
+                 select Guarded {{ Guarded {{ value }} => throw(\"no\") @ EXIT }}
+             }}
+             command main | (exit: -i32) {{
+                 Guarded {{ value: 1 }} @ guard()
+             }}"
+        ))
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_latent_result_row_fires_at_the_cut_and_survives_a_handle() {
+        // `after` performs nothing when called: its row lives on the
+        // returned consumer. The cut is where it fires — and a handler
+        // around the CALL discharges nothing, because nothing fired.
+        let after = "fn after<E>(f: (+i64 -> +i64 / {..E}), k: -i64) -> (-i64 / {..E}) {
+                 fn(x: +i64) { f(x) @ k }
+             }
+             fn risky(x: +i64) -> i64 / {Exn} { throw(\"late\") }\n";
+        let diags = check(&format!(
+            "{EXN}{after} command main | (exit: -i32) {{
+                 let n = mu i64 {{ out <= {{
+                     let c = handle after(risky, out) {{
+                         throw(m) resume => 0 - 1, return(x) => x
+                     }};
+                     5 @ c
+                 }} }};
+                 println(n); 0 @ exit
+             }}"
+        ))
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
+        // Around the cut, it is discharged.
+        assert!(
+            check(&format!(
+                "{EXN}{after} command main | (exit: -i32) {{
+                     let n = handle (mu i64 {{ out <= 5 @ after(risky, out) }}) {{
+                         throw(m) resume => 0 - 1, return(x) => x
+                     }};
+                     println(n); 0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_returned_literal_beyond_the_latent_row_is_rejected() {
+        let diags = check(&format!(
+            "{EXN} fn quiet(k: -i64) -> (-i64 / {{}}) {{
+                 fn(x: +i64) {{ throw(\"loud\") @ k }}
+             }}"
+        ));
+        // `/ {{}}` parses as the empty row, indistinguishable from none —
+        // so the latent row here is empty and the literal is charged to
+        // `quiet` itself, which declares nothing.
+        let diags = match diags {
+            Err(d) => d,
+            Ok(()) => panic!("a throwing returned literal must be rejected somewhere"),
+        };
+        assert!(diags.iter().any(|d| d.message.contains("performs `Exn`")), "{diags:?}");
+    }
+
+    #[test]
+    fn declaration_rows_are_concrete_and_items_unambiguous() {
+        let diags = check(
+            "effect Exn { fn throw(m: +String) -> i64; }
+             menu Bad<E> / {..E} { value: i64 }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("latent row is concrete")), "{diags:?}");
+
+        let diags = check(
+            "effect Exn { fn throw(m: +String) -> i64; }
+             menu A / {Exn} { value: i64 }
+             menu B / {Exn} { value: i64 }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("must be distinct")), "{diags:?}");
     }
 
     #[test]

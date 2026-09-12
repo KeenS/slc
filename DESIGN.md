@@ -717,10 +717,15 @@ command main | (exit: -i32) {
 }
 ```
 
-An operation is a free function, dual to a trait method: a trait hands a value
-the operations it *provides*, an effect hands a computation the answers it
-*demands*. A handler is installed dynamically by `handle` — the effect it handles is inferred from its clause operations, not written; a trait's impl is
-resolved statically.
+An operation is a free function, the dynamic mirror of a trait method: a
+trait is an operation table keyed by a *type* and resolved statically — the
+dictionary travels with the value — while an effect is an operation table
+keyed by the *stack* and resolved dynamically: a handler is installed by
+`handle` (the effect it handles is inferred from its clause operations, not
+written), and its clauses receive `resume`, which no trait has. That mirror
+is static-versus-dynamic provisioning; the *polarity* dual of effects is a
+different axis — latency, below — and the two cross: `impl Trait for Menu`
+is the static column's negative row, latent rows the dynamic column's.
 
 A function declares the effects it may perform in an **effect row** on its
 arrow — `fn scaled(x: +i64) -> i64 / {Reader}` — and a bare arrow is the
@@ -745,11 +750,37 @@ error at the argument. A handler discharges the effects of the operations
 it answers, and `main`'s row must be empty, so a well-typed program
 performs no unhandled operation.
 
+**Latent rows are the dual of effects.** A function's row fires at
+application, because a function is a suspended producer: the work runs
+before the value exists. Codata is the mirror — a menu answers per demand,
+a form runs when fed — so its work runs *after* the value exists, on the
+consumer's schedule, and its row belongs to the *type*:
+
+```sl
+menu Fallible / {Exn} { value: i64, doubled: i64 }
+```
+
+The arms of a `mu` over a rowed menu (and of a `select` over a rowed form)
+are checked against the declaration's latent row and charged to no
+function; every demand `f.value`, and every feed of a rowed form's record,
+incurs the row — so the handler that discharges it is the one around the
+*demand*, and one value can answer different demands under different
+handlers. A consumer type carries latency the same way: `-> (-A / {..E})`
+says the returned consumer performs `..E` when *fed*, not that the call
+performs anything — a returned `fn`/`select` literal is checked against
+that latent row, the cut it is eventually fed at incurs it, and a `handle`
+around the mere construction discharges nothing, because nothing fired.
+Latent rows on declarations are concrete in this version (a row variable
+on a type is the rows-into-types upgrade), rowed declarations' item names
+must be distinct, and a rowless menu or form keeps the conservative
+account: its arms are charged to the declaration that wrote them.
+
 The tracking follows names, conservatively where a function value loses
 its name: a lambda's body is charged to the declaration that wrote it, a
 higher-order global passed on as a value contributes its concrete row but
 no further forwarding, and a function laundered through a `let` binding is
-not tracked.
+not tracked — though a `let` of a call whose result carries a latent row
+keeps that row on the name.
 
 A clause may resume any number of times — the continuation is a first-class
 value sliced from the one frame stack. Not resuming is an exception; resuming

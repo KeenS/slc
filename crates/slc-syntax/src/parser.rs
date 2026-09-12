@@ -332,6 +332,7 @@ impl Parser {
                 span: t.span,
             });
         }
+        let effects = self.parse_effect_row()?;
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut fields = Vec::new();
         loop {
@@ -347,7 +348,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Form { name, type_params, fields } })
+        Ok(Node { span: t.span, kind: Decl::Form { name, type_params, effects, fields } })
     }
 
     fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -360,6 +361,7 @@ impl Parser {
                 span: t.span,
             });
         }
+        let effects = self.parse_effect_row()?;
         self.expect(TokenKind::LBrace, "`{`")?;
         let mut items = Vec::new();
         loop {
@@ -375,7 +377,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Menu { name, type_params, items } })
+        Ok(Node { span: t.span, kind: Decl::Menu { name, type_params, effects, items } })
     }
 
     fn parse_enum(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -937,6 +939,12 @@ impl Parser {
                             kind: right.kind,
                         }),
                     )
+                } else if self.peek_kind() == Some(&TokenKind::Slash) {
+                    // `(-A / {Exn})` — a latent row on the type itself: what
+                    // consuming (or otherwise running) the value may perform.
+                    let row = self.parse_effect_row()?;
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    TypeExpr::Effectful(Box::new(left), row)
                 } else {
                     self.expect(TokenKind::RParen, "`)`")?;
                     left.kind

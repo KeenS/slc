@@ -779,7 +779,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             {
                 Some(name.clone())
             }
-            Decl::Form { name, type_params, fields }
+            Decl::Form { name, type_params, fields, .. }
                 if name == "Bottom" && type_params.is_empty() && fields.is_empty() =>
             {
                 Some(name.clone())

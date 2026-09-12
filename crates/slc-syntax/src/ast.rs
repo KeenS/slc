@@ -383,6 +383,11 @@ pub enum Decl {
     Menu {
         name: String,
         type_params: Vec<String>,
+        /// The latent row: what a demand on a value of this menu may
+        /// perform. Arms of a `mu` over the menu are checked against it,
+        /// and every demand incurs it — the work of codata runs on the
+        /// demander's schedule, so the row belongs to the type.
+        effects: EffectRow,
         items: Vec<(String, TypeExpr)>,
     },
     /// `form Name { field: Type, … }` — the negative multiplicative: the
@@ -392,6 +397,8 @@ pub enum Decl {
     Form {
         name: String,
         type_params: Vec<String>,
+        /// The latent row: what feeding a value of this form may perform.
+        effects: EffectRow,
         fields: Vec<(String, TypeExpr)>,
     },
     Fn {

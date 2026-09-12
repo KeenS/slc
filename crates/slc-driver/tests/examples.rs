@@ -49,6 +49,10 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
+            "latent_effects.sl",
+            Expected { success: true, stdout: &["21", "42", "-1", "-1"], stderr: &[] },
+        ),
+        (
             "effects.sl",
             Expected {
                 success: true,

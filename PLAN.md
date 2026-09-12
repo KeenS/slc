@@ -50,11 +50,6 @@ feature is mid-flight; what remains open is below.
 
 ## Deferred, for discussion
 
-- **The dual of effects.** `effect`/`handle` live entirely on the value side:
-  a handled body returns a value, effect rows annotate `->`. What an
-  effectful negative function or a handler on the consumer side means is an
-  open question — to be discussed, not yet designed.
-
 - **Surface syntax for the additive units `0` and `⊤`.** Their explicit
   prelude forms now exist: `enum Empty {}` is eliminated by `select Empty {}`,
   and the unique value of `menu Top {}` is `mu Top {}`. What remains open is
