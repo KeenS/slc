@@ -51,29 +51,85 @@ feature is mid-flight; what remains open is below.
 ## Next
 
 The queue came from an audit of the polarity×feature matrix (traits and
-effects against negative functions), in order of depth:
+effects against negative functions), in order of depth. Every item ends the
+same way, unlisted: `cargo fmt`, `cargo clippy --workspace --all-targets --
+-D warnings`, `cargo test --workspace` (19 suites green), the examples loop
+(every `examples/*.sl` runs; `*_error.sl` and `command_falls_through.sl`
+must fail), DESIGN.md updated where behaviour changed, and the entry
+retired from this file.
 
-- **Lambda annotations lose rigid type parameters.** In
-  `fn wrap<T: Display>(x: T) -> String { let f = fn(y: T) { fmt(y) }; f(x) }`
-  the inner annotation `T` resolves fresh instead of to the enclosing
-  declaration's rigid variable, so `fmt(y)` cannot see the bound. A checker
-  bug, independent of polarity; fixing it is the first step to the corner
-  below.
+- **Lambda annotations lose rigid type parameters.** A checker bug,
+  independent of polarity: the rigid-variable map built for a declaration's
+  body is not visible where a lambda's annotation resolves.
 
-- **The trait × negative-function corner.** A bounded negative function —
-  `fn emit<T: Display>(out: -String) <- T` — is declarable (DESIGN says
-  bounds are polarity-independent) but unusable: no body form consumes a
-  generic `T` (`select +T` wants a declared type; a lambda hits the bug
-  above), and a call cannot solve `T` from the cut it stands in — in
-  `42 @ emit(s)` the cut's value type never reaches `emit`'s dispatch.
-  The same cut-blindness rules out negative trait *methods*: a negative
-  fn's parameters are all continuations, so `self: +Self` cannot appear,
-  and the `fn deliver(out: -String) <- Self` shape cannot dispatch.
+  - [ ] Reproduce both shapes:
+        `fn wrap<T: Display>(x: T) -> String { let f = fn(y: T) { fmt(y) }; f(x) }`
+        (positive) and
+        `fn emit<T: Display>(out: -String) <- T { fn(x: T) { fmt(x) @ out } }`
+        (negative). Both fail today with ``|`fmt` needs `Display`… not known
+        to satisfy|``.
+  - [ ] Carry the map: the rigid vars exist beside `record_bounds` at
+        `crates/slc-check/src/expr.rs:321` and `:379` but die there. Give
+        `Env` a `rigid_vars: HashMap<String, Type>` field, set and restored
+        around body checking exactly as `bounds` is.
+  - [ ] Resolve through it: the `Expr::Lambda` arm (`expr.rs:1320`) resolves
+        `param_type` with `enums.resolve` only; try
+        `resolve_rigid(ty, &env.rigid_vars, enums)` first, then fall back.
+  - [ ] Sweep for siblings: grep body-position `enums.resolve` on *written*
+        types (`let` annotations, `select`/`mu` scrutinee types) and give
+        each the same first-try.
+  - [ ] Pin: both repro programs as expr.rs unit tests, plus a run of the
+        negative shape in an integration test once item two lands the call
+        side.
 
-- **Negative operations in effects.** The grammar rejects `<-` in an
-  operation declaration — operations are `-> T` only. What an operation
-  that consumes rather than returns means (and what its handler clause
-  looks like) is undesigned.
+- **The trait × negative-function corner.** Bounded negative functions and
+  `<- Self` methods are declarable but cannot dispatch: the cut's value
+  type never reaches the call standing in consumer position. Depends on
+  the item above for the body side.
+
+  - [ ] Verify the body side after the rigid-map fix:
+        `fn emit<T: Display>(out: -String) <- T { fn(x: T) { fmt(x) @ out } }`
+        must check on its own.
+  - [ ] Call side: in `42 @ emit(s)`, the `Expr::Cut` arm
+        (`expr.rs:2164`) checks value and consumer independently, and the
+        `Call` arm resolves dictionaries eagerly from argument unification
+        alone — the consumed `T` is still a variable when `dict_for`
+        (`expr.rs:537`) runs. Two strategies; prefer (ii):
+        (i) check the cut's value first and push `dual(value_ty)` into the
+        consumer's checking as an expected type; or
+        (ii) defer dictionary solving — record each unresolved dictionary
+        as (callee, bound, type variable) during `Call` checking and
+        resolve the batch after the declaration's unification finishes,
+        when the variables are solved.
+  - [ ] Method dispatch keyed on the consumed type: for
+        `fn deliver(out: -String) <- Self`, the impl lookup (`type_key`)
+        must read the *resolved* consumed type, found at the cut, not the
+        call's arguments.
+  - [ ] Decide and write into DESIGN: positive methods carry `self: +Self`;
+        the negative method shape is `<- Self` (a negative fn's parameters
+        are all continuations, so `self` cannot appear among them).
+  - [ ] Acceptance: `42 @ emit(s)` and a `List` cut through the same `emit`;
+        a `trait Deliver { fn deliver(out: -String) <- Self; }` with an
+        i64 impl, driven from a cut. Pin as integration tests; extend
+        `examples/codata_impls.sl` (or a new example) with the negative
+        method.
+
+- **Negative operations in effects.** Design before code: the grammar
+  rejects `<-` in an operation declaration, and nothing yet says what an
+  operation that consumes rather than returns *means*.
+
+  - [ ] Write the candidate semantics down: performing as a cut into the
+        operation (`v @ op(args)`), what the clause binds (the value? a
+        continuation? both?), and the machine transition it needs.
+  - [ ] Find a program a positive operation cannot already express —
+        `yield` is `fn yield(x: +i64) -> unit;` today, and ask-style
+        operations are positive returns; latent rows cover
+        demand-time effects. If every candidate collapses into these,
+        close the item as subsumed, with a DESIGN note saying why.
+  - [ ] Only if a real use survives: extend the operation grammar
+        (`parse_effect` in `crates/slc-syntax/src/parser.rs`), the clause
+        shape, `check_effects`, and the runtime's perform path, each with
+        tests; example alongside `examples/effects.sl`.
 
 ## Deferred, for discussion
 
