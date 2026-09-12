@@ -44,6 +44,12 @@ fn half(n: +i64) -> i64 / {Exn} {
     if n % 2 == 0 { n / 2 } else { throw("odd") }
 }
 
+// A negative function carries its row in the same place — after the `<-`
+// arrow — and it means the same thing: performed on the function's watch.
+fn emit(out: -i64) <- i64 / {Reader} {
+    fn(x: +i64) { x * config() @ out }
+}
+
 command main | (exit: -i32) {
     // never resumes — the exception replaces the computation
     let safe = handle checked_div(10, 0) { throw(m) resume => 0 - 1, return(n) => n };
@@ -74,6 +80,12 @@ command main | (exit: -i32) {
         return(xs) => xs,
     };
     println(fmt(none));                  // "[]"
+
+    // the negative function's row, discharged like any other
+    println(handle (mu i64 { out <= 6 @ emit(out) }) {
+        config() resume => resume(7),
+        return(n) => n,
+    });                                  // 42
 
     0 @ exit
 }

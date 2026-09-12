@@ -48,6 +48,33 @@ feature is mid-flight; what remains open is below.
   tracked. Moving rows into the arrow type itself (unified during
   inference) is the known upgrade if these bite.
 
+## Next
+
+An audit of the polarity×feature matrix (traits and effects against
+negative functions) found these, in order of depth:
+
+- **Lambda annotations lose rigid type parameters.** In
+  `fn wrap<T: Display>(x: T) -> String { let f = fn(y: T) { fmt(y) }; f(x) }`
+  the inner annotation `T` resolves fresh instead of to the enclosing
+  declaration's rigid variable, so `fmt(y)` cannot see the bound. A checker
+  bug, independent of polarity; fixing it is the first step to the corner
+  below.
+
+- **The trait × negative-function corner.** A bounded negative function —
+  `fn emit<T: Display>(out: -String) <- T` — is declarable (DESIGN says
+  bounds are polarity-independent) but unusable: no body form consumes a
+  generic `T` (`select +T` wants a declared type; a lambda hits the bug
+  above), and a call cannot solve `T` from the cut it stands in — in
+  `42 @ emit(s)` the cut's value type never reaches `emit`'s dispatch.
+  The same cut-blindness rules out negative trait *methods*: a negative
+  fn's parameters are all continuations, so `self: +Self` cannot appear,
+  and the `fn deliver(out: -String) <- Self` shape cannot dispatch.
+
+- **Negative operations in effects.** The grammar rejects `<-` in an
+  operation declaration — operations are `-> T` only. What an operation
+  that consumes rather than returns means (and what its handler clause
+  looks like) is undesigned.
+
 ## Deferred, for discussion
 
 - **Surface syntax for the additive units `0` and `⊤`.** Their explicit

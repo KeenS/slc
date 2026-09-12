@@ -49,6 +49,20 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
+            "codata_impls.sl",
+            Expected {
+                success: true,
+                stdout: &[
+                    "\"slant with 3 retries\"",
+                    "\"a sink for one number\"",
+                    "\"stream starting 7\"",
+                    "\"slant with 3 retries\"",
+                    "\"a sink for one number\"",
+                ],
+                stderr: &[],
+            },
+        ),
+        (
             "latent_effects.sl",
             Expected {
                 success: true,
@@ -60,7 +74,7 @@ fn repository_example_suite_has_expected_results() {
             "effects.sl",
             Expected {
                 success: true,
-                stdout: &["-1", "5", "1070", "HH HT TH TT", "\"[4, 2]\"", "\"[]\""],
+                stdout: &["-1", "5", "1070", "HH HT TH TT", "\"[4, 2]\"", "\"[]\"", "42"],
                 stderr: &[],
             },
         ),
