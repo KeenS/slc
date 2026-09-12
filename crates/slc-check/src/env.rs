@@ -144,8 +144,6 @@ fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
             Type::Sum(Box::new(replace_vars(a, map)), Box::new(replace_vars(b, map)))
         }
         Type::Dual(t) => Type::Dual(Box::new(replace_vars(t, map))),
-        Type::Down(t) => Type::Down(Box::new(replace_vars(t, map))),
-        Type::Up(t) => Type::Up(Box::new(replace_vars(t, map))),
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| replace_vars(a, map)).collect())
         }
@@ -162,7 +160,7 @@ pub(crate) fn collect_vars(ty: &Type, out: &mut std::collections::HashSet<usize>
             collect_vars(a, out);
             collect_vars(b, out);
         }
-        Type::Dual(t) | Type::Down(t) | Type::Up(t) => {
+        Type::Dual(t) => {
             collect_vars(t, out);
         }
         Type::Named(_, args) => {

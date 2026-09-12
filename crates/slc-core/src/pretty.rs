@@ -34,8 +34,6 @@ impl std::fmt::Display for Type {
             Type::Dual(t) => write!(f, "dual({t})"),
             Type::With(a, b) => write!(f, "({a} & {b})"),
             Type::Sum(a, b) => write!(f, "({a} + {b})"),
-            Type::Down(t) => write!(f, "↓{t}"),
-            Type::Up(t) => write!(f, "↑{t}"),
             Type::Param(i) => write!(f, "%{i}"),
             Type::Named(name, args) => {
                 write!(f, "{name}")?;

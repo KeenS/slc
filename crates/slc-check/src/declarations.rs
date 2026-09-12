@@ -104,8 +104,6 @@ impl Declarations {
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
             TypeExpr::Dual(inner) => resolve(&inner.kind)?.dual(),
-            TypeExpr::Down(inner) => Type::Down(Box::new(resolve(&inner.kind)?)),
-            TypeExpr::Up(inner) => Type::Up(Box::new(resolve(&inner.kind)?)),
             other => return lower_type(other).ok(),
         };
         Some(resolved)

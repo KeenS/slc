@@ -299,7 +299,7 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
 }
 
 fn format_span(source: &str, span: slc_syntax::token::Span) -> String {
-    // Spans are byte offsets, and the surface has multi-byte glyphs — `↓`,
+    // Spans are byte offsets, and the surface has multi-byte glyphs — `⊗`,
     // `⊗`, `⊥` — so an offset may land inside one. Slicing there panics, so
     // move to the boundary rather than trusting the offset.
     let start = char_boundary(source, span.start, false);

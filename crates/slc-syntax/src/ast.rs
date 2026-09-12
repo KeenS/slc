@@ -74,12 +74,6 @@ pub enum Expr {
         op: UnOp,
         body: Box<Node<Expr>>,
     },
-    /// `↓e` boxes a negative expression as data; `↑e` opens the box. Both
-    /// are erased at lowering — the check is what they are for.
-    Shift {
-        down: bool,
-        expr: Box<Node<Expr>>,
-    },
     /// `base.0` / `base.field`: project one component of a product. The
     /// component's index and the product's arity are resolved from `base`'s
     /// type in the checker (the right-nested encoding needs the arity), so the
@@ -178,7 +172,6 @@ impl Expr {
                 .collect(),
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Cut { value, consumer } => vec![value, consumer],
-            Expr::Shift { expr, .. } => vec![expr],
             Expr::Project { base, .. } => vec![base],
             Expr::Request { arg, .. } => vec![arg],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
@@ -235,11 +228,6 @@ pub enum TypeExpr {
     Par(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Dual(Box<Node<TypeExpr>>),
-    /// `↓A` — a negative type boxed as data, and `↑A` — the computation that
-    /// returns a positive one. Duals of each other, and neither is the
-    /// identity: they are what stops `¬¬A` collapsing to `A`.
-    Down(Box<Node<TypeExpr>>),
-    Up(Box<Node<TypeExpr>>),
     Unit,
     Bottom,
 }

@@ -355,11 +355,9 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
             }
         }
         TypeExpr::Base(name) => *name = resolve_name(name, stack),
-        TypeExpr::Positive(inner)
-        | TypeExpr::Negative(inner)
-        | TypeExpr::Dual(inner)
-        | TypeExpr::Down(inner)
-        | TypeExpr::Up(inner) => resolve_type(&mut inner.kind, stack),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            resolve_type(&mut inner.kind, stack)
+        }
         TypeExpr::Tensor(a, b) | TypeExpr::Par(a, b) | TypeExpr::Fun(a, b) => {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
@@ -493,9 +491,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut lhs.kind, stack, locals);
             resolve_expr(&mut rhs.kind, stack, locals);
         }
-        Expr::UnOp { body, .. }
-        | Expr::Shift { expr: body, .. }
-        | Expr::Project { base: body, .. } => {
+        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
             resolve_expr(&mut body.kind, stack, locals);
         }
         Expr::Cut { value, consumer } => {
@@ -705,9 +701,7 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
             rewrite_expr_imports(&mut value.kind, imported);
             rewrite_expr_imports(&mut consumer.kind, imported);
         }
-        Expr::Shift { expr, .. } | Expr::Request { arg: expr, .. } => {
-            rewrite_expr_imports(&mut expr.kind, imported)
-        }
+        Expr::Request { arg: expr, .. } => rewrite_expr_imports(&mut expr.kind, imported),
         Expr::Project { base, .. } => rewrite_expr_imports(&mut base.kind, imported),
         Expr::Handle { body, clauses, ret } => {
             rewrite_expr_imports(&mut body.kind, imported);

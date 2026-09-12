@@ -49,9 +49,9 @@ form Total {
     right: i64,
 }
 
-fn total(out: ↓-i64) -> Total {
+fn total(out: -i64) -> Total {
     select Total {
-        Total { left, right } => (left + right) @ ↑out,
+        Total { left, right } => (left + right) @ out,
     }
 }
 
@@ -93,7 +93,7 @@ fn code(out: -i64) <- Colour {
 // Declared in its own right, `&` is codata: a value that answers whichever
 // item is demanded. Its dual is the sum of those demands, each carrying the
 // continuation that wants the answer — `menu Config` below is exactly
-// `dual(enum { Retries(↓-i64), Name(↓-String) })`, which is how this had to
+// `dual(enum { Retries(-i64), Name(-String) })`, which is how this had to
 // be written before the negative side could be declared.
 
 menu Config {
@@ -123,7 +123,7 @@ command main | (exit: -i32) {
     // ⅋ : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
     println(mu i64 { answer <= Pair { left: 2, right: 40 } @ report_sum(answer) });
-    println(mu i64 { answer <= Total { left: 2, right: 40 } @ total(↓answer) });
+    println(mu i64 { answer <= Total { left: 2, right: 40 } @ total(answer) });
     println(mu i64 { answer <= (7, "ignored") @ report_first(answer) });
 
     // ⊕ : build one variant, then branch on it.

@@ -219,8 +219,8 @@ A `command` declaration is the form that takes **both** values and
 continuations: value parameters and continuation parameters appear in separate
 parenthesized groups, and the body is a command — hence the name. A
 declaration that consumes values and consumes a continuation is a `command`; a
-positive `fn` may still receive a consumer as data it forwards — in a box,
-`↓-String` — but it returns a value rather than ending in a cut.
+positive `fn` may still receive a consumer as a value it forwards — `-String`
+is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
 command route(x: +i32) | (k: -i32) {
@@ -399,8 +399,8 @@ enum value is one tagged variant the producer chose; a menu value answers one
 item the consumer demands:
 
 ```sl
-enum Config { Retries(↓-i64), Name(↓-String) }   // ⊕ — the value picks
-menu Config { retries: i64,   name: String }     // &  — the demand picks
+enum Config { Retries(-i64), Name(-String) }   // ⊕ — the value picks
+menu Config { retries: i64,  name: String }    // &  — the demand picks
 ```
 
 The nullary case is the additive unit `⊤`: `menu Top {}` has no possible
@@ -607,13 +607,13 @@ value, so `mu` builds it. A menu's demand is one labelled request,
 form's dual.
 
 ```sl
-fn printer(out: ↓-i64) -> Report {
+fn printer(out: -i64) -> Report {
     select Report {
-        Report { value, label } => { println(label); value @ ↑out },
+        Report { value, label } => { println(label); value @ out },
     }
 }
 
-Report { value: 42, label: "answer" } @ printer(↓k)
+Report { value: 42, label: "answer" } @ printer(k)
 ```
 
 `form` needs nothing new in the core: a form value is the `co(μ̃[…])` that
@@ -795,40 +795,36 @@ Lists themselves are not built in: `List<T>` and its functions (`length`,
 declarations like any other. There is no list literal — a list is written
 the way any enum value is.
 
-### Shifts
+### No shifts: a consumer is a value
 
-`↓B` boxes a negative type as data, and `↑P` is its dual — the computation
-that returns a positive one:
+The language once had the polarity shifts `↓`/`↑`, boxing a consumer as
+data and marking the computation returning a value. They were removed:
+they erased at lowering — a boxed consumer and the consumer were already
+the same value at run time — and the declared negatives made them
+redundant. A menu or form value always stored bare, so the box taxed only
+the *structural* negatives; and both shift roles are one declaration away
+when a name is wanted — `menu Lazy<T> { force: T }` is the computation
+returning `T`, and a one-field `form` is a named, storable consumer.
 
-```text
-↓B   positive: a consumer, boxed as data      dual(↓B) = ↑dual(B)
-↑P   negative: the computation returning P    dual(↑P) = ↓dual(P)
-```
-
-The same two glyphs are the expression forms: `↓e` boxes a consumer, `↑e`
-opens the box. Both erase at lowering — a boxed consumer and the consumer are
-the same value at run time; the type is what the box is for.
-
-Three rules make the boxes load-bearing:
-
-- a data position — an enum payload, a record field, a `fn` value parameter —
-  holds a **positive** type, so a consumer goes in boxed: `Refutes(↓-i64)`;
-- the left of `@` is data, so a consumer is sent boxed: `↓k @ ↑refuter`;
-- `select` consumes data, so consuming a consumer means `select ↓B`.
-
-The payoff is that the involution stops collapsing double negation. `¬i64` is
-`-i64`; negating *that* goes through a box, so a refuter consumes `↓-i64` and
-has type `↑i64`, and `¬¬i64`, boxed as an argument, is `↓↑i64` — a type an
-`i64` does not have. The shifts never cancel: `dual` passes through them
-without erasing them.
+So a consumer travels bare everywhere a value does: an enum payload
+(`Refutes(-i64)`), a record field, a `fn` value parameter — passing a
+continuation is an ordinary application, `handle(k)`. `dual` is an
+involution on the nose: `-(-T)` *is* `T`, and double-negation elimination
+is the identity function.
 
 ```sl
-fn dne(refuter: ↓↑i64) -> i64 {
-    mu { k <= ↓k @ ↑refuter }
-}
+fn dne<T>(t: -(-T)) -> T { t }
 
-dne(42)   // rejected: argument 1 of `dne` has type +i64; the declaration says ↓↑+i64
+dne(42)   // 42: -(-i64) and +i64 are one type
 ```
+
+One orientation rule remains, and it is load-bearing: **the left of `@` is
+the value side**. Without it, the involution would let any positive value
+pass for a consumer of consumers — `dual(-i64) = +i64`, so `⟨k ∥ 42⟩`
+would type — and the machine only runs cuts whose right side really
+consumes. For the same reason `select` still consumes a positive type. A
+continuation is a value everywhere except there, where it must be the one
+doing the consuming.
 
 ### What may be left unwritten
 
@@ -940,9 +936,9 @@ form — and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
 **`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
 formatting as in Rust, with impls for `i64`, `String`, `bool`, and
 `List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
-three **consumer combinators**: `then(f, ↓k)` — the composition of a function with a boxed
-continuation, `-A` from `A → B` and `↓-B` — `traced(label, ↓k)`, a tap that
-logs what passes through and forwards it, and `defaulting(fallback, ↓k)`, a
+three **consumer combinators**: `then(f, k)` — the composition of a function with a
+continuation, `-A` from `A → B` and `-B` — `traced(label, k)`, a tap that
+logs what passes through and forwards it, and `defaulting(fallback, k)`, a
 `-String` failure consumer that discards the message and sends `fallback`
 onward, made for the multi-outcome builtins below.
 
@@ -1150,7 +1146,7 @@ Term      t ::= x                     variable
               | L(t)                  labelled additive injection (enum value)
               | μ[M; .d₁(α). c₁ | … ] menu (negative additive value)
               | μ[M]                  empty menu, retaining its named owner
-              | co(e)                 ↓-shift introduction: a co-term as a value
+              | co(e)                 a co-term reified as a value
 
 CoTerm    e ::= α                     co-variable
               | t · e                 application: argument, then tail
@@ -1171,13 +1167,13 @@ Type      A ::= +B | -B               positive / negative atom
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
 
-`co(e)` is the introduction form of the `↓` shift: a co-term boxed as data,
+`co(e)` reifies a co-term as a value: a consumer on the value side,
 so that a consumer can sit where a value is expected. The surface never
 writes it directly — `select` denotes a consumer and lowers straight to it,
 and a continuation passed as an argument arrives the same way. Its
 elimination is application: `⟨ co(e′) ∥ v · e ⟩ → ⟨ v ∥ e′ ⟩` sends the
-argument to the underlying co-term, which is `↑` opening the box. The
-surface `↓e`/`↑e` glyphs themselves erase at lowering because the value is
+argument to the underlying co-term. The reification is invisible at
+lowering because the value is
 already in this form; the type is what they change.
 
 A declared continuation parameter and `μα. c` both bind a continuation
@@ -1231,7 +1227,7 @@ re-parsed without loss.
 ⟨ μα. c ∥ e ⟩                → c[e/α]              μ
 ⟨ v ∥ μ̃x. c ⟩                → c[v/x]              μ̃ — the binder
 ⟨ λx. t ∥ v · e ⟩            → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩  → — application
-⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           ↑ — open the box
+⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           apply the reified consumer
 ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[M; … L(x…). c …] ⟩ → c[vᵢ/xᵢ]       labelled
 ⟨ μ[… .d(α). c …] ∥ .d(e) ⟩  → c[e/α]              copattern
@@ -1243,7 +1239,7 @@ The labelled rule is what makes `select` lazy: the label of the value selects
 one branch, and the branches that were not selected are discarded unreduced.
 The copattern rule is its mirror: the request selects one branch of the menu
 and binds the continuation it carries. The co-labelled rule is what lets
-`match` take a continuation apart — a request boxed by `↓` is a labelled
+`match` take a continuation apart — a reified request is a labelled
 positive value, so the arm binds the request's own continuation as a value.
 An `enum` has a branch per variant and a `data` exactly one, so the same
 rule covers the additive and the labelled multiplicative; the product rule is
@@ -1279,7 +1275,7 @@ nested left to right for several arguments.
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
 | `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
-| `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
+| `expr.consumer_argument` | `f(k)` — a consumer as an argument | `⟦k⟧` — a consumer is a value; nothing to coerce |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
 | `decl.mu` | `command f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
@@ -1301,7 +1297,7 @@ become λ binders.
 | `L(t)` | `enum` values and `data` values — a labelled product |
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
-| `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction, and a `form` value |
+| `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
@@ -1331,7 +1327,7 @@ fn lem() -> Choice {
 ```
 
 `examples/classical.sl` runs both. The types above go through the shifts of
-§8 — `¬¬i64` is `↓↑i64`, not `i64`, so `dne(42)` is rejected at the call.
+§8 — `-(-i64)` *is* `+i64`: `dne` is the identity, and `dne(42)` is `42`.
 
 A captured continuation is a value with no expiry: the evaluator is an
 abstract machine whose continuation is an explicit frame stack, and `mu`

@@ -6,9 +6,8 @@
 //   menu Session answers an enum     — and one item is itself a menu
 //   form Handler is fed an enum      — the consumer branches on data
 //
-// The one polarity seam is the shift: a *raw continuation* inside a
-// positive record needs `↓` (Handler's `out`), unshifted at use with
-// `↑`. Named negatives need nothing.
+// A consumer is a value like any other: a raw continuation sits in a
+// positive record bare (Handler's `out`), named negatives likewise.
 
 enum Cmd {
     Quit,
@@ -49,14 +48,14 @@ fn session(n: +i64) -> Session {
 // ─── a form fed an enum: the consumer branches on the data it receives ───
 form Handler {
     cmd: Cmd,
-    out: ↓-String,
+    out: -String,
 }
 
 fn handler() -> Handler {
     select Handler {
         Handler { cmd, out } => match cmd {
-            Quit => "quit" @ ↑out,
-            Step(k) => to_string(k) @ ↑out,
+            Quit => "quit" @ out,
+            Step(k) => to_string(k) @ out,
         },
     }
 }
@@ -83,11 +82,11 @@ command main | (exit: -i32) {
         Step(k) => println(k),
     };
 
-    println(mu String { ans <= Handler { cmd: Step(7), out: ↓ans } @ handler() });
+    println(mu String { ans <= Handler { cmd: Step(7), out: ans } @ handler() });
 
     match Holds(handler()) {
         Vacant => println("idle"),
-        Holds(h) => println(mu String { ans <= Handler { cmd: Quit, out: ↓ans } @ h }),
+        Holds(h) => println(mu String { ans <= Handler { cmd: Quit, out: ans } @ h }),
     };
 
     0 @ exit

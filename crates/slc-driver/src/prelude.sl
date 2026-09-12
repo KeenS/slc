@@ -30,8 +30,8 @@ fn abs(n: +i64) -> i64 {
 
 // Compose a function with a continuation: the consumer that runs `f`, then
 // jumps to `k`. `A → ⊥` is `-A`, so the lambda *is* that consumer.
-fn then<A, B>(f: (A -> B), k: ↓-B) -> -A {
-    fn(x: A) { f(x) @ ↑k }
+fn then<A, B>(f: (A -> B), k: -B) -> -A {
+    fn(x: A) { f(x) @ k }
 }
 
 // ── Consumer combinators ─────────────────────────────────────────────────
@@ -43,15 +43,15 @@ fn then<A, B>(f: (A -> B), k: ↓-B) -> -A {
 // *is* `-A`.
 
 // A tap: log a label and the value passing through, then forward it.
-fn traced<T>(label: +String, k: ↓-T) -> -T {
-    fn(x: T) { println(label); println(x); x @ ↑k }
+fn traced<T>(label: +String, k: -T) -> -T {
+    fn(x: T) { println(label); println(x); x @ k }
 }
 
 // A failure consumer that discards the message and sends `fallback` onward
 // — pairs with the `-String` outcomes of `parse_int`, `read_file`, and the
 // other multi-outcome builtins.
-fn defaulting<T>(fallback: T, k: ↓-T) -> -String {
-    fn(m: +String) { fallback @ ↑k }
+fn defaulting<T>(fallback: T, k: -T) -> -String {
+    fn(m: +String) { fallback @ k }
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────

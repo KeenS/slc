@@ -189,7 +189,7 @@ command main | (exit: -i32) {
 provider answers:
 
 ```sl
-enum Request { Retries(↓-i64), Name(↓-String) }
+enum Request { Retries(-i64), Name(-String) }
 ```
 
 That is an effect signature by hand — but the provider answers each request

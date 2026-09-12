@@ -201,9 +201,6 @@ fn check_expr(
                 check_expr(rbody, enums, bindings, diags);
             }
         }
-        Expr::Shift { expr: body, .. } => {
-            check_expr(body, enums, bindings, diags);
-        }
         Expr::Cut { value, consumer } => {
             check_expr(value, enums, bindings, diags);
             check_expr(consumer, enums, bindings, diags);

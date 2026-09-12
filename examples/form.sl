@@ -17,11 +17,11 @@ form Report { value: i64, label: String }
 
 // `select` builds the form value, exactly as it builds a menu value: the arm
 // binds the whole demand — every field at once — and runs a command.
-fn printer(out: ↓-i64) -> Report {
+fn printer(out: -i64) -> Report {
     select Report {
         Report { value, label } => {
             println(label);
-            value @ ↑out
+            value @ out
         },
     }
 }
@@ -37,9 +37,9 @@ command main | (exit: -i32) {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.
-    println(mu i64 { a <= Report { value: 42, label: "answer" } @ printer(↓a) });
+    println(mu i64 { a <= Report { value: 42, label: "answer" } @ printer(a) });
 
-    println(mu i64 { a <= Report { value: 7, label: "relabelled" } @ shouting(printer(↓a)) });
+    println(mu i64 { a <= Report { value: 7, label: "relabelled" } @ shouting(printer(a)) });
 
     // What a form cannot do is give up one field: from `-A ⅋ -B` there is no
     // `-A` to be had, the way `A ⊗ B` yields its `A`. Reading `p.x` off a

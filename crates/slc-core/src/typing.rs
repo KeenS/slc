@@ -131,8 +131,6 @@ impl Unification {
             Type::Dual(t) => Type::Dual(Box::new(self.apply(t))),
             Type::With(a, b) => Type::With(Box::new(self.apply(a)), Box::new(self.apply(b))),
             Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            Type::Down(t) => Type::Down(Box::new(self.apply(t))),
-            Type::Up(t) => Type::Up(Box::new(self.apply(t))),
             Type::Named(name, args) => {
                 Type::Named(name.clone(), args.iter().map(|a| self.apply(a)).collect())
             }
@@ -148,7 +146,7 @@ impl Unification {
             Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
                 self.occurs(var, a) || self.occurs(var, b)
             }
-            Type::Dual(t) | Type::Down(t) | Type::Up(t) => self.occurs(var, t),
+            Type::Dual(t) => self.occurs(var, t),
             Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
             _ => false,
         }
@@ -194,8 +192,6 @@ impl Unification {
                 self.unify(inner, &other.dual())?;
                 Ok(self.apply(&expected))
             }
-            (Type::Down(a), Type::Down(b)) => Ok(Type::Down(Box::new(self.unify(a, b)?))),
-            (Type::Up(a), Type::Up(b)) => Ok(Type::Up(Box::new(self.unify(a, b)?))),
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
                 let args = xs
                     .iter()
@@ -256,7 +252,7 @@ pub fn contains_var(ty: &Type) -> bool {
         Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
             contains_var(a) || contains_var(b)
         }
-        Type::Down(t) | Type::Up(t) => contains_var(t),
+
         Type::Dual(t) => contains_var(t),
         Type::Named(_, args) => args.iter().any(contains_var),
         _ => false,

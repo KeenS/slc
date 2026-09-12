@@ -62,7 +62,7 @@ feature is mid-flight; what remains open is below.
 - **Composition syntax: the pipeline cut.** Composing a function with a
   continuation is one binder away in either spelling today —
   `select +A { x => f(x) @ k }` or `fn(x: +A) { f(x) @ k }` — and the
-  prelude has `then(f, ↓k)`. The candidate surface syntax under
+  prelude has `then(f, k)`. The candidate surface syntax under
   consideration writes the cut as a pipeline, values flowing left through
   functions into continuations:
 

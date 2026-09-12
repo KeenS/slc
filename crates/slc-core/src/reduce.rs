@@ -68,7 +68,7 @@ pub fn step(c: &Command) -> Step {
         }
 
         // Co-labelled rule: ⟨ co(.d(e)) ∥ μ̃[M; … .d(x). c …] ⟩ → c[co(e)/x]
-        // A request boxed by ↓ is a positive value with a label, so matching
+        // A reified request is a positive value with a label, so matching
         // on a continuation is the labelled rule with the payload rewrapped:
         // the arm receives the request's own continuation as a value.
         Command::Cut(Term::Co(request), CoTerm::CoCase { branches, .. }) => {
@@ -102,7 +102,7 @@ pub fn step(c: &Command) -> Step {
             CoTerm::MuTilde(x.clone(), Box::new(Command::Cut((**t).clone(), (**e).clone()))),
         )),
 
-        // ↑-rule: ⟨ co(e′) ∥ v·e ⟩ → ⟨ v ∥ e′ ⟩ — applying a boxed consumer
+        // co-rule: ⟨ co(e′) ∥ v·e ⟩ → ⟨ v ∥ e′ ⟩ — applying a reified consumer
         // opens the box; a consumer does not return, so the tail is dropped.
         Command::Cut(Term::Co(consumer), CoTerm::App(v, _)) => {
             Step::Reduced(Command::Cut(v.clone(), (**consumer).clone()))

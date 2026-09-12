@@ -223,7 +223,7 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     })
 }
 
-/// A co-term seen as a value — the `↓` shift, `co(e)`.
+/// A co-term seen as a value — the reification `co(e)`.
 ///
 /// A consumer closes over its environment with its branch bodies
 /// unevaluated; a co-variable is already a value in the environment; and a

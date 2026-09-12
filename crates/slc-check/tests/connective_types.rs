@@ -57,12 +57,9 @@ fn explicit_connectives_parse_and_lower() {
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
         ("command f | (k: -⊥) { k(0) }", Type::Bottom),
-        // The shifts: `↓` boxes a negative type as data, `↑` is its dual.
-        ("fn f(b: ↓-i64) -> i64 { 0 }", Type::Down(Box::new(Type::Neg(Base::I64)))),
-        (
-            "fn f(r: ↓↑i64) -> i64 { 0 }",
-            Type::Down(Box::new(Type::Up(Box::new(Type::Pos(Base::I64))))),
-        ),
+        // Negation is involutive: a double negation is the type itself.
+        ("fn f(b: -i64) -> i64 { 0 }", Type::Neg(Base::I64)),
+        ("fn f(r: -(-i64)) -> i64 { 0 }", Type::Pos(Base::I64)),
     ];
 
     for (source, expected) in cases {
@@ -87,13 +84,10 @@ fn a_function_into_bottom_is_a_consumer() {
         Ok(Type::Neg(Base::I32))
     );
 
-    // So it is a consumer wherever one is wanted, and nowhere else.
+    // It is a consumer wherever one is wanted — and, a consumer being a
+    // value, it may also arrive as a value parameter.
     assert!(check("command f | (k: (+i32 -> ⊥)) { 0 @ k }").is_ok());
-    let diags = check("command f(x: (+i32 -> ⊥)) | (k: -i32) { 0 @ k }").unwrap_err();
-    assert!(
-        diags.iter().any(|d| d.message.contains("has type -i32")),
-        "a consumer is not a value parameter: {diags:?}"
-    );
+    assert!(check("command f(x: (+i32 -> ⊥)) | (k: -i32) { 0 @ k }").is_ok());
 
     // An ordinary function type is unaffected.
     assert_eq!(
@@ -128,32 +122,26 @@ fn connective_polarity_is_enforced_by_position() {
     assert!(check("fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }").is_ok());
     assert!(check("command f(p: (+i64 ⊗ +i64))  { p }").is_ok());
 
-    // A par is negative: it is a continuation, not a value parameter.
+    // A par is negative: it serves as a continuation, and — a consumer
+    // being a value — as a value parameter too.
     assert!(check("command f | (k: (-i64 ⅋ -i64)) { k(0) }").is_ok());
-    let diags = check("command f(p: (-i64 ⅋ -i64))  { p }").unwrap_err();
-    assert!(
-        diags.iter().any(|d| d.message.contains("expected positive (+) polarity")),
-        "a par-typed value parameter should be rejected: {diags:?}"
-    );
+    assert!(check("command f(p: (-i64 ⅋ -i64)) | (k: -i32) { 0 @ k }").is_ok());
 
     // Bottom is negative too.
-    let diags = check("command f(p: ⊥)  { p }").unwrap_err();
-    assert!(
-        diags.iter().any(|d| d.message.contains("expected positive (+) polarity")),
-        "a bottom-typed value parameter should be rejected: {diags:?}"
-    );
+    // A value parameter holds either side, ⊥ included — it is the same
+    // type the prelude names `Bottom`.
+    assert!(check("command f(p: ⊥) | (k: -i32) { 0 @ k }").is_ok());
 }
 
 #[test]
-fn shifts_are_dual_and_never_cancel() {
-    // dual(↓B) = ↑dual(B): the involution goes through the box without
-    // erasing it, which is what keeps `¬¬A` a different type from `A`.
-    let boxed = lower_type(&parameter_type("fn f(b: ↓-i64) -> i64 { 0 }")).unwrap();
-    assert_eq!(boxed.dual(), Type::Up(Box::new(Type::Pos(Base::I64))));
-    assert_eq!(boxed.dual().dual(), boxed);
-    assert!(boxed.is_positive());
-    assert!(boxed.dual().is_negative());
-    assert_ne!(boxed.dual(), Type::Pos(Base::I64));
+fn negations_cancel() {
+    // With no shifts in the language, dual is an involution on the nose:
+    // `-(-A)` *is* `A`, and double-negation elimination is the identity.
+    let neg = lower_type(&parameter_type("fn f(b: -i64) -> i64 { 0 }")).unwrap();
+    assert_eq!(neg, Type::Neg(Base::I64));
+    assert_eq!(neg.dual(), Type::Pos(Base::I64));
+    let dne = lower_type(&parameter_type("fn f(b: -(-i64)) -> i64 { 0 }")).unwrap();
+    assert_eq!(dne, Type::Pos(Base::I64));
 }
 
 #[test]

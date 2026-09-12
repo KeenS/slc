@@ -39,12 +39,12 @@ pub enum Term {
     /// to carry that identity. A request chooses exactly one branch.
     CoMatch { owner: String, branches: Vec<CoMatchBranch> },
     /// A co-term reified as a value: `co(e)` — the introduction form of the
-    /// `↓` shift, boxing a consumer as data.
+    /// A consumer reified as a term, so it can sit on the value side.
     ///
     /// The surface language lets a continuation appear where an expression is
     /// expected — `select` denotes one, and continuations are passed as
     /// arguments. `co(e)` is that continuation seen as a value: applying it
     /// — `⟨co(e) ∥ v · e′⟩` — sends the argument to the underlying co-term,
-    /// which is the `↑` elimination opening the box.
+    /// which applies the reified consumer.
     Co(Box<CoTerm>),
 }

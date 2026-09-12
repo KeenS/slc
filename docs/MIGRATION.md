@@ -439,28 +439,35 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
-## Consumers travel in boxes
+## Shifts removed: a consumer is a value
 
-A data position — an enum payload, a struct field, a `fn` value parameter —
-holds a positive type. A consumer goes into one boxed, with the downshift
-`↓`; the same glyph boxes the value, and `↑` opens the box.
+The polarity shifts `↓`/`↑` are gone. They erased at lowering, and the
+declared negatives (`menu`, `form`) already crossed the data seam bare, so
+the box taxed only structural negatives. A consumer now travels bare in
+every data position — an enum payload, a record field, a `fn` value
+parameter — and the glyphs simply come off:
 
 ```sl
-enum Choice { Refutes(-i64) }      // old
-enum Choice { Refutes(↓-i64) }     // new
+enum Choice { Refutes(↓-i64) }     // old
+enum Choice { Refutes(-i64) }      // new
 
-Choice::Refutes(k)                 // old
-Choice::Refutes(↓k)                // new
+Choice::Refutes(↓k)                // old
+Choice::Refutes(k)                 // new
 
-Refutes(r) => 42 @ r               // old
-Refutes(r) => 42 @ ↑r              // new: open the box, then cut
+Refutes(r) => 42 @ ↑r              // old
+Refutes(r) => 42 @ r               // new
 
-fn describe(note: -String) -> ⊥ { "…" @ note }     // old
-fn describe(note: ↓-String) -> ⊥ { "…" @ ↑note }   // new
+fn describe(note: ↓-String) -> ⊥ { "…" @ ↑note }   // old
+fn describe(note: -String) -> ⊥ { "…" @ note }     // new
 ```
 
-The boxes are erased after checking; they exist so that `¬¬A` — a consumer of
-consumers, `↓↑A` once boxed — is not the same type as `A`.
+With no box to go through, `dual` is an involution on the nose: `-(-T)`
+*is* `T`, and double-negation elimination is `fn dne<T>(t: -(-T)) -> T
+{ t }`. The one rule that remains is orientation: the left of `@` is the
+value side, so a continuation is passed as an argument, never cut against
+data. Where a named box is still wanted, declare it — `menu Lazy<T>
+{ force: T }` is the computation returning `T`, and a one-field `form` is
+a named, storable consumer.
 
 ## Additive control
 

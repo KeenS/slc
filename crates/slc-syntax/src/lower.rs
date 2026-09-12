@@ -232,8 +232,6 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a
         // declaration's name stays wrapped: it is opaque to the core.
         TypeExpr::Dual(inner) => Ok(lower_type(&inner.kind)?.dual()),
-        TypeExpr::Down(inner) => Ok(Type::Down(Box::new(lower_type(&inner.kind)?))),
-        TypeExpr::Up(inner) => Ok(Type::Up(Box::new(lower_type(&inner.kind)?))),
         TypeExpr::Unit => Ok(Type::One),
         TypeExpr::Bottom => Ok(Type::Bottom),
     }
@@ -490,7 +488,6 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         }
         // A shift is a coercion the checker cares about and the core does
         // not: a boxed consumer and the consumer are the same value.
-        Expr::Shift { expr, .. } => lower_expr(expr, continuations),
         // `base.i` / `base.field` → μ. ⟨ ⟦base⟧ ∥ prj:index ⟩. The checker
         // resolved the component index from the base's type; the μ binder is
         // vestigial — the projected component returns to the ambient
@@ -1298,13 +1295,12 @@ fn lower_comatch(
     Ok(Term::CoMatch { owner, branches })
 }
 
-/// The consumer a cut names, seeing through `↓`/`↑`. Both shifts erase at
+/// The consumer a cut names. Reification erases at
 /// lowering — a boxed consumer and the consumer are the same value at run
-/// time — so `v @ ↑k` names `k` just as `v @ k` does.
+/// time, so a reified consumer names itself.
 fn named_consumer(consumer: &Expr) -> Option<&String> {
     match consumer {
         Expr::Ident(name) => Some(name),
-        Expr::Shift { expr, .. } => named_consumer(&expr.kind),
         _ => None,
     }
 }

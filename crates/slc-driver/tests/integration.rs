@@ -112,8 +112,10 @@ fn diagnostic_that_merely_looks_like_exit_is_not_treated_as_exit() {
 
 #[test]
 fn polarity_error() {
+    // A consumer value parameter is fine now; a positive continuation
+    // parameter is the polarity error that remains.
     let dir = std::env::temp_dir().join("slc_test_pol.sl");
-    std::fs::write(&dir, "command bad(x: -i32) | (k: -i32) { 0 @ k }").unwrap();
+    std::fs::write(&dir, "command bad | (j: +i32, k: -i32) { 0 @ k }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("polarity"));
@@ -129,7 +131,7 @@ fn checker_diagnostics_include_source_locations() {
         ),
         (
             "slc_test_location_polarity.sl",
-            "command bad(x: -i32) | (k: -i32) { 0 @ k }",
+            "command bad | (j: +i32, k: -i32) { 0 @ k }",
             ["polarity:", "1:1", "`command`"],
         ),
         (
@@ -932,7 +934,7 @@ fn the_prelude_is_available_and_shadowable() {
             println(min(3, 7));
             println(max(3, 7));
             println(abs(0 - 42));
-            println(mu i64 { out <= 21 @ then(double, ↓out) });
+            println(mu i64 { out <= 21 @ then(double, out) });
             0 @ exit
         }"#,
     )
@@ -978,15 +980,15 @@ fn the_prelude_provides_all_four_logical_units() {
         fn builtin_unit_value() -> unit { Unit {} }
         fn top_value() -> Top { mu Top {} }
         fn use_empty<T>(empty: Empty) -> T { match empty {} }
-        fn use_bottom<T>(bottom: ↓Bottom) -> T {
-            Bottom {} @ ↑bottom
+        fn use_bottom<T>(bottom: Bottom) -> T {
+            Bottom {} @ bottom
         }
         command bottom_command | (exit: -i32) -> Bottom { 0 @ exit }
         command main | (exit: -i32) {
             match unit_value() { Unit {} => println("unit") };
             match builtin_unit_value() { () => println("unit again") };
             println(mu i64 {
-                out <= use_bottom(↓select Bottom { Bottom {} => 42 @ out }) @ out
+                out <= use_bottom(select Bottom { Bottom {} => 42 @ out }) @ out
             });
             println(mu i64 {
                 out <= Bottom {} @ select Bottom { () => 43 @ out }
@@ -1006,12 +1008,12 @@ fn the_prelude_consumer_combinators_compose_with_builtins() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) {
-            println(mu i64 { out <= 42 @ traced("answer", ↓out) });
+            println(mu i64 { out <= 42 @ traced("answer", out) });
             println(mu i64 { out <=
-                parse_int("nope", out, defaulting(7, ↓out), defaulting(9, ↓out))
+                parse_int("nope", out, defaulting(7, out), defaulting(9, out))
             });
             println(mu i64 { out <=
-                parse_int("35", out, defaulting(7, ↓out), defaulting(9, ↓out))
+                parse_int("35", out, defaulting(7, out), defaulting(9, out))
             });
             0 @ exit
         }"#,
@@ -1152,8 +1154,8 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         fn config() -> Config {
             mu Config { retries <= 3 @ retries, name <= "slant" @ name }
         }
-        fn printer(out: ↓-i32) -> Report {
-            select Report { Report { value, label } => value @ ↑out }
+        fn printer(out: -i32) -> Report {
+            select Report { Report { value, label } => value @ out }
         }
         fn ones() -> Stream2<i64> {
             mu Stream2 { head: out <= 1 @ out, tail: out <= ones() @ out }
@@ -1162,10 +1164,10 @@ fn traits_dispatch_on_menu_and_form_receivers() {
 
         command main | (exit: -i32) {
             println(describe(config()));
-            println(describe(printer(↓exit)));
+            println(describe(printer(exit)));
             println(describe(ones()));
             println(label(config()));
-            println(label(printer(↓exit)));
+            println(label(printer(exit)));
             0 @ exit
         }"#,
     )

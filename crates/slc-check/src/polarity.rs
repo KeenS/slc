@@ -145,67 +145,32 @@ fn check_param_polarity(
     {
         return;
     }
-    // A value parameter holds data, and a consumer is data only once boxed:
-    // `↓-String`, never `-String`.
+    // A continuation parameter must be a consumer: control cannot leave
+    // through data. A value parameter may hold either side — a consumer is
+    // a value like any other.
     let resolved = declared.resolve(param_type);
     let requires_negative = is_cont || p.is_continuation;
-    if requires_negative {
-        if let TypeExpr::Positive(_) = param_type {
-            diags.push(Diagnostic {
-                message: format!(
-                    "parameter `{}` has explicitly positive type; expected negative (-) polarity",
-                    p.name
-                ),
-                span,
-            });
-            return;
-        }
-    } else if let TypeExpr::Negative(_) = param_type {
-        // `-Menu` / `-Form` is a demand: the dual of a declared negative
-        // type is honest data, so a value parameter may hold it.
-        if let Some(Type::Named(name, _)) = &resolved
-            && declared.is_negative_decl(name)
-        {
-            return;
-        }
-        // A double negation is the case worth explaining: it reads as a
-        // consumer and is not one.
-        let message = match &resolved {
-            Some(ty) if is_positive_type(ty) => format!(
-                "parameter `{}` is written negative but has type {ty}: dual is an involution",
+    if requires_negative && let TypeExpr::Positive(_) = param_type {
+        diags.push(Diagnostic {
+            message: format!(
+                "parameter `{}` has explicitly positive type; expected negative (-) polarity",
                 p.name
             ),
-            Some(ty) => format!(
-                "parameter `{}` is a consumer of type {ty}, and a value parameter holds data; \
-                 box it as ↓{ty}",
-                p.name
-            ),
-            None => format!(
-                "parameter `{}` has explicitly negative type; expected positive (+) polarity",
-                p.name
-            ),
-        };
-        diags.push(Diagnostic { message, span });
+            span,
+        });
         return;
     }
-    if let Some(ty) = resolved {
-        // A menu or a form is a negative *value*, and a nominal one: it may
-        // sit in a value parameter unboxed, since no involution can confuse
-        // a declared name with the data it consumes.
-        if declared.is_negative_value(&ty) && !requires_negative {
-            return;
-        }
-        let ok = if requires_negative { is_negative_type(&ty) } else { is_positive_type(&ty) };
-        if !ok {
-            diags.push(Diagnostic {
-                message: format!(
-                    "parameter `{}` has type {ty}; expected {} polarity",
-                    p.name,
-                    if requires_negative { "negative (-)" } else { "positive (+)" }
-                ),
-                span,
-            });
-        }
+    if let Some(ty) = resolved
+        && requires_negative
+        && !is_negative_type(&ty)
+    {
+        diags.push(Diagnostic {
+            message: format!(
+                "parameter `{}` has type {ty}; expected negative (-) polarity",
+                p.name
+            ),
+            span,
+        });
     }
 }
 
@@ -224,18 +189,14 @@ fn is_negative_type(t: &Type) -> bool {
     t.is_negative()
 }
 
-/// A field holds data. A consumer is not data until it is boxed: `↓-i64`,
-/// not `-i64`.
+/// A field holds a value of either polarity: a consumer is a value like
+/// any other.
 fn is_usable_as_field(t: &Type) -> bool {
-    t.is_positive()
+    t.is_positive() || t.is_negative()
 }
 
 fn field_message(what: &str, ty: &Type) -> String {
-    if ty.is_negative() {
-        format!("{what} of type {ty} is a consumer, not data; box it as ↓{ty}")
-    } else {
-        format!("{what} of type {ty} is not data")
-    }
+    format!("{what} of type {ty} is not a value type")
 }
 
 /// Check expression polarity: mu binders must be negative. Used on an
@@ -342,19 +303,15 @@ mod tests {
     }
 
     #[test]
-    fn a_double_negation_is_data_and_says_so() {
-        // `-(-i64)` is `+i64`, so it is fine as data and wrong as a
-        // consumer — and the diagnostic explains which.
-        let diags = check("fn f(x: -(-i64)) -> i64 { 0 }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("dual is an involution")), "{diags:?}");
-
-        // A consumer is not data until it is boxed: a bare `-i64` value
-        // parameter asks for the box, and the boxed form is accepted.
-        let diags = check("fn f(x: -i64) -> i64 { 0 }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("box it as ↓-i64")), "{diags:?}");
-        assert!(check("fn f(x: ↓-i64) -> i64 { 0 }").is_ok());
-        let diags = check("command f(x: -i32) | (k: -i32) { 0 @ k }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("box it as ↓-i32")), "{diags:?}");
+    fn a_consumer_is_a_value() {
+        // A value parameter holds either side: a consumer travels bare, and
+        // `-(-i64)` is `+i64` by involution.
+        assert!(check("fn f(x: -i64) -> i64 { 0 }").is_ok());
+        assert!(check("fn f(x: -(-i64)) -> i64 { x }").is_ok());
+        assert!(check("command f(x: -i32) | (k: -i32) { 0 @ k }").is_ok());
+        // Control still cannot leave through data.
+        let diags = check("command f | (j: +i32, k: -i32) { 0 @ k }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("expected negative")), "{diags:?}");
     }
 
     #[test]
@@ -374,10 +331,12 @@ mod tests {
 
     #[test]
     fn command_wrong_polarity_fails() {
+        // The consumer value parameter is fine now; the positive
+        // continuation parameter is the one real error left.
         let r = check("command bad(x: -i32) | (k: +i32) { k(x) }");
         assert!(r.is_err());
         let diags = r.unwrap_err();
-        assert_eq!(diags.len(), 2);
+        assert_eq!(diags.len(), 1);
     }
 
     #[test]

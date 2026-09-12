@@ -48,7 +48,7 @@ fn type_key(ty: &Type) -> Option<String> {
     match ty {
         Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
         Type::Named(n, _) => Some(n.clone()),
-        Type::Down(t) | Type::Up(t) | Type::Dual(t) => type_key(t),
+        Type::Dual(t) => type_key(t),
         _ => None,
     }
 }
@@ -191,10 +191,6 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
             Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
-        T::Down(inner) => {
-            Some(Type::Down(Box::new(resolve_with_self(&inner.kind, self_ty, enums)?)))
-        }
-        T::Up(inner) => Some(Type::Up(Box::new(resolve_with_self(&inner.kind, self_ty, enums)?))),
         _ => enums.resolve(ty),
     }
 }
@@ -247,7 +243,7 @@ fn infer_param_type(
 }
 
 /// Resolve a declared type, substituting a rigid variable for each type
-/// parameter even under a sign or a shift: `+T` and `↓-T` find `T` too.
+/// parameter even under a sign: `+T` and `-T` find `T` too.
 fn resolve_rigid(
     ty: &TypeExpr,
     rigid_vars: &HashMap<&str, Type>,
@@ -261,10 +257,6 @@ fn resolve_rigid(
             Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual()),
-        T::Down(inner) => {
-            Some(Type::Down(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?)))
-        }
-        T::Up(inner) => Some(Type::Up(Box::new(resolve_rigid(&inner.kind, rigid_vars, enums)?))),
         // The connectives recurse, so a type parameter is found inside a
         // function, tensor, par, or list type too — `(A -> B)` with generic
         // `A` and `B` is a rigid arrow, not an unresolved name.
@@ -480,8 +472,6 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
             matches!(&callee.kind, Expr::Ident(name) if enums.variant(name).is_some())
                 && args.iter().all(|arg| is_value_form(&arg.kind, enums))
         }
-        // The shifts are erased coercions: a boxed value is a value.
-        Expr::Shift { expr, .. } => is_value_form(&expr.kind, enums),
         _ => false,
     }
 }
@@ -1946,8 +1936,8 @@ fn check_expr_unapplied(
             {
                 diags.push(Diagnostic {
                     message: format!(
-                        "`select` consumes data, and {resolved} is a consumer; a consumer is \
-                         consumed in a box: `select ↓{resolved}`"
+                        "`select` consumes data, and {resolved} is a consumer; `select` \
+                         builds the consumer of a positive type"
                     ),
                     span: e.span,
                 });
@@ -1972,33 +1962,6 @@ fn check_expr_unapplied(
                 env.pop();
             }
             if selects_bottom_alias { Some(Type::Bottom) } else { Some(resolved.dual()) }
-        }
-        // `↓e` boxes a consumer as data; `↑e` opens the box. Neither does
-        // anything at run time — they are here so that a value and a
-        // suspended computation are not the same type.
-        Expr::Shift { down: true, expr } => {
-            let inner = check_expr(expr, enums, env, diags)?;
-            if !inner.is_negative() {
-                diags.push(Diagnostic {
-                    message: format!("`↓` boxes a consumer; this has type {inner}"),
-                    span: e.span,
-                });
-                return None;
-            }
-            Some(Type::Down(Box::new(inner)))
-        }
-        Expr::Shift { down: false, expr } => {
-            let inner = check_expr(expr, enums, env, diags)?;
-            match inner {
-                Type::Down(boxed) => Some(*boxed),
-                other => {
-                    diags.push(Diagnostic {
-                        message: format!("`↑` opens a `↓` box; this has type {other}"),
-                        span: e.span,
-                    });
-                    None
-                }
-            }
         }
         // `.item(k)` — a request: the continuation `k` must consume the
         // item's answer, and the request itself is the dual of the menu.
@@ -2202,10 +2165,12 @@ fn check_expr_unapplied(
             // side is written negatively is not itself the question.
             let value_ty = check_expr(value, enums, env, diags);
             let consumer_ty = check_expr(consumer, enums, env, diags);
-            // The value side carries data. A consumer travels only in a box:
-            // `↓k @ …`, never `k @ …` — without this rule, `dual` being an
-            // involution would let a consumer of consumers pass for the data
-            // it consumes.
+            // The cut stays oriented: the left is the value side. A raw
+            // consumer may be stored and passed — but not sit here, because
+            // `dual` being an involution would otherwise let any positive
+            // value pass for a consumer of consumers, and the machine only
+            // runs cuts whose right side really consumes. A continuation
+            // travels by application instead: `handle(k)`.
             if let Some(value_ty) = &value_ty
                 && value_ty.is_negative()
                 // An unsolved variable is not yet anything; the duality
@@ -2218,8 +2183,8 @@ fn check_expr_unapplied(
             {
                 diags.push(Diagnostic {
                     message: format!(
-                        "the left of `@` is data, and this has type {value_ty}; a consumer is \
-                         sent in a box: `↓v @ …`"
+                        "the left of `@` is the value side, and this has type {value_ty}; \
+                         pass a continuation as an argument instead"
                     ),
                     span: value.span,
                 });
@@ -3120,38 +3085,34 @@ mod tests {
     }
 
     #[test]
-    fn shifts_box_and_unbox_consumers() {
-        // `↓e` boxes a consumer; boxing data is refused.
-        assert!(check("fn f(k: -i64) <- i64 { g(↓k) }").is_ok());
-        let diags = check("fn f(x: +i64) -> i64 { g(↓x) }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("`↓` boxes a consumer")), "{diags:?}");
-
-        // `↑e` opens a box; there has to be one.
-        assert!(check("fn f(b: ↓-i64) -> ⊥ { 1 @ ↑b }").is_ok());
-        let diags = check("fn f(x: +i64) -> ⊥ { 1 @ ↑x }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("`↑` opens a `↓` box")), "{diags:?}");
+    fn a_consumer_travels_bare() {
+        // A continuation is a value: it passes as an ordinary argument and
+        // sits in bindings without any box.
+        assert!(check("fn hold(k: -i64) -> ⊥ { 1 @ k }").is_ok());
     }
 
     #[test]
-    fn the_left_of_a_cut_is_data() {
-        // Sending a bare consumer would let `¬¬A` pass for `A`.
-        let diags = check("fn f(k: -i64, target: ↓↑i64) -> ⊥ { k @ ↑target }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("the left of `@` is data")), "{diags:?}");
-        assert!(check("fn f(k: -i64, target: ↓↑i64) -> ⊥ { ↓k @ ↑target }").is_ok());
-    }
-
-    #[test]
-    fn double_negation_does_not_collapse() {
-        // `¬¬i64` is `↓↑i64`, and an `i64` is not one: `dne(42)` is the
-        // program the shifts exist to reject.
-        let diags = check(
-            "fn dne(refuter: ↓↑i64) -> i64 { mu { k <= ↓k @ ↑refuter } }
-             command main | (exit: -i32) { println(dne(42)); 0 @ exit }",
-        )
-        .unwrap_err();
+    fn the_cut_stays_oriented() {
+        // A raw consumer is a value everywhere except the left of a cut:
+        // there, involution would let any positive pass for a consumer of
+        // consumers, and the machine only runs an oriented cut.
+        let diags = check("fn f(k: -i64, target: -i64) -> ⊥ { k @ target }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("has type +i64; the declaration says ↓↑+i64")),
+            diags.iter().any(|d| d.message.contains("the left of `@` is the value side")),
             "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn double_negation_collapses() {
+        // With no shifts, dual is an involution on the nose: `-(-T)` *is*
+        // `T`, and double-negation elimination is the identity function.
+        assert!(
+            check(
+                "fn dne<T>(t: -(-T)) -> T { t }
+                 command main | (exit: -i32) { println(dne(42)); 0 @ exit }",
+            )
+            .is_ok()
         );
     }
 

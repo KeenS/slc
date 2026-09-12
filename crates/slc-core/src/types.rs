@@ -39,13 +39,6 @@ pub enum Type {
     With(Box<Type>, Box<Type>),
     /// Additive sum: `A + B`.
     Sum(Box<Type>, Box<Type>),
-    /// Downshift: `↓A`, the positive type of a boxed negative one — data
-    /// holding a computation.
-    Down(Box<Type>),
-    /// Upshift: `↑A`, the negative type of a positive one — the computation
-    /// that returns it. `↓` and `↑` are dual, and neither is the identity:
-    /// they are what keeps `¬¬A` from collapsing to `A`.
-    Up(Box<Type>),
     /// A declaration's type parameter, by position: what `T` becomes inside
     /// the declaration's own field and payload types. It never reaches
     /// unification — a use of the declaration substitutes its arguments for
@@ -77,8 +70,6 @@ impl Type {
                 Type::Sum(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
             }
             Type::Dual(t) => Type::Dual(Box::new(t.instantiate(args))),
-            Type::Down(t) => Type::Down(Box::new(t.instantiate(args))),
-            Type::Up(t) => Type::Up(Box::new(t.instantiate(args))),
             Type::Named(name, own) => {
                 Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
             }
@@ -118,8 +109,6 @@ impl Type {
             Type::Dual(t) => (**t).clone(),
             Type::With(a, b) => Type::Sum(Box::new(a.dual()), Box::new(b.dual())),
             Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
-            Type::Down(t) => Type::Up(Box::new(t.dual())),
-            Type::Up(t) => Type::Down(Box::new(t.dual())),
             Type::Named(name, args) => {
                 Type::Dual(Box::new(Type::Named(name.clone(), args.clone())))
             }
@@ -139,7 +128,6 @@ impl Type {
                     | Type::Tensor(..)
                     | Type::One
                     | Type::Sum(..)
-                    | Type::Down(_)
                     | Type::Named(..)
                     | Type::Param(_)
             ),
@@ -159,7 +147,6 @@ impl Type {
                     | Type::Par(..)
                     | Type::Bottom
                     | Type::With(..)
-                    | Type::Up(_)
             ),
         }
     }

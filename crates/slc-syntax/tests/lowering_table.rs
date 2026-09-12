@@ -72,9 +72,9 @@ const ROWS: &[Row] = &[
         core: "co(μ̃[Color; Color::Red(). ⟨$int_0 ∥ return⟩])",
     },
     Row {
-        id: "expr.shift",
-        // The box erases: the core sees the consumer itself.
-        source: "fn f(k: -i64) <- i64 { g(↓k) }",
+        id: "expr.consumer_argument",
+        // A consumer is a value: it passes as an ordinary argument.
+        source: "fn f(k: -i64) <- i64 { g(k) }",
         core: "⟨g ∥ k · __call⟩",
     },
     Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
@@ -88,7 +88,7 @@ const ROWS: &[Row] = &[
     },
     Row {
         id: "decl.form",
-        source: "form F { a: i32 } fn g(k: ↓-i32) -> F { select F { F { a } => a @ ↑k } }",
+        source: "form F { a: i32 } fn g(k: -i32) -> F { select F { F { a } => a @ k } }",
         core: "co(μ̃[F; F(a). ⟨a ∥ k⟩])",
     },
     Row {

@@ -163,11 +163,7 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: false,
                 stdout: &[],
-                stderr: &[
-                    "polarity:",
-                    "parameter `x` is a consumer of type -i32",
-                    "parameter `j` has explicitly positive type",
-                ],
+                stderr: &["polarity:", "parameter `j` has explicitly positive type"],
             },
         ),
         ("select.sl", Expected { success: true, stdout: &["1", "42", "100"], stderr: &[] }),
