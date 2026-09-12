@@ -58,30 +58,6 @@ same way, unlisted: `cargo fmt`, `cargo clippy --workspace --all-targets --
 must fail), DESIGN.md updated where behaviour changed, and the entry
 retired from this file.
 
-- **Lambda annotations lose rigid type parameters.** A checker bug,
-  independent of polarity: the rigid-variable map built for a declaration's
-  body is not visible where a lambda's annotation resolves.
-
-  - [ ] Reproduce both shapes:
-        `fn wrap<T: Display>(x: T) -> String { let f = fn(y: T) { fmt(y) }; f(x) }`
-        (positive) and
-        `fn emit<T: Display>(out: -String) <- T { fn(x: T) { fmt(x) @ out } }`
-        (negative). Both fail today with ``|`fmt` needs `Display`… not known
-        to satisfy|``.
-  - [ ] Carry the map: the rigid vars exist beside `record_bounds` at
-        `crates/slc-check/src/expr.rs:321` and `:379` but die there. Give
-        `Env` a `rigid_vars: HashMap<String, Type>` field, set and restored
-        around body checking exactly as `bounds` is.
-  - [ ] Resolve through it: the `Expr::Lambda` arm (`expr.rs:1320`) resolves
-        `param_type` with `enums.resolve` only; try
-        `resolve_rigid(ty, &env.rigid_vars, enums)` first, then fall back.
-  - [ ] Sweep for siblings: grep body-position `enums.resolve` on *written*
-        types (`let` annotations, `select`/`mu` scrutinee types) and give
-        each the same first-try.
-  - [ ] Pin: both repro programs as expr.rs unit tests, plus a run of the
-        negative shape in an integration test once item two lands the call
-        side.
-
 - **The trait × negative-function corner.** Bounded negative functions and
   `<- Self` methods are declarable but cannot dispatch: the cut's value
   type never reaches the call standing in consumer position. Depends on

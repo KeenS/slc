@@ -70,7 +70,8 @@ fn discharge_bound(
         }
         diags.push(Diagnostic {
             message: format!(
-                "`{callee}` needs `{trait_name}` for a type parameter, but the caller's type is                  not known to satisfy it"
+                "`{callee}` needs `{trait_name}` for a type parameter, but the caller's \
+                 type is not known to satisfy it"
             ),
             span,
         });
@@ -293,6 +294,21 @@ fn resolve_rigid(
     }
 }
 
+/// Resolve a type written in *body* position: a lambda's annotation, a
+/// `let`'s, a `select`'s or `mu`'s. The enclosing declaration's type
+/// parameters come first, so `T` inside the body is the `T` the signature
+/// bound — rigid, and carrying its bounds — rather than a fresh name.
+fn resolve_in_body(ty: &TypeExpr, env: &Env, enums: &Declarations) -> Option<Type> {
+    if !env.rigid_vars.is_empty() {
+        let rigid: HashMap<&str, Type> =
+            env.rigid_vars.iter().map(|(name, ty)| (name.as_str(), ty.clone())).collect();
+        if let Some(resolved) = resolve_rigid(ty, &rigid, enums) {
+            return Some(resolved);
+        }
+    }
+    enums.resolve(ty)
+}
+
 /// Put a declaration's bounds in scope for its body, as (rigid-variable
 /// index, trait, type-parameter name), and return the previous set to
 /// restore afterward.
@@ -300,14 +316,20 @@ fn record_bounds(
     bounds: &[(String, String)],
     rigid_vars: &HashMap<&str, Type>,
     env: &mut Env,
-) -> Vec<(usize, String, String)> {
+) -> (Vec<(usize, String, String)>, HashMap<String, Type>) {
     let outer = env.bounds.clone();
     for (var, trait_name) in bounds {
         if let Some(Type::Var(v)) = rigid_vars.get(var.as_str()) {
             env.bounds.push((*v, trait_name.clone(), var.clone()));
         }
     }
-    outer
+    // The body resolves written types through these too, so an annotation
+    // inside it names the declaration's parameter rather than a fresh one.
+    let outer_rigid = std::mem::replace(
+        &mut env.rigid_vars,
+        rigid_vars.iter().map(|(name, ty)| (name.to_string(), ty.clone())).collect(),
+    );
+    (outer, outer_rigid)
 }
 
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
@@ -318,7 +340,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // caller chose, not a licence to treat the value as any type.
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
-            let outer_bounds = record_bounds(bounds, &rigid_vars, env);
+            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
                 if let Some(ty) = p.ty.as_ref().and_then(&rigid) {
@@ -335,6 +357,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let body_type = check_expr(body, enums, env, diags);
             env.consumed = outer;
             env.bounds = outer_bounds;
+            env.rigid_vars = outer_rigid;
             env.pop();
             // The body produces what the declaration promises: the return
             // type for `->`, its consumer for `<-`. A body that ends in a
@@ -376,7 +399,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             env.push();
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
-            let outer_bounds = record_bounds(bounds, &rigid_vars, env);
+            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
                 if let Some(ty) = p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums))
                 {
@@ -403,6 +426,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 }
             }
             env.bounds = outer_bounds;
+            env.rigid_vars = outer_rigid;
             env.pop();
         }
         Decl::Const { name, ty, value } => {
@@ -857,7 +881,7 @@ fn check_let_binding(
     diags: &mut Vec<Diagnostic>,
 ) -> Type {
     let actual = check_expr(value, enums, env, diags);
-    let annotation = ty.as_ref().and_then(|ty| enums.resolve(ty));
+    let annotation = ty.as_ref().and_then(|ty| resolve_in_body(ty, env, enums));
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
         && !fits(env, annotation, &actual, &value.kind)
     {
@@ -1321,7 +1345,7 @@ fn check_expr_unapplied(
             env.push();
             let param_ty = param_type
                 .as_ref()
-                .and_then(|ty| enums.resolve(ty))
+                .and_then(|ty| resolve_in_body(ty, env, enums))
                 .or_else(|| infer_param_type(param, body, enums, env))
                 .unwrap_or_else(|| env.uni.fresh_var());
             env.define(param, param_ty.clone());
@@ -1815,8 +1839,10 @@ fn check_expr_unapplied(
             let named = match ty.as_deref().map(|ty| &ty.kind) {
                 Some(TypeExpr::Base(n)) if enums.is_menu(n) => Some((n.clone(), None)),
                 Some(TypeExpr::Apply(n, args)) if enums.is_menu(n) => {
-                    let args =
-                        args.iter().map(|a| enums.resolve(&a.kind)).collect::<Option<Vec<_>>>();
+                    let args = args
+                        .iter()
+                        .map(|a| resolve_in_body(&a.kind, env, enums))
+                        .collect::<Option<Vec<_>>>();
                     Some((n.clone(), args))
                 }
                 Some(_) => {
@@ -1858,7 +1884,7 @@ fn check_expr_unapplied(
             // covers one shape of T, binds that shape's components, and runs
             // a command; the whole expression is dual to T.
             let resolved = match ty {
-                Some(ty) => match enums.resolve(&ty.kind) {
+                Some(ty) => match resolve_in_body(&ty.kind, env, enums) {
                     Some(resolved) => Some(resolved),
                     None => {
                         diags.push(Diagnostic {
@@ -2216,7 +2242,7 @@ fn check_expr_unapplied(
             let mut captured_types = Vec::new();
             for p in continuation_params {
                 let ty = match &p.ty {
-                    Some(ty) => enums.resolve(ty),
+                    Some(ty) => resolve_in_body(ty, env, enums),
                     // Nothing was written, so the body says it.
                     None => infer_param_type(&p.name, body, enums, env),
                 }
@@ -3086,6 +3112,37 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
 
         assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
+    }
+
+    #[test]
+    fn a_body_annotation_names_the_declarations_type_parameter() {
+        // `T` written inside a body is the declaration's rigid `T`, bounds
+        // and all — not a fresh name that merely looks alike.
+        assert!(
+            check(
+                "trait Show { fn show(self: +Self) -> String; }
+                 impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
+                 fn wrap<T: Show>(x: T) -> String { let f = fn(y: T) { show(y) }; f(x) }"
+            )
+            .is_ok()
+        );
+        assert!(
+            check(
+                "trait Show { fn show(self: +Self) -> String; }
+                 impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
+                 fn annotated<T: Show>(x: T) -> String { let y: T = x; show(y) }"
+            )
+            .is_ok()
+        );
+        // The negative shape's body checks on its own too.
+        assert!(
+            check(
+                "trait Show { fn show(self: +Self) -> String; }
+                 impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
+                 fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) @ out } }"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

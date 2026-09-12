@@ -38,6 +38,12 @@ pub(crate) struct Env<'a> {
     /// declaration's `<T: Trait>`. The name identifies the dictionary
     /// parameter a bounded call forwards or a method call projects from.
     pub(crate) bounds: Vec<(usize, String, String)>,
+    /// The enclosing declaration's type parameters, each mapped to the rigid
+    /// variable standing for it. A written type in *body* position — a
+    /// lambda's annotation, a `let`'s, a scrutinee's — resolves through this
+    /// first, so `T` inside the body is the same `T` the signature bound and
+    /// not a fresh name that happens to look alike.
+    pub(crate) rigid_vars: HashMap<String, Type>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
@@ -58,6 +64,7 @@ impl<'a> Env<'a> {
             consumed: None,
             traits,
             bounds: Vec::new(),
+            rigid_vars: HashMap::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
         }
     }
