@@ -52,9 +52,12 @@ feature is mid-flight; what remains open is below.
   effectful negative function or a handler on the consumer side means is an
   open question — to be discussed, not yet designed.
 
-- **The additive units `0` and `⊤`.** Absent on both sides today — no
-  variants to write, so no surface form. Whether they deserve one is a
-  future discussion.
+- **Surface syntax for the additive units `0` and `⊤`.** Their explicit
+  prelude forms now exist: `enum Empty {}` is eliminated by `select Empty {}`,
+  and the unique value of `menu Top {}` is `mu Top {}`. What remains open is
+  whether `Empty` and `Top` should gain symbolic or otherwise concise type and
+  term aliases, analogous to `()`/`Unit` and `⊥`/`Bottom`; settle those
+  spellings later rather than reserving syntax now.
 
 - **Composition syntax: the pipeline cut.** Composing a function with a
   continuation is one binder away in either spelling today —
@@ -106,4 +109,3 @@ The symmetry audit (after `menu` landed) left these queued, in order:
 - **Row-polymorphic effects.** Infer a function's effect row and let a
   higher-order function forward an argument's effects, so `map(f, xs)` can say
   it performs whatever `f` does — retiring the monomorphic-rows limit.
-

@@ -970,6 +970,37 @@ fn the_prelude_is_available_and_shadowable() {
 }
 
 #[test]
+fn the_prelude_provides_all_four_logical_units() {
+    let dir = std::env::temp_dir().join("slc_test_prelude_units.sl");
+    std::fs::write(
+        &dir,
+        r#"fn unit_value() -> Unit { () }
+        fn builtin_unit_value() -> unit { Unit {} }
+        fn top_value() -> Top { mu Top {} }
+        fn use_empty<T>(empty: Empty) -> T { match empty {} }
+        fn use_bottom<T>(bottom: ↓Bottom) -> T {
+            Bottom {} @ ↑bottom
+        }
+        command bottom_command | (exit: -i32) -> Bottom { 0 @ exit }
+        command main | (exit: -i32) {
+            match unit_value() { Unit {} => println("unit") };
+            match builtin_unit_value() { () => println("unit again") };
+            println(mu i64 {
+                out <= use_bottom(↓select Bottom { Bottom {} => 42 @ out }) @ out
+            });
+            println(mu i64 {
+                out <= Bottom {} @ select Bottom { () => 43 @ out }
+            });
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"unit\"", "\"unit again\"", "42", "43"]);
+}
+
+#[test]
 fn the_prelude_consumer_combinators_compose_with_builtins() {
     let dir = std::env::temp_dir().join("slc_test_prelude_combinators.sl");
     std::fs::write(
@@ -1119,13 +1150,13 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         }
 
         fn config() -> Config {
-            mu Config { .retries(out) <= 3 @ out, .name(out) <= "slant" @ out }
+            mu Config { retries <= 3 @ retries, name <= "slant" @ name }
         }
         fn printer(out: ↓-i32) -> Report {
             select Report { Report { value, label } => value @ ↑out }
         }
         fn ones() -> Stream2<i64> {
-            mu Stream2 { .head(out) <= 1 @ out, .tail(out) <= ones() @ out }
+            mu Stream2 { head: out <= 1 @ out, tail: out <= ones() @ out }
         }
         fn label<T: Describe>(x: T) -> String { describe(x) }
 

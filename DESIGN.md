@@ -253,7 +253,9 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 
 `mu` is uniformly `mu [Type] { arms }`, mirroring `select`: one binder arm,
 `k <= c`, is the atom form and captures the ambient continuation whole;
-request arms, `.item(out) <= c`, are the copattern form and build a menu.
+request arms, `item: out <= c`, are the copattern form and build a menu.
+When the continuation binder has the item's name, `item <= c` abbreviates
+`item: item <= c`; an untyped single bare arm remains the local binder form.
 Every `mu` arm writes `<=`, and every `select` arm `=>` — the arrow marks
 what arrives: data flows forward into an arm, a demand reaches back.
 A binder arm stands alone — it takes the whole continuation, so a second
@@ -401,6 +403,28 @@ enum Config { Retries(↓-i64), Name(↓-String) }   // ⊕ — the value picks
 menu Config { retries: i64,   name: String }     // &  — the demand picks
 ```
 
+The nullary case is the additive unit `⊤`: `menu Top {}` has no possible
+requests, and its unique menu value is `mu Top {}`. Its core form is
+`μ[Top]`; the name is retained explicitly because an empty branch table has
+no destructor label from which its nominal type could be recovered.
+
+All four nullary connective shapes are introduced by prelude declarations:
+
+```sl
+data Unit {}
+form Bottom {}
+enum Empty {}
+menu Top {}
+```
+
+The exact nullary `Unit` and `Bottom` declarations are recognized structurally:
+`Unit` is the surface name of core `1`, constructed interchangeably as `()` or
+`Unit {}`, and `Bottom` is the surface name of core `⊥`; its nullary demand
+`Bottom {}` is likewise `()`. A differently shaped declaration that shadows
+either name stays nominal. `select Empty {}` is the empty consumer of the
+uninhabited `Empty`, and `mu Top {}` is the unique `Top` value. Concise surface
+aliases for `Empty` and `Top` are deliberately deferred.
+
 The two declarations above are each other's dual: `dual(i64 & String)` is
 `-i64 ⊕ -String`, a sum of requests each carrying the continuation that wants
 the answer — the shape the enum writes with explicit boxes. `menu` makes that
@@ -412,24 +436,22 @@ arrives at them:
 - **`select` answers data** — it builds the μ̃ family: the consumer of an
   atom, a product, an enum, or the record a `form` consumes. One arm per
   shape the data can take.
-- A `mu` arm has two forms, told apart by its arrow. The value arm
-  `.item => e` produces the answer, flowing forward into the demand with
-  its continuation implicit — sugar for `.item(__ask) <= e @ __ask` — and
-  reads as `match` does. The command arm `.item(out) <= c` binds the
-  demand's continuation — its *return address*, carried the way a
-  variant's payload is — for when the arm routes control itself: nested
-  copatterns, or answering through a multi-outcome builtin. The two mix
-  freely.
+- A `mu` arm is `item: out <= c`: it binds the demand's continuation — its
+  *return address*, carried the way a variant's payload is — and answers it
+  with a command. The continuation can receive a direct answer with
+  `item <= value @ item`, or route control through nested copatterns and
+  multi-outcome builtins.
 
 - **`mu` answers demands** — it builds the μ family: a binder arm `mu { k <= c }` captures
   the ambient continuation, and `mu Config { … }` is the copattern form, a
-  menu value. An arm is `.item(out) <= c`: the destructor it answers, the
+  menu value. An arm is `item: out <= c`: the destructor it answers, the
   binder for the continuation the request carries (`out: -A` for an item
   answering `A`), and the command that answers it. Arms cover each item
   exactly once, only the demanded branch ever runs, and the menu's name may
-  be left out when a destructor names it unambiguously. An arm may *refine*
+  be left out when a labelled copattern names it unambiguously. `item <= c`
+  is shorthand for `item: item <= c`. An arm may *refine*
   an item whose answer is itself a menu with a nested copattern —
-  `.tail(.head(out))` — and the arms sharing an outer destructor group into
+  `tail: head: out` — and the arms sharing an outer destructor group into
   an inner menu, which must again cover every item
   (`examples/stream.sl`).
 - **`match` — a branch table applied to a named scrutinee, on either side.**
@@ -441,8 +463,8 @@ arrives at them:
 ```sl
 fn config() -> Config {
     mu Config {
-        .retries(out) <= 3 @ out,
-        .name(out) <= "slant" @ out,
+        retries: out <= 3 @ out,
+        name: out <= "slant" @ out,
     }
 }
 
@@ -905,7 +927,8 @@ declaring its own `Stream` loses `take` — so shadow a type only to replace
 its whole family. Anything
 expressible in the language belongs here rather than in the runtime.
 
-The prelude defines `min`, `max`, `abs`; the `List<T>` enum with `length`,
+The prelude defines the logical units `Unit`, `Bottom`, `Empty`, and `Top`;
+`min`, `max`, `abs`; the `List<T>` enum with `length`,
 `append`, `map`, and the outcome-offering `command nth`; **`Option<T>`**
 and **`Result<T, E>`** with `unwrap_or` — either/or outcomes are additive,
 so they are enums whose consumers are `select`s (a `form` would be the
@@ -1125,14 +1148,16 @@ Term      t ::= x                     variable
               | μα. c                 capture of the ambient continuation
               | t ⊗ t                 tensor pair
               | L(t)                  labelled additive injection (enum value)
-              | μ[.d₁(α). c₁ | … ]    menu (negative additive value)
+              | μ[M; .d₁(α). c₁ | … ] menu (negative additive value)
+              | μ[M]                  empty menu, retaining its named owner
               | co(e)                 ↓-shift introduction: a co-term as a value
 
 CoTerm    e ::= α                     co-variable
               | t · e                 application: argument, then tail
               | μ̃x. c                 value abstraction
               | prj:i                  projection of the i-th component
-              | μ̃[L₁(x…). c₁ | … ]    labelled consumer (enum, data)
+              | μ̃[M; L₁(x…). c₁ | … ] labelled consumer (enum, data)
+              | μ̃[M]                  empty labelled consumer, retaining its owner
               | μ̃(x₁, …, xₙ). c       product consumer
               | .d(e)                 request (destructor)
 
@@ -1208,9 +1233,9 @@ re-parsed without loss.
 ⟨ λx. t ∥ v · e ⟩            → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩  → — application
 ⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           ↑ — open the box
 ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
-⟨ L(v₁ ⊗ …) ∥ μ̃[… L(x…). c …] ⟩ → c[vᵢ/xᵢ]          labelled
+⟨ L(v₁ ⊗ …) ∥ μ̃[M; … L(x…). c …] ⟩ → c[vᵢ/xᵢ]       labelled
 ⟨ μ[… .d(α). c …] ∥ .d(e) ⟩  → c[e/α]              copattern
-⟨ co(.d(e)) ∥ μ̃[… .d(x). c …] ⟩ → c[co(e)/x]        co-labelled
+⟨ co(.d(e)) ∥ μ̃[M; … .d(x). c …] ⟩ → c[co(e)/x]     co-labelled
 ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩     → c[v₁/x, v₂/y]      product
 ```
 
@@ -1247,13 +1272,13 @@ nested left to right for several arguments.
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
-| `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[ L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
+| `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
-| `expr.select` | `select T { p => c, … }` | `co(μ̃[ L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
-| `expr.comatch` | `mu T { .item(k) <= c, … }` | `μ[.T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |
+| `expr.select` | `select T { p => c, … }` | `co(μ̃[T; L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃[T])` when it has no shapes; `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.comatch` | `mu T { item: k <= c, … }` | `μ[T; .T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
-| `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
+| `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
 | `expr.shift` | `↓e`, `↑e` | `⟦e⟧` — the coercions are for the checker, and erase |
 | `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
@@ -1274,13 +1299,13 @@ become λ binders.
 | `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `data` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `data` values — a labelled product |
-| `μ[.d(α). c \| …]` | `mu` over a `menu` — the copattern form |
+| `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — the `↓`-shift introduction, and a `form` value |
 | `α` | the consumer named on the right of a cut, `v @ k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
-| `μ̃[…]` | `select` over an `enum` or a `data` |
+| `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum` or a `data`, including an empty enum |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |
 

@@ -104,7 +104,7 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         consumer: Box<Node<Expr>>,
     },
-    /// `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a menu
+    /// `mu T { item: k <= c, … }` — the copattern form of `mu`: a menu
     /// value, branching on the demand the ambient consumer turns out to be.
     /// The mirror of `select` over a data type: `select` answers data, `mu`
     /// answers demands. The type may be left out when an arm's destructor
@@ -307,10 +307,10 @@ pub enum Pattern {
         variant: String,
         fields: Vec<Pattern>,
     },
-    /// `.item(p)` — a request shape: the destructor it demands, and a
+    /// A request shape: the destructor it demands, and a
     /// pattern for the continuation the request carries. In `match` the
     /// pattern is a binder naming that continuation; in `mu` it may itself
-    /// be a request shape — a nested copattern, `.tail(.head(out))`.
+    /// be a request shape — a nested copattern, `tail: head: out`.
     Dtor {
         dtor: String,
         arg: Box<Pattern>,

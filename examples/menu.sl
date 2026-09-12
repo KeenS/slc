@@ -23,8 +23,8 @@ menu Config {
 // carries; the arm answers by cutting into it.
 fn config() -> Config {
     mu Config {
-        .retries => 3,
-        .name => "slant",
+        retries <= 3 @ retries,
+        name <= "slant" @ name,
     }
 }
 
@@ -32,8 +32,8 @@ fn config() -> Config {
 // rest. Only the demanded item is ever computed.
 fn loud(base: Config) -> Config {
     mu Config {
-        .retries => base.retries,
-        .name => base.name + "!",
+        retries <= base.retries @ retries,
+        name <= base.name + "!" @ name,
     }
 }
 

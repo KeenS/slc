@@ -31,7 +31,7 @@ fn repository_example_suite_has_expected_results() {
             "arithmetic.sl",
             Expected { success: true, stdout: &["5", "6", "42", "10", "-5"], stderr: &[] },
         ),
-        ("bottom_type.sl", Expected { success: true, stdout: &["()"], stderr: &[] }),
+        ("logical_units.sl", Expected { success: true, stdout: &["()", "()"], stderr: &[] }),
         (
             "comparison.sl",
             Expected {

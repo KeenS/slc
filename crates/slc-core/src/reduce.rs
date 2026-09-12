@@ -43,10 +43,10 @@ pub fn step(c: &Command) -> Step {
         // lowers to.
         Command::Cut(v, CoTerm::MuTilde(x, c2)) => Step::Reduced(subst_command(x, v, c2)),
 
-        // Labelled rule: ⟨ L(v₁ ⊗ … ⊗ vₙ) ∥ μ̃[… L(x₁,…,xₙ). c …] ⟩ → c[vᵢ/xᵢ]
+        // Labelled rule: ⟨ L(v₁ ⊗ … ⊗ vₙ) ∥ μ̃[M; … L(x₁,…,xₙ). c …] ⟩ → c[vᵢ/xᵢ]
         // The label selects exactly one branch; the others are discarded
         // unreduced. An `enum` has a branch per variant, a `data` one.
-        Command::Cut(Term::Tag(label, payload), CoTerm::CoCase(branches)) => {
+        Command::Cut(Term::Tag(label, payload), CoTerm::CoCase { branches, .. }) => {
             match branches.iter().find(|b| &b.label == label) {
                 Some(branch) => match bind_components(&branch.binders, payload, &branch.body) {
                     Some(command) => Step::Reduced(command),
@@ -60,30 +60,32 @@ pub fn step(c: &Command) -> Step {
         // The mirror of the labelled rule: the request selects exactly one
         // branch of the menu, binds its continuation, and the branches that
         // were not demanded are discarded unreduced.
-        Command::Cut(Term::CoMatch(branches), CoTerm::Dtor(label, e)) => {
+        Command::Cut(Term::CoMatch { branches, .. }, CoTerm::Dtor(label, e)) => {
             match branches.iter().find(|b| &b.label == label) {
                 Some(branch) => Step::Reduced(subst_covar_command(&branch.binder, e, &branch.body)),
                 None => Step::Normal,
             }
         }
 
-        // Co-labelled rule: ⟨ co(.d(e)) ∥ μ̃[… .d(x). c …] ⟩ → c[co(e)/x]
+        // Co-labelled rule: ⟨ co(.d(e)) ∥ μ̃[M; … .d(x). c …] ⟩ → c[co(e)/x]
         // A request boxed by ↓ is a positive value with a label, so matching
         // on a continuation is the labelled rule with the payload rewrapped:
         // the arm receives the request's own continuation as a value.
-        Command::Cut(Term::Co(request), CoTerm::CoCase(branches)) => match request.as_ref() {
-            CoTerm::Dtor(label, e) => match branches.iter().find(|b| &b.label == label) {
-                Some(branch) => {
-                    let payload = Term::Co(e.clone());
-                    match bind_components(&branch.binders, &payload, &branch.body) {
-                        Some(command) => Step::Reduced(command),
-                        None => Step::Normal,
+        Command::Cut(Term::Co(request), CoTerm::CoCase { branches, .. }) => {
+            match request.as_ref() {
+                CoTerm::Dtor(label, e) => match branches.iter().find(|b| &b.label == label) {
+                    Some(branch) => {
+                        let payload = Term::Co(e.clone());
+                        match bind_components(&branch.binders, &payload, &branch.body) {
+                            Some(command) => Step::Reduced(command),
+                            None => Step::Normal,
+                        }
                     }
-                }
-                None => Step::Normal,
-            },
-            _ => Step::Normal,
-        },
+                    None => Step::Normal,
+                },
+                _ => Step::Normal,
+            }
+        }
 
         // Multiplicative rule: ⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩ → c[v₁/x, v₂/y]
         Command::Cut(value, CoTerm::MuTildeTensor(binders, body)) => {
@@ -232,12 +234,15 @@ mod tests {
 
     #[test]
     fn labelled_value_selects_its_branch() {
-        // ⟨ Color::Green(v) ∥ μ̃[Red x.⟨x ∥ r⟩ | Green x.⟨x ∥ g⟩] ⟩ → ⟨ v ∥ g ⟩
-        let consumer = CoTerm::CoCase(vec![
-            branch("Color::Red", "r"),
-            branch("Color::Green", "g"),
-            branch("Color::Blue", "b"),
-        ]);
+        // ⟨ Color::Green(v) ∥ μ̃[Color; Red x.⟨x ∥ r⟩ | Green x.⟨x ∥ g⟩] ⟩ → ⟨ v ∥ g ⟩
+        let consumer = CoTerm::CoCase {
+            owner: "Color".into(),
+            branches: vec![
+                branch("Color::Red", "r"),
+                branch("Color::Green", "g"),
+                branch("Color::Blue", "b"),
+            ],
+        };
         let value = Term::Tag("Color::Green".into(), Box::new(Term::Var("v".into())));
         match step(&Command::Cut(value, consumer)) {
             Step::Reduced(c) => {
@@ -249,7 +254,8 @@ mod tests {
 
     #[test]
     fn a_label_with_no_branch_does_not_reduce() {
-        let consumer = CoTerm::CoCase(vec![branch("Color::Red", "r")]);
+        let consumer =
+            CoTerm::CoCase { owner: "Color".into(), branches: vec![branch("Color::Red", "r")] };
         let value = Term::Tag("Color::Blue".into(), Box::new(Term::Var("v".into())));
         assert!(matches!(step(&Command::Cut(value, consumer)), Step::Normal));
     }
@@ -264,9 +270,12 @@ mod tests {
 
     #[test]
     fn a_request_selects_its_menu_branch() {
-        // ⟨ μ[.C::a(out). ⟨x ∥ out⟩ | .C::b(out). ⟨y ∥ out⟩] ∥ .C::b(k) ⟩
+        // ⟨ μ[C; .C::a(out). ⟨x ∥ out⟩ | .C::b(out). ⟨y ∥ out⟩] ∥ .C::b(k) ⟩
         //   → ⟨ y ∥ k ⟩
-        let menu = Term::CoMatch(vec![menu_branch("C::a", "x"), menu_branch("C::b", "y")]);
+        let menu = Term::CoMatch {
+            owner: "C".into(),
+            branches: vec![menu_branch("C::a", "x"), menu_branch("C::b", "y")],
+        };
         let request = CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())));
         match step(&Command::Cut(menu, request)) {
             Step::Reduced(c) => {
@@ -278,14 +287,14 @@ mod tests {
 
     #[test]
     fn a_request_with_no_branch_does_not_reduce() {
-        let menu = Term::CoMatch(vec![menu_branch("C::a", "x")]);
+        let menu = Term::CoMatch { owner: "C".into(), branches: vec![menu_branch("C::a", "x")] };
         let request = CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())));
         assert!(matches!(step(&Command::Cut(menu, request)), Step::Normal));
     }
 
     #[test]
     fn matching_a_boxed_request_binds_its_continuation() {
-        // ⟨ co(.C::b(k)) ∥ μ̃[C::a(f). ⟨x ∥ k2⟩ | C::b(f). ⟨f ∥ k2⟩] ⟩
+        // ⟨ co(.C::b(k)) ∥ μ̃[C; C::a(f). ⟨x ∥ k2⟩ | C::b(f). ⟨f ∥ k2⟩] ⟩
         //   → ⟨ co(k) ∥ k2 ⟩ — the arm binds f to the request's own
         // continuation, boxed, exactly as it would bind an enum payload.
         let branch = |label: &str, answer: &str| crate::coterm::CoCaseBranch {
@@ -295,7 +304,10 @@ mod tests {
         };
         let boxed =
             Term::Co(Box::new(CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())))));
-        let consumer = CoTerm::CoCase(vec![branch("C::a", "x"), branch("C::b", "f")]);
+        let consumer = CoTerm::CoCase {
+            owner: "C".into(),
+            branches: vec![branch("C::a", "x"), branch("C::b", "f")],
+        };
         match step(&Command::Cut(boxed, consumer)) {
             Step::Reduced(c) => {
                 let expected = Command::Cut(

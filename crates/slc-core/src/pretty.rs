@@ -60,8 +60,12 @@ impl std::fmt::Display for Term {
             Term::Mu(a, c) => write!(f, "μ{a}. {c}"),
             Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
             Term::Tag(label, t) => write!(f, "{label}({t})"),
-            Term::CoMatch(branches) => {
-                write!(f, "μ[")?;
+            Term::CoMatch { owner, branches } => {
+                write!(f, "μ[{owner}")?;
+                if branches.is_empty() {
+                    return write!(f, "]");
+                }
+                write!(f, "; ")?;
                 for (i, branch) in branches.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;
@@ -83,8 +87,12 @@ impl std::fmt::Display for CoTerm {
             CoTerm::MuTilde(x, c) => write!(f, "μ̃{x}. {c}"),
             CoTerm::Prj(index) => write!(f, "prj:{index}"),
             CoTerm::MuTildeTensor(binders, c) => write!(f, "μ̃({}). {c}", binders.join(", ")),
-            CoTerm::CoCase(branches) => {
-                write!(f, "μ̃[")?;
+            CoTerm::CoCase { owner, branches } => {
+                write!(f, "μ̃[{owner}")?;
+                if branches.is_empty() {
+                    return write!(f, "]");
+                }
+                write!(f, "; ")?;
                 for (i, branch) in branches.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;

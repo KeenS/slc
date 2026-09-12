@@ -2,6 +2,7 @@
 
 use crate::ast::*;
 use crate::token::{Span, Token, TokenKind};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
@@ -30,6 +31,57 @@ fn pattern_is_copattern(pattern: &Pattern) -> bool {
     }
 }
 
+/// Read just enough of every `menu` declaration to disambiguate the one-arm
+/// item shorthand before name resolution. Menus may be declared after their
+/// uses (including in the appended prelude), so this is deliberately a
+/// whole-token-stream pass rather than parser state accumulated in order.
+fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
+    let mut menus = HashMap::<String, HashSet<String>>::new();
+    let mut pos = 0;
+    while pos < tokens.len() {
+        if tokens[pos].kind != TokenKind::Menu {
+            pos += 1;
+            continue;
+        }
+        let Some(TokenKind::Ident(name)) = tokens.get(pos + 1).map(|token| &token.kind) else {
+            pos += 1;
+            continue;
+        };
+        let mut cursor = pos + 2;
+        while cursor < tokens.len() && tokens[cursor].kind != TokenKind::LBrace {
+            cursor += 1;
+        }
+        if cursor == tokens.len() {
+            break;
+        }
+        cursor += 1;
+        let mut items = HashSet::new();
+        let mut at_item_start = true;
+        let mut depth = 0usize;
+        while cursor < tokens.len() {
+            match &tokens[cursor].kind {
+                TokenKind::RBrace if depth == 0 => break,
+                TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket => depth = depth.saturating_sub(1),
+                TokenKind::Comma if depth == 0 => at_item_start = true,
+                TokenKind::Ident(item)
+                    if at_item_start
+                        && tokens.get(cursor + 1).map(|token| &token.kind)
+                            == Some(&TokenKind::Colon) =>
+                {
+                    items.insert(item.clone());
+                    at_item_start = false;
+                }
+                _ => {}
+            }
+            cursor += 1;
+        }
+        menus.entry(name.clone()).or_default().extend(items);
+        pos = cursor.saturating_add(1);
+    }
+    menus
+}
+
 /// Type parameters with their trait bounds.
 type TypeParams = (Vec<String>, Vec<(String, String)>);
 
@@ -37,6 +89,10 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
+    /// Menu names and their item labels, collected before parsing so the
+    /// one-arm shorthand `mu M { item <= c }` stays distinct from the local
+    /// continuation binder `mu A { k <= c }`.
+    menu_items: HashMap<String, HashSet<String>>,
     in_block: bool,
     /// True where a following `{` opens a block, so an identifier before it
     /// is not a record literal.
@@ -45,7 +101,24 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0, errors: Vec::new(), in_block: false, no_struct_literal: false }
+        let menu_items = collect_menu_items(&tokens);
+        Self {
+            tokens,
+            pos: 0,
+            errors: Vec::new(),
+            menu_items,
+            in_block: false,
+            no_struct_literal: false,
+        }
+    }
+
+    fn type_is_menu_item(&self, ty: Option<&Node<TypeExpr>>, item: &str) -> bool {
+        let name = match ty.map(|ty| &ty.kind) {
+            Some(TypeExpr::Base(name) | TypeExpr::Apply(name, _)) => name,
+            _ => return false,
+        };
+        let name = name.rsplit("::").next().unwrap_or(name);
+        self.menu_items.get(name).is_some_and(|items| items.contains(item))
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -454,9 +527,11 @@ impl Parser {
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
             && !matches!(ty, TypeExpr::Bottom)
+            && !matches!(ty, TypeExpr::Base(name) if name == "Bottom")
         {
             return Err(ParseError {
-                message: "a `command` returns `⊥`; remove the arrow or annotate `-> ⊥`".into(),
+                message: "a `command` returns `⊥` (`Bottom`); remove the arrow or use either unit spelling"
+                    .into(),
                 span: t.span,
             });
         }
@@ -1242,48 +1317,28 @@ impl Parser {
                 };
                 self.expect(TokenKind::LBrace, "`{` after `mu`")?;
                 let mut arms = Vec::new();
+                let mut shorthand_arms = Vec::new();
                 loop {
                     if self.eat(&TokenKind::RBrace) {
                         break;
                     }
                     let arm = self.pos;
-                    // `.item => e` — the value arm: the answer flows forward
-                    // into the demand, its continuation implicit. Sugar for
-                    // `.item(__ask) <= e @ __ask`; an arm that wants the
-                    // demand's continuation binds it and writes `<=`.
-                    if self.peek_kind() == Some(&TokenKind::Dot)
-                        && matches!(
-                            self.tokens.get(self.pos + 1).map(|t| &t.kind),
-                            Some(TokenKind::Ident(_))
-                        )
-                        && self.tokens.get(self.pos + 2).map(|t| &t.kind)
-                            == Some(&TokenKind::FatArrow)
-                    {
-                        self.pos += 1;
-                        let dtor = self.expect_ident("destructor name")?;
-                        self.expect(TokenKind::FatArrow, "`=>`")?;
-                        let value = self.parse_expr()?;
-                        let value_span = value.span;
-                        let pattern =
-                            Pattern::Dtor { dtor, arg: Box::new(Pattern::Ident("__ask".into())) };
-                        let command = Node {
-                            span: value_span,
-                            kind: Expr::Cut {
-                                value: Box::new(value),
-                                consumer: Box::new(Node {
-                                    span: value_span,
-                                    kind: Expr::Ident("__ask".into()),
-                                }),
-                            },
-                        };
-                        arms.push(SelectArm { pattern, command });
-                        if !self.eat(&TokenKind::Comma) {
-                            self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
-                            break;
-                        }
-                        continue;
+                    if self.peek_kind() == Some(&TokenKind::Dot) {
+                        let span = self.peek().expect("peeked a token").span;
+                        self.skip_past_arm_list(arm);
+                        return Err(ParseError {
+                            message: "a `mu` copattern mirrors a menu field: write `item: out <= c` instead of `.item(out) <= c`".into(),
+                            span,
+                        });
                     }
-                    let pattern = match self.parse_pattern() {
+                    let explicit_copattern = matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+                        && self.tokens.get(self.pos + 1).map(|t| &t.kind)
+                            == Some(&TokenKind::Colon);
+                    let pattern = match if explicit_copattern {
+                        self.parse_mu_copattern()
+                    } else {
+                        self.parse_pattern()
+                    } {
                         Ok(pattern) => pattern,
                         Err(e) => {
                             return Err(self.reversed_arm_error(arm, TokenKind::Le, MU_LE, e));
@@ -1300,9 +1355,29 @@ impl Parser {
                     }
                     let command = self.parse_expr()?;
                     arms.push(SelectArm { pattern, command });
+                    shorthand_arms.push(!explicit_copattern);
                     if !self.eat(&TokenKind::Comma) {
                         self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
                         break;
+                    }
+                }
+                let has_explicit_copattern =
+                    arms.iter().zip(&shorthand_arms).any(|(arm, shorthand)| {
+                        !shorthand && matches!(arm.pattern, Pattern::Dtor { .. })
+                    });
+                let multiple_arms = arms.len() > 1;
+                for (arm, shorthand) in arms.iter_mut().zip(&shorthand_arms) {
+                    let Pattern::Ident(label) = &arm.pattern else { continue };
+                    if *shorthand
+                        && (has_explicit_copattern
+                            || multiple_arms
+                            || self.type_is_menu_item(ty.as_deref(), label))
+                    {
+                        let label = label.clone();
+                        arm.pattern = Pattern::Dtor {
+                            dtor: label.clone(),
+                            arg: Box::new(Pattern::Ident(label)),
+                        };
                     }
                 }
                 // One binder arm — `mu { k <= c }` — is the atom form: it
@@ -1643,6 +1718,21 @@ impl Parser {
         self.pos = self.tokens.len();
     }
 
+    /// A menu copattern mirrors the declaration's `label: Type` shape:
+    /// `label: binder`, recursively for a nested menu item.
+    fn parse_mu_copattern(&mut self) -> Result<Pattern, ParseError> {
+        let dtor = self.expect_ident("menu item label")?;
+        self.expect(TokenKind::Colon, "`:` after the menu item label")?;
+        let arg = if matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+            && self.tokens.get(self.pos + 1).map(|token| &token.kind) == Some(&TokenKind::Colon)
+        {
+            self.parse_mu_copattern()?
+        } else {
+            self.parse_pattern()?
+        };
+        Ok(Pattern::Dtor { dtor, arg: Box::new(arg) })
+    }
+
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
         let first = self.parse_single_pattern()?;
         if self.peek_kind() == Some(&TokenKind::DotDotEq) {
@@ -1979,6 +2069,12 @@ mod tests {
             &p.decls[0].kind,
             Decl::Command { return_type: Some(TypeExpr::Bottom), .. }
         ));
+
+        let p = parse_str("command step(x: +i32) | (k: -i32) -> Bottom { k(x) }");
+        assert!(matches!(
+            &p.decls[0].kind,
+            Decl::Command { return_type: Some(TypeExpr::Base(name)), .. } if name == "Bottom"
+        ));
     }
 
     #[test]
@@ -2067,9 +2163,65 @@ mod tests {
 
         // A binder arm stands alone: it captures the whole continuation, so
         // a second arm has nothing left to answer.
-        let errors = parse(lex("fn f() -> i32 { mu { k <= 1 @ k, .item(x) <= 2 @ x } }").unwrap())
-            .unwrap_err();
+        let errors =
+            parse(lex("fn f() -> i32 { mu { _ <= 1, item: x <= 2 @ x } }").unwrap()).unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("binder arm stands alone")), "{errors:?}");
+    }
+
+    #[test]
+    fn mu_copatterns_mirror_menu_fields() {
+        let p = parse_str(
+            "menu Stream { head: i32, tail: Stream }
+             fn stream() -> Stream {
+                 mu Stream {
+                     head: out <= 1 @ out,
+                     tail: head: out <= 2 @ out,
+                 }
+             }",
+        );
+        let Decl::Fn { body, .. } = &p.decls[1].kind else { panic!("expected a function") };
+        let Expr::Block(items) = &body.kind else { panic!("expected a block") };
+        let Expr::CoMatch { arms, .. } = &items[0].kind else { panic!("expected a menu mu") };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Dtor { dtor, arg }
+                if dtor == "head" && matches!(&**arg, Pattern::Ident(name) if name == "out")
+        ));
+        assert!(matches!(
+            &arms[1].pattern,
+            Pattern::Dtor { dtor, arg }
+                if dtor == "tail"
+                    && matches!(&**arg, Pattern::Dtor { dtor, arg }
+                        if dtor == "head"
+                            && matches!(&**arg, Pattern::Ident(name) if name == "out"))
+        ));
+    }
+
+    #[test]
+    fn mu_item_label_is_its_default_binder() {
+        let p = parse_str(
+            "fn lazy() -> Lazy { mu Lazy { force <= 1 @ force } }
+             menu Lazy { force: i32 }",
+        );
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
+        let Expr::Block(items) = &body.kind else { panic!("expected a block") };
+        let Expr::CoMatch { arms, .. } = &items[0].kind else { panic!("expected a menu mu") };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Dtor { dtor, arg }
+                if dtor == "force" && matches!(&**arg, Pattern::Ident(name) if name == "force")
+        ));
+
+        let p = parse_str("fn captured() -> i32 { mu i32 { out <= 1 @ out } }");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
+        let Expr::Block(items) = &body.kind else { panic!("expected a block") };
+        assert!(matches!(&items[0].kind, Expr::Mu { .. }));
+    }
+
+    #[test]
+    fn old_mu_destructor_syntax_points_to_the_field_form() {
+        let errors = parse(lex("mu M { .item(out) <= 1 @ out }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("item: out <= c"), "{errors:?}");
     }
 
     #[test]
@@ -2145,6 +2297,14 @@ mod tests {
         let errors = parse(
             lex("menu Config { retries: i64 }
                  fn f(k: -Config) -> -Config { match k { .retries(out) => .retries(out) } }")
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(errors.iter().any(|e| e.message.contains("reaches back")), "errors: {errors:?}");
+
+        let errors = parse(
+            lex("menu Config { retries: i64 }
+                 fn config() -> Config { mu Config { retries => 3 } }")
             .unwrap(),
         )
         .unwrap_err();

@@ -299,18 +299,14 @@ pub fn infer_term(
             // A labelled injection belongs to the declaration that owns the
             // label: `Color::Red` inhabits the named positive type `Color`.
             let _ = infer_term(payload, gamma, delta)?;
-            Ok(Type::Named(owner_of_label(label)?, Vec::new()))
+            Ok(Type::Named(owner_of_label(label), Vec::new()))
         }
 
-        Term::CoMatch(branches) => {
+        Term::CoMatch { owner, branches } => {
             // A menu value inhabits the named negative type its destructors
             // belong to. Every branch must belong to the same declaration.
-            let Some(first) = branches.first() else {
-                return Err(TypeError::Arity("empty menu value".into()));
-            };
-            let owner = owner_of_label(&first.label)?;
             for branch in branches {
-                if owner_of_label(&branch.label)? != owner {
+                if owner_of_label(&branch.label) != owner.as_str() {
                     return Err(TypeError::Arity(format!(
                         "menu value mixes `{owner}` with `{}`",
                         branch.label
@@ -326,7 +322,7 @@ pub fn infer_term(
                 }
                 result?;
             }
-            Ok(Type::Named(owner, Vec::new()))
+            Ok(Type::Named(owner.clone(), Vec::new()))
         }
 
         Term::Co(e) => {
@@ -337,11 +333,8 @@ pub fn infer_term(
 }
 
 /// The declaration a fully qualified variant label belongs to.
-fn owner_of_label(label: &str) -> Result<String, TypeError> {
-    label
-        .split_once("::")
-        .map(|(owner, _)| owner.to_string())
-        .ok_or_else(|| TypeError::Arity(format!("label `{label}` is not `Type::Variant`")))
+fn owner_of_label(label: &str) -> String {
+    label.rsplit_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_else(|| label.to_string())
 }
 
 /// Infer the type of a co-term: `Γ | e : A ⊢ Δ`
@@ -370,15 +363,11 @@ pub fn infer_coterm(
             Ok(xt)
         }
 
-        CoTerm::CoCase(branches) => {
+        CoTerm::CoCase { owner, branches } => {
             // A negative additive consumer refutes the named type its labels
             // belong to. Every branch must belong to the same declaration.
-            let Some(first) = branches.first() else {
-                return Err(TypeError::Arity("empty negative additive consumer".into()));
-            };
-            let owner = owner_of_label(&first.label)?;
             for branch in branches {
-                if owner_of_label(&branch.label)? != owner {
+                if owner_of_label(&branch.label) != owner.as_str() {
                     return Err(TypeError::Arity(format!(
                         "negative additive consumer mixes `{owner}` with `{}`",
                         branch.label
@@ -402,14 +391,14 @@ pub fn infer_coterm(
                 }
                 result?;
             }
-            Ok(Type::Named(owner, Vec::new()))
+            Ok(Type::Named(owner.clone(), Vec::new()))
         }
 
         CoTerm::Dtor(label, e) => {
             // A request refutes the named negative type that owns its
             // destructor; the payload is the continuation for the answer.
             infer_coterm(e, gamma, delta)?;
-            Ok(Type::Named(owner_of_label(label)?, Vec::new()))
+            Ok(Type::Named(owner_of_label(label), Vec::new()))
         }
 
         CoTerm::MuTildeTensor(binders, body) => {
@@ -475,16 +464,41 @@ mod tests {
     }
 
     #[test]
+    fn empty_menu_retains_its_declaration_type() {
+        let mut gamma = TermContext::new();
+        let mut delta = CoTermContext::new();
+        let top = Term::CoMatch { owner: "Top".into(), branches: Vec::new() };
+        assert_eq!(
+            infer_term(&top, &mut gamma, &mut delta),
+            Ok(Type::Named("Top".into(), Vec::new()))
+        );
+    }
+
+    #[test]
+    fn empty_case_consumer_retains_its_declaration_type() {
+        let mut gamma = TermContext::new();
+        let mut delta = CoTermContext::new();
+        let empty = CoTerm::CoCase { owner: "Empty".into(), branches: Vec::new() };
+        assert_eq!(
+            infer_coterm(&empty, &mut gamma, &mut delta),
+            Ok(Type::Named("Empty".into(), Vec::new()))
+        );
+    }
+
+    #[test]
     fn negative_additive_consumer_refutes_its_declaration_type() {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
         d.insert("k".into(), Type::Neg(Base::I32));
         g.insert("n".into(), Type::Pos(Base::I32));
-        let consumer = CoTerm::CoCase(vec![CoCaseBranch {
-            label: "Color::Red".into(),
-            binders: vec!["x".into()],
-            body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()))),
-        }]);
+        let consumer = CoTerm::CoCase {
+            owner: "Color".into(),
+            branches: vec![CoCaseBranch {
+                label: "Color::Red".into(),
+                binders: vec!["x".into()],
+                body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()))),
+            }],
+        };
         assert_eq!(
             infer_coterm(&consumer, &mut g, &mut d),
             Ok(Type::Named("Color".into(), Vec::new()))
@@ -503,18 +517,21 @@ mod tests {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
         g.insert("x".into(), Type::One);
-        let mixed = CoTerm::CoCase(vec![
-            CoCaseBranch {
-                label: "Color::Red".into(),
-                binders: vec!["x".into()],
-                body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
-            },
-            CoCaseBranch {
-                label: "Shape::Circle".into(),
-                binders: vec!["x".into()],
-                body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
-            },
-        ]);
+        let mixed = CoTerm::CoCase {
+            owner: "Color".into(),
+            branches: vec![
+                CoCaseBranch {
+                    label: "Color::Red".into(),
+                    binders: vec!["x".into()],
+                    body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+                },
+                CoCaseBranch {
+                    label: "Shape::Circle".into(),
+                    binders: vec!["x".into()],
+                    body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+                },
+            ],
+        };
         d.insert("k".into(), Type::Bottom);
         assert!(matches!(infer_coterm(&mixed, &mut g, &mut d), Err(TypeError::Arity(_))));
     }

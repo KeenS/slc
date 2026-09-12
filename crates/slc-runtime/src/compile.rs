@@ -82,7 +82,7 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         Term::Tag(label, payload) => {
             Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
         }
-        Term::CoMatch(branches) => {
+        Term::CoMatch { branches, .. } => {
             let branches = branches
                 .iter()
                 .map(|b| {
@@ -114,7 +114,7 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             Node::MuTilde(body)
         }
         CoTerm::Prj(index) => Node::Prj(*index),
-        CoTerm::CoCase(branches) => {
+        CoTerm::CoCase { branches, .. } => {
             let branches = branches.iter().map(|b| compile_branch(b, scope, chunk)).collect();
             Node::CoCase(Rc::new(branches))
         }

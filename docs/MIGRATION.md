@@ -46,6 +46,31 @@ select Colour { Red => 0 @ out, Green => 1 @ out }
 match k { .retries(out) <= .retries(out) }
 ```
 
+## Menu copatterns in `mu`
+
+A `mu` menu arm now mirrors the field syntax of its `menu` declaration. The
+item label precedes `:`, followed by the continuation binder. Repeating the
+label as its binder may be shortened to the label alone. Every arm remains a
+command and therefore writes `<=`.
+
+Unsupported:
+
+```sl
+mu Config { .retries(out) <= 3 @ out, .name => "slant" }
+```
+
+Write:
+
+```sl
+mu Config { retries: out <= 3 @ out, name: out <= "slant" @ out }
+mu Config { retries <= 3 @ retries, name <= "slant" @ name }
+```
+
+Nested menu copatterns repeat the field shape: `tail: head: out <= c`.
+An untyped, single bare arm remains the local continuation form
+`mu { k <= c }`; use `item: item <= c` when constructing an untyped one-item
+menu.
+
 ## Local `mu`
 
 The parenthesised binder group is gone; `mu` is uniformly `mu [Type] { arms }`,

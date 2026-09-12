@@ -69,7 +69,7 @@ const ROWS: &[Row] = &[
     Row {
         id: "expr.select",
         source: "enum Color { Red } fn k(return: -i32) <- Color { select Color { Red => 0 @ return } }",
-        core: "co(μ̃[Color::Red(). ⟨$int_0 ∥ return⟩])",
+        core: "co(μ̃[Color; Color::Red(). ⟨$int_0 ∥ return⟩])",
     },
     Row {
         id: "expr.shift",
@@ -89,17 +89,17 @@ const ROWS: &[Row] = &[
     Row {
         id: "decl.form",
         source: "form F { a: i32 } fn g(k: ↓-i32) -> F { select F { F { a } => a @ ↑k } }",
-        core: "co(μ̃[F(a). ⟨a ∥ k⟩])",
+        core: "co(μ̃[F; F(a). ⟨a ∥ k⟩])",
     },
     Row {
         id: "expr.comatch",
-        source: "menu M { v: i32 } fn g() -> M { mu { .v(out) <= 1 @ out } }",
-        core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",
+        source: "menu M { v: i32 } fn g() -> M { mu { v: out <= 1 @ out } }",
+        core: "μ[M; .M::v(out). ⟨$int_1 ∥ out⟩]",
     },
     Row {
         id: "decl.menu",
-        source: "menu M { v: i32 } fn g() -> M { mu M { .v(out) <= 1 @ out } }",
-        core: "μ[.M::v(out). ⟨$int_1 ∥ out⟩]",
+        source: "menu M { v: i32 } fn g() -> M { mu M { v: out <= 1 @ out } }",
+        core: "μ[M; .M::v(out). ⟨$int_1 ∥ out⟩]",
     },
     Row {
         id: "decl.enum",

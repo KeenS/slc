@@ -7,7 +7,7 @@ use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::{Base, Type};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 thread_local! {
     static CONSTANTS: RefCell<HashMap<String, Pattern>> = RefCell::new(HashMap::new());
@@ -30,6 +30,9 @@ thread_local! {
     /// Demand span → the qualified destructor label the checker resolved
     /// (`cfg.item` on a menu, as opposed to a struct projection).
     static DEMANDS: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
+    /// The exact nullary records that are aliases for the tensor unit:
+    /// `data Unit {}` and `form Bottom {}`.
+    static UNIT_RECORDS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -152,6 +155,10 @@ fn lookup_dtor(name: &str) -> Option<String> {
 /// `span`, if `base.item` demands a menu rather than projecting a struct.
 fn demand(span: Span) -> Option<String> {
     DEMANDS.with(|cell| cell.borrow().get(&span).cloned())
+}
+
+fn is_unit_record(name: &str) -> bool {
+    UNIT_RECORDS.with(|cell| cell.borrow().contains(name))
 }
 
 /// Lower a program with the checker's dispatch resolution in force, so that
@@ -637,6 +644,9 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // tags the right-nested tensor of its field values. An `enum`
             // variant is the same shape with a different label, so one core
             // form covers both.
+            if is_unit_record(name) && fields.is_empty() {
+                return Ok(Term::Var("$unit".into()));
+            }
             let mut payload = Term::Var("$unit".into());
             for (index, (_, value)) in fields.iter().enumerate().rev() {
                 let value = lower_expr(value, continuations)?;
@@ -649,13 +659,13 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             Ok(Term::Tag(name.clone(), Box::new(payload)))
         }
 
-        // `mu T { .item(k) <= c, … }` — the copattern form: a menu value,
+        // `mu T { item: k <= c, … }` — the copattern form: a menu value,
         // μ[…], one branch per demand. Arms may refine an item with nested
-        // copatterns — `.tail(.head(out))` — which group by their outer
+        // copatterns — `tail: head: out` — which group by their outer
         // destructor into an inner menu.
         Expr::CoMatch { ty, arms } => {
             let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
-                TypeExpr::Base(name) => Some(name.as_str()),
+                TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
                 _ => None,
             });
             let rows: Vec<(&Pattern, &Node<Expr>)> =
@@ -663,20 +673,24 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             lower_comatch(qualifier, rows, continuations, 0)
         }
 
-        Expr::Select { arms, .. } => {
+        Expr::Select { ty, arms } => {
             // `select T { p => c, … }` is the consumer of T, given by cases
             // on it: one branch per shape, binding that shape's components.
             //
-            //   labelled (enum, struct) ⟹ co(μ̃[ L(x…). c | … ])
+            //   labelled (enum, struct) ⟹ co(μ̃[T; L(x…). c | … ])
             //   product (tensor)        ⟹ co(μ̃(x…). c)
             // Request arms belong to `mu`: `select` answers data.
             if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Dtor { .. })) {
                 return Err(LowerError::Unsupported(
                     "`select` answers data; a menu answers demands and is built by \
-                     `mu Menu { .item(k) <= c, … }`"
+                     `mu Menu { item: k <= c, … }`"
                         .into(),
                 ));
             }
+            let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
+                TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
+                _ => None,
+            });
             let mut branches = Vec::new();
             let mut product: Option<(Vec<String>, Command)> = None;
             for arm in arms {
@@ -698,7 +712,10 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     };
                     Ok(Term::Co(Box::new(consumer)))
                 }
-                (false, None) => Ok(Term::Co(Box::new(CoTerm::CoCase(branches)))),
+                (false, None) => Ok(Term::Co(Box::new(lower_cocase(qualifier, branches)?))),
+                (true, None) if qualifier.is_some() => {
+                    Ok(Term::Co(Box::new(lower_cocase(qualifier, branches)?)))
+                }
                 _ => Err(LowerError::Unsupported(
                     "a `select` covers either a labelled type or one product, not both".into(),
                 )),
@@ -753,6 +770,24 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
 }
 
 pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
+    let unit_records = p
+        .decls
+        .iter()
+        .filter_map(|declaration| match &declaration.kind {
+            Decl::Data { name, type_params, fields }
+                if name == "Unit" && type_params.is_empty() && fields.is_empty() =>
+            {
+                Some(name.clone())
+            }
+            Decl::Form { name, type_params, fields }
+                if name == "Bottom" && type_params.is_empty() && fields.is_empty() =>
+            {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    UNIT_RECORDS.with(|cell| *cell.borrow_mut() = unit_records);
     let mut variant_labels: HashMap<String, Option<String>> = HashMap::new();
     for d in &p.decls {
         if let Decl::Enum { name, variants, .. } = &d.kind {
@@ -948,7 +983,11 @@ fn select_arm_shape(
         // `S { left: a, right: b }`: a record is a labelled product.
         Pattern::Data { name, fields } => {
             let (binders, command) = components(fields.iter().map(|(_, p)| p), command)?;
-            Ok((Some(name.clone()), binders, command))
+            if is_unit_record(name) && fields.is_empty() {
+                Ok((None, binders, command))
+            } else {
+                Ok((Some(name.clone()), binders, command))
+            }
         }
         // `(a, b)`: an unlabelled product.
         Pattern::Tuple(items) => {
@@ -992,11 +1031,18 @@ fn components<'p>(
                 let (binders, command) = nested(fields.iter().map(|(_, p)| p), &fresh, command)?;
                 let cut = Command::Cut(
                     Term::Var(fresh.clone()),
-                    CoTerm::CoCase(vec![CoCaseBranch {
-                        label: name.clone(),
-                        binders,
-                        body: Box::new(command),
-                    }]),
+                    if is_unit_record(name) && fields.is_empty() {
+                        CoTerm::MuTildeTensor(binders, Box::new(command))
+                    } else {
+                        CoTerm::CoCase {
+                            owner: name.clone(),
+                            branches: vec![CoCaseBranch {
+                                label: name.clone(),
+                                binders,
+                                body: Box::new(command),
+                            }],
+                        }
+                    },
                 );
                 Ok((fresh, cut))
             }
@@ -1097,7 +1143,15 @@ fn lower_match_canonical(
                     return Ok(None);
                 }
                 let (binders, body) = components(fields.iter().map(|(_, p)| p), body)?;
-                branches.push(CoCaseBranch { label: name.clone(), binders, body: Box::new(body) });
+                if is_unit_record(name) && fields.is_empty() {
+                    product = Some(CoTerm::MuTildeTensor(binders, Box::new(body)));
+                } else {
+                    branches.push(CoCaseBranch {
+                        label: name.clone(),
+                        binders,
+                        body: Box::new(body),
+                    });
+                }
             }
             Pattern::Tuple(items) => {
                 if !items.iter().all(canonical_component) || arms.len() != 1 {
@@ -1131,7 +1185,7 @@ fn lower_match_canonical(
     let consumer = match (branches.is_empty(), atom, product) {
         (true, Some(atom), None) => atom,
         (true, None, Some(product)) => product,
-        (false, None, None) => CoTerm::CoCase(branches),
+        (false, None, None) => lower_cocase(None, branches)?,
         _ => return Ok(None),
     };
     let scrutinee = lower_expr(scrutinee, continuations)?;
@@ -1150,9 +1204,32 @@ fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Comma
     Ok(Command::Cut(lower_expr(body, continuations)?, CoTerm::Covar(MATCH_COVAR.into())))
 }
 
+/// Build a labelled consumer while retaining the declaration it refutes.
+/// Nonempty tables can recover that declaration from their first qualified
+/// label; empty tables must receive it from the surface type annotation.
+fn lower_cocase(
+    qualifier: Option<&str>,
+    branches: Vec<CoCaseBranch>,
+) -> Result<CoTerm, LowerError> {
+    let owner = qualifier
+        .map(str::to_string)
+        .or_else(|| {
+            branches.first().map(|branch| {
+                branch
+                    .label
+                    .rsplit_once("::")
+                    .map_or_else(|| branch.label.clone(), |(owner, _)| owner.to_string())
+            })
+        })
+        .ok_or_else(|| {
+            LowerError::Unsupported("an empty labelled consumer must name its type".into())
+        })?;
+    Ok(CoTerm::CoCase { owner, branches })
+}
+
 /// Build a menu from copattern rows, grouping arms by their outer
 /// destructor. A group with one plainly-bound arm is a leaf; a group whose
-/// arms all nest — `.tail(.head(out))` — answers its item with an inner
+/// arms all nest — `tail: head: out` — answers its item with an inner
 /// menu, built recursively from the arms' payload patterns and cut against
 /// the request's continuation.
 fn lower_comatch(
@@ -1166,7 +1243,7 @@ fn lower_comatch(
     for (pattern, command) in rows {
         let Pattern::Dtor { dtor, arg } = pattern else {
             return Err(LowerError::Unsupported(
-                "`mu` with arms answers a menu's demands; every arm is `.item(p)`".into(),
+                "`mu` with arms answers a menu's demands; every arm is `item: pattern`".into(),
             ));
         };
         if !groups.contains_key(dtor) {
@@ -1207,7 +1284,18 @@ fn lower_comatch(
             )));
         }
     }
-    Ok(Term::CoMatch(branches))
+    let owner = qualifier
+        .map(str::to_string)
+        .or_else(|| {
+            branches
+                .first()
+                .and_then(|branch| branch.label.rsplit_once("::"))
+                .map(|(owner, _)| owner.to_string())
+        })
+        .ok_or_else(|| {
+            LowerError::Unsupported("an empty menu value must name its menu type".into())
+        })?;
+    Ok(Term::CoMatch { owner, branches })
 }
 
 /// The consumer a cut names, seeing through `↓`/`↑`. Both shifts erase at
@@ -1397,6 +1485,10 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 out.push(')');
             }
             Pattern::Data { name, fields } => {
+                if is_unit_record(name) && fields.is_empty() {
+                    out.push_str("()");
+                    return;
+                }
                 // Fields are written in declaration order, so the pattern is
                 // the labelled shape the value has, with positional fields.
                 out.push('"');
@@ -1473,6 +1565,46 @@ mod tests {
     }
 
     #[test]
+    fn empty_menu_lowering_retains_its_owner() {
+        let out = lower_str("menu Top {} fn top() -> Top { mu Top {} }");
+        let (_, Term::Lam(_, body)) = &out[0] else { panic!("expected a nullary function") };
+        assert!(matches!(
+            body.as_ref(),
+            Term::CoMatch { owner, branches } if owner == "Top" && branches.is_empty()
+        ));
+    }
+
+    #[test]
+    fn multiplicative_unit_aliases_erase_to_the_builtin_unit() {
+        let out = lower_str(
+            "data Unit {}
+             form Bottom {}
+             fn unit() -> Unit { Unit {} }
+             fn bottom(k: -i32) -> Bottom {
+                 select Bottom { Bottom {} => 0 @ k }
+             }",
+        );
+        let unit = out.iter().find(|(name, _)| name == "unit").unwrap();
+        let Term::Lam(_, unit_body) = &unit.1 else { panic!("expected a nullary function") };
+        assert_eq!(unit_body.as_ref(), &Term::Var("$unit".into()));
+
+        let bottom = out.iter().find(|(name, _)| name == "bottom").unwrap();
+        let Term::Lam(_, bottom_body) = &bottom.1 else { panic!("expected a function") };
+        assert!(matches!(
+            bottom_body.as_ref(),
+            Term::Co(coterm) if matches!(coterm.as_ref(), CoTerm::MuTildeTensor(binders, _) if binders.is_empty())
+        ));
+    }
+
+    #[test]
+    fn a_non_nullary_unit_shadow_keeps_its_label() {
+        let out = lower_str("data Unit { value: i64 } fn unit() -> Unit { Unit { value: 1 } }");
+        let unit = out.iter().find(|(name, _)| name == "unit").unwrap();
+        let Term::Lam(_, body) = &unit.1 else { panic!("expected a nullary function") };
+        assert!(matches!(body.as_ref(), Term::Tag(label, _) if label == "Unit"));
+    }
+
+    #[test]
     fn lower_block_sequence_handles_nested_shadowed_empty_and_single_forms() {
         // A positive function with no parameters binds the marker a call
         // with no arguments supplies, so it stays callable.
@@ -1519,9 +1651,10 @@ mod tests {
         let Term::Co(coterm) = body.as_ref() else {
             panic!("`select` should lower to a reified co-term: {body}");
         };
-        let CoTerm::CoCase(branches) = coterm.as_ref() else {
+        let CoTerm::CoCase { owner, branches } = coterm.as_ref() else {
             panic!("`select` should lower to a negative additive consumer: {coterm}");
         };
+        assert_eq!(owner, "Color");
         let labels: Vec<&str> = branches.iter().map(|b| b.label.as_str()).collect();
         assert_eq!(labels, ["Color::Red", "Color::Green", "Color::Blue"]);
         for (branch, value) in branches.iter().zip(["$int_0", "$int_1", "$int_2"]) {
@@ -1564,7 +1697,7 @@ mod tests {
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
         let printed = format!("{}", show.1);
-        assert!(printed.contains("μ̃[R(value, unit)."), "{printed}");
+        assert!(printed.contains("μ̃[R; R(value, unit)."), "{printed}");
     }
 
     #[test]
@@ -1673,7 +1806,7 @@ mod tests {
         let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
         let printed = format!("{}", f.1);
         assert!(!printed.contains("__match_dispatch"), "canonical, not dispatch: {printed}");
-        assert!(printed.contains("μ̃[Colour::Red()."), "a labelled branch table: {printed}");
+        assert!(printed.contains("μ̃[Colour; Colour::Red()."), "a labelled branch table: {printed}");
         assert!(printed.contains("∥ __match⟩"), "arm values reach the match: {printed}");
     }
 

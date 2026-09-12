@@ -33,11 +33,11 @@ pub enum Term {
     /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.
     Tag(String, Box<Term>),
-    /// Menu: `μ[.d₁(α). c₁ | … | .dₙ(α). cₙ]` — the negative additive value,
-    /// dual of [`CoTerm::CoCase`]. One branch per destructor the type
-    /// offers; the request that arrives chooses exactly one of them, and
-    /// the others are never evaluated. A `menu` value is a menu term.
-    CoMatch(Vec<CoMatchBranch>),
+    /// Menu: `μ[M; .d₁(α). c₁ | … | .dₙ(α). cₙ]` — the negative additive value,
+    /// dual of [`CoTerm::CoCase`]. `owner` retains its named type even when
+    /// the branch list is empty (`μ[Top]`), where no destructor label exists
+    /// to carry that identity. A request chooses exactly one branch.
+    CoMatch { owner: String, branches: Vec<CoMatchBranch> },
     /// A co-term reified as a value: `co(e)` — the introduction form of the
     /// `↓` shift, boxing a consumer as data.
     ///

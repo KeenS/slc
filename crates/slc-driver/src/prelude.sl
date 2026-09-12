@@ -1,9 +1,20 @@
 // The Slant prelude: ordinary declarations, available to every program.
 //
-// Nothing here is special to the compiler. The driver appends this file to
-// the program before parsing — the user's source comes first, so its spans
-// and line numbers are untouched — and everything below goes through the
-// same checking and lowering as user code.
+// The driver appends this file to the program before parsing — the user's
+// source comes first, so its spans and line numbers are untouched — and
+// everything below goes through the same checking and lowering as user code.
+// The only compiler trick is that the exact nullary Unit and Bottom
+// declarations below are aliases for the existing multiplicative units.
+
+// ── Logical units ───────────────────────────────────────────────────────
+//
+// Empty and Top remain ordinary nominal declarations. Unit and Bottom give
+// names to the existing `()`/`1` and `⊥` units respectively.
+
+data Unit {}
+form Bottom {}
+enum Empty {}
+menu Top {}
 
 fn min(a: +i64, b: +i64) -> i64 {
     if a < b { a } else { b }
@@ -140,22 +151,22 @@ menu Stream<T> {
 
 fn repeat<T>(x: T) -> Stream<T> {
     mu Stream {
-        .head => x,
-        .tail => repeat(x),
+        head <= x @ head,
+        tail <= repeat(x) @ tail,
     }
 }
 
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
-        .head => n,
-        .tail => count_from(n + 1),
+        head <= n @ head,
+        tail <= count_from(n + 1) @ tail,
     }
 }
 
 fn map_stream<A, B>(f: (A -> B), s: Stream<A>) -> Stream<B> {
     mu Stream {
-        .head => f(s.head),
-        .tail => map_stream(f, s.tail),
+        head <= f(s.head) @ head,
+        tail <= map_stream(f, s.tail) @ tail,
     }
 }
 

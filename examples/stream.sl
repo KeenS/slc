@@ -14,9 +14,9 @@
 // menu, which must again cover every item.
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
-        .head(out) <= n @ out,
-        .tail(.head(out)) <= n + 1 @ out,
-        .tail(.tail(rest)) <= count_from(n + 2) @ rest,
+        head: out <= n @ out,
+        tail: head: out <= n + 1 @ out,
+        tail: tail: rest <= count_from(n + 2) @ rest,
     }
 }
 

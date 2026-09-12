@@ -47,7 +47,7 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             go_term(t2, out);
         }
         Term::Tag(_, t) => go_term(t, out),
-        Term::CoMatch(branches) => {
+        Term::CoMatch { branches, .. } => {
             for branch in branches {
                 let mut inner = HashSet::new();
                 go_command(&branch.body, &mut inner);
@@ -75,7 +75,7 @@ fn go_coterm(e: &CoTerm, out: &mut HashSet<String>) {
             out.extend(inner);
         }
         CoTerm::Prj(_) => {}
-        CoTerm::CoCase(branches) => {
+        CoTerm::CoCase { branches, .. } => {
             for branch in branches {
                 let mut inner = HashSet::new();
                 go_command(&branch.body, &mut inner);
@@ -142,8 +142,12 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
             alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
         }
         (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
-        (Term::CoMatch(b1), Term::CoMatch(b2)) => {
-            b1.len() == b2.len()
+        (
+            Term::CoMatch { owner: owner1, branches: b1 },
+            Term::CoMatch { owner: owner2, branches: b2 },
+        ) => {
+            owner1 == owner2
+                && b1.len() == b2.len()
                 && b1.iter().zip(b2).all(|(l, r)| {
                     if l.label != r.label {
                         return false;
@@ -188,8 +192,12 @@ fn alpha_coterm(a: &CoTerm, b: &CoTerm, xs: &mut Vec<String>, ys: &mut Vec<Strin
         }
         (CoTerm::Prj(i), CoTerm::Prj(j)) => i == j,
         (CoTerm::Dtor(l1, e1), CoTerm::Dtor(l2, e2)) => l1 == l2 && alpha_coterm(e1, e2, xs, ys),
-        (CoTerm::CoCase(b1), CoTerm::CoCase(b2)) => {
-            b1.len() == b2.len()
+        (
+            CoTerm::CoCase { owner: owner1, branches: b1 },
+            CoTerm::CoCase { owner: owner2, branches: b2 },
+        ) => {
+            owner1 == owner2
+                && b1.len() == b2.len()
                 && b1.iter().zip(b2).all(|(l, r)| {
                     if l.label != r.label || l.binders.len() != r.binders.len() {
                         return false;
@@ -238,8 +246,9 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
             Box::new(subst_term(x, replacement, t2)),
         ),
         Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
-        Term::CoMatch(branches) => Term::CoMatch(
-            branches
+        Term::CoMatch { owner, branches } => Term::CoMatch {
+            owner: owner.clone(),
+            branches: branches
                 .iter()
                 .map(|branch| {
                     if branch.binder == x {
@@ -253,7 +262,7 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
                     }
                 })
                 .collect(),
-        ),
+        },
         Term::Co(e) => Term::Co(Box::new(subst_coterm(x, replacement, e))),
     }
 }
@@ -288,8 +297,9 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
             }
         }
         CoTerm::Prj(_) => e.clone(),
-        CoTerm::CoCase(branches) => CoTerm::CoCase(
-            branches
+        CoTerm::CoCase { owner, branches } => CoTerm::CoCase {
+            owner: owner.clone(),
+            branches: branches
                 .iter()
                 .map(|branch| {
                     if branch.binders.iter().any(|binder| binder == x) {
@@ -303,7 +313,7 @@ pub fn subst_coterm(x: &str, replacement: &Term, e: &CoTerm) -> CoTerm {
                     }
                 })
                 .collect(),
-        ),
+        },
         CoTerm::MuTildeTensor(binders, c) => {
             if binders.iter().any(|binder| binder == x) {
                 e.clone()
@@ -355,8 +365,9 @@ pub fn subst_covar_term(a: &str, replacement: &CoTerm, term: &Term) -> Term {
         Term::Tag(label, t) => {
             Term::Tag(label.clone(), Box::new(subst_covar_term(a, replacement, t)))
         }
-        Term::CoMatch(branches) => Term::CoMatch(
-            branches
+        Term::CoMatch { owner, branches } => Term::CoMatch {
+            owner: owner.clone(),
+            branches: branches
                 .iter()
                 .map(|branch| {
                     if branch.binder == a {
@@ -370,7 +381,7 @@ pub fn subst_covar_term(a: &str, replacement: &CoTerm, term: &Term) -> Term {
                     }
                 })
                 .collect(),
-        ),
+        },
         Term::Co(e) => Term::Co(Box::new(subst_covar_coterm(a, replacement, e))),
     }
 }
@@ -397,8 +408,9 @@ pub fn subst_covar_coterm(a: &str, replacement: &CoTerm, e: &CoTerm) -> CoTerm {
             }
         }
         CoTerm::Prj(_) => e.clone(),
-        CoTerm::CoCase(branches) => CoTerm::CoCase(
-            branches
+        CoTerm::CoCase { owner, branches } => CoTerm::CoCase {
+            owner: owner.clone(),
+            branches: branches
                 .iter()
                 .map(|branch| {
                     if branch.binders.iter().any(|binder| binder == a) {
@@ -412,7 +424,7 @@ pub fn subst_covar_coterm(a: &str, replacement: &CoTerm, e: &CoTerm) -> CoTerm {
                     }
                 })
                 .collect(),
-        ),
+        },
         CoTerm::MuTildeTensor(binders, c) => {
             if binders.iter().any(|binder| binder == a) {
                 e.clone()

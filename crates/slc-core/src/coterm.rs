@@ -29,13 +29,13 @@ pub enum CoTerm {
     /// Projection of the `index`-th component of a right-nested product,
     /// counted along the spine (the last component is stored bare).
     Prj(usize),
-    /// Labelled consumer: `μ̃[L₁(x…). c₁ | … | Lₙ(x…). cₙ]`.
+    /// Labelled consumer: `μ̃[M; L₁(x…). c₁ | … | Lₙ(x…). cₙ]`.
     ///
     /// The dual of a labelled positive type: one branch per shape the value
     /// can take, and the label supplied at activation chooses exactly one of
     /// them. An `enum` has a branch per variant — the negative additive — and
     /// a `data` has exactly one, binding its fields.
-    CoCase(Vec<CoCaseBranch>),
+    CoCase { owner: String, branches: Vec<CoCaseBranch> },
     /// Consumer of a product: `μ̃(x₁, …, xₙ). c` binds every component of the
     /// tensor it is given. This is the negative multiplicative: it is the
     /// unlabelled counterpart of a one-branch `CoCase`.
@@ -51,7 +51,7 @@ impl CoTerm {
     /// consumer that covers the label.
     pub fn branch(&self, label: &str) -> Option<&CoCaseBranch> {
         match self {
-            CoTerm::CoCase(branches) => branches.iter().find(|b| b.label == label),
+            CoTerm::CoCase { branches, .. } => branches.iter().find(|b| b.label == label),
             _ => None,
         }
     }

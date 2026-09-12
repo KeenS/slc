@@ -4,7 +4,7 @@
 use crate::declarations::{Declarations, enum_types};
 use slc_syntax::ast::{Decl, Expr, MatchArm, Named, Node, Pattern, Program};
 use slc_syntax::token::Span;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use crate::Diagnostic;
 
@@ -20,9 +20,15 @@ pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
 
 fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { body, .. } => check_expr(body, enums, diags),
-        Decl::Command { body, .. } => check_expr(body, enums, diags),
-        Decl::Const { value, .. } => check_expr(value, enums, diags),
+        Decl::Fn { params, body, .. } => {
+            let bindings = declared_bindings(params);
+            check_expr(body, enums, &bindings, diags);
+        }
+        Decl::Command { value_params, body, .. } => {
+            let bindings = declared_bindings(value_params);
+            check_expr(body, enums, &bindings, diags);
+        }
+        Decl::Const { value, .. } => check_expr(value, enums, &HashMap::new(), diags),
         Decl::Data { .. }
         | Decl::Enum { .. }
         | Decl::Menu { .. }
@@ -35,16 +41,31 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
     }
 }
 
-fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
+fn declared_bindings(params: &[slc_syntax::ast::Param]) -> HashMap<String, String> {
+    params
+        .iter()
+        .filter(|param| !param.is_continuation)
+        .filter_map(|param| {
+            written_type_name(param.ty.as_ref()?).map(|ty| (param.name.clone(), ty))
+        })
+        .collect()
+}
+
+fn check_expr(
+    e: &Node<Expr>,
+    enums: &Declarations,
+    bindings: &HashMap<String, String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &e.kind {
         Expr::Match { scrutinee, arms } => {
-            check_match(scrutinee, arms, enums, e.span, diags);
+            check_match(scrutinee, arms, enums, bindings, e.span, diags);
             // Recurse into arm bodies
             for arm in arms {
                 if let Some(guard) = &arm.guard {
-                    check_expr(guard, enums, diags);
+                    check_expr(guard, enums, bindings, diags);
                 }
-                check_expr(&arm.body, enums, diags);
+                check_expr(&arm.body, enums, bindings, diags);
             }
         }
         Expr::Select { ty, arms } => {
@@ -92,7 +113,7 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
                 _ => {}
             }
             for arm in arms {
-                check_expr(&arm.command, enums, diags);
+                check_expr(&arm.command, enums, bindings, diags);
             }
         }
         Expr::CoMatch { ty, arms } => {
@@ -122,74 +143,74 @@ fn check_expr(e: &Node<Expr>, enums: &Declarations, diags: &mut Vec<Diagnostic>)
                 None => {}
             }
             for arm in arms {
-                check_expr(&arm.command, enums, diags);
+                check_expr(&arm.command, enums, bindings, diags);
             }
         }
-        Expr::Lambda { body, .. } => check_expr(body, enums, diags),
-        Expr::Mu { body, .. } => check_expr(body, enums, diags),
+        Expr::Lambda { body, .. } => check_expr(body, enums, bindings, diags),
+        Expr::Mu { body, .. } => check_expr(body, enums, bindings, diags),
         Expr::Call { callee, args } => {
-            check_expr(callee, enums, diags);
+            check_expr(callee, enums, bindings, diags);
             for a in args {
-                check_expr(a, enums, diags);
+                check_expr(a, enums, bindings, diags);
             }
         }
         Expr::Pair(items) => {
             for i in items {
-                check_expr(i, enums, diags);
+                check_expr(i, enums, bindings, diags);
             }
         }
         Expr::Let { value, body, .. } => {
-            check_expr(value, enums, diags);
+            check_expr(value, enums, bindings, diags);
             if let Some(b) = body {
-                check_expr(b, enums, diags);
+                check_expr(b, enums, bindings, diags);
             }
         }
         Expr::If { cond, then, otherwise } => {
-            check_expr(cond, enums, diags);
-            check_expr(then, enums, diags);
+            check_expr(cond, enums, bindings, diags);
+            check_expr(then, enums, bindings, diags);
             if let Some(o) = otherwise {
-                check_expr(o, enums, diags);
+                check_expr(o, enums, bindings, diags);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            check_expr(lhs, enums, diags);
-            check_expr(rhs, enums, diags);
+            check_expr(lhs, enums, bindings, diags);
+            check_expr(rhs, enums, bindings, diags);
         }
         Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
-            check_expr(body, enums, diags)
+            check_expr(body, enums, bindings, diags)
         }
         Expr::Index { value, index } => {
-            check_expr(value, enums, diags);
-            check_expr(index, enums, diags);
+            check_expr(value, enums, bindings, diags);
+            check_expr(index, enums, bindings, diags);
         }
         Expr::Slice { value, start, end } => {
-            check_expr(value, enums, diags);
+            check_expr(value, enums, bindings, diags);
             if let Some(start) = start {
-                check_expr(start, enums, diags);
+                check_expr(start, enums, bindings, diags);
             }
             if let Some(end) = end {
-                check_expr(end, enums, diags);
+                check_expr(end, enums, bindings, diags);
             }
         }
         Expr::Handle { body, clauses, ret, .. } => {
-            check_expr(body, enums, diags);
+            check_expr(body, enums, bindings, diags);
             for c in clauses {
-                check_expr(&c.body, enums, diags);
+                check_expr(&c.body, enums, bindings, diags);
             }
             if let Some((_, rbody)) = ret {
-                check_expr(rbody, enums, diags);
+                check_expr(rbody, enums, bindings, diags);
             }
         }
         Expr::Shift { expr: body, .. } => {
-            check_expr(body, enums, diags);
+            check_expr(body, enums, bindings, diags);
         }
         Expr::Cut { value, consumer } => {
-            check_expr(value, enums, diags);
-            check_expr(consumer, enums, diags);
+            check_expr(value, enums, bindings, diags);
+            check_expr(consumer, enums, bindings, diags);
         }
         Expr::Block(exprs) => {
             for ex in exprs {
-                check_expr(ex, enums, diags);
+                check_expr(ex, enums, bindings, diags);
             }
         }
         _ => {}
@@ -388,9 +409,10 @@ fn check_pattern_arity(
 }
 
 fn check_match(
-    _scrutinee: &Node<Expr>,
+    scrutinee: &Node<Expr>,
     arms: &[MatchArm],
     enums: &Declarations,
+    bindings: &HashMap<String, String>,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -406,7 +428,10 @@ fn check_match(
 
     // Collect enum patterns used: Name(variant, _).
     let mut covered: HashSet<String> = HashSet::new();
-    let mut scrutinee_type: Option<&String> = None;
+    let mut scrutinee_type = match &scrutinee.kind {
+        Expr::Ident(name) => bindings.get(name),
+        _ => None,
+    };
 
     for arm in arms {
         // A binding around a pattern does not change which constructors are
@@ -560,6 +585,17 @@ mod tests {
             check(
                 "enum Color { Red, Green, Blue }
              fn f(c: Color) -> i32 { match c { Red => 1, Green => 2, Blue => 3 } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn empty_match_exhausts_an_empty_enum_parameter() {
+        assert!(
+            check(
+                "enum Empty {}
+                 fn absurd<T>(empty: Empty) -> T { match empty {} }"
             )
             .is_ok()
         );

@@ -178,11 +178,21 @@ impl Parser {
             }
             Some('μ') => {
                 self.pos += 1;
-                // `μ[.d(α). c | …]` is a menu; `μα. c` binds a co-variable.
+                // `μ[M; .d(α). c | …]` is a menu; `μα. c` binds a co-variable.
                 if self.eat("[") {
+                    let written_owner = if self.eat(".") {
+                        None
+                    } else {
+                        let owner = self.name()?;
+                        if self.eat("]") {
+                            return Ok(Term::CoMatch { owner, branches: Vec::new() });
+                        }
+                        self.expect(";")?;
+                        self.expect(".")?;
+                        Some(owner)
+                    };
                     let mut branches = Vec::new();
                     loop {
-                        self.expect(".")?;
                         let label = self.name()?;
                         self.expect("(")?;
                         let binder = self.name()?;
@@ -194,12 +204,21 @@ impl Parser {
                             body: Box::new(self.command()?),
                         });
                         if self.eat("|") {
+                            self.expect(".")?;
                             continue;
                         }
                         self.expect("]")?;
                         break;
                     }
-                    return Ok(Term::CoMatch(branches));
+                    let owner = written_owner
+                        .or_else(|| {
+                            branches[0].label.rsplit_once("::").map(|(owner, _)| owner.to_string())
+                        })
+                        .ok_or_else(|| ParseError {
+                            message: "menu destructor label must include its owner".into(),
+                            at: self.pos,
+                        })?;
+                    return Ok(Term::CoMatch { owner, branches });
                 }
                 let a = self.name()?;
                 self.expect(".")?;
@@ -243,6 +262,11 @@ impl Parser {
             Some('μ') if self.chars.get(self.pos + 1).copied() == Some(TILDE) => {
                 self.pos += 2;
                 if self.eat("[") {
+                    let owner = self.name()?;
+                    if self.eat("]") {
+                        return Ok(CoTerm::CoCase { owner, branches: Vec::new() });
+                    }
+                    self.expect(";")?;
                     let mut branches = Vec::new();
                     loop {
                         let label = self.name()?;
@@ -259,7 +283,7 @@ impl Parser {
                         self.expect("]")?;
                         break;
                     }
-                    return Ok(CoTerm::CoCase(branches));
+                    return Ok(CoTerm::CoCase { owner, branches });
                 }
                 // `μ̃(x, y). c` binds a product; `μ̃x. c` binds one value.
                 if self.peek() == Some('(') {

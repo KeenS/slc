@@ -24,32 +24,39 @@ fn every_term() -> Vec<Term> {
         Term::Mu("k".into(), Box::new(cut(var("v"), CoTerm::Covar("k".into())))),
         Term::Pair(Box::new(var("a")), Box::new(var("b"))),
         Term::Tag("Color::Red".into(), Box::new(var("$unit"))),
-        Term::Co(Box::new(CoTerm::CoCase(vec![
-            CoCaseBranch {
-                label: "Color::Red".into(),
-                binders: vec!["x".into()],
-                body: Box::new(cut(var("$int_0"), CoTerm::Covar("return".into()))),
-            },
-            CoCaseBranch {
-                label: "Color::Green".into(),
-                binders: vec!["y".into()],
-                body: Box::new(cut(var("y"), CoTerm::Covar("return".into()))),
-            },
-        ]))),
+        Term::Co(Box::new(CoTerm::CoCase {
+            owner: "Color".into(),
+            branches: vec![
+                CoCaseBranch {
+                    label: "Color::Red".into(),
+                    binders: vec!["x".into()],
+                    body: Box::new(cut(var("$int_0"), CoTerm::Covar("return".into()))),
+                },
+                CoCaseBranch {
+                    label: "Color::Green".into(),
+                    binders: vec!["y".into()],
+                    body: Box::new(cut(var("y"), CoTerm::Covar("return".into()))),
+                },
+            ],
+        })),
         // A menu: one branch per destructor, each binding its request's
         // continuation.
-        Term::CoMatch(vec![
-            CoMatchBranch {
-                label: "Config::retries".into(),
-                binder: "out".into(),
-                body: Box::new(cut(var("n"), CoTerm::Covar("out".into()))),
-            },
-            CoMatchBranch {
-                label: "Config::name".into(),
-                binder: "out".into(),
-                body: Box::new(cut(var("s"), CoTerm::Covar("out".into()))),
-            },
-        ]),
+        Term::CoMatch {
+            owner: "Config".into(),
+            branches: vec![
+                CoMatchBranch {
+                    label: "Config::retries".into(),
+                    binder: "out".into(),
+                    body: Box::new(cut(var("n"), CoTerm::Covar("out".into()))),
+                },
+                CoMatchBranch {
+                    label: "Config::name".into(),
+                    binder: "out".into(),
+                    body: Box::new(cut(var("s"), CoTerm::Covar("out".into()))),
+                },
+            ],
+        },
+        Term::CoMatch { owner: "Top".into(), branches: Vec::new() },
         // A declaration-shaped term: binders of both kinds, nested.
         Term::Lam(
             "x".into(),
@@ -79,11 +86,15 @@ fn every_coterm() -> Vec<CoTerm> {
         CoTerm::Dtor("Config::retries".into(), Box::new(CoTerm::Covar("k".into()))),
         CoTerm::Prj(0),
         CoTerm::Prj(1),
-        CoTerm::CoCase(vec![CoCaseBranch {
-            label: "Reading::Measured".into(),
-            binders: vec!["value".into()],
-            body: Box::new(cut(var("value"), CoTerm::Covar("k".into()))),
-        }]),
+        CoTerm::CoCase {
+            owner: "Reading".into(),
+            branches: vec![CoCaseBranch {
+                label: "Reading::Measured".into(),
+                binders: vec!["value".into()],
+                body: Box::new(cut(var("value"), CoTerm::Covar("k".into()))),
+            }],
+        },
+        CoTerm::CoCase { owner: "Empty".into(), branches: Vec::new() },
     ]
 }
 

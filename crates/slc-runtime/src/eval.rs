@@ -404,14 +404,17 @@ mod tests {
 
     #[test]
     fn a_request_runs_one_menu_branch() {
-        // ⟨ μ[.C::a(out). ⟨$int_1 ∥ out⟩ | .C::b(out). ⟨$int_2 ∥ out⟩]
+        // ⟨ μ[C; .C::a(out). ⟨$int_1 ∥ out⟩ | .C::b(out). ⟨$int_2 ∥ out⟩]
         //   ∥ .C::b(μ̃x. ⟨x ∥ k⟩) ⟩ → 2
         let branch = |label: &str, lit: &str| slc_core::term::CoMatchBranch {
             label: label.into(),
             binder: "out".into(),
             body: Box::new(Command::Cut(Term::Var(lit.into()), CoTerm::Covar("out".into()))),
         };
-        let menu = Term::CoMatch(vec![branch("C::a", "$int_1"), branch("C::b", "$int_2")]);
+        let menu = Term::CoMatch {
+            owner: "C".into(),
+            branches: vec![branch("C::a", "$int_1"), branch("C::b", "$int_2")],
+        };
         let forward = CoTerm::MuTilde(
             "x".into(),
             Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),

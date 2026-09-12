@@ -205,7 +205,7 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
 fn named_by_arms(arms: &[slc_syntax::ast::SelectArm], enums: &Declarations) -> Option<Type> {
     arms.iter().find_map(|arm| match arm.pattern.names()? {
         Named::Declaration(name) if enums.declares(name) => {
-            Some(Type::Named(name.to_string(), Vec::new()))
+            enums.resolve(&TypeExpr::Base(name.to_string()))
         }
         Named::Variant(name) => {
             enums.variant(name).map(|(declaration, _)| Type::Named(declaration.clone(), Vec::new()))
@@ -359,7 +359,24 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 });
             }
         }
-        Decl::Command { value_params, continuation_params, body, type_params, bounds, .. } => {
+        Decl::Command {
+            value_params,
+            continuation_params,
+            body,
+            return_type,
+            type_params,
+            bounds,
+            ..
+        } => {
+            if let Some(return_type) = return_type
+                && enums.resolve(return_type) != Some(Type::Bottom)
+            {
+                diags.push(Diagnostic {
+                    message: "a `command` returns `Bottom` (`⊥`); this `Bottom` is not the nullary prelude form"
+                        .into(),
+                    span: d.span,
+                });
+            }
             env.push();
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
@@ -669,7 +686,9 @@ fn check_pattern(
                 });
                 return;
             };
-            if expected != &Type::Named(name.clone(), Vec::new()) {
+            if expected != &Type::Named(name.clone(), Vec::new())
+                && !(declarations.is_unit_record(name) && expected == &Type::One)
+            {
                 diags.push(Diagnostic {
                     message: format!(
                         "record pattern `{name}` cannot match a scrutinee of type {expected}"
@@ -1090,6 +1109,8 @@ fn bind_select_arm(
             }
         }
         // A struct: its field types.
+        (Type::One, Pattern::Data { name, .. }) if declarations.is_unit_record(name) => Vec::new(),
+        (Type::One, Pattern::Tuple(items)) if items.is_empty() => Vec::new(),
         (Type::Named(name, _), Pattern::Data { name: written, .. }) => {
             if written != name {
                 diags.push(Diagnostic {
@@ -1784,10 +1805,14 @@ fn check_expr_unapplied(
                     });
                 }
             }
-            Some(Type::Named(name.clone(), type_args))
+            if enums.is_unit_record(name) {
+                Some(Type::One)
+            } else {
+                Some(Type::Named(name.clone(), type_args))
+            }
         }
         Expr::CoMatch { ty, arms } => {
-            // `mu T { .item(k) <= c, … }` — the copattern form of `mu`: a
+            // `mu T { item: k <= c, … }` — the copattern form of `mu`: a
             // menu value, branching on the demand the ambient consumer turns
             // out to be. Each arm binds the continuation its request carries
             // and answers it with a command.
@@ -1861,6 +1886,18 @@ fn check_expr_unapplied(
                 });
                 return None;
             };
+            let selects_bottom_alias = ty
+                .as_deref()
+                .and_then(|ty| match &ty.kind {
+                    TypeExpr::Base(name) => Some(name.as_str()),
+                    _ => None,
+                })
+                .is_some_and(|name| enums.is_bottom_alias(name))
+                || arms.iter().any(|arm| {
+                    matches!(&arm.pattern,
+                        slc_syntax::ast::Pattern::Data { name, .. }
+                            if enums.is_bottom_alias(name))
+                });
             // A menu belongs to `mu`: `select` answers data, and a menu
             // answers demands.
             if let Type::Dual(inner) = &resolved
@@ -1905,7 +1942,8 @@ fn check_expr_unapplied(
             }
             // An unsolved variable is not yet anything — a generic `<- T`
             // body selects over the rigid `T` its caller chose.
-            if resolved.is_negative() && !matches!(resolved, Type::Var(_)) {
+            if resolved.is_negative() && !matches!(resolved, Type::Var(_)) && !selects_bottom_alias
+            {
                 diags.push(Diagnostic {
                     message: format!(
                         "`select` consumes data, and {resolved} is a consumer; a consumer is \
@@ -1915,9 +1953,10 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
+            let consumed = if selects_bottom_alias { Type::One } else { resolved.clone() };
             for arm in arms {
                 env.push();
-                bind_select_arm(&resolved, &arm.pattern, enums, env, e.span, diags);
+                bind_select_arm(&consumed, &arm.pattern, enums, env, e.span, diags);
                 let command = check_expr(&arm.command, enums, env, diags);
                 if let Some(command) = command
                     && command != Type::Bottom
@@ -1932,7 +1971,7 @@ fn check_expr_unapplied(
                 }
                 env.pop();
             }
-            Some(resolved.dual())
+            if selects_bottom_alias { Some(Type::Bottom) } else { Some(resolved.dual()) }
         }
         // `↓e` boxes a consumer as data; `↑e` opens the box. Neither does
         // anything at run time — they are here so that a value and a
@@ -2765,6 +2804,39 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("has type 1")),
             "unit fit everything once: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn prelude_shaped_unit_and_bottom_declarations_are_builtin_aliases() {
+        assert!(
+            check(
+                "data Unit {}
+                 form Bottom {}
+                 fn named_unit() -> Unit { () }
+                 fn symbolic_unit() -> unit { Unit {} }
+                 fn stop(exit: -i32) -> Bottom {
+                     select { Bottom {} => 0 @ exit }
+                 }
+                 command absorb | (never: -Bottom) { () @ never }
+                 command halt | (exit: -i32) { 0 @ exit }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_differently_shaped_unit_shadow_stays_nominal() {
+        let diags = check("data Unit { value: i64 } fn not_unit() -> Unit { () }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("initializer") || d.message.contains("body")),
+            "{diags:?}"
+        );
+
+        let diags = check("data Bottom {} command halt -> Bottom { () }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("not the nullary prelude form")),
+            "{diags:?}"
         );
     }
 
