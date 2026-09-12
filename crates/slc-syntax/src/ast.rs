@@ -94,6 +94,11 @@ pub enum Expr {
         dtor: String,
         arg: Box<Node<Expr>>,
     },
+    /// A flow: `a | b | c` — everything moves left to right. What each
+    /// step means follows from polarity: a value into a function applies,
+    /// a function into a function composes, a function into a consumer
+    /// builds a consumer, and a value into a consumer is the cut.
+    Flow(Vec<Node<Expr>>),
     /// A cut: `v @ k` sends the value `v` to the consumer `k`.
     ///
     /// A cut is a command, not an application: it has no result and control
@@ -159,7 +164,9 @@ impl Expr {
                 vec![body]
             }
             Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
-            Expr::Pair(items) | Expr::Bundle(items) | Expr::Block(items) => items.iter().collect(),
+            Expr::Pair(items) | Expr::Bundle(items) | Expr::Block(items) | Expr::Flow(items) => {
+                items.iter().collect()
+            }
             Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
                 .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
                 .collect(),

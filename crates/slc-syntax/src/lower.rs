@@ -33,6 +33,7 @@ thread_local! {
     /// How many of a call's arguments are its value product; the rest are
     /// its menu of exits.
     static CALL_GROUPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
+    static FLOWS: RefCell<HashMap<Span, FlowShape>> = RefCell::new(HashMap::new());
     /// The exact nullary records that are aliases for the tensor unit:
     /// `data Unit {}` and `form Bottom {}`.
     static UNIT_RECORDS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
@@ -74,6 +75,19 @@ pub struct DispatchInfo {
     /// rest are the menu of exits: each group packs into one argument, so
     /// the callee's single binder for that group receives it.
     pub call_groups: HashMap<Span, usize>,
+    /// Flow span → what the chain turned out to be. Two bits settle it,
+    /// since every middle step is an application.
+    pub flows: HashMap<Span, FlowShape>,
+}
+
+/// What a flow chain does, read off the types at its ends.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlowShape {
+    /// The chain begins with a function or a consumer rather than a value,
+    /// so it denotes one: `f | k` is `λx. x | f | k`.
+    pub eta: bool,
+    /// The chain ends in a consumer, so its last step is the cut.
+    pub cut: bool,
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -142,6 +156,11 @@ fn call_groups(span: Span) -> Option<usize> {
     CALL_GROUPS.with(|cell| cell.borrow().get(&span).copied())
 }
 
+/// What a flow chain does — an open chain awaiting a value by default.
+fn flow_shape(span: Span) -> FlowShape {
+    FLOWS.with(|cell| cell.borrow().get(&span).copied()).unwrap_or_default()
+}
+
 /// The term a dictionary argument lowers to: the named dictionary, applied
 /// to its constructor arguments when the impl behind it is bounded.
 fn dict_term(dict: &DictExpr) -> Term {
@@ -186,12 +205,14 @@ pub fn lower_program_resolving(
     PROJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.projections.clone());
     DEMANDS.with(|cell| *cell.borrow_mut() = dispatch.demands.clone());
     CALL_GROUPS.with(|cell| *cell.borrow_mut() = dispatch.call_groups.clone());
+    FLOWS.with(|cell| *cell.borrow_mut() = dispatch.flows.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
     PROJECTIONS.with(|cell| cell.borrow_mut().clear());
     DEMANDS.with(|cell| cell.borrow_mut().clear());
     CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
+    FLOWS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -504,6 +525,44 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             ))
         }
 
+        // `a | b | c` — everything flows left to right. A chain that does
+        // not begin with a value denotes one that would: `f | k` is
+        // `λx. x | f | k`, so eta-expanding leaves every middle step an
+        // ordinary application and the last one either an application or
+        // the cut.
+        Expr::Flow(stages) => {
+            let shape = flow_shape(e.span);
+            let mut lowered = Vec::new();
+            if shape.eta {
+                lowered.push(Term::Var(FLOW_ARGUMENT.into()));
+            }
+            for stage in stages {
+                lowered.push(lower_expr(stage, continuations)?);
+            }
+            let last = lowered.pop().expect("a flow has at least two stages");
+            let mut acc = lowered.remove(0);
+            for stage in lowered {
+                acc = call_curried(stage, vec![acc]);
+            }
+            let term = if shape.cut {
+                // The closed chain: its value meets the consumer at the end.
+                let consumer = match stages.last().map(|s| &s.kind).and_then(named_consumer) {
+                    Some(name) => CoTerm::Covar(name.clone()),
+                    None => CoTerm::App(acc.clone(), Box::new(CoTerm::Covar("__tail".into()))),
+                };
+                match consumer {
+                    CoTerm::Covar(_) => {
+                        Term::Mu("__flow".into(), Box::new(Command::Cut(acc, consumer)))
+                    }
+                    application => {
+                        Term::Mu("__tail".into(), Box::new(Command::Cut(last, application)))
+                    }
+                }
+            } else {
+                call_curried(last, vec![acc])
+            };
+            Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
+        }
         Expr::Cut { value, consumer } => {
             // `v @ k` is the cut ⟨v ∥ k⟩: a command, not an application. It
             // is wrapped in a μ binder that its body never mentions, because
@@ -1414,6 +1473,10 @@ fn lower_select_command(
 /// callers pass. `f()` is `f((,))`, so there is nothing special about it
 /// beyond the name never being mentioned.
 const NO_ARGUMENTS: &str = "__no_args";
+
+/// The value an eta-expanded flow abstracts over: `f | k` denotes the
+/// consumer `λx. x | f | k`.
+const FLOW_ARGUMENT: &str = "__flow_value";
 
 /// A binder a lowered arm introduces but never mentions.
 const UNUSED_BINDER: &str = "__unused";

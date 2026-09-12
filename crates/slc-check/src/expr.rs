@@ -2378,6 +2378,87 @@ fn check_expr_unapplied(
             env.pop();
             result
         }
+        // `a | b | c` — flow. Polarity decides each step: a value into a
+        // function applies, a function into a function composes, a function
+        // into a consumer builds a consumer, a value into a consumer is the
+        // cut. A chain that does not begin with a value denotes one that
+        // would, so it is read as `λx. x | …` and every step becomes an
+        // application but the last.
+        Expr::Flow(stages) => {
+            let types: Vec<Option<Type>> = stages
+                .iter()
+                .map(|stage| check_expr(stage, enums, env, diags).map(|ty| env.uni.apply(&ty)))
+                .collect();
+            let opens = types
+                .first()
+                .and_then(|ty| ty.as_ref())
+                .is_some_and(|ty| !matches!(ty, Type::Var(_)) && ty.is_negative());
+            let entry = env.uni.fresh_var();
+            let mut acc = if opens {
+                entry.clone()
+            } else {
+                types[0].clone().unwrap_or_else(|| env.uni.fresh_var())
+            };
+            let mut cut = false;
+            for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
+                let Some(ty) = ty else { continue };
+                let last = index + 1 == types.len();
+                match ty {
+                    // A function: the value flows in, its result flows on.
+                    Type::Par(argument, result) => {
+                        let expects = argument.dual();
+                        if !fits(env, &expects, &acc, &stages[index].kind) {
+                            let expects = env.uni.apply(&expects);
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "this stage takes {expects}, and what flows in has \
+                                     type {acc}"
+                                ),
+                                span: stages[index].span,
+                            });
+                        }
+                        acc = env.uni.apply(result);
+                    }
+                    // A consumer: the chain closes here, and nothing flows
+                    // out of it.
+                    ty if ty.is_negative() && !matches!(ty, Type::Var(_)) => {
+                        let expects = ty.dual();
+                        if !fits(env, &expects, &acc, &stages[index].kind) {
+                            let expects = env.uni.apply(&expects);
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "this consumer takes {expects}, and what flows in has \
+                                     type {acc}"
+                                ),
+                                span: stages[index].span,
+                            });
+                        }
+                        if !last {
+                            diags.push(Diagnostic {
+                                message: "a consumer ends the flow: nothing comes out of one, \
+                                          so it stands only at the right end"
+                                    .into(),
+                                span: stages[index].span,
+                            });
+                        }
+                        cut = true;
+                        acc = Type::Bottom;
+                    }
+                    other => {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "a stage receives what flows in, so it is a function or a \
+                                 consumer; this has type {other}"
+                            ),
+                            span: stages[index].span,
+                        });
+                        return None;
+                    }
+                }
+            }
+            env.dispatch.flows.insert(e.span, slc_syntax::lower::FlowShape { eta: opens, cut });
+            Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
+        }
         Expr::Cut { value, consumer } => {
             // `v @ k` is a command: it sends `v` to the consumer `k` and does
             // not return, so its type is bottom. A cut is well typed when the

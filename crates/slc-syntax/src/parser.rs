@@ -1110,6 +1110,23 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self) -> Result<Node<Expr>, ParseError> {
+        // `|` binds more loosely than every operator, so `a + b | k` sends
+        // the sum along. The chain is flat: composition is associative, and
+        // the syntax says so rather than nesting.
+        let first = self.parse_flow_stage()?;
+        if self.peek_kind() != Some(&TokenKind::Pipe) {
+            return Ok(first);
+        }
+        let mut stages = vec![first];
+        while self.eat(&TokenKind::Pipe) {
+            stages.push(self.parse_flow_stage()?);
+        }
+        let span = Span { start: stages[0].span.start, end: stages.last().unwrap().span.end };
+        Ok(Node { span, kind: Expr::Flow(stages) })
+    }
+
+    /// One stage of a flow, which may still be a cut while `@` lives.
+    fn parse_flow_stage(&mut self) -> Result<Node<Expr>, ParseError> {
         // A cut binds more loosely than every operator: `a + b @ k` sends the
         // sum to `k`. It is not associative — a cut has no result, so it
         // cannot be the value of another cut.
