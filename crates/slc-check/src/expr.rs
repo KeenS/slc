@@ -309,6 +309,10 @@ fn resolve_in_body(ty: &TypeExpr, env: &Env, enums: &Declarations) -> Option<Typ
     enums.resolve(ty)
 }
 
+/// What a declaration's body-scope replaced, to be restored after it: the
+/// bounds in scope, and the type parameters' rigid variables.
+type OuterScope = (Vec<(usize, String, String)>, HashMap<String, Type>);
+
 /// Put a declaration's bounds in scope for its body, as (rigid-variable
 /// index, trait, type-parameter name), and return the previous set to
 /// restore afterward.
@@ -316,7 +320,7 @@ fn record_bounds(
     bounds: &[(String, String)],
     rigid_vars: &HashMap<&str, Type>,
     env: &mut Env,
-) -> (Vec<(usize, String, String)>, HashMap<String, Type>) {
+) -> OuterScope {
     let outer = env.bounds.clone();
     for (var, trait_name) in bounds {
         if let Some(Type::Var(v)) = rigid_vars.get(var.as_str()) {
