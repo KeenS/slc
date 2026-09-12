@@ -253,7 +253,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             let mut bound = HashSet::new();
             for p in params.iter_mut() {
                 resolve_param(p, stack);
-                bound.insert(p.name.clone());
+                bound.extend(pattern_binders(&p.pattern));
             }
             if let Some(ty) = return_type {
                 resolve_type(ty, stack);
@@ -267,7 +267,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             let mut bound = HashSet::new();
             for p in value_params.iter_mut().chain(continuation_params.iter_mut()) {
                 resolve_param(p, stack);
-                bound.insert(p.name.clone());
+                bound.extend(pattern_binders(&p.pattern));
             }
             if let Some(ty) = return_type {
                 resolve_type(ty, stack);
@@ -409,18 +409,19 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             let mut bound = HashSet::new();
             for p in continuation_params.iter_mut() {
                 resolve_param(p, stack);
-                bound.insert(p.name.clone());
+                bound.extend(pattern_binders(&p.pattern));
             }
             locals.push(bound);
             resolve_expr(&mut body.kind, stack, locals);
             locals.pop();
         }
-        Expr::Let { name, ty, value, body } => {
+        Expr::Let { pattern, ty, value, body } => {
             if let Some(ty) = ty {
                 resolve_type(ty, stack);
             }
             resolve_expr(&mut value.kind, stack, locals);
-            locals.push(HashSet::from([name.clone()]));
+            resolve_pattern(pattern, stack, locals);
+            locals.push(pattern_binders(pattern));
             if let Some(body) = body {
                 resolve_expr(&mut body.kind, stack, locals);
             }
@@ -431,8 +432,8 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             let mut opened = 0;
             for item in items.iter_mut() {
                 resolve_expr(&mut item.kind, stack, locals);
-                if let Expr::Let { name, body: None, .. } = &item.kind {
-                    locals.push(HashSet::from([name.clone()]));
+                if let Expr::Let { pattern, body: None, .. } = &item.kind {
+                    locals.push(pattern_binders(pattern));
                     opened += 1;
                 }
             }

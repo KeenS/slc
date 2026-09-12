@@ -21,10 +21,13 @@ pub fn check_exhaustiveness(p: &Program) -> Result<(), Vec<Diagnostic>> {
 fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { params, body, .. } => {
+            check_params(params, enums, d.span, diags);
             let bindings = declared_bindings(params);
             check_expr(body, enums, &bindings, diags);
         }
-        Decl::Command { value_params, body, .. } => {
+        Decl::Command { value_params, continuation_params, body, .. } => {
+            check_params(value_params, enums, d.span, diags);
+            check_params(continuation_params, enums, d.span, diags);
             let bindings = declared_bindings(value_params);
             check_expr(body, enums, &bindings, diags);
         }
@@ -41,12 +44,43 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
     }
 }
 
+/// A parameter binds a pattern, and the same two laws hold wherever a binder
+/// does: it must match every value of its type, and a continuation must be a
+/// name, because a name is what control leaves through.
+fn check_params(
+    params: &[slc_syntax::ast::Param],
+    enums: &Declarations,
+    span: slc_syntax::token::Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for p in params {
+        if p.is_continuation && p.name().is_none() {
+            diags.push(Diagnostic {
+                message: "a continuation parameter is a name: control leaves through it, \
+                          and a pattern has nowhere to leave through"
+                    .into(),
+                span,
+            });
+        } else if !is_irrefutable(&p.pattern, enums) {
+            diags.push(Diagnostic {
+                message: format!(
+                    "a parameter binds every value of its type, and {} does not match all \
+                     of them; take it apart with `match` in the body",
+                    refutable_shape(&p.pattern)
+                ),
+                span,
+            });
+        }
+    }
+}
+
 fn declared_bindings(params: &[slc_syntax::ast::Param]) -> HashMap<String, String> {
     params
         .iter()
         .filter(|param| !param.is_continuation)
         .filter_map(|param| {
-            written_type_name(param.ty.as_ref()?).map(|ty| (param.name.clone(), ty))
+            let name = param.name()?.to_string();
+            written_type_name(param.ty.as_ref()?).map(|ty| (name, ty))
         })
         .collect()
 }
@@ -147,7 +181,10 @@ fn check_expr(
             }
         }
         Expr::Lambda { body, .. } => check_expr(body, enums, bindings, diags),
-        Expr::Mu { body, .. } => check_expr(body, enums, bindings, diags),
+        Expr::Mu { continuation_params, body, .. } => {
+            check_params(continuation_params, enums, e.span, diags);
+            check_expr(body, enums, bindings, diags);
+        }
         Expr::Call { callee, args } => {
             check_expr(callee, enums, bindings, diags);
             for a in args {
@@ -159,7 +196,20 @@ fn check_expr(
                 check_expr(i, enums, bindings, diags);
             }
         }
-        Expr::Let { value, body, .. } => {
+        Expr::Let { pattern, value, body, .. } => {
+            // A binder stands for every value of its type: there is no other
+            // arm to fall to. Anything that can fail to match belongs in a
+            // `match`, which says what happens when it does.
+            if !is_irrefutable(pattern, enums) {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`let` binds every value of its type, and {} does not match all of \
+                         them; use `match` to say what happens when it does not",
+                        refutable_shape(pattern)
+                    ),
+                    span: e.span,
+                });
+            }
             check_expr(value, enums, bindings, diags);
             if let Some(b) = body {
                 check_expr(b, enums, bindings, diags);
@@ -210,19 +260,56 @@ fn check_expr(
     }
 }
 
+/// Is this variant the only one its enum declares? A `Pattern::Enum` with no
+/// variant names the variant itself, so its owner is looked up.
+fn sum_of_one(name: &str, variant: &str, enums: &Declarations) -> bool {
+    let owner = if variant.is_empty() {
+        match enums.variant(name) {
+            Some((owner, _)) => owner.clone(),
+            None => return false,
+        }
+    } else {
+        name.to_string()
+    };
+    enums.variants_of(&owner).is_some_and(|variants| variants.len() == 1)
+}
+
+/// How to name a binder pattern that can fail, for the reader who wrote it.
+fn refutable_shape(pattern: &Pattern) -> String {
+    match pattern {
+        Pattern::Ident(name) => format!("the variant `{name}`"),
+        Pattern::Enum { name, variant, .. } if variant.is_empty() => {
+            format!("the variant `{name}`")
+        }
+        Pattern::Enum { name, variant, .. } => format!("the variant `{name}::{variant}`"),
+        Pattern::Data { name, .. } => format!("`{name}`"),
+        Pattern::Or(_) => "an or-pattern".into(),
+        Pattern::Range { .. } => "a range".into(),
+        Pattern::Dtor { dtor, .. } => format!("the request `.{dtor}`"),
+        Pattern::Tuple(_) | Pattern::Bundle(_) => "this pattern".into(),
+        _ => "a literal".into(),
+    }
+}
+
 /// Does this pattern match every value of its type? A sum needs one arm per
 /// variant, but a product has a single shape, so one arm covers it.
 fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
     match pattern {
         Pattern::Wildcard => true,
-        // A name that is not a variant is a binding, so it matches anything.
-        Pattern::Ident(name) => enums.payload_arity(name).is_none(),
+        // A name that is not a variant is a binding, so it matches anything;
+        // one that is covers its enum only when the enum has no other.
+        Pattern::Ident(name) => enums.payload_arity(name).is_none() || sum_of_one(name, "", enums),
         Pattern::Binding { pattern, .. } => is_irrefutable(pattern, enums),
         Pattern::Tuple(items) | Pattern::Bundle(items) => {
             items.iter().all(|item| is_irrefutable(item, enums))
         }
         Pattern::Data { name, fields } => {
             enums.declares(name) && fields.iter().all(|(_, pattern)| is_irrefutable(pattern, enums))
+        }
+        // A sum of one has a single shape, so naming it covers it.
+        Pattern::Enum { name, variant, fields } => {
+            sum_of_one(name, variant, enums)
+                && fields.iter().all(|field| is_irrefutable(field, enums))
         }
         _ => false,
     }
@@ -508,6 +595,56 @@ mod tests {
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         check_exhaustiveness(&prog)
+    }
+
+    #[test]
+    fn a_binder_pattern_must_be_irrefutable() {
+        // Tuples, records, single-variant enums and `_` each have one shape.
+        assert!(
+            check(
+                "data Point { x: i64, y: i64 }
+                 enum Wrapped { Only(i64) }
+                 command main | (exit: -i32) {
+                     let (a, b) = (1, 2);
+                     let Point { x, y } = Point { x: 3, y: 4 };
+                     let Only(n) = Only(5);
+                     let _ = 6;
+                     a + b + x + y + n | exit⟩
+                 }"
+            )
+            .is_ok()
+        );
+        // A sum of many does not, so it belongs in a `match`.
+        let diags = check(
+            "enum Shape { Circle(i64), Rect(i64, i64) }
+             command main | (exit: -i32) { let Circle(r) = Circle(5); r | exit⟩ }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("does not match all of them")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_parameter_binds_a_pattern_and_an_exit_binds_a_name() {
+        assert!(
+            check(
+                "fn skew((a, b): (+i64 ⊗ +i64), c: +i64) -> i64 { a * c - b }
+                 command main | (exit: -i32) { ((1, 2), 3) | skew | exit⟩ }"
+            )
+            .is_ok()
+        );
+        // Control leaves through a name, so an exit cannot be taken apart.
+        let diags = check(
+            "command route(n: +i64) | ((a & b): (-i64 & -i64)) { n | a⟩ }
+             command main | (exit: -i32) { 0 | exit⟩ }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("a continuation parameter is a name")),
+            "{diags:?}"
+        );
     }
 
     #[test]

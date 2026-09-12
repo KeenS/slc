@@ -59,30 +59,9 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **Irrefutable patterns at binders, as in Rust.** The one box of the
-  composition redesign still open; everything else in it has shipped.
-  `let p = e`, a parameter `p: T`, and a `mu` binder arm `p <= c` take a
-  pattern, not just a name. A header *is* such a pattern with typed
-  leaves — the value group a tuple pattern on the one argument, the
-  continuation group a bundle pattern on the one exit-menu — which is
-  what the unary calling convention already stands on, with plain names
-  where patterns belong.
-
-  - [ ] `Expr::Let { name }` and `Param { name }` become patterns; a bare
-        name is the trivial one. The bundle copattern `(p & q)` and the
-        nullary `(,)`/`(&)` patterns already parse, so the grammar work is
-        in the binder positions.
-  - [ ] Refutability: a binder pattern must be exhaustive for its type —
-        reuse `exhaustive.rs` — so tuples, records, single-variant enums,
-        wildcards, and bundles pass, and a many-variant enum is refused
-        with a pointer at `match`.
-  - [ ] Lowering: `let p = e; rest` is the one-arm match, a parameter
-        pattern a match on the incoming argument (`bind_group` already
-        destructures a group; this generalises its binders), a bundle
-        pattern its projections. `let … else` stays out of scope.
-  - [ ] Nested patterns at every leaf: `fn f((a, b): (i64, i64), c: String)`.
-        Example and DESIGN note; MIGRATION needs nothing, since names stay
-        the trivial pattern.
+Nothing is queued. The composition redesign's last box — irrefutable
+patterns at binders — has shipped, and what remains below is limits and
+deferrals, not work in flight.
 
 ## Deferred, for discussion
 

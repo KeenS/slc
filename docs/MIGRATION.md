@@ -501,6 +501,24 @@ command forward(…) | (row: (-T & -String)) {  // or handed on unopened
 }
 ```
 
+## A binder is a pattern
+
+`let p = e` and a parameter `p: T` take a pattern, as in Rust; a bare name
+is the trivial one, so nothing written before needs changing. What is new
+is that a binder may take its value apart:
+
+```sl
+let pair = make(); let a = pair.0; let b = pair.1;   // old
+let (a, b) = make();                                 // new
+
+fn norm(p: Point) -> i64 { p.x * p.x + p.y * p.y }   // still fine
+fn norm(Point { x, y }: Point) -> i64 { x * x + y * y }
+```
+
+A binder must be irrefutable — it stands for every value of its type — so a
+many-variant enum is still taken apart with `match`. A continuation
+parameter stays a name: control leaves through it.
+
 ## Handler clauses bind their continuation after a colon
 
 An operation is a demand, and its clause binds the carried continuation

@@ -164,7 +164,7 @@ fn pack(types: &[slc_syntax::ast::TypeExpr]) -> Result<Option<Type>, InferenceEr
 /// Only a local `mu` may leave one out, and it is not a declaration.
 fn missing_parameter_type(p: &slc_syntax::ast::Param, span: Span) -> InferenceError {
     InferenceError::Diag(vec![Diagnostic {
-        message: format!("parameter `{}` of a declaration needs a type", p.name),
+        message: format!("parameter {} of a declaration needs a type", p.describe()),
         span,
     }])
 }

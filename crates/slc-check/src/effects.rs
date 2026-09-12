@@ -220,7 +220,8 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
         };
         let params: Vec<(String, Row)> = params
             .iter()
-            .map(|p| (p.name.clone(), p.ty.as_ref().map(param_row).unwrap_or_default()))
+            .filter_map(|p| Some(p.name()?.to_string()))
+            .zip(params.iter().map(|p| p.ty.as_ref().map(param_row).unwrap_or_default()))
             .collect();
         let latent = return_type.as_ref().map(return_latent).unwrap_or_default();
         interfaces.insert(name.clone(), Interface { row: Row::from_ast(effects), params, latent });
@@ -451,15 +452,19 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
         }
         // A `let` remembers the latent row of what it binds, so a consumer
         // built by a call and fed later is still charged at its cut.
-        Expr::Let { name, value, body, .. } => {
+        Expr::Let { pattern, value, body, .. } => {
             collect(value, ctx, out);
             // A block-level `let` has no body of its own — its siblings
-            // follow it — so the binding stays for the rest of the walk.
-            let latent = latent_of_value(value, ctx);
-            if latent.effects.is_empty() && latent.tails.is_empty() {
-                ctx.locals.remove(name);
-            } else {
-                ctx.locals.insert(name.clone(), latent);
+            // follow it — so the binding stays for the rest of the walk. A
+            // destructuring binder names parts of the value, not the value,
+            // so nothing it binds carries the whole thing's latent row.
+            if let Some(name) = pattern.binder_name() {
+                let latent = latent_of_value(value, ctx);
+                if latent.effects.is_empty() && latent.tails.is_empty() {
+                    ctx.locals.remove(name);
+                } else {
+                    ctx.locals.insert(name.to_string(), latent);
+                }
             }
             if let Some(body) = body {
                 collect(body, ctx, out);

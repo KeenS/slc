@@ -194,6 +194,10 @@ fn repository_example_suite_has_expected_results() {
         ),
         ("namespaces.sl", Expected { success: true, stdout: &["75", "420", "0"], stderr: &[] }),
         ("pair.sl", Expected { success: true, stdout: &["30"], stderr: &[] }),
+        (
+            "patterns.sl",
+            Expected { success: true, stdout: &["13", "71", "11", "25", "2"], stderr: &[] },
+        ),
         ("projection.sl", Expected { success: true, stdout: &["60", "6"], stderr: &[] }),
         ("polarity.sl", Expected { success: true, stdout: &["3", "positive"], stderr: &[] }),
         (

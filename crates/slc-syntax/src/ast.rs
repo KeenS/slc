@@ -58,8 +58,11 @@ pub enum Expr {
         ty: Option<Box<Node<TypeExpr>>>,
         arms: Vec<SelectArm>,
     },
+    /// `let p = v; rest` — a binder, which is a pattern. A bare name is
+    /// the trivial one; anything else must be irrefutable for the value's
+    /// type, which the checker enforces.
     Let {
-        name: String,
+        pattern: Pattern,
         ty: Option<TypeExpr>,
         value: Box<Node<Expr>>,
         body: Option<Box<Node<Expr>>>,
@@ -267,12 +270,36 @@ impl EffectRow {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
-    pub name: String,
+    /// What the parameter binds. A bare name is the trivial pattern; a value
+    /// parameter may be any irrefutable one, since a group *is* a pattern
+    /// with typed leaves. A continuation parameter is a name: control leaves
+    /// through it, and a name is what it leaves through.
+    pub pattern: Pattern,
     /// `None` where the type was left out. A declaration's parameters always
     /// carry one — a declaration is an interface — so this is `None` only for
     /// the parameters of a local `mu`.
     pub ty: Option<TypeExpr>,
     pub is_continuation: bool,
+}
+
+impl Param {
+    /// A parameter written as a bare name — the ordinary case.
+    pub fn named(name: impl Into<String>, ty: Option<TypeExpr>, is_continuation: bool) -> Self {
+        Param { pattern: Pattern::Ident(name.into()), ty, is_continuation }
+    }
+
+    /// The single name this parameter binds, when it binds one.
+    pub fn name(&self) -> Option<&str> {
+        self.pattern.binder_name()
+    }
+
+    /// How to speak of the parameter in a diagnostic.
+    pub fn describe(&self) -> String {
+        match self.name() {
+            Some(name) => format!("`{name}`"),
+            None => "this parameter".into(),
+        }
+    }
 }
 
 /// One arm of a `select`, written `pattern <= command`: the shape that
@@ -342,6 +369,16 @@ pub enum Pattern {
 }
 
 impl Pattern {
+    /// The single name a trivial binder introduces. A `let` or a parameter
+    /// written as a bare name is this pattern, and the paths that only ever
+    /// saw a name take it directly.
+    pub fn binder_name(&self) -> Option<&str> {
+        match self {
+            Pattern::Ident(name) => Some(name),
+            _ => None,
+        }
+    }
+
     /// The type this pattern names, when it names one. A `select` whose type
     /// is left out reads it off its arms: `S { … }` names its struct,
     /// `Color::Red(x)` its enum, and a bare `Red` its variant, whose

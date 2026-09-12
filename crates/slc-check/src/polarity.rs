@@ -153,8 +153,8 @@ fn check_param_polarity(
     if requires_negative && let TypeExpr::Positive(_) = param_type {
         diags.push(Diagnostic {
             message: format!(
-                "parameter `{}` has explicitly positive type; expected negative (-) polarity",
-                p.name
+                "parameter {} has explicitly positive type; expected negative (-) polarity",
+                p.describe()
             ),
             span,
         });
@@ -166,8 +166,8 @@ fn check_param_polarity(
     {
         diags.push(Diagnostic {
             message: format!(
-                "parameter `{}` has type {ty}; expected negative (-) polarity",
-                p.name
+                "parameter {} has type {ty}; expected negative (-) polarity",
+                p.describe()
             ),
             span,
         });

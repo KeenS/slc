@@ -800,10 +800,19 @@ impl Parser {
             if self.eat(&TokenKind::RParen) {
                 break;
             }
-            let name = self.expect_ident("parameter name")?;
+            // A parameter binds a pattern: a group is a pattern with typed
+            // leaves, and a bare name is the trivial one. A name is read as
+            // a name rather than parsed as a pattern, so a parameter may
+            // still be called `return`.
+            let pattern =
+                if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Colon) {
+                    Pattern::Ident(self.expect_ident("parameter name")?)
+                } else {
+                    self.parse_single_pattern()?
+                };
             self.expect(TokenKind::Colon, "`:` — a declaration's parameters carry types")?;
             let ty = Some(self.parse_type()?.kind);
-            params.push(Param { name, ty, is_continuation: false });
+            params.push(Param { pattern, ty, is_continuation: false });
             let next = match self.peek_kind() {
                 Some(kind @ (TokenKind::Comma | TokenKind::Amp)) => kind.clone(),
                 _ => {
@@ -1508,8 +1517,7 @@ impl Parser {
                 };
                 if let Some(name) = binder {
                     let command = arms.pop().expect("matched one arm").command;
-                    let param =
-                        Param { name, ty: ty.map(TypeExpr::Negative), is_continuation: true };
+                    let param = Param::named(name, ty.map(TypeExpr::Negative), true);
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
                         kind: Expr::Mu {
@@ -1724,7 +1732,10 @@ impl Parser {
             }
             Some(TokenKind::Let) => {
                 self.pos += 1;
-                let name = self.expect_ident("binding name")?;
+                // A binder is a pattern; a bare name is the trivial one.
+                // `parse_single_pattern`, not `parse_pattern`: an
+                // or-pattern's `|` is the flow operator here.
+                let pattern = self.parse_single_pattern()?;
                 let ty =
                     if self.eat(&TokenKind::Colon) { Some(self.parse_type()?.kind) } else { None };
                 let value = if self.eat(&TokenKind::Assign) {
@@ -1742,7 +1753,7 @@ impl Parser {
                 };
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Let { name, ty, value: Box::new(value), body },
+                    kind: Expr::Let { pattern, ty, value: Box::new(value), body },
                 })
             }
             Some(TokenKind::If) => {
@@ -2205,7 +2216,7 @@ mod tests {
         let p = parse_str("fn k(return: -i32) <- i32 { return(0) }");
         assert!(matches!(
             &p.decls[0].kind,
-            Decl::Fn { params, .. } if params.first().is_some_and(|p| p.name == "return")
+            Decl::Fn { params, .. } if params.first().is_some_and(|p| p.name() == Some("return"))
         ));
 
         // ...and used as an expression callee and an expression argument.
@@ -2338,7 +2349,7 @@ mod tests {
         let Expr::Mu { continuation_params, .. } = &body.kind else {
             panic!("expected a local mu: {:?}", body.kind)
         };
-        assert_eq!(continuation_params[0].name, "k");
+        assert_eq!(continuation_params[0].name(), Some("k"));
         assert_eq!(continuation_params[0].ty, None);
 
         // The produced type may be written in front; the binder then
@@ -2452,7 +2463,7 @@ mod tests {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
         assert!(value_params.is_empty());
-        assert_eq!(continuation_params[0].name, "exit");
+        assert_eq!(continuation_params[0].name(), Some("exit"));
         assert!(continuation_params[0].is_continuation);
 
         // No continuations: the `|` goes with the group it introduces.
@@ -2460,7 +2471,7 @@ mod tests {
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
-        assert_eq!(value_params[0].name, "message");
+        assert_eq!(value_params[0].name(), Some("message"));
         assert!(continuation_params.is_empty());
 
         for source in

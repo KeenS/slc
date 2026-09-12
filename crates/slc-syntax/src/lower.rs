@@ -421,14 +421,13 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             }
         }
 
-        Expr::Let { name, value, body, .. } => {
-            let v = lower_expr(value, continuations)?;
+        Expr::Let { pattern, value, body, .. } => {
             let b = body
                 .as_ref()
                 .map(|b| lower_expr(b, continuations))
                 .transpose()?
                 .unwrap_or_else(|| Term::Var("$unit".into()));
-            Ok(lower_let(name, v, b))
+            lower_binding(pattern, value, b, continuations)
         }
 
         Expr::If { cond, then, otherwise } => {
@@ -619,13 +618,11 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         }
         Expr::Mu { continuation_params, body, .. } => {
             let mut body_scope = continuations.to_vec();
-            body_scope.extend(continuation_params.iter().map(|p| p.name.clone()));
+            body_scope.extend(continuation_params.iter().map(continuation_name));
             let mut term = lower_expr(body, &body_scope)?;
             for p in continuation_params.iter().rev() {
-                term = Term::Mu(
-                    p.name.clone(),
-                    Box::new(Command::Cut(term, CoTerm::Covar(p.name.clone()))),
-                );
+                let name = continuation_name(p);
+                term = Term::Mu(name.clone(), Box::new(Command::Cut(term, CoTerm::Covar(name))));
             }
             Ok(term)
         }
@@ -878,13 +875,12 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     return Ok(Term::Var("$unit".into()));
                 };
 
-                if let Expr::Let { name, value, body: None, .. } = &e.kind {
+                if let Expr::Let { pattern, value, body: None, .. } = &e.kind {
                     // A bodyless `let` scopes over the rest of the block, so
                     // the rest is lowered as its body. Both `let` forms use
                     // the same binding lowering.
                     let rest = lower_block(exprs, index + 1, seq_counter, continuations)?;
-                    let val = lower_expr(value, continuations)?;
-                    return Ok(lower_let(name, val, rest));
+                    return lower_binding(pattern, value, rest, continuations);
                 }
 
                 let rest = lower_block(exprs, index + 1, seq_counter, continuations)?;
@@ -1008,12 +1004,12 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 // Negative functions are genuine co-abstractions: each
                 // continuation parameter becomes a μ binder, not a λ binder.
                 let continuations: Vec<String> =
-                    params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
+                    params.iter().filter(|p| p.is_continuation).map(continuation_name).collect();
                 let mut term = lower_expr(body, &continuations)?;
                 // A function's parameters are one group — a product of values
                 // for `->`, a menu of exits for `<-` — so it binds one
                 // argument and the body destructures it.
-                term = bind_group(params, "args", term);
+                term = bind_group(params, "args", term)?;
                 // A positive function with no parameters is still called, so
                 // it binds the unit its callers pass. A negative one produces
                 // a continuation and is used by name.
@@ -1029,12 +1025,12 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             Decl::Command { name, value_params, continuation_params, body, bounds, .. } => {
                 // mu f(x: +A) | (k: -B) { E } → λx. μk. E
                 let continuations: Vec<String> =
-                    continuation_params.iter().map(|p| p.name.clone()).collect();
+                    continuation_params.iter().map(continuation_name).collect();
                 let mut term = lower_expr(body, &continuations)?;
                 // Two groups, two binders: the product of values, then the
                 // menu of exits, each destructured when it holds several.
-                term = bind_group(continuation_params, "row", term);
-                term = bind_group(value_params, "values", term);
+                term = bind_group(continuation_params, "row", term)?;
+                term = bind_group(value_params, "values", term)?;
                 // The value group is a group even when it is empty: a caller
                 // writes `(,) | retries | …`, so the unit still arrives.
                 if value_params.is_empty() {
@@ -1079,6 +1075,35 @@ const CUT_BINDER: &str = "__cut";
 ///
 /// Both surface `let` forms — the expression form with an explicit body and
 /// the bodyless form that scopes over the rest of its block — lower here.
+/// A binding: `let p = v` for the value `v` and the body it scopes over. A
+/// bare name is a μ̃ binder, exactly as it always was; any other pattern is
+/// the one-arm `match` it abbreviates, so destructuring needs nothing the
+/// core did not already have.
+fn lower_binding(
+    pattern: &Pattern,
+    value: &Node<Expr>,
+    body: Term,
+    continuations: &[String],
+) -> Result<Term, LowerError> {
+    if let Some(name) = pattern.binder_name() {
+        return Ok(lower_let(name, lower_expr(value, continuations)?, body));
+    }
+    if matches!(pattern, Pattern::Wildcard) {
+        return Ok(lower_let(DISCARDED_BINDING, lower_expr(value, continuations)?, body));
+    }
+    // The one-arm match it abbreviates: the pattern's binders scope over the
+    // body, so the body is the arm's own command.
+    let arm = (pattern, Command::Cut(body, CoTerm::Covar(MATCH_COVAR.into())));
+    let consumer = branch_table(vec![arm])?.ok_or_else(|| {
+        LowerError::Unsupported("a binder pattern the core cannot express".into())
+    })?;
+    let value = lower_expr(value, continuations)?;
+    Ok(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(value, consumer))))
+}
+
+/// The binder a `let _` introduces and never mentions.
+const DISCARDED_BINDING: &str = "__discarded_binding";
+
 fn lower_let(name: &str, value: Term, body: Term) -> Term {
     Term::Mu(
         "let".into(),
@@ -1097,9 +1122,37 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
 /// Bind one parameter group as a single binder. A group of several is one
 /// packed argument — a product of values, or a menu of exits — which the
 /// body destructures, so a declaration takes at most one of each.
-fn bind_group(params: &[Param], group: &str, body: Term) -> Term {
-    let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
-    bind_names(&names, group, body)
+fn bind_group(params: &[Param], group: &str, body: Term) -> Result<Term, LowerError> {
+    // The ordinary case: every leaf is a name, so the group is the μ̃ binder
+    // it has always been.
+    if let Some(names) = params.iter().map(|p| p.name().map(str::to_string)).collect() {
+        let names: Vec<String> = names;
+        return Ok(bind_names(&names, group, body));
+    }
+    // A leaf is a pattern, so the group is the tuple pattern its parameters
+    // spell out, and the argument is destructured by the one-arm match that
+    // pattern abbreviates.
+    let pattern = match params {
+        [only] => only.pattern.clone(),
+        several => Pattern::Tuple(several.iter().map(|p| p.pattern.clone()).collect()),
+    };
+    let packed = format!("__{group}");
+    let out = format!("__{group}_body");
+    let consumer = branch_table(vec![(&pattern, Command::Cut(body, CoTerm::Covar(out.clone())))])?
+        .ok_or_else(|| {
+            LowerError::Unsupported("a parameter pattern the core cannot express".into())
+        })?;
+    Ok(Term::Lam(
+        packed.clone(),
+        Box::new(Term::Mu(out, Box::new(Command::Cut(Term::Var(packed), consumer)))),
+    ))
+}
+
+/// The name a continuation parameter binds. Control leaves through a name,
+/// so a continuation parameter is never a compound pattern; one written that
+/// way is refused before lowering.
+fn continuation_name(p: &Param) -> String {
+    p.name().unwrap_or(UNUSED_BINDER).to_string()
 }
 
 /// `bind_group` over plain binder names.
@@ -1270,6 +1323,23 @@ fn lower_match_canonical(
     arms: &[MatchArm],
     continuations: &[String],
 ) -> Result<Option<Term>, LowerError> {
+    if arms.iter().any(|arm| arm.guard.is_some()) {
+        return Ok(None);
+    }
+    let mut lowered = Vec::new();
+    for arm in arms {
+        lowered.push((&arm.pattern, lower_match_body(&arm.body, continuations)?));
+    }
+    let Some(consumer) = branch_table(lowered)? else { return Ok(None) };
+    let scrutinee = lower_expr(scrutinee, continuations)?;
+    Ok(Some(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(scrutinee, consumer)))))
+}
+
+/// The consumer a set of arms builds, each already lowered to the command it
+/// runs: a labelled table, a single product, or a single whole-value binder.
+/// `Ok(None)` is a mix the core's branch tables cannot express, which a
+/// `match` answers with the runtime dispatch — and a binder refuses.
+fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerError> {
     fn canonical_component(pattern: &Pattern) -> bool {
         match pattern {
             Pattern::Ident(name) => lookup_constant(name).is_none(),
@@ -1279,30 +1349,27 @@ fn lower_match_canonical(
             _ => false,
         }
     }
-    if arms.iter().any(|arm| arm.guard.is_some()) {
-        return Ok(None);
-    }
     // One pass over the arms, sorting them into a labelled table, a single
     // product, or a single whole-value binder. Any mix the core's branch
     // tables cannot express aborts to the dispatch path.
     let mut branches: Vec<CoCaseBranch> = Vec::new();
     let mut atom: Option<CoTerm> = None;
     let mut product: Option<CoTerm> = None;
-    for arm in arms {
-        let body = lower_match_body(&arm.body, continuations)?;
-        match &arm.pattern {
+    let arm_count = arms.len();
+    for (pattern, body) in arms {
+        match pattern {
             Pattern::Ident(name)
                 if lookup_constant(name).is_none() && lookup_variant(name).is_none() =>
             {
                 // A whole-value binder: the atom form, alone or not at all —
                 // a default among labelled arms is order-sensitive.
-                if !branches.is_empty() || product.is_some() || atom.is_some() || arms.len() != 1 {
+                if !branches.is_empty() || product.is_some() || atom.is_some() || arm_count != 1 {
                     return Ok(None);
                 }
                 atom = Some(CoTerm::MuTilde(name.clone(), Box::new(body)));
             }
             Pattern::Wildcard => {
-                if !branches.is_empty() || product.is_some() || atom.is_some() || arms.len() != 1 {
+                if !branches.is_empty() || product.is_some() || atom.is_some() || arm_count != 1 {
                     return Ok(None);
                 }
                 atom = Some(CoTerm::MuTilde(UNUSED_BINDER.into(), Box::new(body)));
@@ -1326,7 +1393,7 @@ fn lower_match_canonical(
                 branches.push(CoCaseBranch { label, binders, body: Box::new(body) });
             }
             Pattern::Data { name, fields } => {
-                if !fields.iter().all(|(_, p)| canonical_component(p)) || arms.len() != 1 {
+                if !fields.iter().all(|(_, p)| canonical_component(p)) || arm_count != 1 {
                     return Ok(None);
                 }
                 let (binders, body) = components(fields.iter().map(|(_, p)| p), body)?;
@@ -1341,7 +1408,7 @@ fn lower_match_canonical(
                 }
             }
             Pattern::Tuple(items) => {
-                if !items.iter().all(canonical_component) || arms.len() != 1 {
+                if !items.iter().all(canonical_component) || arm_count != 1 {
                     return Ok(None);
                 }
                 let (binders, body) = components(items.iter(), body)?;
@@ -1369,14 +1436,12 @@ fn lower_match_canonical(
         }
         seen.push(&branch.label);
     }
-    let consumer = match (branches.is_empty(), atom, product) {
+    Ok(Some(match (branches.is_empty(), atom, product) {
         (true, Some(atom), None) => atom,
         (true, None, Some(product)) => product,
         (false, None, None) => lower_cocase(None, branches)?,
         _ => return Ok(None),
-    };
-    let scrutinee = lower_expr(scrutinee, continuations)?;
-    Ok(Some(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(scrutinee, consumer)))))
+    }))
 }
 
 /// The command a canonical `match` arm runs: its value goes to the match's

@@ -486,7 +486,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
                 if let Some(ty) = p.ty.as_ref().and_then(&rigid) {
-                    env.define(&p.name, ty);
+                    bind_match_pattern(&p.pattern, &ty, enums, env);
                 }
             }
             // A negative function produces the consumer of what follows its
@@ -546,7 +546,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             for p in value_params.iter().chain(continuation_params.iter()) {
                 if let Some(ty) = p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums))
                 {
-                    env.define(&p.name, ty);
+                    bind_match_pattern(&p.pattern, &ty, enums, env);
                 }
             }
             let body_type = check_expr(body, enums, env, diags);
@@ -1063,8 +1063,27 @@ fn check_call_arguments(
 /// Check a `let` initializer against its optional annotation and return the
 /// type to bind. Both surface `let` forms — the expression form and the
 /// bodyless form that scopes over the rest of a block — check identically.
+/// Bind what a `let` pattern names. A bare name is the trivial pattern, and
+/// the only one that generalizes: a value form bound to a name may be used
+/// at several types, while a destructured part is a component of one value
+/// the pattern has already fixed.
+fn bind_let_pattern(
+    pattern: &slc_syntax::ast::Pattern,
+    binding_ty: Type,
+    value: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+) {
+    if let Some(name) = pattern.binder_name() {
+        let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
+        env.define_scheme(name, binding_ty, generalized);
+        return;
+    }
+    bind_match_pattern(pattern, &binding_ty, enums, env);
+}
+
 fn check_let_binding(
-    name: &str,
+    pattern: &slc_syntax::ast::Pattern,
     ty: &Option<TypeExpr>,
     value: &Node<Expr>,
     enums: &Declarations,
@@ -1077,9 +1096,14 @@ fn check_let_binding(
         && !fits(env, annotation, &actual, &value.kind)
     {
         diags.push(Diagnostic {
-            message: format!(
-                "`let {name}` is annotated as {annotation}; initializer has type {actual}"
-            ),
+            message: match pattern.binder_name() {
+                Some(name) => format!(
+                    "`let {name}` is annotated as {annotation}; initializer has type {actual}"
+                ),
+                None => format!(
+                    "this `let` is annotated as {annotation}; initializer has type {actual}"
+                ),
+            },
             span: value.span,
         });
     }
@@ -1842,11 +1866,10 @@ fn check_expr_unapplied(
                 (then_ty, _) => then_ty,
             }
         }
-        Expr::Let { name, ty, value, body } => {
-            let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
-            let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
+        Expr::Let { pattern, ty, value, body } => {
+            let binding_ty = check_let_binding(pattern, ty, value, enums, env, diags);
             env.push();
-            env.define_scheme(name, binding_ty, generalized);
+            bind_let_pattern(pattern, binding_ty, value, enums, env);
             let result = body.as_ref().and_then(|body| check_expr(body, enums, env, diags));
             env.pop();
             result
@@ -2455,12 +2478,11 @@ fn check_expr_unapplied(
             let mut result = None;
             env.push();
             for expr in exprs {
-                if let Expr::Let { name, ty, value, body: None } = &expr.kind {
+                if let Expr::Let { pattern, ty, value, body: None } = &expr.kind {
                     // A bodyless `let` scopes over the rest of the block; the
                     // binding itself is checked exactly as the expression form.
-                    let binding_ty = check_let_binding(name, ty, value, enums, env, diags);
-                    let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
-                    env.define_scheme(name, binding_ty, generalized);
+                    let binding_ty = check_let_binding(pattern, ty, value, enums, env, diags);
+                    bind_let_pattern(pattern, binding_ty, value, enums, env);
                 } else {
                     result = check_expr(expr, enums, env, diags);
                 }
@@ -2749,13 +2771,14 @@ fn check_expr_unapplied(
             env.push();
             let mut captured_types = Vec::new();
             for p in continuation_params {
-                let ty = match &p.ty {
-                    Some(ty) => resolve_in_body(ty, env, enums),
+                let ty = match (&p.ty, p.name()) {
+                    (Some(ty), _) => resolve_in_body(ty, env, enums),
                     // Nothing was written, so the body says it.
-                    None => infer_param_type(&p.name, body, enums, env),
+                    (None, Some(name)) => infer_param_type(name, body, enums, env),
+                    (None, None) => None,
                 }
                 .unwrap_or_else(|| env.uni.fresh_var());
-                env.define(&p.name, ty.clone());
+                bind_match_pattern(&p.pattern, &ty, enums, env);
                 captured_types.push(Some(ty));
             }
             let result = check_expr(body, enums, env, diags);

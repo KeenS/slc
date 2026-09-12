@@ -291,6 +291,34 @@ positive value parameter. Generic function declarations are type-erased at
 lowering: their ordinary parameters lower to λ binders and their continuation
 parameters lower to λ binders as well — a continuation is a value like any other.
 
+### A binder is a pattern
+
+`let p = e`, and a parameter `p: T`, take a pattern; a bare name is the
+trivial one. A binder stands for **every** value of its type — there is no
+other arm to fall to — so the pattern must be irrefutable: tuples, bundles,
+records, single-variant enums, and `_` all qualify, and a many-variant enum
+is refused with a pointer at `match`.
+
+```sl
+let (a, b) = pair;
+let Point { x, y } = origin;
+fn skew((a, b): (+i64 ⊗ +i64), c: +i64) -> i64 { a * c - b }
+```
+
+This is what the unary calling convention already stood on. A declaration
+binds one argument per group, and a header *is* a pattern with typed leaves:
+the value group a tuple pattern on the one argument, the continuation group a
+bundle pattern on the one menu of exits. Writing a pattern at a leaf only
+says out loud what the group was doing already, and nesting goes as deep as
+it likes.
+
+A **continuation parameter is a name**. Control leaves through it, and a
+pattern has nowhere to leave through — the group as a whole is the bundle
+pattern, and its leaves are the names of the exits.
+
+`let … else` is out of scope: a binder that may fail is a `match`.
+`examples/patterns.sl` writes all of it.
+
 ## 5. `command`: consumer abstraction
 
 A `command` declaration is the form that takes **both** values and
@@ -1427,7 +1455,7 @@ nested left to right for several arguments.
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `expr.pair` | `(a, b)`, `()` | `⟦a⟧ ⊗ ⟦b⟧`, right-nested; `()` is `unit` |
-| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction |
+| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
 | `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
 | `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to `expr.if` first, keeping them short-circuiting |
