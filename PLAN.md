@@ -119,6 +119,23 @@ feature is mid-flight; what remains open is below.
         stays legal and must agree. DESIGN's "row" wording moves from
         positional to `&`, and its polarity section states the rule that
         signs are written only where position does not decide.
+  - [ ] Irrefutable patterns at binders, as in Rust: `let p = e`, a
+        parameter `p: T`, and a `mu` binder arm `p <= c` take a pattern,
+        not just a name. A header *is* such a pattern with typed leaves —
+        the value group a tuple pattern on the one argument, the
+        continuation group a bundle pattern on the one exit-menu — so
+        this is what unary-ization stands on. The pattern grammar gains
+        the bundle copattern `(p & q)`, the anonymous menu's counterpart
+        to the tuple pattern, binding each exit; nested patterns are
+        allowed at every leaf. Refutability: a binder pattern must be
+        exhaustive for its type — reuse `exhaustive.rs` — so tuples,
+        records, single-variant enums, wildcards, and bundles pass, and a
+        many-variant enum is refused with a pointer at `match`. Lowering:
+        `let p = e; rest` is the one-arm match, a parameter pattern a
+        match on the incoming argument, a bundle pattern its projections.
+        AST: `Expr::Let { name }` and `Param { name }` become patterns
+        (a bare name is the trivial one). `let … else` stays out of
+        scope.
   - [ ] Unary values: `f(a, b)` packs a tensor and the declaration
         destructures it (`μ̃(x, y)`), replacing curried lowering; function
         values then have single-argument types, and `parse_int`-style
