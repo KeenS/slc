@@ -972,6 +972,31 @@ fn the_prelude_is_available_and_shadowable() {
 }
 
 #[test]
+fn a_row_arrives_spread_or_whole() {
+    // A menu of exits may be written one argument per exit, or passed as
+    // one bundle — the same call either way — and a row is first class: a
+    // command can take one and hand it on.
+    let dir = std::env::temp_dir().join("slc_test_row_forms.sl");
+    std::fs::write(
+        &dir,
+        r#"command classify(n: i64) | (found: i64 & missing: String) {
+            if n > 0 { n @ found } else { "negative" @ missing }
+        }
+        command forward(n: i64) | (row: (-i64 & -String)) { classify(n, row) }
+        command main | (exit: -i32) {
+            println(mu i64 { ok <= classify(7, ok, select +String { s => str_len(s) @ ok }) });
+            println(mu i64 { ok <= classify(7, (ok & select +String { s => str_len(s) @ ok })) });
+            println(mu i64 { ok <= forward(0 - 1, (ok & select +String { s => str_len(s) @ ok })) });
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["7", "7", "8"]);
+}
+
+#[test]
 fn an_operation_may_take_several_parameters() {
     // Calls are curried, so an operation of several parameters collects
     // them before performing — otherwise it would perform on its first

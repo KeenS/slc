@@ -894,6 +894,51 @@ fn check_call_arguments(
     diags: &mut Vec<Diagnostic>,
 ) {
     let row_width = signature.continuations.iter().filter(|is_cont| **is_cont).count();
+    let values = signature.continuations.iter().filter(|is_cont| !**is_cont).count();
+    // A row of several exits may arrive spread, one argument per exit, or
+    // whole — one bundle, which is that menu. Both are the same call: the
+    // spread form packs, and the bundle already is the packed form.
+    if row_width > 1 && args.len() == values + 1 {
+        for (index, arg) in args.iter().enumerate() {
+            let actual = check_expr(arg, enums, env, diags);
+            if index < values {
+                if is_builtin(name) {
+                    continue;
+                }
+                if let (Some(expected), Some(actual)) = (signature.params.get(index), &actual)
+                    && !fits(env, expected, actual, &arg.kind)
+                {
+                    let expected = &env.uni.apply(expected);
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "argument {} of `{name}` has type {actual}; expected {expected}",
+                            index + 1
+                        ),
+                        span: arg.span,
+                    });
+                }
+                continue;
+            }
+            let row = signature.params[values..]
+                .iter()
+                .rev()
+                .cloned()
+                .reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)));
+            if let (Some(row), Some(actual)) = (row, &actual)
+                && !fits(env, &row, actual, &arg.kind)
+            {
+                let row = env.uni.apply(&row);
+                diags.push(Diagnostic {
+                    message: format!(
+                        "continuation row mismatch: `{name}` offers the exits {row}, and \
+                         this bundle has type {actual}"
+                    ),
+                    span: arg.span,
+                });
+            }
+        }
+        return;
+    }
     if row_width > 0 && args.len() > signature.params.len() {
         diags.push(Diagnostic {
             message: format!(
@@ -1569,6 +1614,12 @@ fn check_expr_unapplied(
                     }
                 }
                 check_call_arguments(name, &signature, args, enums, env, diags);
+                // Say where the value product ends and the menu of exits
+                // begins, so lowering packs each group into one argument.
+                let values = signature.continuations.iter().filter(|c| !**c).count();
+                if signature.continuations.iter().any(|c| *c) {
+                    env.dispatch.call_groups.insert(e.span, values);
+                }
                 // Discharge each bound against what its type parameter
                 // resolved to, now that the arguments have constrained it, and
                 // record the dictionary the call must pass for it: the global

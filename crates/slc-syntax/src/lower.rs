@@ -30,6 +30,9 @@ thread_local! {
     /// Demand span → the qualified destructor label the checker resolved
     /// (`cfg.item` on a menu, as opposed to a struct projection).
     static DEMANDS: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
+    /// How many of a call's arguments are its value product; the rest are
+    /// its menu of exits.
+    static CALL_GROUPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     /// The exact nullary records that are aliases for the tensor unit:
     /// `data Unit {}` and `form Bottom {}`.
     static UNIT_RECORDS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
@@ -67,6 +70,10 @@ pub struct DispatchInfo {
     /// Demand span → the qualified destructor label: `cfg.item` resolved
     /// against a `menu` declaration rather than a struct's fields.
     pub demands: HashMap<Span, String>,
+    /// Call span → how many of its arguments are the value product. The
+    /// rest are the menu of exits: each group packs into one argument, so
+    /// the callee's single binder for that group receives it.
+    pub call_groups: HashMap<Span, usize>,
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -129,6 +136,12 @@ fn call_dicts(span: Span) -> Option<Vec<DictExpr>> {
     CALLS.with(|cell| cell.borrow().get(&span).cloned())
 }
 
+/// How many of this call's arguments are values, when the checker resolved
+/// the callee and found a menu of exits after them.
+fn call_groups(span: Span) -> Option<usize> {
+    CALL_GROUPS.with(|cell| cell.borrow().get(&span).copied())
+}
+
 /// The term a dictionary argument lowers to: the named dictionary, applied
 /// to its constructor arguments when the impl behind it is bounded.
 fn dict_term(dict: &DictExpr) -> Term {
@@ -172,11 +185,13 @@ pub fn lower_program_resolving(
     CALLS.with(|cell| *cell.borrow_mut() = dispatch.calls.clone());
     PROJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.projections.clone());
     DEMANDS.with(|cell| *cell.borrow_mut() = dispatch.demands.clone());
+    CALL_GROUPS.with(|cell| *cell.borrow_mut() = dispatch.call_groups.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
     PROJECTIONS.with(|cell| cell.borrow_mut().clear());
     DEMANDS.with(|cell| cell.borrow_mut().clear());
+    CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -311,14 +326,26 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // in bound order, then the value arguments.
             let mut call_args: Vec<Term> =
                 call_dicts(e.span).unwrap_or_default().iter().map(dict_term).collect();
-            if args.is_empty() {
-                // A call with no value arguments applies its callee to unit,
-                // the empty tuple: `f()` is `f((,))`.
-                call_args.push(Term::Var("$unit".into()));
-            } else {
-                for arg in args {
-                    call_args.push(lower_expr(arg, continuations)?);
+            let mut lowered = Vec::new();
+            for arg in args {
+                lowered.push(lower_expr(arg, continuations)?);
+            }
+            // The arguments group as the callee's parameters do: the value
+            // product, then the menu of exits. Each packs into one argument,
+            // and a call with no values still passes unit.
+            match call_groups(e.span) {
+                // The callee has a menu of exits, so it binds that group
+                // separately — and binds a value group only if it declared
+                // one, which a negative function does not.
+                Some(values) => {
+                    let row = lowered.split_off(values.min(lowered.len()));
+                    if !lowered.is_empty() {
+                        call_args.push(pack_group(lowered));
+                    }
+                    call_args.push(pack_group(row));
                 }
+                // One group: the values, or the unit a call with none passes.
+                None => call_args.push(pack_group(lowered)),
             }
             for arg in call_args {
                 result = Term::Mu(
@@ -566,24 +593,23 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
         Expr::Handle { body, clauses, ret } => {
-            // Each clause → ($str_op ⊗ λp1. … λpn. λresume. body): one binder
-            // per operation parameter, then the captured continuation. A
-            // nullary operation still takes one ignored binder, since the
-            // call that performs it applies it to the no-arguments marker.
+            // Each clause → ($str_op ⊗ λpayload. λresume. body): performing
+            // an operation is a call, so its arguments arrive packed, and a
+            // clause of several parameters destructures them. A nullary
+            // operation still takes one ignored binder, for the unit its
+            // caller passes.
             let mut encoded = Term::Var("$unit".into());
             for clause in clauses.iter().rev() {
                 let mut body_scope = continuations.to_vec();
                 body_scope.push(clause.resume.clone());
                 body_scope.extend(clause.params.iter().cloned());
                 let inner = lower_expr(&clause.body, &body_scope)?;
-                let mut closure = Term::Lam(clause.resume.clone(), Box::new(inner));
-                if clause.params.is_empty() {
-                    closure = Term::Lam("__op_arg".into(), Box::new(closure));
+                let answered = Term::Lam(clause.resume.clone(), Box::new(inner));
+                let closure = if clause.params.is_empty() {
+                    Term::Lam("__op_arg".into(), Box::new(answered))
                 } else {
-                    for param in clause.params.iter().rev() {
-                        closure = Term::Lam(param.clone(), Box::new(closure));
-                    }
-                }
+                    bind_names(&clause.params, "op", answered)
+                };
                 let pair = Term::Pair(
                     Box::new(Term::Var(format!("$str_\"{}\"", clause.op))),
                     Box::new(closure),
@@ -889,16 +915,13 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 let continuations: Vec<String> =
                     params.iter().filter(|p| p.is_continuation).map(|p| p.name.clone()).collect();
                 let mut term = lower_expr(body, &continuations)?;
-                // Binders are nested in declaration order, so a call supplies
-                // arguments in the order the parameters are written. Value and
-                // continuation parameters alike are λ binders — a continuation
-                // is a value like any other.
-                for p in params.iter().rev() {
-                    term = bind_param(p, term);
-                }
+                // A function's parameters are one group — a product of values
+                // for `->`, a menu of exits for `<-` — so it binds one
+                // argument and the body destructures it.
+                term = bind_group(params, "args", term);
                 // A positive function with no parameters is still called, so
-                // it binds the marker a call with no arguments supplies. A
-                // negative one produces a continuation and is used by name.
+                // it binds the unit its callers pass. A negative one produces
+                // a continuation and is used by name.
                 if params.is_empty() && *polarity == FunctionPolarity::Positive {
                     term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
                 }
@@ -913,15 +936,10 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 let continuations: Vec<String> =
                     continuation_params.iter().map(|p| p.name.clone()).collect();
                 let mut term = lower_expr(body, &continuations)?;
-                // `mu f(values) | (continuations)` is called as
-                // `f(values..., continuations...)`, so the continuation
-                // binders are innermost.
-                for p in continuation_params.iter().rev() {
-                    term = Term::Lam(p.name.clone(), Box::new(term));
-                }
-                for p in value_params.iter().rev() {
-                    term = Term::Lam(p.name.clone(), Box::new(term));
-                }
+                // Two groups, two binders: the product of values, then the
+                // menu of exits, each destructured when it holds several.
+                term = bind_group(continuation_params, "row", term);
+                term = bind_group(value_params, "values", term);
                 term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
@@ -976,8 +994,54 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
 
 /// Wrap `body` in the λ binder a declared parameter introduces — value and
 /// continuation parameters alike, since a continuation is a value.
-fn bind_param(p: &Param, body: Term) -> Term {
-    Term::Lam(p.name.clone(), Box::new(body))
+/// Bind one parameter group as a single binder. A group of several is one
+/// packed argument — a product of values, or a menu of exits — which the
+/// body destructures, so a declaration takes at most one of each.
+fn bind_group(params: &[Param], group: &str, body: Term) -> Term {
+    let names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+    bind_names(&names, group, body)
+}
+
+/// `bind_group` over plain binder names.
+fn bind_names(names: &[String], group: &str, body: Term) -> Term {
+    match names {
+        [] => body,
+        [only] => Term::Lam(only.clone(), Box::new(body)),
+        several => {
+            let packed = format!("__{group}");
+            let out = format!("__{group}_body");
+            Term::Lam(
+                packed.clone(),
+                Box::new(Term::Mu(
+                    out.clone(),
+                    Box::new(Command::Cut(
+                        Term::Var(packed),
+                        CoTerm::MuTildeTensor(
+                            several.to_vec(),
+                            Box::new(Command::Cut(body, CoTerm::Covar(out))),
+                        ),
+                    )),
+                )),
+            )
+        }
+    }
+}
+
+/// Pack a call's arguments into one term per group: nothing is unit, one is
+/// itself, and several are the right-nested pair the callee destructures.
+fn pack_group(mut terms: Vec<Term>) -> Term {
+    match terms.len() {
+        0 => Term::Var("$unit".into()),
+        1 => terms.pop().unwrap(),
+        _ => {
+            let mut it = terms.into_iter().rev();
+            let mut acc = it.next().unwrap();
+            for t in it {
+                acc = Term::Pair(Box::new(t), Box::new(acc));
+            }
+            acc
+        }
+    }
 }
 
 /// The shape a `select` arm covers: the label it answers to, if it has one,
@@ -1580,8 +1644,8 @@ mod tests {
         );
         let printed = format!("{}", out[0].1);
         assert!(
-            printed.starts_with("λ__seq0."),
-            "user continuation binder should remain distinct: {printed}"
+            printed.contains("μ̃(__seq0, __ret0)"),
+            "user continuation binders should remain distinct: {printed}"
         );
         assert!(
             printed.matches("__seq0").count() >= 2,
@@ -1861,19 +1925,16 @@ mod tests {
     }
 
     #[test]
-    fn lower_negative_fn_binds_continuation_parameters_as_lambdas() {
-        // A continuation is a value like any other, so a negative function's
-        // continuation parameters are ordinary λ binders, nested in
-        // declaration order.
+    fn lower_negative_fn_binds_its_exits_as_one_group() {
+        // A negative function's parameters are its menu of exits, and a
+        // group is one argument: it binds that, then destructures it into
+        // the exits the body names.
         let out = lower_str("fn k(return: -i32 & other: -bool) <- bool { return(0) }");
-        let term = &out[0].1;
-        let Term::Lam(first, rest) = term else {
-            panic!("continuation parameter must be a λ binder: {term}");
-        };
-        assert_eq!(first, "return");
+        let printed = format!("{}", out[0].1);
+        assert!(printed.starts_with("λ__args."), "the group is one binder: {printed}");
         assert!(
-            matches!(rest.as_ref(), Term::Lam(second, _) if second == "other"),
-            "second continuation parameter must also be a λ binder: {rest}"
+            printed.contains("μ̃(return, other)"),
+            "the group destructures into its exits: {printed}"
         );
     }
 
