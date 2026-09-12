@@ -1105,18 +1105,23 @@ fn the_prelude_provides_all_four_logical_units() {
 }
 
 #[test]
-fn the_prelude_consumer_combinators_compose_with_builtins() {
+fn the_prelude_tap_is_a_command_and_composes_with_builtins() {
     let dir = std::env::temp_dir().join("slc_test_prelude_combinators.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} {
-            println(mu i64 { out <= 42 | (("answer", out) | traced)⟩ });
-            println(mu i64 { out <=
-                parse_int("nope", out, ((7, out) | defaulting), ((9, out) | defaulting))
-            });
-            println(mu i64 { out <=
-                parse_int("35", out, ((7, out) | defaulting), ((9, out) | defaulting))
-            });
+        r#"command main | (exit: i32) / {IO} {
+            mu i64 { out <= ("answer", 42) | traced | out⟩ } | println;
+            // A row slot wants a consumer, and `select` is what builds one.
+            mu i64 { out <=
+                "nope" | parse_int | (out
+                    & select String { m => 7 | out⟩ }
+                    & select String { m => 9 | out⟩ })⟩
+            } | println;
+            mu i64 { out <=
+                "35" | parse_int | (out
+                    & select String { m => 7 | out⟩ }
+                    & select String { m => 9 | out⟩ })⟩
+            } | println;
             0 | exit⟩
         }"#,
     )

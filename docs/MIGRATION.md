@@ -498,6 +498,27 @@ command forward(…) | (row: (T & String)) {   // or handed on unopened
 }
 ```
 
+## A stdlib helper with values and continuations is a `command`
+
+`traced` was a positive `fn` returning `-T`, so a caller built the consumer
+and then cut into it. It takes values *and* continuations, which is what a
+`command` is, so it is one — and the call reads like every other call:
+
+```sl
+42 | (("answer", out) | traced)⟩          // old
+("answer", 42) | traced | out⟩            // new
+```
+
+`defaulting(fallback, k)` is gone rather than converted. Its job was to
+*be* a consumer in a row slot, and a command is not one; the slot takes
+`select String { m => fallback | k⟩ }`, which is what the combinator was
+hiding.
+
+```sl
+(xs, 9) | nth | (out & (0, out) | defaulting)⟩              // old
+(xs, 9) | nth | (out & select String { m => 0 | out⟩ })⟩    // new
+```
+
 ## Printing is an effect
 
 `println` and `print` perform the `IO` effect the prelude declares, so a

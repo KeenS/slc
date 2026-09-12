@@ -24,8 +24,11 @@ command main | (exit: i32) / {IO} {
     (double, xs) | map | sum | println;          // 84
     (xs, xs) | append | sum | println;           // 84
 
-    // nth offers its outcomes; `defaulting` answers the miss.
-    mu i64 { out <= (xs, 2) | nth | (out & (0, out) | defaulting)⟩ } | println;   // 39
-    mu i64 { out <= (xs, 9) | nth | (out & (0, out) | defaulting)⟩ } | println;   // 0
+    // nth offers its outcomes, so the miss gets an arm of its own: a row
+    // slot wants a consumer, and `select` is what builds one.
+    mu i64 { out <= (xs, 2) | nth | (out & select String { m => 0 | out⟩ })⟩ }
+        | println;                                                            // 39
+    mu i64 { out <= (xs, 9) | nth | (out & select String { m => 0 | out⟩ })⟩ }
+        | println;                                                            // 0
     0 | exit⟩
 }

@@ -1190,11 +1190,8 @@ and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
 **`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
 formatting as in Rust, with impls for `i64`, `String`, `bool`, and
 `List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
-two **consumer combinators**: `traced(label, k)`, a tap that
-logs what passes through and forwards it, and `defaulting(fallback, k)`, a
-`-String` failure consumer that discards the message and sends `fallback`
-onward, made for the multi-outcome builtins below. (A third, `then(f, k)`,
-is gone: composing a function with a continuation is `f | k`.)
+one **tap**, `command traced(label, x) | (k)`, which logs what passes
+through and forwards it: `("answer", 42) | traced | out⟩`.
 
 **`Seq<T>` is the one that pays for menus in ordinary code.** `List` is
 data and `Stream` is codata that never ends; a `Seq` is a menu whose single
@@ -1221,12 +1218,20 @@ what the function does. `examples/seq.sl` runs all of it. There is no
 `impl Display for Seq`, for the reason `Stream` has none: showing one is
 `list_of_seq`, or `take_seq` first if it may not end.
 
-The combinators share one shape, and it is forced: a negative `fn`'s
-parameters form its continuation row, and values do not ride in a row — so
-a combinator that needs a value input is a *positive* fn returning the
-consumer, built as a λ whose body is a command, since `A → ⊥` *is* `-A`.
-The `<- A` declaration form remains the natural spelling for pure consumer
-transformers, whose inputs are all continuations.
+**A stdlib helper that takes both values and continuations is a
+`command`.** That is what the declaration square calls the shape, and the
+header says it: the value group before the `|`, the menu of exits after. It
+could instead be a positive `fn` returning `-T` — the same type, since
+`A → ⊥` *is* `-A`, and a negative `fn` cannot do it because its one
+parameter group *is* its row — but that spelling says the shape only in the
+return position, and it makes the caller build the consumer before cutting
+into it rather than write the call every other call is written as. Two
+combinators had it and are gone: `then(f, k)`, because composing a function
+with a continuation is `f | k`, and `defaulting(fallback, k)`, because a row
+slot wants a consumer and `select String { m => fallback | k⟩ }` is the
+consumer — the combinator only hid the arm. The `<- A` form remains the
+natural spelling for a consumer transformer whose inputs are all
+continuations.
 
 **Builtins** are what the language cannot express — I/O, arithmetic on
 machine integers, string internals — and they follow the same rule the

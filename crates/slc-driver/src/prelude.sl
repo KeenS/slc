@@ -45,24 +45,23 @@ effect IO {
     fn write_line(text: String) -> Unit;
 }
 
-// ── Consumer combinators ─────────────────────────────────────────────────
+// ── Taps ─────────────────────────────────────────────────────────────────
 //
-// A combinator that needs value inputs cannot be declared `<- A`: a negative
-// fn's parameters form its continuation row, and values do not ride in a
-// row. The stdlib shape for consumer combinators is therefore a positive fn
-// returning the consumer, built as a λ whose body is a command — `A → ⊥`
-// *is* `-A`.
+// A helper that takes both values and continuations is a `command`: that is
+// what the declaration square calls the shape, and the header says it — the
+// value group before the `|`, the menu of exits after. The older spelling —
+// a positive `fn` returning `-T`, built as a λ whose body is a command — was
+// the same type by `A → ⊥` *is* `-A`, but it said the shape only in the
+// return position, and the caller had to build the consumer before cutting
+// into it. A command is written and read the way every other call is:
+//
+//     ("answer", 42) | traced | out⟩
 
 // A tap: log a label and the value passing through, then forward it.
-fn traced<T>(label: String, k: -T) -> -T / {IO} {
-    fn(x: T) { label | println; x | println; x | k⟩ }
-}
-
-// A failure consumer that discards the message and sends `fallback` onward
-// — pairs with the `-String` outcomes of `parse_int`, `read_file`, and the
-// other multi-outcome builtins.
-fn defaulting<T>(fallback: T, k: -T) -> -String {
-    fn(m: String) { fallback | k⟩ }
+command traced<T>(label: String, x: T) | (k: T) / {IO} {
+    label | println;
+    x | println;
+    x | k⟩
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────
