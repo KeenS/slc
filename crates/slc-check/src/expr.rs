@@ -2592,7 +2592,6 @@ fn check_expr_unapplied(
                     // A trait method dispatches instead; that is the arm below.
                     && !env.traits.is_method(name)
                     && let Some(signature) = env.functions.get(name)
-                    && !signature.params.is_empty()
                     && {
                         // Only when its parameters take what flows in: a
                         // negative function may instead read the other way
@@ -2607,7 +2606,9 @@ fn check_expr_unapplied(
                             .rev()
                             .cloned()
                             .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                            .expect("a stage with parameters");
+                            // No parameters is the empty product: `(,) | f`
+                            // is how a nullary declaration is called.
+                            .unwrap_or(Type::One);
                         let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
                         let probe = Env { uni: probe, ..env.clone() };
                         is_builtin(name)
@@ -2622,7 +2623,7 @@ fn check_expr_unapplied(
                         .rev()
                         .cloned()
                         .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                        .expect("a stage with parameters");
+                        .unwrap_or(Type::One);
                     // A tuple written in place is checked component by
                     // component, so an integer literal still takes the
                     // width its slot requires.
@@ -3640,6 +3641,26 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
 
         assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
+    }
+
+    #[test]
+    fn a_nullary_declaration_is_called_with_the_unit() {
+        // No parameters is the empty product, so `(,)` is what flows in.
+        assert!(
+            check(
+                "fn answer() -> i64 { 42 }
+                 command main | (exit: -i32) / {IO} { (,) | answer | println; 0 | exit⟩ }"
+            )
+            .is_ok()
+        );
+        // A value flowing into one is not a call: nothing takes it.
+        assert!(
+            check(
+                "fn answer() -> i64 { 42 }
+                 command main | (exit: -i32) / {IO} { 1 | answer | println; 0 | exit⟩ }"
+            )
+            .is_err()
+        );
     }
 
     #[test]
