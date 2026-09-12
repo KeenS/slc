@@ -456,12 +456,12 @@ f | k                          // new — the same consumer, composed
 ⟨21 | double | out⟩            // new
 ```
 
-The stage after `⟨` is a value, the stage before `⟩` consumes, and
-everything between is a function. Half-open chains are the two sides on
-their own: `⟨v | f` is a value awaiting a continuation, `f | k⟩` a
-consumer awaiting a value. A chain is flat, because composition is
-associative. `@` keeps its other job, the as-pattern binder
-`c @ '0'..='9'`.
+`⟩` closes a chain: the stage before it consumes. A head that is not a
+function needs no mark, so `v | f` applies and `v | k⟩` cuts; a head
+that *is* a function composes, and `⟨` says it is the value flowing in
+instead — `f | k⟩` composes into `k`, while `⟨f | k⟩` sends `f` to it. A
+chain is flat, because composition is associative. `@` keeps its other
+job, the as-pattern binder `c @ '0'..='9'`.
 
 ## Calls and rows are unary
 

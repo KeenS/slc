@@ -14,5 +14,5 @@ command bad(x: +i32) | (k: -i32) {
 }
 
 command main | (exit: -i32) {
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

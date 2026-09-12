@@ -46,5 +46,5 @@ command main | (exit: -i32) {
     match geometry::origin() {
         geometry::Point { x, y } => println(x + y),
     };
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

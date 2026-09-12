@@ -23,8 +23,8 @@ menu Config {
 // carries; the arm answers by cutting into it.
 fn config() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= 3 | retries⟩,
+        name <= "slant" | name⟩,
     }
 }
 
@@ -32,8 +32,8 @@ fn config() -> Config {
 // rest. Only the demanded item is ever computed.
 fn loud(base: Config) -> Config {
     mu Config {
-        retries <= ⟨base.retries | retries⟩,
-        name <= ⟨base.name + "!" | name⟩,
+        retries <= base.retries | retries⟩,
+        name <= base.name + "!" | name⟩,
     }
 }
 
@@ -57,8 +57,8 @@ command main | (exit: -i32) {
 
     // A cut delivers a request directly: `mu` names where the answer goes.
     println(mu i32 { a <= {
-        ⟨cfg | reroute(.retries(a))⟩   // 3
+        cfg | reroute(.retries(a))⟩   // 3
     } });
 
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

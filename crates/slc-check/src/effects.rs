@@ -440,10 +440,8 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
         }
         // A flow that closes is a cut, so it charges like one: its first
         // stage is what flows in, its last is what consumes.
-        Expr::Flow { stages, from_value, into_consumer } => {
-            if *from_value
-                && *into_consumer
-                && let (Some(value), Some(consumer)) = (stages.first(), stages.last())
+        Expr::Flow { stages, into_consumer, .. } => {
+            if *into_consumer && let (Some(value), Some(consumer)) = (stages.first(), stages.last())
             {
                 charge_cut(value, consumer, ctx, out);
             }
@@ -644,7 +642,7 @@ mod tests {
                 "{EXN} fn app<E>(f: (+i64 -> +i64 / {{..E}}), x: +i64) -> i64 / {{..E}} {{ f(x) }}
                  fn inc(x: +i64) -> i64 {{ x + 1 }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-                 command main | (exit: -i32) {{ {main_body}; ⟨0 | exit⟩ }}"
+                 command main | (exit: -i32) {{ {main_body}; 0 | exit⟩ }}"
             )
         };
         // A pure argument instantiates E to the empty row.
@@ -667,7 +665,7 @@ mod tests {
         let diags = check(&format!(
             "{EXN} fn app(f: (+i64 -> +i64), x: +i64) -> i64 {{ f(x) }}
              fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
-             command main | (exit: -i32) {{ println(app(risky, 1)); ⟨0 | exit⟩ }}"
+             command main | (exit: -i32) {{ println(app(risky, 1)); 0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(
@@ -707,7 +705,7 @@ mod tests {
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) {{
                      let r = handle twice(risky, 8) {{ throw(m) => 0 - 1, return(n) => n }};
-                     println(r); ⟨0 | exit⟩
+                     println(r); 0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -718,7 +716,7 @@ mod tests {
     fn an_operation_passed_as_a_value_carries_its_effect() {
         let diags = check(&format!(
             "{EXN} fn app<E>(f: (+String -> +i64 / {{..E}}), x: +String) -> i64 / {{..E}} {{ f(x) }}
-             command main | (exit: -i32) {{ println(app(throw, \"m\")); ⟨0 | exit⟩ }}"
+             command main | (exit: -i32) {{ println(app(throw, \"m\")); 0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
@@ -736,7 +734,7 @@ mod tests {
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) {{
                      let r = handle guard(risky, 1) {{ throw(m) => 0 - 1, return(n) => n }};
-                     println(r); ⟨0 | exit⟩
+                     println(r); 0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -746,7 +744,7 @@ mod tests {
     #[test]
     fn main_must_be_pure() {
         let diags = check(&format!(
-            "{EXN} command main | (exit: -i32) / {{Exn}} {{ println(throw(\"no\")); ⟨0 | exit⟩ }}"
+            "{EXN} command main | (exit: -i32) / {{Exn}} {{ println(throw(\"no\")); 0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`main` is the root")), "{diags:?}");
@@ -755,8 +753,8 @@ mod tests {
     const FALLIBLE: &str = "menu Fallible / {Exn} { value: i64, doubled: i64 }
          fn checked(n: +i64) -> Fallible {
              mu Fallible {
-                 value <= ⟨(if n >= 0 { n } else { throw(\"neg\") }) | value⟩,
-                 doubled <= ⟨(if n >= 0 { n * 2 } else { throw(\"neg\") }) | doubled⟩,
+                 value <= (if n >= 0 { n } else { throw(\"neg\") }) | value⟩,
+                 doubled <= (if n >= 0 { n * 2 } else { throw(\"neg\") }) | doubled⟩,
              }
          }\n";
 
@@ -766,7 +764,7 @@ mod tests {
         // row. The demand is what incurs it — unhandled, it reaches main.
         let diags = check(&format!(
             "{EXN}{FALLIBLE} command main | (exit: -i32) {{
-                 println(checked(1).value); ⟨0 | exit⟩
+                 println(checked(1).value); 0 | exit⟩
              }}"
         ))
         .unwrap_err();
@@ -778,7 +776,7 @@ mod tests {
                      println(handle checked(1).value {{
                          throw(m) => 0 - 1, return(n) => n
                      }});
-                     ⟨0 | exit⟩
+                     0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -791,7 +789,7 @@ mod tests {
             "{EXN} effect Log {{ fn log(m: +String) -> unit; }}
              menu Fallible / {{Exn}} {{ value: i64 }}
              fn noisy() -> Fallible {{
-                 mu Fallible {{ value: out <= ⟨{{ log(\"x\"); 1 }} | out⟩ }}
+                 mu Fallible {{ value: out <= {{ log(\"x\"); 1 }} | out⟩ }}
              }}"
         ))
         .unwrap_err();
@@ -807,10 +805,10 @@ mod tests {
         let diags = check(&format!(
             "{EXN} form Guarded / {{Exn}} {{ value: i64 }}
              fn guard() -> Guarded {{
-                 select Guarded {{ Guarded {{ value }} => ⟨throw(\"no\") | EXIT⟩ }}
+                 select Guarded {{ Guarded {{ value }} => throw(\"no\") | EXIT⟩ }}
              }}
              command main | (exit: -i32) {{
-                 ⟨Guarded {{ value: 1 }} | guard()⟩
+                 Guarded {{ value: 1 }} | guard()⟩
              }}"
         ))
         .unwrap_err();
@@ -823,7 +821,7 @@ mod tests {
         // returned consumer. The cut is where it fires — and a handler
         // around the CALL discharges nothing, because nothing fired.
         let after = "fn after<E>(f: (+i64 -> +i64 / {..E}), k: -i64) -> (-i64 / {..E}) {
-                 fn(x: +i64) { ⟨f(x) | k⟩ }
+                 fn(x: +i64) { f(x) | k⟩ }
              }
              fn risky(x: +i64) -> i64 / {Exn} { throw(\"late\") }\n";
         let diags = check(&format!(
@@ -832,9 +830,9 @@ mod tests {
                      let c = handle after(risky, out) {{
                          throw(m) => 0 - 1, return(x) => x
                      }};
-                     ⟨5 | c⟩
+                     5 | c⟩
                  }} }};
-                 println(n); ⟨0 | exit⟩
+                 println(n); 0 | exit⟩
              }}"
         ))
         .unwrap_err();
@@ -843,10 +841,10 @@ mod tests {
         assert!(
             check(&format!(
                 "{EXN}{after} command main | (exit: -i32) {{
-                     let n = handle (mu i64 {{ out <= ⟨5 | after(risky, out)⟩ }}) {{
+                     let n = handle (mu i64 {{ out <= 5 | after(risky, out)⟩ }}) {{
                          throw(m) => 0 - 1, return(x) => x
                      }};
-                     println(n); ⟨0 | exit⟩
+                     println(n); 0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -857,7 +855,7 @@ mod tests {
     fn a_returned_literal_beyond_the_latent_row_is_rejected() {
         let diags = check(&format!(
             "{EXN} fn quiet(k: -i64) -> (-i64 / {{}}) {{
-                 fn(x: +i64) {{ ⟨throw(\"loud\") | k⟩ }}
+                 fn(x: +i64) {{ throw(\"loud\") | k⟩ }}
              }}"
         ));
         // `/ {{}}` parses as the empty row, indistinguishable from none —
@@ -896,7 +894,7 @@ mod tests {
             check(&format!(
                 "{EXN} command main | (exit: -i32) {{
                      let r = handle throw(\"x\") {{ throw(m) => 0 - 1, return(n) => n }};
-                     println(r); ⟨0 | exit⟩
+                     println(r); 0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -905,7 +903,7 @@ mod tests {
             check(&format!(
                 "{EXN} command main | (exit: -i32) {{
                      let r = handle throw(\"x\") {{ throw(m): k => k(9), return(n) => n }};
-                     println(r); ⟨0 | exit⟩
+                     println(r); 0 | exit⟩
                  }}"
             ))
             .is_ok()
@@ -918,13 +916,13 @@ mod tests {
         assert!(
             check(
                 "effect Log { fn log(m: +String) -> unit; }
-                 fn emit(out: -i64) <- i64 / {Log} { log(\"x\"); ⟨42 | out⟩ }"
+                 fn emit(out: -i64) <- i64 / {Log} { log(\"x\"); 42 | out⟩ }"
             )
             .is_ok()
         );
         let diags = check(
             "effect Log { fn log(m: +String) -> unit; }
-             fn emit(out: -i64) <- i64 { log(\"x\"); ⟨42 | out⟩ }",
+             fn emit(out: -i64) <- i64 { log(\"x\"); 42 | out⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`emit` performs `Log`")), "{diags:?}");

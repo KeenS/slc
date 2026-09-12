@@ -68,12 +68,12 @@ command parse_json(input: +String) | (parsed: -String & failed: -String) {
     if start < str_len(input) {
         let end = mu { k <= parse_value(input, start, k, failed) };
         if skip_ws(input, end) == str_len(input) {
-            ⟨input[start..end] | parsed⟩
+            input[start..end] | parsed⟩
         } else {
-            ⟨"trailing characters after JSON value" | failed⟩
+            "trailing characters after JSON value" | failed⟩
         }
     } else {
-        ⟨"empty input" | failed⟩
+        "empty input" | failed⟩
     }
 }
 
@@ -86,7 +86,7 @@ command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
         't' => parse_literal(input, pos, "true", ok, failed),
         'f' => parse_literal(input, pos, "false", ok, failed),
         'n' => parse_literal(input, pos, "null", ok, failed),
-        _ => ⟨"expected JSON value" | failed⟩,
+        _ => "expected JSON value" | failed⟩,
     }
 }
 
@@ -100,7 +100,7 @@ command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if integer_end > after_sign {
         parse_number_tail(input, integer_end, ok, failed)
     } else {
-        ⟨"expected integer part in number" | failed⟩
+        "expected integer part in number" | failed⟩
     }
 }
 
@@ -115,9 +115,9 @@ command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
 
 command parse_fraction(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if is_digit(at(input, pos)) {
-        ⟨parse_digits(input, pos) | ok⟩
+        parse_digits(input, pos) | ok⟩
     } else {
-        ⟨"expected digit after decimal point" | failed⟩
+        "expected digit after decimal point" | failed⟩
     }
 }
 
@@ -126,7 +126,7 @@ command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String)
     if ch == 'e' || ch == 'E' {
         parse_exponent_tail(input, pos + 1, ok, failed)
     } else {
-        ⟨pos | ok⟩
+        pos | ok⟩
     }
 }
 
@@ -137,9 +137,9 @@ command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -St
         pos
     };
     if is_digit(at(input, after_sign)) {
-        ⟨parse_digits(input, after_sign) | ok⟩
+        parse_digits(input, after_sign) | ok⟩
     } else {
-        ⟨"expected digit in exponent" | failed⟩
+        "expected digit in exponent" | failed⟩
     }
 }
 
@@ -149,15 +149,15 @@ command parse_string(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
 
 command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     if pos >= str_len(input) {
-        ⟨"unterminated JSON string" | failed⟩
+        "unterminated JSON string" | failed⟩
     } else {
         let ch = at(input, pos);
         if ch == QUOTE {
-            ⟨pos + 1 | ok⟩
+            pos + 1 | ok⟩
         } else if ch == BACKSLASH {
             parse_escape(input, pos + 1, ok, failed)
         } else if ch < ' ' {
-            ⟨"raw control character in JSON string" | failed⟩
+            "raw control character in JSON string" | failed⟩
         } else {
             parse_string_tail(input, pos + 1, ok, failed)
         }
@@ -170,7 +170,7 @@ command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
             parse_string_tail(input, pos + 1, ok, failed)
         }
         'u' => parse_hex4(input, pos + 1, ok, failed),
-        _ => ⟨"invalid escape in JSON string" | failed⟩,
+        _ => "invalid escape in JSON string" | failed⟩,
     }
 }
 
@@ -182,23 +182,23 @@ command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     {
         parse_string_tail(input, pos + 4, ok, failed)
     } else {
-        ⟨"invalid hexadecimal digit in \\u escape" | failed⟩
+        "invalid hexadecimal digit in \\u escape" | failed⟩
     }
 }
 
 command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & failed: -String) {
     let end = pos + str_len(text);
     if end <= str_len(input) && input[pos..end] == text {
-        ⟨end | ok⟩
+        end | ok⟩
     } else {
-        ⟨"invalid JSON literal" | failed⟩
+        "invalid JSON literal" | failed⟩
     }
 }
 
 command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACKET {
-        ⟨first + 1 | ok⟩
+        first + 1 | ok⟩
     } else {
         parse_array_body(input, first, ok, failed)
     }
@@ -211,21 +211,21 @@ command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -Strin
     if ch == COMMA {
         let next = skip_ws(input, after_value + 1);
         if at(input, next) == CLOSE_BRACKET {
-            ⟨"trailing comma in array" | failed⟩
+            "trailing comma in array" | failed⟩
         } else {
             parse_array_body(input, next, ok, failed)
         }
     } else if ch == CLOSE_BRACKET {
-        ⟨after_value + 1 | ok⟩
+        after_value + 1 | ok⟩
     } else {
-        ⟨"expected `,` or `]` in array" | failed⟩
+        "expected `,` or `]` in array" | failed⟩
     }
 }
 
 command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     let first = skip_ws(input, pos + 1);
     if at(input, first) == CLOSE_BRACE {
-        ⟨first + 1 | ok⟩
+        first + 1 | ok⟩
     } else {
         parse_object_body(input, first, ok, failed)
     }
@@ -242,20 +242,20 @@ command parse_object_body(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
             if ch == COMMA {
                 let next = skip_ws(input, after_value + 1);
                 if at(input, next) == CLOSE_BRACE {
-                    ⟨"trailing comma in object" | failed⟩
+                    "trailing comma in object" | failed⟩
                 } else {
                     parse_object_body(input, next, ok, failed)
                 }
             } else if ch == CLOSE_BRACE {
-                ⟨after_value + 1 | ok⟩
+                after_value + 1 | ok⟩
             } else {
-                ⟨"expected `,` or `}` in object" | failed⟩
+                "expected `,` or `}` in object" | failed⟩
             }
         } else {
-            ⟨"expected `:` after object key" | failed⟩
+            "expected `:` after object key" | failed⟩
         }
     } else {
-        ⟨"expected object key" | failed⟩
+        "expected object key" | failed⟩
     }
 }
 
@@ -266,13 +266,13 @@ command main | (exit: -i32) {
     let parsed = select +String {
         value => {
             println("parsed: " + value);
-            ⟨0 | exit⟩
+            0 | exit⟩
         },
     };
     let failed = select +String {
         message => {
             println("error: " + message);
-            ⟨1 | exit⟩
+            1 | exit⟩
         },
     };
     parse_json(source, parsed, failed)

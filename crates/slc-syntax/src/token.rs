@@ -154,7 +154,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Assign => write!(f, "`=`"),
             TokenKind::Pipe => write!(f, "`|`"),
             TokenKind::Amp => write!(f, "`&`"),
-            TokenKind::CutOpen => write!(f, "`⟨`"),
+            TokenKind::CutOpen => write!(f, "``"),
             TokenKind::CutClose => write!(f, "`⟩`"),
             TokenKind::AmpAmp => write!(f, "`&&`"),
             TokenKind::PipePipe => write!(f, "`||`"),

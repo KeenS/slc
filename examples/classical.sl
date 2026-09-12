@@ -22,7 +22,7 @@ enum Choice {
 // expression have answered `Holds` instead. The refutation is this call's
 // own continuation, dressed as a consumer of `i64`.
 fn lem() -> Choice {
-    mu { k <= ⟨Choice::Refutes(select +i64 { a => ⟨Choice::Holds(a) | k⟩ }) | k⟩ }
+    mu { k <= Choice::Refutes(select +i64 { a => Choice::Holds(a) | k⟩ }) | k⟩ }
 }
 
 command main | (exit: -i32) {
@@ -40,11 +40,11 @@ command main | (exit: -i32) {
     match lem() {
         Holds(n) => {
             println("holds: " + int_to_str(n));
-            ⟨0 | exit⟩
+            0 | exit⟩
         },
         Refutes(r) => {
             println("refuted — taking the offer");
-            ⟨42 | r⟩
+            42 | r⟩
         },
     }
 }

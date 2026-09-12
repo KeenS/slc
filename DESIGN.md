@@ -54,21 +54,29 @@ Everything moves left to right through one operator. `a | b` is **flow**,
 and what a step means follows from polarity — no other reading is
 available, so none has to be chosen:
 
-Every step composes; **brackets say where a chain is closed**, and the
-stage beside a bracket takes its role from that:
+Every step is a function applied to what flows in, and **`⟩` closes the
+chain**: the stage before it consumes, so the chain delivers rather than
+returns.
 
-| form | the ends | what it is |
-|---|---|---|
-| `f \| g` | neither | function composition, always |
-| `⟨v \| f` | the left | a value flowing on, awaiting a continuation |
-| `f \| k⟩` | the right | a consumer, awaiting a value |
-| `⟨v \| f \| k⟩` | both | **a cut** — a command, `⊥` |
+| form | what it is |
+|---|---|
+| `v \| f` | a value through a function — an application, and a value |
+| `v \| f \| k⟩` | **a cut** — a command, `⊥` |
+| `f \| g` | function composition — a function |
+| `f \| k⟩` | composition into a consumer — a consumer |
 
-So the reading is positional, never inferred: the stage after `⟨` is a
-value, the stage before `⟩` consumes, and everything else is a function
-applied to what flows in. `f | k` is therefore always the composition,
-and `⟨f | k⟩` always the cut that sends `f` itself to `k` — the two are
-written apart rather than told apart.
+The head decides whether a chain applies or composes, and it needs no
+mark when it is not a function: `"hi" | println` can only be an
+application. Where the head *is* a function, the chain composes — and
+`⟨` says the one other thing it could mean, that the function is itself
+the value flowing in:
+
+```sl
+f | k⟩          // compose f into k: a consumer
+⟨f | k⟩         // send f itself to k: a cut
+```
+
+That is the only place a `⟨` is needed, and the whole corpus has one.
 
 A chain is flat, because composition is associative and the syntax says
 so: `⟨v | f | g | k⟩` may be bracketed any way and is the same

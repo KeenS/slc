@@ -37,7 +37,7 @@ fn sum(p: Pair) -> i64 {
 
 fn report_sum(out: -i64) <- Pair {
     select Pair {
-        Pair { left, right } => ⟨(left + right) | out⟩,
+        Pair { left, right } => (left + right) | out⟩,
     }
 }
 
@@ -51,7 +51,7 @@ form Total {
 
 fn total(out: -i64) -> Total {
     select Total {
-        Total { left, right } => ⟨(left + right) | out⟩,
+        Total { left, right } => (left + right) | out⟩,
     }
 }
 
@@ -59,7 +59,7 @@ fn total(out: -i64) -> Total {
 
 fn report_first(out: -i64) <- (+i64 ⊗ +String) {
     select (+i64 ⊗ +String) {
-        (count, label) => ⟨count | out⟩,
+        (count, label) => count | out⟩,
     }
 }
 
@@ -84,9 +84,9 @@ fn name(c: Colour) -> String {
 
 fn code(out: -i64) <- Colour {
     select Colour {
-        Red => ⟨0 | out⟩,
-        Green => ⟨1 | out⟩,
-        Blue => ⟨2 | out⟩,
+        Red => 0 | out⟩,
+        Green => 1 | out⟩,
+        Blue => 2 | out⟩,
     }
 }
 
@@ -103,8 +103,8 @@ menu Config {
 
 fn config() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= 3 | retries⟩,
+        name <= "slant" | name⟩,
     }
 }
 
@@ -113,7 +113,7 @@ fn config() -> Config {
 // have no variants to write and so no surface form.)
 
 fn done(k: -⊥) <- unit {
-    ⟨(,) | k⟩
+    (,) | k⟩
 }
 
 command main | (exit: -i32) {
@@ -122,15 +122,15 @@ command main | (exit: -i32) {
 
     // ⅋ : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
-    println(mu i64 { answer <= ⟨Pair { left: 2, right: 40 } | report_sum(answer)⟩ });
-    println(mu i64 { answer <= ⟨Total { left: 2, right: 40 } | total(answer)⟩ });
-    println(mu i64 { answer <= ⟨(7, "ignored") | report_first(answer)⟩ });
+    println(mu i64 { answer <= Pair { left: 2, right: 40 } | report_sum(answer)⟩ });
+    println(mu i64 { answer <= Total { left: 2, right: 40 } | total(answer)⟩ });
+    println(mu i64 { answer <= (7, "ignored") | report_first(answer)⟩ });
 
     // ⊕ : build one variant, then branch on it.
     println(name(Colour::Green));
 
     // & : hand the consumer one variant; only its branch runs.
-    println(mu i64 { answer <= ⟨Colour::Green | code(answer)⟩ });
+    println(mu i64 { answer <= Colour::Green | code(answer)⟩ });
 
     // codata: demand one item of the menu. The other is never computed.
     println(config().retries);
@@ -139,5 +139,5 @@ command main | (exit: -i32) {
     // 1 and ⊥.
     println(mu ⊥ { k <= done(k) });
 
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

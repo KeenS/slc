@@ -21,7 +21,7 @@ fn printer(out: -i64) -> Report {
     select Report {
         Report { value, label } => {
             println(label);
-            ⟨value | out⟩
+            value | out⟩
         },
     }
 }
@@ -29,7 +29,7 @@ fn printer(out: -i64) -> Report {
 // A form composes like any consumer: this one relabels, then forwards.
 fn shouting(next: Report) -> Report {
     select Report {
-        Report { value, label } => ⟨Report { value: value, label: label + "!" } | next⟩,
+        Report { value, label } => Report { value: value, label: label + "!" } | next⟩,
     }
 }
 
@@ -37,14 +37,14 @@ command main | (exit: -i32) {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.
-    println(mu i64 { a <= ⟨Report { value: 42, label: "answer" } | printer(a)⟩ });
+    println(mu i64 { a <= Report { value: 42, label: "answer" } | printer(a)⟩ });
 
-    println(mu i64 { a <= ⟨Report { value: 7, label: "relabelled" } | shouting(printer(a))⟩ });
+    println(mu i64 { a <= Report { value: 7, label: "relabelled" } | shouting(printer(a))⟩ });
 
     // What a form cannot do is give up one field: from `-A ⅋ -B` there is no
     // `-A` to be had, the way `A ⊗ B` yields its `A`. Reading `p.x` off a
     // record is fine because the other fields can be discarded; a form would
     // have to invent them. So a form is always fed whole.
 
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

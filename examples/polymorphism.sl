@@ -37,5 +37,5 @@ command main | (exit: -i32) {
     println(fresh((,))(1) + 1);
     println(str_len(fresh((,))("again")));
 
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

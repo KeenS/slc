@@ -65,5 +65,5 @@ command main | (exit: -i32) {
     };
     println(bad);                       // failed → -1
 
-    ⟨0 | exit⟩
+    0 | exit⟩
 }

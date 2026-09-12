@@ -19,7 +19,7 @@ command main | (exit: -i32) {
     let complain = select +String {
         message => {
             println("cannot read: " + message);
-            ⟨1 | exit⟩
+            1 | exit⟩
         },
     };
 
@@ -37,12 +37,12 @@ command main | (exit: -i32) {
     let exit = select +i32 {
         status => {
             close_file(file);
-            ⟨status | exit⟩
+            status | exit⟩
         },
     };
 
     let first = mu { k <= {
-        read_line(file, k, select +unit { end => { println("empty file"); ⟨1 | exit⟩ } })
+        read_line(file, k, select +unit { end => { println("empty file"); 1 | exit⟩ } })
     } };
     println("first line: " + first);
 
@@ -54,13 +54,13 @@ command main | (exit: -i32) {
         select +File {
             unexpected => {
                 println("unexpectedly opened");
-                ⟨1 | exit⟩
+                1 | exit⟩
             },
         },
         select +String {
             message => {
                 println("cannot open: " + message);
-                ⟨0 | exit⟩
+                0 | exit⟩
             },
         },
     )

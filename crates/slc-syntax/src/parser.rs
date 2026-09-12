@@ -1127,7 +1127,7 @@ impl Parser {
         if from_value && into_consumer && stages.len() < 2 {
             return Err(ParseError {
                 message: "a cut sends a value to a consumer, so it has both: \
-                          `⟨value | consumer⟩`"
+                          `value | consumer⟩`"
                     .into(),
                 span: Span { start, end: self.span_end() },
             });
@@ -1142,7 +1142,7 @@ impl Parser {
         if self.peek_kind() == Some(&TokenKind::At) {
             return Err(ParseError {
                 message: "`@` is gone: everything flows left to right through `|`, so a cut \
-                          is `⟨value | consumer⟩`"
+                          is `value | consumer⟩`"
                     .into(),
                 span: Span { start: value.span.start, end: self.span_end() },
             });
@@ -2319,7 +2319,7 @@ mod tests {
     #[test]
     fn parse_select() {
         // One arm per variant of an enum.
-        let p = parse_str("select Color { Red => ⟨0 | return⟩, Green => ⟨1 | return⟩ }");
+        let p = parse_str("select Color { Red => 0 | return⟩, Green => 1 | return⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -2333,7 +2333,7 @@ mod tests {
 
     #[test]
     fn a_local_mu_may_leave_out_its_type() {
-        let p = parse_str("mu { k <= ⟨42 | k⟩ }");
+        let p = parse_str("mu { k <= 42 | k⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Mu { continuation_params, .. } = &body.kind else {
             panic!("expected a local mu: {:?}", body.kind)
@@ -2343,7 +2343,7 @@ mod tests {
 
         // The produced type may be written in front; the binder then
         // consumes it — `mu i32 { k <= c }` gives `k` the type `-i32`.
-        let p = parse_str("fn f() -> i32 { mu i32 { k <= ⟨42 | k⟩ } }");
+        let p = parse_str("fn f() -> i32 { mu i32 { k <= 42 | k⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
         let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
@@ -2359,9 +2359,9 @@ mod tests {
     fn a_declaration_is_a_command_and_mu_is_the_expression() {
         // A declaration over parameters is a `command`; `mu` is the
         // expression capturing the ambient continuation.
-        let p = parse_str("command f | (k: -i32) { ⟨1 | k⟩ }");
+        let p = parse_str("command f | (k: -i32) { 1 | k⟩ }");
         assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
-        let p = parse_str("fn g() -> i32 { mu { k <= ⟨1 | k⟩ } }");
+        let p = parse_str("fn g() -> i32 { mu { k <= 1 | k⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
@@ -2371,10 +2371,9 @@ mod tests {
     fn the_parenthesised_mu_form_is_gone() {
         // `mu(k) { c }` and `mu name(k: -T) { c }` both point at the arm
         // syntax now.
-        for source in [
-            "fn f() -> i32 { mu(k: -i32) { ⟨1 | k⟩ } }",
-            "fn f() -> i32 { mu here(k) { ⟨1 | k⟩ } }",
-        ] {
+        for source in
+            ["fn f() -> i32 { mu(k: -i32) { 1 | k⟩ } }", "fn f() -> i32 { mu here(k) { 1 | k⟩ } }"]
+        {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
                 errors.iter().any(|e| e.message.contains("mu { k <= c }")),
@@ -2385,7 +2384,7 @@ mod tests {
         // A binder arm stands alone: it captures the whole continuation, so
         // a second arm has nothing left to answer.
         let errors =
-            parse(lex("fn f() -> i32 { mu { _ <= 1, item: x <= ⟨2 | x⟩ } }").unwrap()).unwrap_err();
+            parse(lex("fn f() -> i32 { mu { _ <= 1, item: x <= 2 | x⟩ } }").unwrap()).unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("binder arm stands alone")), "{errors:?}");
     }
 
@@ -2395,8 +2394,8 @@ mod tests {
             "menu Stream { head: i32, tail: Stream }
              fn stream() -> Stream {
                  mu Stream {
-                     head: out <= ⟨1 | out⟩,
-                     tail: head: out <= ⟨2 | out⟩,
+                     head: out <= 1 | out⟩,
+                     tail: head: out <= 2 | out⟩,
                  }
              }",
         );
@@ -2421,7 +2420,7 @@ mod tests {
     #[test]
     fn mu_item_label_is_its_default_binder() {
         let p = parse_str(
-            "fn lazy() -> Lazy { mu Lazy { force <= ⟨1 | force⟩ } }
+            "fn lazy() -> Lazy { mu Lazy { force <= 1 | force⟩ } }
              menu Lazy { force: i32 }",
         );
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
@@ -2433,7 +2432,7 @@ mod tests {
                 if dtor == "force" && matches!(&**arg, Pattern::Ident(name) if name == "force")
         ));
 
-        let p = parse_str("fn captured() -> i32 { mu i32 { out <= ⟨1 | out⟩ } }");
+        let p = parse_str("fn captured() -> i32 { mu i32 { out <= 1 | out⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
         let Expr::Block(items) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&items[0].kind, Expr::Mu { .. }));
@@ -2441,14 +2440,14 @@ mod tests {
 
     #[test]
     fn old_mu_destructor_syntax_points_to_the_field_form() {
-        let errors = parse(lex("mu M { .item(out) <= ⟨1 | out⟩ }").unwrap()).unwrap_err();
+        let errors = parse(lex("mu M { .item(out) <= 1 | out⟩ }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("item: out <= c"), "{errors:?}");
     }
 
     #[test]
     fn a_mu_writes_only_the_parameter_groups_it_has() {
         // No values: the group is left out, not written empty.
-        let p = parse_str("command main | (exit: -i32) { ⟨0 | exit⟩ }");
+        let p = parse_str("command main | (exit: -i32) { 0 | exit⟩ }");
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
@@ -2465,7 +2464,7 @@ mod tests {
         assert!(continuation_params.is_empty());
 
         for source in
-            ["command main() | (exit: -i32) { ⟨0 | exit⟩ }", "command log(m: +String) | () { m }"]
+            ["command main() | (exit: -i32) { 0 | exit⟩ }", "command log(m: +String) | () { m }"]
         {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
@@ -2486,7 +2485,7 @@ mod tests {
 
     #[test]
     fn a_select_may_leave_out_its_type() {
-        let p = parse_str("select { Red => ⟨0 | return⟩ }");
+        let p = parse_str("select { Red => 0 | return⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -2504,8 +2503,8 @@ mod tests {
             lex("enum Color { Red, Green }
                  fn k(return: -i32) <- Color {
                      select Color {
-                         Red <= ⟨0 | return⟩,
-                         Green <= ⟨1 | return⟩,
+                         Red <= 0 | return⟩,
+                         Green <= 1 | return⟩,
                      }
                  }")
             .unwrap(),
@@ -2535,7 +2534,7 @@ mod tests {
     #[test]
     fn parse_select_over_a_product() {
         // A product has one shape, so one arm, binding its components.
-        let p = parse_str("select (+i64 ⊗ +String) { (end, text) => ⟨end | done⟩ }");
+        let p = parse_str("select (+i64 ⊗ +String) { (end, text) => end | done⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -2547,7 +2546,7 @@ mod tests {
 
     #[test]
     fn parse_select_over_a_struct() {
-        let p = parse_str("select Reading { Reading { value: v, unit: u } => ⟨0 | out⟩ }");
+        let p = parse_str("select Reading { Reading { value: v, unit: u } => 0 | out⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { arms, .. } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -2563,7 +2562,7 @@ mod tests {
     #[test]
     fn parse_flow_binds_more_loosely_than_every_operator() {
         // `1 + 2 | k` sends the sum along, so the sum is one stage.
-        let p = parse_str("fn main() -> i32 { ⟨1 + 2 | k⟩ }");
+        let p = parse_str("fn main() -> i32 { 1 + 2 | k⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
         let Expr::Flow { stages, .. } = &exprs[0].kind else {
@@ -2579,7 +2578,7 @@ mod tests {
         // Composition is associative, so the chain is one flat list of
         // stages — where a consumer may stand is the checker's rule, not
         // the grammar's.
-        let p = parse_str("fn main() -> i32 { ⟨1 | j | k⟩ }");
+        let p = parse_str("fn main() -> i32 { 1 | j | k⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
         let Expr::Flow { stages, .. } = &exprs[0].kind else {
@@ -2646,7 +2645,7 @@ mod tests {
 
     #[test]
     fn parse_interaction() {
-        let p = parse_str("fn f() -> i32 { mu { k <= ⟨1 | k⟩ } }");
+        let p = parse_str("fn f() -> i32 { mu { k <= 1 | k⟩ } }");
         assert_eq!(p.decls.len(), 1);
     }
 
