@@ -76,18 +76,18 @@ fn a_function_into_bottom_is_a_consumer() {
     // `A → ⊥` and `-A` are one type, not two that convert: a function that
     // never returns is a consumer of its argument.
     assert_eq!(
-        lower_type(&parameter_type("command f | (k: (+i32 -> ⊥)) { 0 @ k }")),
+        lower_type(&parameter_type("command f | (k: (+i32 -> ⊥)) { 0 | k }")),
         Ok(Type::Neg(Base::I32))
     );
     assert_eq!(
-        lower_type(&parameter_type("command f | (k: -i32) { 0 @ k }")),
+        lower_type(&parameter_type("command f | (k: -i32) { 0 | k }")),
         Ok(Type::Neg(Base::I32))
     );
 
     // It is a consumer wherever one is wanted — and, a consumer being a
     // value, it may also arrive as a value parameter.
-    assert!(check("command f | (k: (+i32 -> ⊥)) { 0 @ k }").is_ok());
-    assert!(check("command f(x: (+i32 -> ⊥)) | (k: -i32) { 0 @ k }").is_ok());
+    assert!(check("command f | (k: (+i32 -> ⊥)) { 0 | k }").is_ok());
+    assert!(check("command f(x: (+i32 -> ⊥)) | (k: -i32) { 0 | k }").is_ok());
 
     // An ordinary function type is unaffected.
     assert_eq!(
@@ -125,12 +125,12 @@ fn connective_polarity_is_enforced_by_position() {
     // A par is negative: it serves as a continuation, and — a consumer
     // being a value — as a value parameter too.
     assert!(check("command f | (k: (-i64 ⅋ -i64)) { k(0) }").is_ok());
-    assert!(check("command f(p: (-i64 ⅋ -i64)) | (k: -i32) { 0 @ k }").is_ok());
+    assert!(check("command f(p: (-i64 ⅋ -i64)) | (k: -i32) { 0 | k }").is_ok());
 
     // Bottom is negative too.
     // A value parameter holds either side, ⊥ included — it is the same
     // type the prelude names `Bottom`.
-    assert!(check("command f(p: ⊥) | (k: -i32) { 0 @ k }").is_ok());
+    assert!(check("command f(p: ⊥) | (k: -i32) { 0 | k }").is_ok());
 }
 
 #[test]

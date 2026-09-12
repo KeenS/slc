@@ -269,8 +269,15 @@ fn infer_param_type(
     if let Expr::Cut { value, consumer } = &body.kind
         && matches!(&consumer.kind, Expr::Ident(x) if x == name)
     {
-        // `v @ k` makes `k` the consumer of whatever `v` is. The value is
+        // `v | k` makes `k` the consumer of whatever `v` is. The value is
         // checked again in place, so these diagnostics are thrown away.
+        return check_expr(value, enums, env, &mut Vec::new()).map(|ty| ty.dual());
+    }
+    // The same, written as a flow: a chain of two ending in the binder.
+    if let Expr::Flow(stages) = &body.kind
+        && let [value, consumer] = stages.as_slice()
+        && matches!(&consumer.kind, Expr::Ident(x) if x == name)
+    {
         return check_expr(value, enums, env, &mut Vec::new()).map(|ty| ty.dual());
     }
     body.kind.children().into_iter().find_map(|child| infer_param_type(name, child, enums, env))
@@ -836,7 +843,7 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
 /// Does a value written as `expr`, inferred as `actual`, fit a port that
 /// requires `expected`?
 ///
-/// An integer literal takes the integer type its port requires — `0 @ exit`
+/// An integer literal takes the integer type its port requires — `0 | exit`
 /// sends an `i32` — and is `+i64` only when nothing constrains it. Every
 /// other value must match its port exactly.
 /// The expression a body's value comes from: the tail of a block, through a
@@ -1607,7 +1614,7 @@ fn check_expr_unapplied(
                 diags.push(Diagnostic {
                     message: format!(
                         "`{name}` is a consumer of type {ty}, not a function; send it a value \
-                         with a cut: `value @ {name}`"
+                         with a cut: `value | {name}`"
                     ),
                     span: e.span,
                 });
@@ -2303,7 +2310,7 @@ fn check_expr_unapplied(
                         diags.push(Diagnostic {
                             message: format!(
                                 "`{form}` is a form, and a form takes every field at once: send \
-                                 it one, `{form} {{ … }} @ …`. A single field cannot be taken \
+                                 it one, `{form} {{ … }} | …`. A single field cannot be taken \
                                  out of it — the others would have to be invented"
                             ),
                             span: e.span,
@@ -2422,7 +2429,10 @@ fn check_expr_unapplied(
             // is itself a value, so `f | k` may be either the composition
             // or the cut that sends `f` to `k` — and only `k` says which.
             let opens = match (types.first().and_then(|ty| ty.as_ref()), types.get(1)) {
-                (Some(first), Some(Some(second))) => !stage_accepts(second)
+                // Only a function can open a chain: anything else there is
+                // a value, and if the next stage will not take it that is a
+                // duality error, reported where it flows in.
+                (Some(first @ Type::Par(..)), Some(Some(second))) => !stage_accepts(second)
                     .iter()
                     .any(|accepts| would_fit(env, accepts, first, Some(&stages[0].kind))),
                 _ => false,
@@ -2439,8 +2449,12 @@ fn check_expr_unapplied(
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
             let mut cut = false;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
-                let Some(ty) = ty else { continue };
                 let last = index + 1 == types.len();
+                // A stage whose type the checker could not read is as
+                // undecided as an unsolved one: the last closes the chain,
+                // an earlier one passes it on.
+                let unknown = env.uni.fresh_var();
+                let ty = ty.as_ref().unwrap_or(&unknown);
                 let shape = flowing.unwrap_or(&e.kind);
                 // An unsolved stage is whatever this position needs: the
                 // last one closes the chain, an earlier one passes it on.
@@ -2493,8 +2507,29 @@ fn check_expr_unapplied(
                     // menu of exits — and duality settles it, exactly as it
                     // settles a cut.
                     ty => {
+                        // The orientation rule: a consumer may stand only at
+                        // the right end, so one arriving from the left is
+                        // the mistake, not a duality failure. Codata is a
+                        // negative *value* and flows in legitimately.
+                        if acc.is_negative()
+                            && !contains_var(&acc)
+                            && !enums.is_negative_value(&acc)
+                        {
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "the left of `|` is the value side, and this has type \
+                                     {acc}; pass a continuation as an argument instead"
+                                ),
+                                span: stages[index].span,
+                            });
+                            return Some(Type::Bottom);
+                        }
                         let expects = ty.dual();
-                        if !fits(env, &expects, &acc, shape) {
+                        // The ⊥/1 corner: `-⊥` resolves to `1`, so the
+                        // idiomatic `(,) | k` against it is unit meeting
+                        // unit.
+                        let units = acc == Type::One && ty == &Type::One;
+                        if !units && !fits(env, &expects, &acc, shape) {
                             let expects = env.uni.apply(&expects);
                             diags.push(Diagnostic {
                                 message: format!(
@@ -2521,7 +2556,7 @@ fn check_expr_unapplied(
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
         }
         Expr::Cut { value, consumer } => {
-            // `v @ k` is a command: it sends `v` to the consumer `k` and does
+            // `v | k` is a command: it sends `v` to the consumer `k` and does
             // not return, so its type is bottom. A cut is well typed when the
             // two sides are dual — that is what makes the interaction fit,
             // and with `A → B` being `-A ⅋ B` it is the whole rule: which
@@ -2555,7 +2590,7 @@ fn check_expr_unapplied(
             }
             if let (Some(value_ty), Some(consumer_ty)) = (&value_ty, &consumer_ty)
                 // The ⊥/1 corner: `-⊥` resolves to `1`, so the idiomatic
-                // `() @ k` against it is unit meeting unit.
+                // `() | k` against it is unit meeting unit.
                 && !(value_ty == &Type::One && consumer_ty == &Type::One)
                 && !fits(env, &consumer_ty.dual(), value_ty, &value.kind)
             {
@@ -2623,7 +2658,7 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
         // An `if` with no `else` falls through on the false path.
         let diags =
-            check("command bad(x: +i32) | (k: -i32) { if eq(x, 0) { x @ k } }").unwrap_err();
+            check("command bad(x: +i32) | (k: -i32) { if eq(x, 0) { x | k } }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
     }
 
@@ -2632,7 +2667,7 @@ mod tests {
         // The core is classical: reaching one continuation is enough, so a
         // declared continuation the body never triggers is not an error.
         assert!(
-            check("command f(x: +i32) | (ok: -i32 & err: -i32) { x @ ok }").is_ok(),
+            check("command f(x: +i32) | (ok: -i32 & err: -i32) { x | ok }").is_ok(),
             "dropping a continuation should be allowed"
         );
     }
@@ -2828,8 +2863,8 @@ mod tests {
                 "enum R { Some(i64), None }
                  fn k(ok: -i64 & absent: -i64) <- R {
                      select R {
-                         Some(value) => value @ ok,
-                         None => 0 @ absent,
+                         Some(value) => value | ok,
+                         None => 0 | absent,
                      }
                  }"
             )
@@ -2843,8 +2878,8 @@ mod tests {
             "enum R { Some(i64), None }
              fn k(ok: -i64 & absent: -i64) <- R {
                  select R {
-                     Some => 0 @ ok,
-                     None => 0 @ absent,
+                     Some => 0 | ok,
+                     None => 0 | absent,
                  }
              }",
         )
@@ -2861,7 +2896,7 @@ mod tests {
             "enum R { None }
              fn k(absent: -i32) <- R {
                  select R {
-                     None(value) => 0 @ absent,
+                     None(value) => 0 | absent,
                  }
              }",
         )
@@ -2877,10 +2912,10 @@ mod tests {
         let diags = check("command route(x: +i32) | (k: -i32) { k(x) }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("is a consumer of type -i32, not a function")
-                && d.message.contains("value @ k")),
+                && d.message.contains("value | k")),
             "{diags:?}"
         );
-        assert!(check("command route(x: +i32) | (k: -i32) { x @ k }").is_ok());
+        assert!(check("command route(x: +i32) | (k: -i32) { x | k }").is_ok());
     }
 
     #[test]
@@ -2890,7 +2925,7 @@ mod tests {
             diags.iter().any(|d| d.message.contains("`out` is a consumer of type -i32")),
             "{diags:?}"
         );
-        assert!(check("command f | (out: -i32) { 0 @ out }").is_ok());
+        assert!(check("command f | (out: -i32) { 0 | out }").is_ok());
     }
 
     #[test]
@@ -2899,7 +2934,7 @@ mod tests {
         // so a branch that ends in one leaves the `if` type to the other.
         let ok = check(
             "fn parse(input: +String, err: -String) -> i64 {
-                 if str_len(input) > 0 { 1 } else { \"empty\" @ err }
+                 if str_len(input) > 0 { 1 } else { \"empty\" | err }
              }",
         );
         assert!(ok.is_ok(), "{ok:?}");
@@ -2908,19 +2943,16 @@ mod tests {
     #[test]
     fn a_cut_needs_dual_sides() {
         // Two values of the same positive type do not interact.
-        let diags = check("fn f(x: +i32, y: +i32) -> i32 { x @ y }").unwrap_err();
-        assert!(
-            diags.iter().any(|d| d.message.contains("sends a value to a consumer of it")),
-            "{diags:?}"
-        );
+        let diags = check("fn f(x: +i32, y: +i32) -> i32 { x | y }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
     #[test]
     fn a_cut_checks_what_the_consumer_accepts() {
-        let diags = check("command route(x: +String) | (k: -i32) { x @ k }").unwrap_err();
+        let diags = check("command route(x: +String) | (k: -i32) { x | k }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("-i32 accepts +i32")
-                && d.message.contains("the value has type +String")),
+            diags.iter().any(|d| d.message.contains("this consumer takes +i32")
+                && d.message.contains("what flows in has type +String")),
             "{diags:?}"
         );
     }
@@ -2934,12 +2966,12 @@ mod tests {
                 "enum Color { Red, Green }
                  fn code(return: -i64) <- Color {
                      select Color {
-                         Red => 0 @ return,
-                         Green => 1 @ return,
+                         Red => 0 | return,
+                         Green => 1 | return,
                      }
                  }
                  fn main() -> i64 {
-                     mu i64 { answer <= Color::Green @ code(answer) }
+                     mu i64 { answer <= Color::Green | code(answer) }
                  }"
             )
             .is_ok()
@@ -2950,7 +2982,7 @@ mod tests {
     fn continuation_row_accepts_the_declared_row() {
         assert!(
             check(
-                "command route(x: +i32) | (k: -i32) { x @ k }
+                "command route(x: +i32) | (k: -i32) { x | k }
                  fn main() -> i32 { mu i32 { out <= route(1, out) } }"
             )
             .is_ok()
@@ -2960,7 +2992,7 @@ mod tests {
     #[test]
     fn continuation_row_rejects_an_incompatible_continuation_type() {
         let diags = check(
-            "command route(x: +i32) | (k: -i32) { x @ k }
+            "command route(x: +i32) | (k: -i32) { x | k }
              fn main() -> i32 { mu bool { out <= route(1, out) } }",
         )
         .unwrap_err();
@@ -2978,7 +3010,7 @@ mod tests {
         // The row is ordered: swapping two continuations of different types
         // is rejected even though both types appear in the declaration.
         let diags = check(
-            "command route(a: -i32, b: -bool) | (c: -i32 & d: -bool) { 0 @ c }
+            "command route(a: -i32, b: -bool) | (c: -i32 & d: -bool) { 0 | c }
              command caller | (first: -i32 & second: -bool) { route(0, true, second, first) }",
         )
         .unwrap_err();
@@ -2991,7 +3023,7 @@ mod tests {
     #[test]
     fn continuation_row_rejects_extra_arguments() {
         let diags = check(
-            "command route(x: +i32) | (k: -i32) { x @ k }
+            "command route(x: +i32) | (k: -i32) { x | k }
              fn main() -> i32 { mu i32 { out <= route(1, out, out) } }",
         )
         .unwrap_err();
@@ -3083,9 +3115,9 @@ mod tests {
             "enum Color { Red, Green, Blue }
             fn k(return: -i32) <- Color {
                 select Color {
-                    Red => 0 @ return,
-                    Green => 1 @ return,
-                    Blue => 2 @ return,
+                    Red => 0 | return,
+                    Green => 1 | return,
+                    Blue => 2 | return,
                 }
             }",
         );
@@ -3099,7 +3131,7 @@ mod tests {
             fn k(return: -i32) <- Color {
                 select Color {
                     Red => 0,
-                    Green => 1 @ return,
+                    Green => 1 | return,
                 }
             }",
         )
@@ -3113,8 +3145,8 @@ mod tests {
             "enum Color { Red, Green }
             fn k(return: -i32) <- Color {
                 select Color {
-                    (a, b) => 0 @ return,
-                    Green => 1 @ return,
+                    (a, b) => 0 | return,
+                    Green => 1 | return,
                 }
             }",
         )
@@ -3126,7 +3158,7 @@ mod tests {
     fn unit_is_a_type_and_not_a_wildcard() {
         let diags = check(
             "fn wants(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) { println(wants((,))); 0 @ exit }",
+             command main | (exit: -i32) { println(wants((,))); 0 | exit }",
         )
         .unwrap_err();
         assert!(
@@ -3144,10 +3176,10 @@ mod tests {
                  fn named_unit() -> Unit { (,) }
                  fn symbolic_unit() -> unit { Unit {} }
                  fn stop(exit: -i32) -> Bottom {
-                     select { Bottom {} => 0 @ exit }
+                     select { Bottom {} => 0 | exit }
                  }
-                 command absorb | (never: -Bottom) { (,) @ never }
-                 command halt | (exit: -i32) { 0 @ exit }"
+                 command absorb | (never: -Bottom) { (,) | never }
+                 command halt | (exit: -i32) { 0 | exit }"
             )
             .is_ok()
         );
@@ -3178,7 +3210,7 @@ mod tests {
                  fn u() -> i64 / {Ask} { ask() + 5 }
                  command main | (exit: -i32) {
                      let r = handle u() { ask(): resume => 1000 + resume(7), return(n) => n };
-                     println(r); 0 @ exit
+                     println(r); 0 | exit
                  }"
             )
             .is_ok()
@@ -3197,7 +3229,7 @@ mod tests {
                          c(): resume => resume(true) + resume(false),
                          return(n) => n,
                      };
-                     println(r); 0 @ exit
+                     println(r); 0 | exit
                  }"
             )
             .is_ok()
@@ -3211,7 +3243,7 @@ mod tests {
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
                  fn label<T: Show>(x: +T) -> String { show(x) }
-                 command main | (exit: -i32) { println(label(1)); 0 @ exit }"
+                 command main | (exit: -i32) { println(label(1)); 0 | exit }"
             )
             .is_ok()
         );
@@ -3230,7 +3262,7 @@ mod tests {
         let mono = resolve(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) { println(show(1)); 0 @ exit }",
+             command main | (exit: -i32) { println(show(1)); 0 | exit }",
         );
         assert_eq!(mono.methods.len(), 1, "one method call should resolve: {mono:?}");
         assert!(
@@ -3245,7 +3277,7 @@ mod tests {
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
              fn label<T: Show>(x: +T) -> String { show(x) }
-             command main | (exit: -i32) { println(label(1)); 0 @ exit }",
+             command main | (exit: -i32) { println(label(1)); 0 | exit }",
         );
         // `show(x)` inside `label` projects from the dictionary parameter;
         // `label(1)` passes the concrete i64 dictionary.
@@ -3269,14 +3301,14 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-                 fn emit<T: Show>(out: -String & v: +T) <- i64 { show(v) @ out }"
+                 fn emit<T: Show>(out: -String & v: +T) <- i64 { show(v) | out }"
             )
             .is_ok()
         );
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             fn emit<T>(out: -String & v: +T) <- i64 { show(v) @ out }",
+             fn emit<T>(out: -String & v: +T) <- i64 { show(v) | out }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
@@ -3287,7 +3319,7 @@ mod tests {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) { println(show(true)); 0 @ exit }",
+             command main | (exit: -i32) { println(show(true)); 0 | exit }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("no `impl Show for bool`")), "{diags:?}");
@@ -3316,7 +3348,7 @@ mod tests {
                      println(str_len(f(\"s\")));
                      let alias = f;
                      println(alias(true));
-                     0 @ exit
+                     0 | exit
                  }"
             )
             .is_ok()
@@ -3330,10 +3362,10 @@ mod tests {
         // at another, so it stays monomorphic and mixed uses are rejected.
         let diags = check(
             "command main | (exit: -i32) {
-                 let g = mu { k <= fn(x) { x } @ k };
+                 let g = mu { k <= fn(x) { x } | k };
                  println(g(1) + 1);
                  println(str_len(g(\"s\")));
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3347,7 +3379,7 @@ mod tests {
                  let h = id(fn(x) { x });
                  println(h(1) + 1);
                  println(str_len(h(\"s\")));
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3361,10 +3393,10 @@ mod tests {
         assert!(
             check(
                 "command main | (exit: -i32) {
-                     let fresh = fn(u) { mu { k <= fn(x) { x } @ k } };
+                     let fresh = fn(u) { mu { k <= fn(x) { x } | k } };
                      println(fresh((,))(1) + 1);
                      println(str_len(fresh((,))(\"s\")));
-                     0 @ exit
+                     0 | exit
                  }"
             )
             .is_ok()
@@ -3379,7 +3411,7 @@ mod tests {
             "command main | (exit: -i32) {
                  let g = fn(x) { x };
                  println(g(1) + str_len(g(1)));
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3392,7 +3424,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) {
                  println(fn(x) { x + 1 }(\"not a number\"));
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3408,7 +3440,7 @@ mod tests {
                  command main | (exit: -i32) {
                      println(id(42) + 1);
                      println(str_len(id(\"each call its own T\")));
-                     0 @ exit
+                     0 | exit
                  }"
             )
             .is_ok()
@@ -3417,7 +3449,7 @@ mod tests {
         // Within one call, T is one type.
         let diags = check(
             "fn id<T>(x: T) -> T { x }
-             command main | (exit: -i32) { println(str_len(id(42))); 0 @ exit }",
+             command main | (exit: -i32) { println(str_len(id(42))); 0 | exit }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
@@ -3430,7 +3462,7 @@ mod tests {
         // An integer literal still adapts to the declared width.
         assert!(check("fn f() -> i32 { 0 }").is_ok());
         // A body that ends in a cut produces nothing, and promises nothing.
-        assert!(check("fn f(k: -i64) <- i64 { 1 @ k }").is_ok());
+        assert!(check("fn f(k: -i64) <- i64 { 1 | k }").is_ok());
     }
 
     #[test]
@@ -3452,15 +3484,15 @@ mod tests {
         let prelude = "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
              impl Show for bool { fn show(self: +bool) -> String { \"b\" } }
-             fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) @ out } }\n";
+             fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) | out } }\n";
         // Nothing the call receives mentions T; the cut fixes it, at two
         // different types in the same declaration.
         assert!(
             check(&format!(
                 "{prelude} command main | (exit: -i32) {{
-                     println(mu String {{ s <= 42 @ emit(s) }});
-                     println(mu String {{ s <= true @ emit(s) }});
-                     0 @ exit
+                     println(mu String {{ s <= 42 | emit(s) }});
+                     println(mu String {{ s <= true | emit(s) }});
+                     0 | exit
                  }}"
             ))
             .is_ok()
@@ -3468,7 +3500,7 @@ mod tests {
         // A type with no impl is still refused.
         let diags = check(&format!(
             "{prelude} command main | (exit: -i32) {{
-                 println(mu String {{ s <= \"text\" @ emit(s) }}); 0 @ exit
+                 println(mu String {{ s <= \"text\" | emit(s) }}); 0 | exit
              }}"
         ))
         .unwrap_err();
@@ -3481,24 +3513,24 @@ mod tests {
         // consumes, and the cut says which impl runs.
         let prelude = "trait Deliver { fn deliver(out: -String) <- Self; }
              impl Deliver for i64 {
-                 fn deliver(out: -String) <- i64 { fn(n: +i64) { \"i\" @ out } }
+                 fn deliver(out: -String) <- i64 { fn(n: +i64) { \"i\" | out } }
              }
              impl Deliver for bool {
-                 fn deliver(out: -String) <- bool { fn(b: +bool) { \"b\" @ out } }
+                 fn deliver(out: -String) <- bool { fn(b: +bool) { \"b\" | out } }
              }\n";
         assert!(
             check(&format!(
                 "{prelude} command main | (exit: -i32) {{
-                     println(mu String {{ s <= 42 @ deliver(s) }});
-                     println(mu String {{ s <= true @ deliver(s) }});
-                     0 @ exit
+                     println(mu String {{ s <= 42 | deliver(s) }});
+                     println(mu String {{ s <= true | deliver(s) }});
+                     0 | exit
                  }}"
             ))
             .is_ok()
         );
         let diags = check(&format!(
             "{prelude} command main | (exit: -i32) {{
-                 println(mu String {{ s <= \"text\" @ deliver(s) }}); 0 @ exit
+                 println(mu String {{ s <= \"text\" | deliver(s) }}); 0 | exit
              }}"
         ))
         .unwrap_err();
@@ -3533,7 +3565,7 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
-                 fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) @ out } }"
+                 fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) | out } }"
             )
             .is_ok()
         );
@@ -3543,7 +3575,7 @@ mod tests {
     fn a_consumer_travels_bare() {
         // A continuation is a value: it passes as an ordinary argument and
         // sits in bindings without any box.
-        assert!(check("fn hold(k: -i64) -> ⊥ { 1 @ k }").is_ok());
+        assert!(check("fn hold(k: -i64) -> ⊥ { 1 | k }").is_ok());
     }
 
     #[test]
@@ -3551,9 +3583,9 @@ mod tests {
         // A raw consumer is a value everywhere except the left of a cut:
         // there, involution would let any positive pass for a consumer of
         // consumers, and the machine only runs an oriented cut.
-        let diags = check("fn f(k: -i64, target: -i64) -> ⊥ { k @ target }").unwrap_err();
+        let diags = check("fn f(k: -i64, target: -i64) -> ⊥ { k | target }").unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("the left of `@` is the value side")),
+            diags.iter().any(|d| d.message.contains("the left of `|` is the value side")),
             "{diags:?}"
         );
     }
@@ -3565,7 +3597,7 @@ mod tests {
         assert!(
             check(
                 "fn dne<T>(t: -(-T)) -> T { t }
-                 command main | (exit: -i32) { println(dne(42)); 0 @ exit }",
+                 command main | (exit: -i32) { println(dne(42)); 0 | exit }",
             )
             .is_ok()
         );
@@ -3575,7 +3607,7 @@ mod tests {
     fn value_arguments_are_checked_against_the_declaration() {
         let diags = check(
             "fn f(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) { println(f(42)); 0 @ exit }",
+             command main | (exit: -i32) { println(f(42)); 0 | exit }",
         )
         .unwrap_err();
         assert!(
@@ -3601,7 +3633,7 @@ mod tests {
             check(
                 "enum Color { Red, Green }
                  fn code(return: -i32) <- Color {
-                     select { Red => 0 @ return, Green => 1 @ return }
+                     select { Red => 0 | return, Green => 1 | return }
                  }"
             )
             .is_ok()
@@ -3613,8 +3645,8 @@ mod tests {
     #[test]
     fn a_select_in_a_negative_fn_takes_the_type_it_consumes() {
         // Nothing in `n <= …` names a type, but the declaration already did.
-        assert!(check("fn twice(out: -i64) <- +i64 { select { n => (n * 2) @ out } }").is_ok());
-        let diags = check("fn twice(out: -String) <- +i64 { select { n => str_len(n) @ out } }")
+        assert!(check("fn twice(out: -i64) <- +i64 { select { n => (n * 2) | out } }").is_ok());
+        let diags = check("fn twice(out: -String) <- +i64 { select { n => str_len(n) | out } }")
             .unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),
@@ -3625,8 +3657,8 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) {
                  let show = select { n => println(n) };
-                 42 @ show;
-                 0 @ exit
+                 42 | show;
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3639,10 +3671,10 @@ mod tests {
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) {
-                 let complain = select { m => { println(m); 1 @ exit } };
+                 let complain = select { m => { println(m); 1 | exit } };
                  let text = mu { k <= read_file(\"in\", k, complain) };
                  println(text + 1);
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3651,12 +3683,12 @@ mod tests {
             "the inferred type should reach the use: {diags:?}"
         );
 
-        // A cut says it just as well: `42 @ k` makes `k` a consumer of i64.
+        // A cut says it just as well: `42 | k` makes `k` a consumer of i64.
         let diags = check(
             "command main | (exit: -i32) {
-                 let answer = mu { k <= 42 @ k };
+                 let answer = mu { k <= 42 | k };
                  println(str_len(answer));
-                 0 @ exit
+                 0 | exit
              }",
         )
         .unwrap_err();
@@ -3668,12 +3700,12 @@ mod tests {
         // An atom has one shape and one component, so its arm's pattern is a
         // plain binder, typed by the type being consumed.
         assert!(
-            check("fn show(out: -String) <- +i64 { select +i64 { n => int_to_str(n) @ out } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n => int_to_str(n) | out } }")
                 .is_ok()
         );
 
         let diags =
-            check("fn show(out: -String) <- +i64 { select +i64 { n => str_len(n) @ out } }")
+            check("fn show(out: -String) <- +i64 { select +i64 { n => str_len(n) | out } }")
                 .unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),

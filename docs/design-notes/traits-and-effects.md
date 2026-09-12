@@ -40,7 +40,7 @@ fn announce<T: Show>(label: +String, x: +T) -> String {
 command main | (exit: -i32) {
     println(announce("answer", 42));      // "answer: 42"
     println(announce("flag", true));      // "flag: true"
-    0 @ exit
+    0 | exit
 }
 ```
 
@@ -100,7 +100,7 @@ trait Render {
 
 impl Render for i64 {
     command render(self: +i64) | (out: -String) {
-        int_to_str(self) @ out
+        int_to_str(self) | out
     }
 }
 
@@ -110,7 +110,7 @@ impl Render for i64 {
 command show_both<T: Render>(x: +T, y: +T) | (out: -String) {
     render(x, select +String {
         first <= render(y, select +String {
-            second <= (first + " " + second) @ out,
+            second <= (first + " " + second) | out,
         }),
     })
 }
@@ -149,7 +149,7 @@ command main | (exit: -i32) {
         return(n)        => "ok: " + int_to_str(n),
     };
     println(result);                  // "error: division by zero"
-    0 @ exit
+    0 | exit
 }
 ```
 
@@ -179,7 +179,7 @@ command main | (exit: -i32) {
         return(s)       => s,
     };
     println(all);                     // "HH HT TH TT"
-    0 @ exit
+    0 | exit
 }
 ```
 

@@ -64,10 +64,10 @@ command main | (exit: -i32) {
     println(handle f.doubled { throw(m) => 0 - 1, return(n) => n });
     println(handle checked(0 - 5).value { throw(m) => 0 - 1, return(n) => n });
 
-    // A consumer carries a latent row too: `then(risky, out)` performs
-    // nothing when called — `(-A / {..E})` says the row fires when the
-    // consumer is FED, so the handler belongs around the cut.
-    let n = handle (mu i64 { out <= 5 | then(risky, out) }) {
+    // A consumer carries a latent row too: `risky | out` composes without
+    // performing anything — the row fires when the consumer is FED, so the
+    // handler belongs around the cut.
+    let n = handle (mu i64 { out <= 5 | risky | out }) {
         throw(m) => 0 - 1,
         return(x) => x,
     };

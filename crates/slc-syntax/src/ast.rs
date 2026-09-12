@@ -99,7 +99,7 @@ pub enum Expr {
     /// a function into a function composes, a function into a consumer
     /// builds a consumer, and a value into a consumer is the cut.
     Flow(Vec<Node<Expr>>),
-    /// A cut: `v @ k` sends the value `v` to the consumer `k`.
+    /// A cut: `v | k` sends the value `v` to the consumer `k`.
     ///
     /// A cut is a command, not an application: it has no result and control
     /// does not return from it. Application is `Call`, at either polarity.

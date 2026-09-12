@@ -28,12 +28,6 @@ fn abs(n: +i64) -> i64 {
     if n < 0 { 0 - n } else { n }
 }
 
-// Compose a function with a continuation: the consumer that runs `f`, then
-// jumps to `k`. `A → ⊥` is `-A`, so the lambda *is* that consumer.
-fn then<A, B, E>(f: (A -> B / {..E}), k: -B) -> (-A / {..E}) {
-    fn(x: A) { f(x) | k }
-}
-
 // ── Consumer combinators ─────────────────────────────────────────────────
 //
 // A combinator that needs value inputs cannot be declared `<- A`: a negative

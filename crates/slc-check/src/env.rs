@@ -65,7 +65,7 @@ pub(crate) struct Env<'a> {
     pub(crate) rigid_vars: HashMap<String, Type>,
     /// Bounded calls whose dictionaries are not solved yet. A call standing
     /// in consumer position learns its type parameter from the cut it is
-    /// part of — `42 @ emit(s)` fixes `emit`'s `T` only when the cut is
+    /// part of — `42 | emit(s)` fixes `emit`'s `T` only when the cut is
     /// checked, after the call — so solving waits until the declaration's
     /// unification has finished.
     pub(crate) pending_dicts: Vec<PendingDicts>,

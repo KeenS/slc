@@ -156,9 +156,15 @@ fn call_groups(span: Span) -> Option<usize> {
     CALL_GROUPS.with(|cell| cell.borrow().get(&span).copied())
 }
 
-/// What a flow chain does — an open chain awaiting a value by default.
-fn flow_shape(span: Span) -> FlowShape {
-    FLOWS.with(|cell| cell.borrow().get(&span).copied()).unwrap_or_default()
+/// What a chain turned out to be. Lowering follows the checker, which
+/// always runs first and records every chain; run on its own, as the
+/// lowering tests run it, a chain ending in a plain name is read as the
+/// cut it has always been.
+fn flow_shape(span: Span, stages: &[Node<Expr>]) -> FlowShape {
+    FLOWS.with(|cell| cell.borrow().get(&span).copied()).unwrap_or(FlowShape {
+        eta: false,
+        cut: stages.last().map(|s| &s.kind).and_then(named_consumer).is_some(),
+    })
 }
 
 /// The term a dictionary argument lowers to: the named dictionary, applied
@@ -531,7 +537,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
         // ordinary application and the last one either an application or
         // the cut.
         Expr::Flow(stages) => {
-            let shape = flow_shape(e.span);
+            let shape = flow_shape(e.span, stages);
             let mut lowered = Vec::new();
             if shape.eta {
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
@@ -545,26 +551,24 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                 acc = call_curried(stage, vec![acc]);
             }
             let term = if shape.cut {
-                // The closed chain: its value meets the consumer at the end.
-                let consumer = match stages.last().map(|s| &s.kind).and_then(named_consumer) {
-                    Some(name) => CoTerm::Covar(name.clone()),
-                    None => CoTerm::App(acc.clone(), Box::new(CoTerm::Covar("__tail".into()))),
+                // The closed chain is a cut, and lowers to exactly the term
+                // a cut has always lowered to.
+                let closing = &stages.last().expect("a flow has stages").kind;
+                let command = match named_consumer(closing) {
+                    Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
+                    None => Command::Cut(
+                        last,
+                        CoTerm::App(acc, Box::new(CoTerm::Covar("__tail".into()))),
+                    ),
                 };
-                match consumer {
-                    CoTerm::Covar(_) => {
-                        Term::Mu("__flow".into(), Box::new(Command::Cut(acc, consumer)))
-                    }
-                    application => {
-                        Term::Mu("__tail".into(), Box::new(Command::Cut(last, application)))
-                    }
-                }
+                Term::Mu(cut_binder(closing), Box::new(command))
             } else {
                 call_curried(last, vec![acc])
             };
             Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
         }
         Expr::Cut { value, consumer } => {
-            // `v @ k` is the cut ⟨v ∥ k⟩: a command, not an application. It
+            // `v | k` is the cut ⟨v ∥ k⟩: a command, not an application. It
             // is wrapped in a μ binder that its body never mentions, because
             // a command has no result and control does not return from it.
             let v = lower_expr(value, continuations)?;
@@ -1407,7 +1411,11 @@ fn lower_comatch(
             })?;
         let group = groups.remove(dtor).expect("grouped above");
         if let [(Pattern::Ident(name), command)] = group.as_slice() {
-            let body = lower_select_command(command, continuations)?;
+            // The copattern binds the demand's continuation, so the arm's
+            // body may reach it: it belongs to the arm's scope.
+            let mut arm_scope = continuations.to_vec();
+            arm_scope.push((*name).clone());
+            let body = lower_select_command(command, &arm_scope)?;
             branches.push(CoMatchBranch { label, binder: name.clone(), body: Box::new(body) });
         } else if let [(Pattern::Wildcard, command)] = group.as_slice() {
             let body = lower_select_command(command, continuations)?;
@@ -1465,6 +1473,20 @@ fn lower_select_command(
         && let Some(name) = named_consumer(&consumer.kind)
     {
         return Ok(Command::Cut(lower_expr(value, continuations)?, CoTerm::Covar(name.clone())));
+    }
+    // The same, written as a flow: everything before the closing consumer
+    // is what flows in, and it is cut against that consumer directly.
+    if let Expr::Flow(stages) = &command.kind
+        && flow_shape(command.span, stages).cut
+        && let Some((closing, flowing)) = stages.split_last()
+        && let Some(name) = named_consumer(&closing.kind)
+        && let Some((first, rest)) = flowing.split_first()
+    {
+        let mut value = lower_expr(first, continuations)?;
+        for stage in rest {
+            value = call_curried(lower_expr(stage, continuations)?, vec![value]);
+        }
+        return Ok(Command::Cut(value, CoTerm::Covar(name.clone())));
     }
     Ok(Command::Cut(lower_expr(command, continuations)?, CoTerm::Covar(ARM_COVAR.into())))
 }
@@ -1733,7 +1755,7 @@ mod tests {
              form Bottom {}
              fn unit() -> Unit { Unit {} }
              fn bottom(k: -i32) -> Bottom {
-                 select Bottom { Bottom {} => 0 @ k }
+                 select Bottom { Bottom {} => 0 | k }
              }",
         );
         let unit = out.iter().find(|(name, _)| name == "unit").unwrap();
@@ -1791,7 +1813,7 @@ mod tests {
         // `select` must lower to a genuine negative additive co-term — one
         // branch per variant, each cutting the arm value against the arm's
         // consumer — and not to an opaque builtin marker.
-        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => 0 @ return, Green => 1 @ return, Blue => 2 @ return } }";
+        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => 0 | return, Green => 1 | return, Blue => 2 | return } }";
         let out = lower_str(src);
         let k = out.iter().find(|(name, _)| name == "k").unwrap();
 
@@ -1824,7 +1846,7 @@ mod tests {
         // needs no label.
         let out = lower_str(
             "fn total(out: -i64) <- (+i64 ⊗ +i64) {
-                 select (+i64 ⊗ +i64) { (left, right) => (left + right) @ out }
+                 select (+i64 ⊗ +i64) { (left, right) => (left + right) | out }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
@@ -1845,7 +1867,7 @@ mod tests {
         // declaration, binding every field.
         let out = lower_str(
             "data R { value: i64, unit: String }
-             fn show(out: -String) <- R { select R { R { value, unit } => unit @ out } }",
+             fn show(out: -String) <- R { select R { R { value, unit } => unit | out } }",
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
         let printed = format!("{}", show.1);
@@ -1862,7 +1884,7 @@ mod tests {
     #[test]
     fn lower_select_rejects_an_arm_that_is_not_a_shape() {
         // An arm covers one shape of the type; a literal is not one.
-        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => 0 @ return, Green => 1 @ return } }";
+        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => 0 | return, Green => 1 | return } }";
         let toks = crate::lexer::lex(src).unwrap();
         let prog = crate::parser::parse(toks).unwrap();
         assert!(
@@ -1895,10 +1917,10 @@ mod tests {
 
     #[test]
     fn lower_cut_with_a_named_consumer_is_a_core_cut() {
-        // `v @ k` is the command ⟨v ∥ k⟩. The μ binder that wraps it is never
+        // `v | k` is the command ⟨v ∥ k⟩. The μ binder that wraps it is never
         // referenced — a command has no result — and must not be the
         // consumer's own name, or the cut would send the value to itself.
-        let positive = lower_str("fn f(k: -i32) <- i32 { 1 @ k }");
+        let positive = lower_str("fn f(k: -i32) <- i32 { 1 | k }");
         assert_eq!(
             positive[0].1,
             Term::Lam(
@@ -1911,7 +1933,7 @@ mod tests {
         );
 
         // A consumer named `__cut` still receives the value.
-        let shadowed = lower_str("fn f(__cut: -i32) <- i32 { 1 @ __cut }");
+        let shadowed = lower_str("fn f(__cut: -i32) <- i32 { 1 | __cut }");
         assert_eq!(
             shadowed[0].1,
             Term::Lam(
@@ -1928,22 +1950,22 @@ mod tests {
     }
 
     #[test]
-    fn lower_cut_with_a_computed_consumer_evaluates_then_cuts() {
-        // A consumer that is not a name is an expression producing one:
-        // evaluate it, then apply it to the value — an application stack.
-        let out = lower_str("fn f(ignored: +i32) -> i32 { 1 @ pick(2) }");
+    fn lower_flow_follows_the_checker_for_a_computed_stage() {
+        // `1 | pick(2)` is a cut when `pick(2)` consumes, and an
+        // application when it is a function — only types tell, so lowering
+        // takes the checker's word and defaults to the application. The
+        // cut through a computed consumer is covered end to end by
+        // `a_computed_consumer_receives_the_value` in the driver's tests.
+        let out = lower_str("fn f(ignored: +i32) -> i32 { 1 | pick(2) }");
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else {
-            panic!("a cut is wrapped in a μ binder: {body}");
+            panic!("an application is wrapped in a μ binder: {body}");
         };
-        assert_eq!(binder, "__cut");
-        let Command::Cut(consumer, CoTerm::App(value, _)) = command.as_ref() else {
-            panic!("a computed consumer is applied to the value: {command}");
+        assert_eq!(binder, "__call");
+        let Command::Cut(callee, CoTerm::App(value, _)) = command.as_ref() else {
+            panic!("the stage is applied to what flows in: {command}");
         };
-        assert!(
-            format!("{consumer}").contains("pick"),
-            "the consumer expression is evaluated: {consumer}"
-        );
+        assert!(format!("{callee}").contains("pick"), "the stage is evaluated: {callee}");
         assert_eq!(value, &Term::Var("$int_1".into()));
     }
 

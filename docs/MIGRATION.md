@@ -35,14 +35,14 @@ writes `<=`.
 Unsupported:
 
 ```sl
-select Colour { Red <= 0 @ out, Green <= 1 @ out }
+select Colour { Red <= 0 | out, Green <= 1 | out }
 match k { .retries(out) => .retries(out) }
 ```
 
 Write:
 
 ```sl
-select Colour { Red => 0 @ out, Green => 1 @ out }
+select Colour { Red => 0 | out, Green => 1 | out }
 match k { .retries(out) <= .retries(out) }
 ```
 
@@ -56,14 +56,14 @@ command and therefore writes `<=`.
 Unsupported:
 
 ```sl
-mu Config { .retries(out) <= 3 @ out, .name => "slant" }
+mu Config { .retries(out) <= 3 | out, .name => "slant" }
 ```
 
 Write:
 
 ```sl
-mu Config { retries: out <= 3 @ out, name: out <= "slant" @ out }
-mu Config { retries <= 3 @ retries, name <= "slant" @ name }
+mu Config { retries: out <= 3 | out, name: out <= "slant" | out }
+mu Config { retries <= 3 | retries, name <= "slant" | name }
 ```
 
 Nested menu copatterns repeat the field shape: `tail: head: out <= c`.
@@ -82,14 +82,14 @@ dual).
 Unsupported:
 
 ```sl
-mu(k) { 42 @ k }
+mu(k) { 42 | k }
 mu here(k: -i64) { read_file(path, k, complain) }
 ```
 
 Write:
 
 ```sl
-mu { k <= 42 @ k }
+mu { k <= 42 | k }
 mu i64 { k <= read_file(path, k, complain) }
 ```
 
@@ -175,8 +175,8 @@ caller supplies, against `μα. c`, the ambient continuation), and one keyword
 for both hid that.
 
 ```sl
-mu route(x: +i32) | (k: -i32) { x @ k }        // old: the declaration
-command route(x: +i32) | (k: -i32) { x @ k }   // new
+mu route(x: +i32) | (k: -i32) { x | k }        // old: the declaration
+command route(x: +i32) | (k: -i32) { x | k }   // new
 
 let source = mu(k) { read_file(path, k, err) };   // unchanged: the capture
 ```
@@ -287,15 +287,15 @@ a function and returns; a cut sends a value to a consumer and does not return.
 
 ```sl
 k(v)        // old
-v @ k       // new
+v | k       // new
 
 EXIT(0)     // old
-0 @ EXIT    // later — and `EXIT` itself is now gone, see below
+0 | EXIT    // later — and `EXIT` itself is now gone, see below
 ```
 
-`@` binds more loosely than every operator, so `a + b @ k` sends the sum, and
+`@` binds more loosely than every operator, so `a + b | k` sends the sum, and
 it is not associative. The consumer may be any expression that produces one,
-including a negative function applied to its row: `Color::Blue @ code(answer)`.
+including a negative function applied to its row: `Color::Blue | code(answer)`.
 
 Applying a function to a continuation is unchanged: it is ordinary call
 syntax, because the callee's declared row already says which arguments are
@@ -311,10 +311,10 @@ reaches helpers as a continuation parameter or inside a consumer built where
 it is in scope.
 
 ```sl
-fn die(m: +String) -> ⊥ { println(m); 1 @ EXIT }        // old
+fn die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
 
 command main | (exit: -i32) {                            // new
-    let die = select { m => { println(m); 1 @ exit } };
+    let die = select { m => { println(m); 1 | exit } };
     …
 }
 ```
@@ -332,7 +332,7 @@ fn main() -> i32 {          // old
 
 command main | (exit: -i32) {  // new
     println("hi");
-    0 @ exit
+    0 | exit
 }
 ```
 
@@ -349,16 +349,16 @@ given, so a `main` that never reaches `exit` is a linearity error.
 
 ```sl
 select Color {                     // one arm per variant — the negative additive
-    Red => 0 @ return,
-    Green => 1 @ return,
+    Red => 0 | return,
+    Green => 1 | return,
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } => (int_to_str(value) + unit) @ out,
+    Reading { value, unit } => (int_to_str(value) + unit) | out,
 }
 
 select (+i64 ⊗ +i64) {             // a bare product names its type
-    (left, right) => (left + right) @ out,
+    (left, right) => (left + right) | out,
 }
 ```
 
@@ -369,8 +369,8 @@ way `match` writes it. And an arm used to be written the other way round, as
 
 ```sl
 select Color {
-    0 @ return => Red,     // old
-    Red => 0 @ return,     // new
+    0 | return => Red,     // old
+    Red => 0 | return,     // new
 }
 ```
 
@@ -485,11 +485,11 @@ enum Choice { Refutes(-i64) }      // new
 Choice::Refutes(↓k)                // old
 Choice::Refutes(k)                 // new
 
-Refutes(r) => 42 @ ↑r              // old
-Refutes(r) => 42 @ r               // new
+Refutes(r) => 42 | ↑r              // old
+Refutes(r) => 42 | r               // new
 
-fn describe(note: ↓-String) -> ⊥ { "…" @ ↑note }   // old
-fn describe(note: -String) -> ⊥ { "…" @ note }     // new
+fn describe(note: ↓-String) -> ⊥ { "…" | ↑note }   // old
+fn describe(note: -String) -> ⊥ { "…" | note }     // new
 ```
 
 With no box to go through, `dual` is an involution on the nose: `-(-T)`
@@ -512,9 +512,9 @@ enum Color { Red, Green, Blue }
 
 fn k(return: -i32) <- Color {
     select Color {
-        Red => 0 @ return,
-        Green => 1 @ return,
-        Blue => 2 @ return,
+        Red => 0 | return,
+        Green => 1 | return,
+        Blue => 2 | return,
     }
 }
 ```
@@ -528,8 +528,8 @@ enum ParseResult { Parsed(String), Failed(String) }
 
 fn deliver(ok: -String, err: -String) <- ParseResult {
     select ParseResult {
-        Parsed(text) => text @ ok,
-        Failed(message) => message @ err,
+        Parsed(text) => text | ok,
+        Failed(message) => message | err,
     }
 }
 ```

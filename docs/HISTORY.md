@@ -44,7 +44,7 @@ reasoning per change.
 - Every `fn` declares its direction with an arrow: `->` for a positive
   function, `<-` for a negative one. Either may take continuation parameters.
 - Application and cut are distinct: `f(a)` applies at either polarity, and
-  `v @ k` is the cut — a command of type `⊥` that does not return. Calling a
+  `v | k` is the cut — a command of type `⊥` that does not return. Calling a
   continuation is rejected, and `select` arms are cuts.
 - `match` takes any positive value apart, and `select` builds the consumer of
   any positive type, with arms `pattern <= command`: one arm per variant of an

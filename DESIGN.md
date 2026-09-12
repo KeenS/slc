@@ -28,7 +28,7 @@ returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
    categories.
 3. **Polarized types** — positive types denote values/proofs; negative types
    denote continuations/refutations.
-4. **Explicit control** — a continuation is activated by a cut, `v @ k`,
+4. **Explicit control** — a continuation is activated by a cut, `v | k`,
    which is a command and not a call.
 5. **Total control** — every terminating path reaches a continuation: a
    `command` body must be `⊥`. The core is classical, so *which* continuation
@@ -62,28 +62,28 @@ nothing new is needed to apply a function to a continuation:
 deliver(ok, err)        // `deliver` declares a row of two consumers
 ```
 
-**A cut** `v @ k` sends the value `v` to the consumer `k`. It is the surface
+**A cut** `v | k` sends the value `v` to the consumer `k`. It is the surface
 spelling of the core's `⟨ v ∥ k ⟩`, and it is a *command*, not an expression
 that happens to return: control does not come back, so nothing after it in a
 block runs, and its type is `⊥`.
 
 ```sl
 command route(x: +i32) | (k: -i32) {
-    x @ k
+    x | k
 }
 ```
 
-`@` binds more loosely than every operator, so `a + b @ k` sends the sum. It
+`@` binds more loosely than every operator, so `a + b | k` sends the sum. It
 is not associative: a cut has no result, so it cannot be the value of another
 cut. The consumer may be any expression that produces one — a name, or a
 negative function applied to its row:
 
 ```sl
-Color::Blue @ code(answer)      // apply, then cut against the result
+Color::Blue | code(answer)      // apply, then cut against the result
 ```
 
 Because a cut has type `⊥`, a branch that ends in one constrains nothing: in
-`if c { pos + 1 } else { message @ err }` the `if` has the type of the branch
+`if c { pos + 1 } else { message | err }` the `if` has the type of the branch
 that returns.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and
@@ -108,8 +108,8 @@ enum Status { Ok(i64), Failed(i64) }
 
 fn report(success: -i64, failure: -i64) <- Status {
     select Status {
-        Ok(code) => code @ success,
-        Failed(code) => code @ failure,
+        Ok(code) => code | success,
+        Failed(code) => code | failure,
     }
 }
 ```
@@ -151,7 +151,7 @@ what polarity buys:
 
 Consuming codata reverses a cut's usual sides: a provider is negative, so what
 consumes it is its dual — the positive request. In
-`Request::Retries(answer) @ provider` the provider is the consumer and the
+`Request::Retries(answer) | provider` the provider is the consumer and the
 request is the value.
 
 `examples/polarity.sl` writes all four; `examples/polarity_error.sl` writes
@@ -203,7 +203,7 @@ required by its position:
 
 ```sl
 fn id<T>(value: T) -> T { value }
-fn consume<T>(ok: -T) <- T { 0 @ ok }
+fn consume<T>(ok: -T) <- T { 0 | ok }
 ```
 
 An explicit sign is a constraint, not a change of representation. `+T` denotes
@@ -224,7 +224,7 @@ is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
 command route(x: +i32) | (k: -i32) {
-    x @ k
+    x | k
 }
 ```
 
@@ -287,7 +287,7 @@ that a caller inspects, it takes the continuations its outcomes belong to:
 command parse_value(input: +String, pos: +i64) | (ok: -i64, failed: -String) {
     match at(input, pos) {
         QUOTE => parse_string(input, pos, ok, failed),
-        _ => "expected JSON value" @ failed,
+        _ => "expected JSON value" | failed,
     }
 }
 ```
@@ -339,9 +339,9 @@ negative additive:
 ```sl
 fn k(return: -i32) <- Color {
     select Color {
-        Red => 0 @ return,
-        Green => 1 @ return,
-        Blue => 2 @ return,
+        Red => 0 | return,
+        Green => 1 | return,
+        Blue => 2 | return,
     }
 }
 ```
@@ -359,8 +359,8 @@ enum Reading { Measured(i64), Missing }
 
 fn report(value: -i64, absent: -i64) <- Reading {
     select Reading {
-        Measured(measurement) => measurement @ value,
-        Missing => -1 @ absent,
+        Measured(measurement) => measurement | value,
+        Missing => -1 | absent,
     }
 }
 ```
@@ -381,7 +381,7 @@ arm (`=>`); a demand reaches back into it (`<=`)**. A `select` matches data,
 so its arms are `pattern => command`; a `mu` answers demands, so its arms are
 `copattern <= command`; and a `match` writes whichever its scrutinee calls
 for — `p => e` over a value, `.item(out) <= e` over a continuation. The
-command an arm runs must be a cut `v @ k` whose consumer is a visible
+command an arm runs must be a cut `v | k` whose consumer is a visible
 negative binding. The arm lowers to it, so a `select` expression is a genuine negative
 additive consumer — one branch per variant — and not an opaque builtin. Activation
 chooses exactly one branch: the branches of the arms that were not selected
@@ -439,7 +439,7 @@ arrives at them:
 - A `mu` arm is `item: out <= c`: it binds the demand's continuation — its
   *return address*, carried the way a variant's payload is — and answers it
   with a command. The continuation can receive a direct answer with
-  `item <= value @ item`, or route control through nested copatterns and
+  `item <= value | item`, or route control through nested copatterns and
   multi-outcome builtins.
 
 - **`mu` answers demands** — it builds the μ family: a binder arm `mu { k <= c }` captures
@@ -463,8 +463,8 @@ arrives at them:
 ```sl
 fn config() -> Config {
     mu Config {
-        retries: out <= 3 @ out,
-        name: out <= "slant" @ out,
+        retries: out <= 3 | out,
+        name: out <= "slant" | out,
     }
 }
 
@@ -483,7 +483,7 @@ Three request forms complete the surface:
 - `.item(k)` is a **request literal** — the mirror of an enum variant
   expression: a variant is data the producer tags, a request is a demand the
   consumer tags. It has type `-Config`, and `k` must consume the answer.
-- `v @ request` **cuts** a menu against a request directly; `mu` names where
+- `v | request` **cuts** a menu against a request directly; `mu` names where
   the answer goes.
 
 A menu type is negative, but a menu is a *value*: it may be returned
@@ -566,7 +566,7 @@ data Reading { value: i64, unit: String }
 // dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        Reading { value, unit } => (int_to_str(value) + unit) @ out,
+        Reading { value, unit } => (int_to_str(value) + unit) | out,
     }
 }
 ```
@@ -576,7 +576,7 @@ A bare product needs no declaration; its shape is written as the type:
 ```sl
 fn total(out: -i64) <- (+i64 ⊗ +i64) {
     select (+i64 ⊗ +i64) {
-        (left, right) => (left + right) @ out,
+        (left, right) => (left + right) | out,
     }
 }
 ```
@@ -584,8 +584,8 @@ fn total(out: -i64) <- (+i64 ⊗ +i64) {
 Either is consumed by the cut that supplies the whole product:
 
 ```sl
-Reading { value: 42, unit: "m" } @ show(out)
-(2, 40) @ total(out)
+Reading { value: 42, unit: "m" } | show(out)
+(2, 40) | total(out)
 ```
 
 ### `form`: the negative multiplicative declared
@@ -609,11 +609,11 @@ form's dual.
 ```sl
 fn printer(out: -i64) -> Report {
     select Report {
-        Report { value, label } => { println(label); value @ out },
+        Report { value, label } => { println(label); value | out },
     }
 }
 
-Report { value: 42, label: "answer" } @ printer(k)
+Report { value: 42, label: "answer" } | printer(k)
 ```
 
 `form` needs nothing new in the core: a form value is the `co(μ̃[…])` that
@@ -635,7 +635,7 @@ it too, and the arm's pattern is a plain binder that names the whole value:
 ```sl
 fn show(out: -String) <- +i64 {
     select +i64 {
-        n => int_to_str(n) @ out,
+        n => int_to_str(n) | out,
     }
 }
 ```
@@ -789,14 +789,14 @@ performing value collects them all before suspending. **Operations are
 positive, and need no negative form.** An operation that consumes rather
 than answers is already writable: `A → ⊥` *is* `-A`, so
 `fn drop(x: +i64) -> ⊥;` declares a consumer, and both `drop(42)` and the
-cut `42 @ drop` perform it. Routing to a chosen outcome needs nothing new
+cut `42 | drop` perform it. Routing to a chosen outcome needs nothing new
 either, now that consumers are values — an operation takes them as
 ordinary parameters, and the clause cuts into whichever it picks:
 
 ```sl
 effect Judge { fn judge(n: +i64, ok: -String, bad: -String) -> ⊥; }
 …
-judge(n, ok, bad) => if n > 3 { "big" @ ok } else { "small" @ bad },
+judge(n, ok, bad) => if n > 3 { "big" | ok } else { "small" | bad },
 ```
 
 Demand-time effects are the latent rows above. Between the three, a
@@ -817,7 +817,7 @@ function returns a value or a consumer.
 
 A bound on a negative function is discharged by the **cut**, not by an
 argument: in `fn emit<T: Display>(out: -String) <- T`, nothing the call
-receives mentions `T`, and `42 @ emit(s)` is what fixes it. So dictionary
+receives mentions `T`, and `42 | emit(s)` is what fixes it. So dictionary
 solving waits until a declaration's body is fully checked — by then every
 cut has spoken — and the same deferral gives a trait a second method
 shape:
@@ -830,8 +830,8 @@ trait Deliver  { fn deliver(out: -String) <- Self; }     // consumes Self
 A positive method takes `self: +Self` and dispatches on what it receives.
 A negative method takes no `self` — a negative function's parameters are
 all continuations — so its `Self` is the type it *consumes*, and dispatch
-reads the value the cut sends: `42 @ deliver(s)` finds the `i64` impl,
-`true @ deliver(s)` the `bool` one. Both shapes resolve statically, and a
+reads the value the cut sends: `42 | deliver(s)` finds the `i64` impl,
+`true | deliver(s)` the `bool` one. Both shapes resolve statically, and a
 bound forwards through either.
 
 ### Polymorphism
@@ -938,15 +938,15 @@ let source = mu { k <=
 // `Red` is a variant of exactly one enum, so the type is `Color`.
 fn code(return: -i32) <- Color {
     select {
-        Red => 0 @ return,
-        Green => 1 @ return,
+        Red => 0 | return,
+        Green => 1 | return,
     }
 }
 
 // Nothing in the arm names a type, but `<- +i64` did.
 fn twice(out: -i64) <- +i64 {
     select {
-        n => (n * 2) @ out,
+        n => (n * 2) | out,
     }
 }
 ```
@@ -969,7 +969,7 @@ and exactly one continuation — the exit status:
 ```sl
 command main | (exit: -i32) {
     println("Hello, Slant!");
-    0 @ exit
+    0 | exit
 }
 ```
 
@@ -984,8 +984,8 @@ function end the program behind `main`'s back, and it is gone.)
 
 ```sl
 command main | (exit: -i32) {
-    let complain = select { message => { println(message); 1 @ exit } };
-    read_file("input.txt", select { text => { print(text); 0 @ exit } }, complain)
+    let complain = select { message => { println(message); 1 | exit } };
+    read_file("input.txt", select { text => { print(text); 0 | exit } }, complain)
 }
 ```
 
@@ -1090,7 +1090,7 @@ where the handle comes into scope.
 
 ```sl
 let handle = mu { k <= open_file(path, k, complain) };
-let exit = select +i32 { status => { close_file(handle); status @ exit } };
+let exit = select +i32 { status => { close_file(handle); status | exit } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the
@@ -1124,10 +1124,10 @@ an argument together with a continuation for the result — a *call stack*. So
 and a consumer of a function is an ordinary value of that product type.
 
 A cut is well typed exactly when its two sides are dual. Which side is
-written negatively is not itself the question: `v @ k` sends `v` to something
+written negatively is not itself the question: `v | k` sends `v` to something
 that consumes it, and for a function that something is a call stack.
 
-An integer literal takes the integer type its port requires — `0 @ exit`
+An integer literal takes the integer type its port requires — `0 | exit`
 sends an `i32` — and is `+i64` when nothing constrains it. Every other value
 must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
@@ -1181,7 +1181,7 @@ use geometry::area;
 
 command main | (exit: -i32) {
     println(area(geometry::Shape::Circle(5)));
-    0 @ exit
+    0 | exit
 }
 ```
 
@@ -1357,7 +1357,7 @@ nested left to right for several arguments.
 | `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
-| `expr.cut` | `v @ k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
+| `expr.cut` | `v | k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
@@ -1389,8 +1389,8 @@ become λ binders.
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value |
-| `α` | the consumer named on the right of a cut, `v @ k` |
-| `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v @ f(a)`), which is the same act: applying the consumer the expression evaluates to |
+| `α` | the consumer named on the right of a cut, `v | k` |
+| `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v | f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
 | `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum` or a `data`, including an empty enum |
 | `μ̃(x…)` | `select` over a bare product |
@@ -1406,13 +1406,13 @@ it stands in:
 ```sl
 // ¬¬A → A: give the refuter this call's continuation.
 fn dne(refuter: +i64) -> i64 {
-    mu { k <= k @ refuter }
+    mu { k <= k | refuter }
 }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
     mu { k <=
-        Choice::Refutes(select +i64 { a => Choice::Holds(a) @ k }) @ k
+        Choice::Refutes(select +i64 { a => Choice::Holds(a) | k }) | k
     }
 }
 ```
@@ -1434,8 +1434,8 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-let parsed = select +String { value => { println("parsed: " + value); 0 @ exit } };
-let failed = select +String { message => { println("error: " + message); 1 @ exit } };
+let parsed = select +String { value => { println("parsed: " + value); 0 | exit } };
+let failed = select +String { message => { println("error: " + message); 1 | exit } };
 parse_json(source, parsed, failed)
 ```
 
@@ -1454,13 +1454,13 @@ program *reaches* are a row.
 
 ## 13. Migration summary
 
-- `k(v)` (activating a continuation) → `v @ k`
-- `EXIT(0)` → `0 @ EXIT` → gone: end the program through a continuation
+- `k(v)` (activating a continuation) → `v | k`
+- `EXIT(0)` → `0 | EXIT` → gone: end the program through a continuation
   parameter, the way `main` does with `exit`
 - `select T { c => p }` → `select T { p => c }` — the shape comes first, as
   in a `match`
-- `select T { V => k(v) }` → `select T { V => v @ k }`
-- `t @ k` previously lowered to a μ binder that shadowed `k`, so it sent the
+- `select T { V => k(v) }` → `select T { V => v | k }`
+- `t | k` previously lowered to a μ binder that shadowed `k`, so it sent the
   value nowhere; it is now the cut it always claimed to be
 - `mu name(...) | (...)` → `command name(...) | (...)` — a declaration is a
   `command`; `mu` is the expression that captures the current continuation
