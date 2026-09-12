@@ -972,6 +972,29 @@ fn the_prelude_is_available_and_shadowable() {
 }
 
 #[test]
+fn a_multi_parameter_function_travels_as_a_value() {
+    // Its parameters pack into one product, so naming it and calling it
+    // through a binding or a higher-order parameter all agree.
+    let dir = std::env::temp_dir().join("slc_test_packed_hof.sl");
+    std::fs::write(
+        &dir,
+        r#"fn plus(a: i64, b: i64) -> i64 { a + b }
+        fn apply2(f: ((+i64 ⊗ +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
+        command main | (exit: -i32) {
+            println(plus(1, 2));
+            let g = plus;
+            println(g(10, 20));
+            println(apply2(plus, 3, 4));
+            0 @ exit
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["3", "30", "7"]);
+}
+
+#[test]
 fn a_row_arrives_spread_or_whole() {
     // A menu of exits may be written one argument per exit, or passed as
     // one bundle — the same call either way — and a row is first class: a

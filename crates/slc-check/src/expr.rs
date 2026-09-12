@@ -1468,7 +1468,18 @@ fn check_expr_unapplied(
             {
                 let (signature, _) = instantiate(signature, &mut env.uni);
                 if let Some(result) = signature.result {
-                    let ty = signature.params.into_iter().rev().fold(result, Type::arrow_from);
+                    // Its parameters pack into the one product a call
+                    // passes; a function with none is its result already,
+                    // since naming it is how it is used.
+                    let ty = match signature
+                        .params
+                        .into_iter()
+                        .rev()
+                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                    {
+                        Some(packed) => Type::arrow(packed, result),
+                        None => result,
+                    };
                     return Some(ty);
                 }
                 return None;
@@ -1647,17 +1658,31 @@ fn check_expr_unapplied(
             let callee_ty = callee_ty.map(|ty| env.uni.apply(&ty));
             match callee_ty {
                 Some(Type::Par(argument_dual, result)) => {
-                    if let [argument] = args.as_slice()
-                        && let Some(actual) = check_expr(argument, enums, env, diags)
-                        && !fits(env, &argument_dual.dual(), &actual, &argument.kind)
-                    {
-                        let expected = env.uni.apply(&argument_dual.dual());
+                    // The arguments pack into one product, as they do for a
+                    // named callee, so the whole group meets the one type
+                    // the function takes.
+                    let actuals: Vec<Option<Type>> =
+                        args.iter().map(|arg| check_expr(arg, enums, env, diags)).collect();
+                    let packed = actuals
+                        .into_iter()
+                        .collect::<Option<Vec<_>>>()
+                        .and_then(|types| {
+                            types
+                                .into_iter()
+                                .rev()
+                                .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                        })
+                        .unwrap_or(Type::One);
+                    let expected = argument_dual.dual();
+                    let shape = args.first().map(|a| a.kind.clone());
+                    if !fits(env, &expected, &packed, shape.as_ref().unwrap_or(&e.kind)) {
+                        let expected = env.uni.apply(&expected);
                         diags.push(Diagnostic {
                             message: format!(
-                                "this call's argument has type {actual}; the function takes \
+                                "this call's arguments have type {packed}; the function takes \
                                  {expected}"
                             ),
-                            span: argument.span,
+                            span: args.first().map(|a| a.span).unwrap_or(e.span),
                         });
                     }
                     Some(env.uni.apply(&result))
