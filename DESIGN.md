@@ -796,6 +796,25 @@ function carries them in the same places — `fn emit<T: Show>(out: -String)
 describes what the body performs, neither of which depends on whether the
 function returns a value or a consumer.
 
+A bound on a negative function is discharged by the **cut**, not by an
+argument: in `fn emit<T: Display>(out: -String) <- T`, nothing the call
+receives mentions `T`, and `42 @ emit(s)` is what fixes it. So dictionary
+solving waits until a declaration's body is fully checked — by then every
+cut has spoken — and the same deferral gives a trait a second method
+shape:
+
+```sl
+trait Describe { fn describe(self: +Self) -> String; }   // receives Self
+trait Deliver  { fn deliver(out: -String) <- Self; }     // consumes Self
+```
+
+A positive method takes `self: +Self` and dispatches on what it receives.
+A negative method takes no `self` — a negative function's parameters are
+all continuations — so its `Self` is the type it *consumes*, and dispatch
+reads the value the cut sends: `42 @ deliver(s)` finds the `i64` impl,
+`true @ deliver(s)` the `bool` one. Both shapes resolve statically, and a
+bound forwards through either.
+
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —

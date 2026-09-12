@@ -58,38 +58,6 @@ same way, unlisted: `cargo fmt`, `cargo clippy --workspace --all-targets --
 must fail), DESIGN.md updated where behaviour changed, and the entry
 retired from this file.
 
-- **The trait × negative-function corner.** Bounded negative functions and
-  `<- Self` methods are declarable but cannot dispatch: the cut's value
-  type never reaches the call standing in consumer position. Depends on
-  the item above for the body side.
-
-  - [ ] Verify the body side after the rigid-map fix:
-        `fn emit<T: Display>(out: -String) <- T { fn(x: T) { fmt(x) @ out } }`
-        must check on its own.
-  - [ ] Call side: in `42 @ emit(s)`, the `Expr::Cut` arm
-        (`expr.rs:2164`) checks value and consumer independently, and the
-        `Call` arm resolves dictionaries eagerly from argument unification
-        alone — the consumed `T` is still a variable when `dict_for`
-        (`expr.rs:537`) runs. Two strategies; prefer (ii):
-        (i) check the cut's value first and push `dual(value_ty)` into the
-        consumer's checking as an expected type; or
-        (ii) defer dictionary solving — record each unresolved dictionary
-        as (callee, bound, type variable) during `Call` checking and
-        resolve the batch after the declaration's unification finishes,
-        when the variables are solved.
-  - [ ] Method dispatch keyed on the consumed type: for
-        `fn deliver(out: -String) <- Self`, the impl lookup (`type_key`)
-        must read the *resolved* consumed type, found at the cut, not the
-        call's arguments.
-  - [ ] Decide and write into DESIGN: positive methods carry `self: +Self`;
-        the negative method shape is `<- Self` (a negative fn's parameters
-        are all continuations, so `self` cannot appear among them).
-  - [ ] Acceptance: `42 @ emit(s)` and a `List` cut through the same `emit`;
-        a `trait Deliver { fn deliver(out: -String) <- Self; }` with an
-        i64 impl, driven from a cut. Pin as integration tests; extend
-        `examples/codata_impls.sl` (or a new example) with the negative
-        method.
-
 - **Negative operations in effects.** Design before code: the grammar
   rejects `<-` in an operation declaration, and nothing yet says what an
   operation that consumes rather than returns *means*.

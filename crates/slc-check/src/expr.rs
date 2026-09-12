@@ -124,25 +124,65 @@ fn check_trait_method_call(
     }
     // Discharge `Self: Trait` against what the first argument fixed it to.
     let target = env.uni.apply(&self_ty);
-    discharge_bound(&trait_name, &target, method, span, env, diags);
-    // Resolve the dispatch for lowering. A concrete receiver calls the impl
-    // directly; a bounded type parameter projects the method from the
-    // enclosing function's dictionary for that bound.
-    let resolution = match &target {
-        Type::Var(v) => env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == &trait_name).map(
+    // A method whose `Self` appears only in what it *consumes* — a negative
+    // method, `fn deliver(out: -String) <- Self` — learns it from the cut
+    // the call stands in, which is checked after this call. Dispatch waits.
+    let open = matches!(&target, Type::Var(v)
+        if !env.bounds.iter().any(|(bv, bt, _)| bv == v && bt == &trait_name));
+    if open {
+        env.pending_methods.push(crate::env::PendingMethod {
+            span,
+            method: method.to_string(),
+            trait_name: trait_name.clone(),
+            self_ty: self_ty.clone(),
+        });
+    } else {
+        resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
+    }
+    // A command method returns bottom; a fn method returns its (Self-subst)
+    // result type — the consumer of it, for a negative method.
+    if sig.is_command {
+        return Some(Type::Bottom);
+    }
+    match &sig.return_type {
+        Some(ty) => resolve_with_self(ty, &self_ty, enums).map(|t| {
+            let t = match sig.polarity {
+                slc_syntax::ast::FunctionPolarity::Negative => t.dual(),
+                slc_syntax::ast::FunctionPolarity::Positive => t,
+            };
+            env.uni.apply(&t)
+        }),
+        None => Some(Type::One),
+    }
+}
+
+/// Record how a trait-method call dispatches, once `Self` is known: a
+/// concrete receiver calls the impl directly, a bounded type parameter
+/// projects the method from the enclosing function's dictionary.
+fn resolve_method_dispatch(
+    method: &str,
+    trait_name: &str,
+    target: &Type,
+    span: Span,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    discharge_bound(trait_name, target, method, span, env, diags);
+    let resolution = match target {
+        Type::Var(v) => env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == trait_name).map(
             |(_, _, type_param)| {
-                let methods = env.traits.traits.get(&trait_name);
+                let methods = env.traits.traits.get(trait_name);
                 let count = methods.map(|m| m.len()).unwrap_or(1);
                 let index =
                     methods.and_then(|m| m.iter().position(|tm| tm.name == method)).unwrap_or(0);
                 slc_syntax::lower::MethodDispatch::Dict {
-                    dict_var: slc_syntax::lower::dict_param_name(&trait_name, type_param),
+                    dict_var: slc_syntax::lower::dict_param_name(trait_name, type_param),
                     index,
                     count,
                 }
             },
         ),
-        _ => type_key(&target)
+        _ => type_key(target)
             .and_then(|key| env.traits.method_impls.get(method).and_then(|m| m.get(&key)))
             .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone())),
     };
@@ -150,10 +190,11 @@ fn check_trait_method_call(
     // List<T>` — supplies one dictionary per impl bound, read off the
     // receiver's type arguments.
     if let Some(slc_syntax::lower::MethodDispatch::Static(_)) = &resolution
-        && let Some(key) = type_key(&target)
-        && let Some(impl_bounds) = env.traits.impl_bounds.get(&(trait_name.clone(), key)).cloned()
+        && let Some(key) = type_key(target)
+        && let Some(impl_bounds) =
+            env.traits.impl_bounds.get(&(trait_name.to_string(), key)).cloned()
     {
-        let receiver_args = scrutinee_args(&target).to_vec();
+        let receiver_args = scrutinee_args(target).to_vec();
         let mut dict_args = Vec::new();
         for (position, bound_trait) in &impl_bounds {
             let Some(arg) = receiver_args.get(*position) else { continue };
@@ -169,15 +210,6 @@ fn check_trait_method_call(
     }
     if let Some(resolution) = resolution {
         env.dispatch.methods.insert(span, resolution);
-    }
-    // A command method returns bottom; a fn method returns its (Self-subst)
-    // result type.
-    if sig.is_command {
-        return Some(Type::Bottom);
-    }
-    match &sig.return_type {
-        Some(ty) => resolve_with_self(ty, &self_ty, enums).map(|t| env.uni.apply(&t)),
-        None => Some(Type::One),
     }
 }
 
@@ -336,6 +368,36 @@ fn record_bounds(
     (outer, outer_rigid)
 }
 
+/// Solve the bounded calls a declaration deferred. Everything its body
+/// could say about a type parameter has now been said — including what a
+/// cut told a call standing in consumer position — so each bound is
+/// discharged against what its parameter actually became, and the call's
+/// dictionaries recorded for lowering.
+fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
+    for pending in std::mem::take(&mut env.pending_methods) {
+        let target = env.uni.apply(&pending.self_ty);
+        resolve_method_dispatch(
+            &pending.method,
+            &pending.trait_name,
+            &target,
+            pending.span,
+            env,
+            diags,
+        );
+    }
+    for pending in std::mem::take(&mut env.pending_dicts) {
+        let mut dict_args = Vec::new();
+        for (trait_name, var) in &pending.bounds {
+            let target = env.uni.apply(var);
+            discharge_bound(trait_name, &target, &pending.callee, pending.span, env, diags);
+            if let Some(dict) = dict_for(trait_name, &target, env, pending.span, diags) {
+                dict_args.push(dict);
+            }
+        }
+        env.dispatch.calls.insert(pending.span, dict_args);
+    }
+}
+
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
         Decl::Fn { name, params, body, polarity, return_type, type_params, bounds, .. } => {
@@ -360,6 +422,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 .flatten();
             let body_type = check_expr(body, enums, env, diags);
             env.consumed = outer;
+            resolve_pending_dicts(env, diags);
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
@@ -429,6 +492,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     });
                 }
             }
+            resolve_pending_dicts(env, diags);
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
@@ -1473,18 +1537,19 @@ fn check_expr_unapplied(
                 // record the dictionary the call must pass for it: the global
                 // dict of a concrete type, or the enclosing function's own
                 // dict parameter when the bound is forwarded.
-                let mut dict_args = Vec::new();
-                for (param_index, trait_name) in &signature.bounds {
-                    if let Some(var) = seen.get(param_index) {
-                        let target = env.uni.apply(var);
-                        discharge_bound(trait_name, &target, name, e.span, env, diags);
-                        if let Some(dict) = dict_for(trait_name, &target, env, e.span, diags) {
-                            dict_args.push(dict);
-                        }
-                    }
-                }
                 if !signature.bounds.is_empty() {
-                    env.dispatch.calls.insert(e.span, dict_args);
+                    let bounds = signature
+                        .bounds
+                        .iter()
+                        .filter_map(|(param_index, trait_name)| {
+                            seen.get(param_index).map(|var| (trait_name.clone(), var.clone()))
+                        })
+                        .collect();
+                    env.pending_dicts.push(crate::env::PendingDicts {
+                        span: e.span,
+                        callee: name.clone(),
+                        bounds,
+                    });
                 }
                 return signature.result.map(|ty| env.uni.apply(&ty));
             }
@@ -3116,6 +3181,67 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
 
         assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
+    }
+
+    #[test]
+    fn a_bound_on_a_negative_function_is_discharged_by_the_cut() {
+        let prelude = "trait Show { fn show(self: +Self) -> String; }
+             impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
+             impl Show for bool { fn show(self: +bool) -> String { \"b\" } }
+             fn emit<T: Show>(out: -String) <- T { fn(x: T) { show(x) @ out } }\n";
+        // Nothing the call receives mentions T; the cut fixes it, at two
+        // different types in the same declaration.
+        assert!(
+            check(&format!(
+                "{prelude} command main | (exit: -i32) {{
+                     println(mu String {{ s <= 42 @ emit(s) }});
+                     println(mu String {{ s <= true @ emit(s) }});
+                     0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
+        // A type with no impl is still refused.
+        let diags = check(&format!(
+            "{prelude} command main | (exit: -i32) {{
+                 println(mu String {{ s <= \"text\" @ emit(s) }}); 0 @ exit
+             }}"
+        ))
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("no `impl Show for String`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_trait_method_may_consume_self() {
+        // A negative method has no `self` parameter: its Self is what it
+        // consumes, and the cut says which impl runs.
+        let prelude = "trait Deliver { fn deliver(out: -String) <- Self; }
+             impl Deliver for i64 {
+                 fn deliver(out: -String) <- i64 { fn(n: +i64) { \"i\" @ out } }
+             }
+             impl Deliver for bool {
+                 fn deliver(out: -String) <- bool { fn(b: +bool) { \"b\" @ out } }
+             }\n";
+        assert!(
+            check(&format!(
+                "{prelude} command main | (exit: -i32) {{
+                     println(mu String {{ s <= 42 @ deliver(s) }});
+                     println(mu String {{ s <= true @ deliver(s) }});
+                     0 @ exit
+                 }}"
+            ))
+            .is_ok()
+        );
+        let diags = check(&format!(
+            "{prelude} command main | (exit: -i32) {{
+                 println(mu String {{ s <= \"text\" @ deliver(s) }}); 0 @ exit
+             }}"
+        ))
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("no `impl Deliver for String`")),
+            "{diags:?}"
+        );
     }
 
     #[test]

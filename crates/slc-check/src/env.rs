@@ -18,6 +18,25 @@ pub(crate) struct Binding {
     pub(crate) generalized: std::rc::Rc<Vec<usize>>,
 }
 
+/// One bounded call awaiting its dictionaries: where it stands, who it
+/// calls, and each bound with the type standing for its parameter.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingDicts {
+    pub(crate) span: slc_syntax::token::Span,
+    pub(crate) callee: String,
+    pub(crate) bounds: Vec<(String, Type)>,
+}
+
+/// One trait-method call awaiting its `Self`: a negative method's `Self`
+/// appears only in what it consumes, so the cut fixes it after the call.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingMethod {
+    pub(crate) span: slc_syntax::token::Span,
+    pub(crate) method: String,
+    pub(crate) trait_name: String,
+    pub(crate) self_ty: Type,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Env<'a> {
     pub(crate) constants: &'a HashMap<String, Type>,
@@ -44,6 +63,15 @@ pub(crate) struct Env<'a> {
     /// first, so `T` inside the body is the same `T` the signature bound and
     /// not a fresh name that happens to look alike.
     pub(crate) rigid_vars: HashMap<String, Type>,
+    /// Bounded calls whose dictionaries are not solved yet. A call standing
+    /// in consumer position learns its type parameter from the cut it is
+    /// part of — `42 @ emit(s)` fixes `emit`'s `T` only when the cut is
+    /// checked, after the call — so solving waits until the declaration's
+    /// unification has finished.
+    pub(crate) pending_dicts: Vec<PendingDicts>,
+    /// Trait-method calls whose dispatch is not resolved yet, for the same
+    /// reason as `pending_dicts`.
+    pub(crate) pending_methods: Vec<PendingMethod>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
@@ -65,6 +93,8 @@ impl<'a> Env<'a> {
             traits,
             bounds: Vec::new(),
             rigid_vars: HashMap::new(),
+            pending_dicts: Vec::new(),
+            pending_methods: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
         }
     }
