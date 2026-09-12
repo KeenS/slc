@@ -208,6 +208,21 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &["polarity:", "parameter `j` has explicitly positive type"],
             },
         ),
+        (
+            "seq.sl",
+            Expected {
+                success: true,
+                stdout: &[
+                    "\"[2, 6, 10]\"",
+                    "\"[1, 3, 5, 7]\"",
+                    "\"[1, 2, 3, 4, 5, 6, 7, 8, 9]\"",
+                    "\"[64, 32, 16, 8, 4]\"",
+                    "\"[4, 5, 6]\"",
+                    "\"[1, 2, 4, 8, 16]\"",
+                ],
+                stderr: &[],
+            },
+        ),
         ("select.sl", Expected { success: true, stdout: &["1", "42", "100"], stderr: &[] }),
         (
             "stream.sl",

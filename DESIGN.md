@@ -1127,9 +1127,11 @@ and **`Result<T, E>`** with `unwrap_or` — either/or outcomes are additive,
 so they are enums whose consumers are `select`s (a `form` would be the
 wrong connective: it wants every field at once); the negative side's
 **`Stream<T>`** — the coinductive mirror of `List`, with `repeat`,
-`count_from`, `map_stream`, and `take` bridging back to data, since an
-infinite structure cannot print whole and `fmt(take(s, n))` is the honest
-form — and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
+`count_from`, `iterate`, `unfold`, `map_stream`, `zip_stream`,
+`drop_stream`, and `take` bridging back to data, since an infinite
+structure cannot print whole and `fmt(take(s, n))` is the honest form —
+**`Seq<T>`**, the finite codata sequence that sits between the two (below),
+and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
 **`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
 formatting as in Rust, with impls for `i64`, `String`, `bool`, and
 `List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
@@ -1138,6 +1140,31 @@ logs what passes through and forwards it, and `defaulting(fallback, k)`, a
 `-String` failure consumer that discards the message and sends `fallback`
 onward, made for the multi-outcome builtins below. (A third, `then(f, k)`,
 is gone: composing a function with a continuation is `f | k`.)
+
+**`Seq<T>` is the one that pays for menus in ordinary code.** `List` is
+data and `Stream` is codata that never ends; a `Seq` is a menu whose single
+item answers *whether* there is more, so the recursion lives in the codata
+and the branching in the data:
+
+```sl
+enum SeqStep<T> { Done, Yield(T, Seq<T>) }
+menu Seq<T> { next: SeqStep<T> }
+```
+
+It is produced a step at a time and only as far as it is demanded, which is
+what neither neighbour can do — so `filter_seq` over an infinite source is a
+terminating program as long as something downstream stops asking:
+
+```sl
+((odd, 1 | count_from | seq_of_stream) | filter_seq, 4) | take_seq   // [1, 3, 5, 7]
+```
+
+Beside it: `seq_of_list`/`list_of_seq` and `seq_of_stream` for the bridges,
+`map_seq`, `filter_seq`, `take_seq`, and `take_while`, which cuts a stream
+where a value stops passing and therefore answers a `Seq` — the type saying
+what the function does. `examples/seq.sl` runs all of it. There is no
+`impl Display for Seq`, for the reason `Stream` has none: showing one is
+`list_of_seq`, or `take_seq` first if it may not end.
 
 The combinators share one shape, and it is forced: a negative `fn`'s
 parameters form its continuation row, and values do not ride in a row — so
