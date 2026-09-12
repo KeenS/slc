@@ -40,11 +40,13 @@ feature is mid-flight; what remains open is below.
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
 
-- **Effect tracking follows names.** Rows are inferred and forwarded
-  through parameters, but a lambda's effects are charged where it is
+- **Effect tracking follows names.** Rows and row variables are explicit
+  and checked per declaration, but the rows live beside the type system
+  rather than in core types: a lambda's effects are charged where it is
   written, a higher-order global passed as a value forwards nothing
   further, and a function laundered through a `let` binding is not
-  tracked — the value side has no effect types, only the analysis.
+  tracked. Moving rows into the arrow type itself (unified during
+  inference) is the known upgrade if these bite.
 
 ## Deferred, for discussion
 

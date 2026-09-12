@@ -191,6 +191,7 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
             Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
+        T::Effectful(inner, _) => resolve_with_self(&inner.kind, self_ty, enums),
         _ => enums.resolve(ty),
     }
 }
@@ -264,6 +265,9 @@ fn resolve_rigid(
             resolve_rigid(&a.kind, rigid_vars, enums)?,
             resolve_rigid(&b.kind, rigid_vars, enums)?,
         )),
+        // The effect row is the effect checker's concern; the type is the
+        // arrow underneath.
+        T::Effectful(inner, _) => resolve_rigid(&inner.kind, rigid_vars, enums),
         T::Tensor(a, b) => Some(Type::Tensor(
             Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
             Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),

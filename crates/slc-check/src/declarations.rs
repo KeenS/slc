@@ -104,6 +104,9 @@ impl Declarations {
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
             TypeExpr::Dual(inner) => resolve(&inner.kind)?.dual(),
+            // The effect row is the effect checker's concern; the type is
+            // the arrow underneath.
+            TypeExpr::Effectful(inner, _) => resolve(&inner.kind)?,
             other => return lower_type(other).ok(),
         };
         Some(resolved)

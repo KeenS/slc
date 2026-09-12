@@ -722,25 +722,34 @@ the operations it *provides*, an effect hands a computation the answers it
 *demands*. A handler is installed dynamically by `handle` — the effect it handles is inferred from its clause operations, not written; a trait's impl is
 resolved statically.
 
-**Effect rows are inferred, and rows are polymorphic.** The checker computes
-every declaration's row from its body: performing an operation adds its
-effect, a call brings the callee's row, and calling a *parameter* forwards
-that parameter's row — instantiated at each call site with the argument
-standing there, so a higher-order function performs whatever the function
-it was given does. The prelude's `map` declares nothing and needs nothing:
-`map(f, xs)` carries `f`'s row. A written row — `fn scaled(x: +i64) -> i64
-/ {Reader}` — is a *bound* the inferred row must fit, the signature's
-promise to callers; a bare arrow promises nothing and infers everything.
-The enforced boundary is `main`, whose row must come out empty — a handler
-discharges the effects of the operations it answers, so a well-typed
-program performs no unhandled operation, and the diagnostic names the call
-the effect arrived through (``performs `Exn` (via `risky`)``).
+A function declares the effects it may perform in an **effect row** on its
+arrow — `fn scaled(x: +i64) -> i64 / {Reader}` — and a bare arrow is the
+empty row, a pure function: the signature tells the whole truth, and every
+declaration is checked locally against its own row. **Row polymorphism is
+written the way the rest of the language writes generics, explicitly**: a
+row variable is declared as a generic parameter and used with the `..`
+"rest" spelling, and a parameter's arrow type carries the row calling it
+may incur —
 
-The analysis follows names, and is conservative where a function value
-loses its name: a lambda's body is charged to the declaration that wrote
-it, a higher-order global passed on as a value contributes its concrete
-row but no further forwarding, and a function laundered through a `let`
-binding is not tracked.
+```sl
+fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
+```
+
+A call instantiates the callee's row variables from the arguments standing
+at the positions that mention them: `map(half, xs)` sets `E` to `half`'s
+row, so the call incurs exactly what `half` performs. `{Exn, ..E}` extends
+a variable — what the written part covers does not flow through it. A
+rowless arrow in a parameter's type is a promise of purity, enforced at
+the call site: passing `risky` where `(i64 -> i64)` is declared is an
+error at the argument. A handler discharges the effects of the operations
+it answers, and `main`'s row must be empty, so a well-typed program
+performs no unhandled operation.
+
+The tracking follows names, conservatively where a function value loses
+its name: a lambda's body is charged to the declaration that wrote it, a
+higher-order global passed on as a value contributes its concrete row but
+no further forwarding, and a function laundered through a `let` binding is
+not tracked.
 
 A clause may resume any number of times — the continuation is a first-class
 value sliced from the one frame stack. Not resuming is an exception; resuming

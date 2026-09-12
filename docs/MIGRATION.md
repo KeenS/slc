@@ -439,6 +439,22 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
+## Effect rows: row variables, written like generics
+
+A higher-order function forwards an argument's effects by declaring a
+**row variable** — a generic parameter used with the `..` "rest" spelling
+in a row, on its own arrow and on the parameter's:
+
+```sl
+fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B>              // old: f had to be pure
+fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
+```
+
+A bare arrow still means pure — now enforced against arguments too:
+passing an effectful function where a rowless arrow is declared is an
+error at the call site. `{Exn, ..E}` extends a variable; `main`'s row must
+be empty.
+
 ## Shifts removed: a consumer is a value
 
 The polarity shifts `↓`/`↑` are gone. They erased at lowering, and the

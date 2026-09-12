@@ -32,10 +32,14 @@ fn pick() -> String / {Choose} {
     a + b
 }
 
-// Row polymorphism: rows are inferred, and a higher-order function performs
-// whatever the function it was given does. The prelude's `map` declares no
-// row — passed `half`, it carries `{Exn}`; passed a pure function, nothing —
-// so the handler around it is what keeps `main` pure.
+// Row polymorphism, written the way generics are: a row variable is a
+// generic parameter, used with the `..` "rest" spelling. The prelude's map
+// says exactly what it forwards —
+//
+//   fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
+//
+// — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
+// handler around the call is what keeps `main` pure.
 fn half(n: +i64) -> i64 / {Exn} {
     if n % 2 == 0 { n / 2 } else { throw("odd") }
 }

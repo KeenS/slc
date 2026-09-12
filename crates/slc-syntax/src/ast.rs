@@ -227,9 +227,27 @@ pub enum TypeExpr {
     Tensor(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Par(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
+    /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
+    Effectful(Box<Node<TypeExpr>>, EffectRow),
     Dual(Box<Node<TypeExpr>>),
     Unit,
     Bottom,
+}
+
+/// An effect row: the concrete effects, and the declared row variables —
+/// `{Exn, ..E}` extends the row variable `E` with `Exn`. A row variable is
+/// declared like any generic parameter and written with `..`, the "rest"
+/// spelling.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EffectRow {
+    pub effects: Vec<String>,
+    pub tails: Vec<String>,
+}
+
+impl EffectRow {
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty() && self.tails.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -386,7 +404,7 @@ pub enum Decl {
         return_type: Option<TypeExpr>,
         /// The effect row: operations this function may perform. Empty (a
         /// bare arrow) means pure.
-        effects: Vec<String>,
+        effects: EffectRow,
         body: Node<Expr>,
     },
     /// A declaration whose body is a command: it takes values and
@@ -400,7 +418,7 @@ pub enum Decl {
         continuation_params: Vec<Param>,
         return_type: Option<TypeExpr>,
         /// The effect row this command may perform.
-        effects: Vec<String>,
+        effects: EffectRow,
         body: Node<Expr>,
     },
     /// A module: a named scope of declarations. Resolution flattens it,

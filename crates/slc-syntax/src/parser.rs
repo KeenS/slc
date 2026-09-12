@@ -239,7 +239,7 @@ impl Parser {
                             polarity: FunctionPolarity::Positive,
                             params: vec![],
                             return_type: None,
-                            effects: vec![],
+                            effects: EffectRow::default(),
                             body: e,
                         },
                     })
@@ -286,7 +286,7 @@ impl Parser {
                         polarity: FunctionPolarity::Positive,
                         params: vec![],
                         return_type: None,
-                        effects: vec![],
+                        effects: EffectRow::default(),
                         body: e,
                     },
                 })
@@ -418,24 +418,30 @@ impl Parser {
         Ok(Node { span: t.span, kind: Decl::Enum { name, type_params, variants } })
     }
 
-    /// An optional effect row: `/ { E1, E2 }`, or nothing for pure.
-    fn parse_effect_row(&mut self) -> Result<Vec<String>, ParseError> {
+    /// An optional effect row: `/ { E1, E2, ..R }`, or nothing for pure.
+    /// `..R` names a row variable — declared as a generic parameter, it
+    /// stands for the rest of the row, instantiated at each call.
+    fn parse_effect_row(&mut self) -> Result<EffectRow, ParseError> {
         if !self.eat(&TokenKind::Slash) {
-            return Ok(Vec::new());
+            return Ok(EffectRow::default());
         }
         self.expect(TokenKind::LBrace, "`{` after `/` in an effect row")?;
-        let mut effects = Vec::new();
+        let mut row = EffectRow::default();
         if self.eat(&TokenKind::RBrace) {
-            return Ok(effects);
+            return Ok(row);
         }
         loop {
-            effects.push(self.expect_ident("an effect name")?);
+            if self.eat(&TokenKind::DotDot) {
+                row.tails.push(self.expect_ident("a row variable after `..`")?);
+            } else {
+                row.effects.push(self.expect_ident("an effect name")?);
+            }
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RBrace, "`}` after the effect row")?;
                 break;
             }
         }
-        Ok(effects)
+        Ok(row)
     }
 
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -891,14 +897,26 @@ impl Parser {
                 let left = self.parse_type()?;
                 if self.eat(&TokenKind::Arrow) {
                     let right = self.parse_type()?;
+                    let row = self.parse_effect_row()?;
                     self.expect(TokenKind::RParen, "`)`")?;
-                    TypeExpr::Fun(
+                    let fun = TypeExpr::Fun(
                         Box::new(left),
                         Box::new(Node {
                             span: Span { start, end: self.span_end() },
                             kind: right.kind,
                         }),
-                    )
+                    );
+                    if row.is_empty() {
+                        fun
+                    } else {
+                        TypeExpr::Effectful(
+                            Box::new(Node {
+                                span: Span { start, end: self.span_end() },
+                                kind: fun,
+                            }),
+                            row,
+                        )
+                    }
                 } else if self.eat(&TokenKind::Tensor) {
                     let right = self.parse_type()?;
                     self.expect(TokenKind::RParen, "`)`")?;

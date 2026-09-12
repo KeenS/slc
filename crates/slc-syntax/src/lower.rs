@@ -228,6 +228,9 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
+        // The effect row is the effect checker's concern; the core type is
+        // the arrow underneath.
+        TypeExpr::Effectful(inner, _) => lower_type(&inner.kind),
         // `dual(A)` applies the involution rather than wrapping a node, so
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a
         // declaration's name stays wrapped: it is opaque to the core.

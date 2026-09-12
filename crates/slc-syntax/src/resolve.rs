@@ -362,6 +362,8 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
         }
+        // The row names effects, not types; only the arrow resolves.
+        TypeExpr::Effectful(inner, _) => resolve_type(&mut inner.kind, stack),
         TypeExpr::Unit | TypeExpr::Bottom => {}
     }
 }

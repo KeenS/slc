@@ -30,7 +30,7 @@ fn abs(n: +i64) -> i64 {
 
 // Compose a function with a continuation: the consumer that runs `f`, then
 // jumps to `k`. `A → ⊥` is `-A`, so the lambda *is* that consumer.
-fn then<A, B>(f: (A -> B), k: -B) -> -A {
+fn then<A, B, E>(f: (A -> B / {..E}), k: -B) -> -A / {..E} {
     fn(x: A) { f(x) @ k }
 }
 
@@ -82,7 +82,7 @@ fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
     }
 }
 
-fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B> {
+fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
     match xs {
         Nil => Nil,
         Cons(h, rest) => Cons(f(h), map(f, rest)),
@@ -163,7 +163,7 @@ fn count_from(n: +i64) -> Stream<i64> {
     }
 }
 
-fn map_stream<A, B>(f: (A -> B), s: Stream<A>) -> Stream<B> {
+fn map_stream<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
     mu Stream {
         head <= f(s.head) @ head,
         tail <= map_stream(f, s.tail) @ tail,
