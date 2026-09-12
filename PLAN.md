@@ -59,13 +59,17 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-The queue came from an audit of the polarity×feature matrix (traits and
-effects against negative functions), in order of depth. Every item ends the
-same way, unlisted: `cargo fmt`, `cargo clippy --workspace --all-targets --
--D warnings`, `cargo test --workspace` (19 suites green), the examples loop
-(every `examples/*.sl` runs; `*_error.sl` and `command_falls_through.sl`
-must fail), DESIGN.md updated where behaviour changed, and the entry
-retired from this file.
+The queue is empty: the polarity×feature audit is fully executed — bounds
+and traits now reach negative functions, and operations were settled as
+positive-only. What remains open is the discussions below and the limits
+above.
+
+When an item returns here, it ends the same way, unlisted: `cargo fmt`,
+`cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace` (19 suites green), the examples loop (every
+`examples/*.sl` runs; `*_error.sl` and `command_falls_through.sl` must
+fail), DESIGN.md updated where behaviour changed, and the entry retired
+from this file.
 
 ## Deferred, for discussion
 
