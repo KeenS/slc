@@ -241,8 +241,9 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: true,
                 // The value-first half and the continuation-first half print
-                // the same two answers, in the same order.
-                stdout: &["big", "small", "big", "small"],
+                // the same two answers, in the same order — written the
+                // same way, since the two styles share a type.
+                stdout: &["big", "small", "big", "small", "and directly: big"],
                 stderr: &[],
             },
         ),

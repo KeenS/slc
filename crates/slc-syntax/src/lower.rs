@@ -88,6 +88,12 @@ pub struct FlowShape {
     pub eta: bool,
     /// The chain ends in a consumer, so its last step is the cut.
     pub cut: bool,
+    /// The stage at which the chain turns around. `⅋` is commutative, so a
+    /// stage may read as a consumer transformer instead of a function —
+    /// `area_of(out: -i64) <- Shape` takes the *rest of the chain* as its
+    /// continuation — and from here on the stages fold right, building the
+    /// consumer that what flows in is cut against.
+    pub commuted_from: Option<usize>,
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -532,7 +538,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             // eta-expanding leaves every middle step an application.
             let shape = FLOWS
                 .with(|cell| cell.borrow().get(&e.span).copied())
-                .unwrap_or(FlowShape { eta: false, cut: *into_consumer });
+                .unwrap_or(FlowShape { eta: false, cut: *into_consumer, commuted_from: None });
             let mut lowered = Vec::new();
             if shape.eta {
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
@@ -540,25 +546,48 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
             for stage in stages {
                 lowered.push(lower_expr(stage, continuations)?);
             }
-            let last = lowered.pop().expect("a flow has at least two stages");
-            let mut acc = lowered.remove(0);
-            for stage in lowered {
-                acc = call_curried(stage, vec![acc]);
-            }
-            let term = if shape.cut {
-                // The closed chain is a cut, and lowers to exactly the term
-                // a cut has always lowered to.
-                let closing = &stages.last().expect("a flow has stages").kind;
-                let command = match named_consumer(closing) {
-                    Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
-                    None => Command::Cut(
-                        last,
+            // Where the chain turns around, the stages after it fold the
+            // other way: each takes the consumer the rest builds, and what
+            // flowed in that far is cut against the result.
+            let turn = shape.commuted_from.map(|i| i + usize::from(shape.eta));
+            let term = if let Some(turn) = turn.filter(|t| *t < lowered.len()) {
+                let tail = lowered.split_off(turn);
+                let mut acc = lowered.remove(0);
+                for stage in lowered {
+                    acc = call_curried(stage, vec![acc]);
+                }
+                let mut consumer = tail.last().expect("a turn has a consumer").clone();
+                for stage in tail[..tail.len() - 1].iter().rev() {
+                    consumer = call_curried(stage.clone(), vec![consumer]);
+                }
+                Term::Mu(
+                    "__tail".into(),
+                    Box::new(Command::Cut(
+                        consumer,
                         CoTerm::App(acc, Box::new(CoTerm::Covar("__tail".into()))),
-                    ),
-                };
-                Term::Mu(cut_binder(closing), Box::new(command))
+                    )),
+                )
             } else {
-                call_curried(last, vec![acc])
+                let last = lowered.pop().expect("a flow has at least two stages");
+                let mut acc = lowered.remove(0);
+                for stage in lowered {
+                    acc = call_curried(stage, vec![acc]);
+                }
+                if shape.cut {
+                    // The closed chain is a cut, and lowers to exactly the
+                    // term a cut has always lowered to.
+                    let closing = &stages.last().expect("a flow has stages").kind;
+                    let command = match named_consumer(closing) {
+                        Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
+                        None => Command::Cut(
+                            last,
+                            CoTerm::App(acc, Box::new(CoTerm::Covar("__tail".into()))),
+                        ),
+                    };
+                    Term::Mu(cut_binder(closing), Box::new(command))
+                } else {
+                    call_curried(last, vec![acc])
+                }
             };
             Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
         }

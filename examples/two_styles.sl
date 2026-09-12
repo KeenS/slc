@@ -9,9 +9,15 @@
 //   data arrives, data leaves         a consumer arrives, a consumer leaves
 //   match v { p => e }                select A { p => c }
 //   return the result                 cut the result against a consumer
-//   f(x)                              x | f(k)
-//   g(f(x))          — inside out     x | f(g(k))        — left to right
-//   let y = f(x); rest                x | f(select +B { y => rest })
+//   x | f                             x | f_of | k⟩
+//   x | f | g                         x | f_of | g_of | k⟩
+//   let y = x | f; rest               x | f_of(select +B { y => rest })⟩
+//
+// The last two rows are the point: `f: A -> B` and `f_of(k: -B) <- A` are
+// *one type* — `⅋` is commutative, so `-A ⅋ B` read the other way round is
+// `dual(B) ⅋ dual(A)` — and a pipeline takes either. The two halves below
+// therefore end up written the same way, which is what "the same program,
+// twice" was always trying to say.
 //
 // Both halves below compute the area of a shape, decide whether it is big or
 // small, and print that. Neither is a transcription of the other: each is the
@@ -68,27 +74,24 @@ fn label_of(out: -String) <- +i64 {
 }
 
 command main | (exit: -i32) {
-    // Value-first: the shape goes in at the innermost call, and the answer
-    // comes back out through `area` and then `label` to `println`.
-    println(label(area(Shape::Circle(5))));
-    println(label(area(Shape::Rect(6, 7))));
+    // Value-first: the shape flows through `area`, then `label`.
+    println(Shape::Circle(5) | area | label);
+    println(Shape::Rect(6, 7) | area | label);
 
-    // Continuation-first: the same pipeline, written in the order the value
-    // travels. `label_of(…)` is a consumer of areas, `area_of(…)` wraps it
-    // into a consumer of shapes, and the cut sets the whole thing going.
-    //
-    // Nothing returns here, so what comes next is written inside the last
-    // consumer: the rest of the program *is* the continuation. That nesting
-    // is exactly what a local `mu` removes — see `file_io.sl`.
-    Shape::Circle(5) | area_of(label_of(select +String {
-        first => {
-            println(first);
-            Shape::Rect(6, 7) | area_of(label_of(select +String {
-                second => {
-                    println(second);
-                    0 | exit⟩
-                },
-            }))⟩
+    // Continuation-first: the same chain, stage for stage. Each `_of` is a
+    // consumer transformer, and a pipeline reads it as the function it
+    // equally is — so nothing nests and nothing is written backwards.
+    println(mu String { out <= Shape::Circle(5) | area_of | label_of | out⟩ });
+    println(mu String { out <= Shape::Rect(6, 7) | area_of | label_of | out⟩ });
+
+    // Where the two differ is what they *are*: the value-first chain
+    // returns a String, and the continuation-first one ends in a cut. The
+    // `mu` above is what turns the second back into a value; without it,
+    // the rest of the program is written inside the last consumer.
+    Shape::Circle(5) | area_of | label_of | select +String {
+        answer => {
+            println("and directly: " + answer);
+            0 | exit⟩
         },
-    }))⟩
+    }⟩
 }

@@ -2415,6 +2415,7 @@ fn check_expr_unapplied(
             // width the next stage requires, and only the first stage can be
             // one — everything later is the result of a step.
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
+            let mut commuted_from: Option<usize> = None;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
                 let last = index + 1 == types.len();
                 let unknown = env.uni.fresh_var();
@@ -2457,11 +2458,16 @@ fn check_expr_unapplied(
                     continue;
                 }
                 // A function: what flows in is its argument, its result
-                // flows on.
-                let argument = env.uni.fresh_var();
-                let result = env.uni.fresh_var();
-                let expects = Type::arrow(argument.clone(), result.clone());
-                if env.uni.unify(ty, &expects).is_err() {
+                // flows on. `⅋` is commutative, so a stage `A ⅋ B` reads
+                // both ways — `dual(A) → B` and `dual(B) → A` — and the two
+                // styles meet here: `area: Shape -> i64` and
+                // `area_of(out: -i64) <- Shape` are one type, so either
+                // stands in a pipeline. What flows in picks the reading,
+                // and where both fit they agree.
+                let left = env.uni.fresh_var();
+                let right = env.uni.fresh_var();
+                let par = Type::Par(Box::new(left.clone()), Box::new(right.clone()));
+                if env.uni.unify(ty, &par).is_err() {
                     diags.push(Diagnostic {
                         message: format!(
                             "a step composes, so this stage is a function; it has type {ty}. \
@@ -2471,23 +2477,32 @@ fn check_expr_unapplied(
                     });
                     return None;
                 }
-                if !fits(env, &argument, &acc, shape) {
-                    let argument = env.uni.apply(&argument);
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "this stage takes {argument}, and what flows in has type {acc}"
-                        ),
-                        span: stages[index].span,
-                    });
+                let (left, right) = (env.uni.apply(&left), env.uni.apply(&right));
+                let forward = left.dual();
+                if fits(env, &forward, &acc, shape) {
+                    acc = env.uni.apply(&right);
+                } else {
+                    let commuted = right.dual();
+                    commuted_from.get_or_insert(index);
+                    if !fits(env, &commuted, &acc, shape) {
+                        let forward = env.uni.apply(&forward);
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "this stage takes {forward}, and what flows in has type {acc}"
+                            ),
+                            span: stages[index].span,
+                        });
+                    }
+                    acc = env.uni.apply(&left);
                 }
-                acc = env.uni.apply(&result);
                 flowing = None;
             }
             // `⟩` is syntax, but "does a function head this chain?" is not,
             // so lowering is told.
-            env.dispatch
-                .flows
-                .insert(e.span, slc_syntax::lower::FlowShape { eta: opens, cut: *into_consumer });
+            env.dispatch.flows.insert(
+                e.span,
+                slc_syntax::lower::FlowShape { eta: opens, cut: *into_consumer, commuted_from },
+            );
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
         }
         Expr::Cut { value, consumer } => {

@@ -65,6 +65,27 @@ returns.
 | `f \| g` | function composition — a function |
 | `f \| k⟩` | composition into a consumer — a consumer |
 
+**A stage reads either way round, because `⅋` is commutative.** `A ⅋ B`
+is `dual(A) → B` and equally `dual(B) → A`, so a function and the
+consumer transformer that mirrors it are one type:
+
+```sl
+fn area(s: Shape) -> i64                  // -Shape ⅋ +i64
+fn area_of(out: -i64) <- Shape            // +i64 ⅋ -Shape — the same type
+```
+
+Either stands as a stage, and what flows in picks the reading; where
+both fit they agree, so nothing is chosen. A stage read the second way
+takes *the rest of the chain* as its continuation, which is why the two
+styles are written the same:
+
+```sl
+shape | area    | label    | out⟩
+shape | area_of | label_of | out⟩
+```
+
+`examples/two_styles.sl` is that program, twice.
+
 The head decides whether a chain applies or composes, and it needs no
 mark when it is not a function: `"hi" | println` can only be an
 application. Where the head *is* a function, the chain composes — and
