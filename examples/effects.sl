@@ -32,6 +32,14 @@ fn pick() -> String / {Choose} {
     a + b
 }
 
+// Row polymorphism: rows are inferred, and a higher-order function performs
+// whatever the function it was given does. The prelude's `map` declares no
+// row — passed `half`, it carries `{Exn}`; passed a pure function, nothing —
+// so the handler around it is what keeps `main` pure.
+fn half(n: +i64) -> i64 / {Exn} {
+    if n % 2 == 0 { n / 2 } else { throw("odd") }
+}
+
 command main | (exit: -i32) {
     // never resumes — the exception replaces the computation
     let safe = handle checked_div(10, 0) { throw(m) resume => 0 - 1, return(n) => n };
@@ -50,6 +58,18 @@ command main | (exit: -i32) {
         return(s) => s,
     };
     println(all);                        // "HH HT TH TT"
+
+    // the row of `map(half, …)` is `half`'s row, forwarded — handled here
+    let halves = handle map(half, Cons(8, Cons(4, Nil))) {
+        throw(m) resume => Nil,
+        return(xs) => xs,
+    };
+    println(fmt(halves));                // "[4, 2]"
+    let none = handle map(half, Cons(8, Cons(5, Nil))) {
+        throw(m) resume => Nil,
+        return(xs) => xs,
+    };
+    println(fmt(none));                  // "[]"
 
     0 @ exit
 }

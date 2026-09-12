@@ -40,10 +40,11 @@ feature is mid-flight; what remains open is below.
   unchecked, type variables carry no polarity kind, and the untyped evaluator
   remains the backstop for whatever that gap hides.
 
-- **Effect rows are explicit and monomorphic.** A function declares its
-  effects (`/ {E}`) and the checker enforces them, but there is no inference
-  and no row polymorphism, so a higher-order function cannot forward an
-  argument's effects — `map(f, xs)` cannot say it performs whatever `f` does.
+- **Effect tracking follows names.** Rows are inferred and forwarded
+  through parameters, but a lambda's effects are charged where it is
+  written, a higher-order global passed as a value forwards nothing
+  further, and a function laundered through a `let` binding is not
+  tracked — the value side has no effect types, only the analysis.
 
 ## Deferred, for discussion
 
@@ -104,8 +105,5 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-The symmetry audit (after `menu` landed) left these queued, in order:
-
-- **Row-polymorphic effects.** Infer a function's effect row and let a
-  higher-order function forward an argument's effects, so `map(f, xs)` can say
-  it performs whatever `f` does — retiring the monomorphic-rows limit.
+The queue is empty. The symmetry audit's items are all shipped; what remains
+open is the deferred discussions above.

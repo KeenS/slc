@@ -722,14 +722,25 @@ the operations it *provides*, an effect hands a computation the answers it
 *demands*. A handler is installed dynamically by `handle` — the effect it handles is inferred from its clause operations, not written; a trait's impl is
 resolved statically.
 
-A function declares the effects it may perform in an **effect row** on its
-arrow — `fn scaled(x: +i64) -> i64 / {Reader}` — and a bare arrow is the
-empty row, a pure function. A function may perform an operation only when its
-effect is in the row; a call propagates the callee's row; and a handler discharges the effects of
-the operations it answers. `main` has the empty row, so a well-typed program performs
-no unhandled operation. (Rows are explicit in v1: no inference, and no row
-polymorphism — a higher-order function cannot yet forward an argument's
-effects.)
+**Effect rows are inferred, and rows are polymorphic.** The checker computes
+every declaration's row from its body: performing an operation adds its
+effect, a call brings the callee's row, and calling a *parameter* forwards
+that parameter's row — instantiated at each call site with the argument
+standing there, so a higher-order function performs whatever the function
+it was given does. The prelude's `map` declares nothing and needs nothing:
+`map(f, xs)` carries `f`'s row. A written row — `fn scaled(x: +i64) -> i64
+/ {Reader}` — is a *bound* the inferred row must fit, the signature's
+promise to callers; a bare arrow promises nothing and infers everything.
+The enforced boundary is `main`, whose row must come out empty — a handler
+discharges the effects of the operations it answers, so a well-typed
+program performs no unhandled operation, and the diagnostic names the call
+the effect arrived through (``performs `Exn` (via `risky`)``).
+
+The analysis follows names, and is conservative where a function value
+loses its name: a lambda's body is charged to the declaration that wrote
+it, a higher-order global passed on as a value contributes its concrete
+row but no further forwarding, and a function laundered through a `let`
+binding is not tracked.
 
 A clause may resume any number of times — the continuation is a first-class
 value sliced from the one frame stack. Not resuming is an exception; resuming

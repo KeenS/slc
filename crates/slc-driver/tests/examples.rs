@@ -50,7 +50,11 @@ fn repository_example_suite_has_expected_results() {
         ),
         (
             "effects.sl",
-            Expected { success: true, stdout: &["-1", "5", "1070", "HH HT TH TT"], stderr: &[] },
+            Expected {
+                success: true,
+                stdout: &["-1", "5", "1070", "HH HT TH TT", "\"[4, 2]\"", "\"[]\""],
+                stderr: &[],
+            },
         ),
         (
             "dictionaries.sl",
