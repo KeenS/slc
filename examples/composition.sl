@@ -1,0 +1,94 @@
+// The declaration square composes: a field can hold a type from any
+// column, because a menu or form value is a value like any other.
+//
+//   data App     holds a menu        — codata stored in data
+//   enum Slot    holds a form        — a consumer stored in a variant
+//   menu Session answers an enum     — and one item is itself a menu
+//   form Handler is fed an enum      — the consumer branches on data
+//
+// The one polarity seam is the shift: a *raw continuation* inside a
+// positive record needs `↓` (Handler's `out`), unshifted at use with
+// `↑`. Named negatives need nothing.
+
+enum Cmd {
+    Quit,
+    Step(i64),
+}
+
+menu Config {
+    retries: i64,
+    name: String,
+}
+
+fn defaults() -> Config {
+    mu Config {
+        retries <= 3 @ retries,
+        name <= "slant" @ name,
+    }
+}
+
+// ─── data holding a menu ───
+data App {
+    title: String,
+    config: Config,
+}
+
+// ─── menu items answering an enum, and another menu ───
+menu Session {
+    next: Cmd,
+    config: Config,
+}
+
+fn session(n: +i64) -> Session {
+    mu Session {
+        next <= (if n > 0 { Step(n) } else { Quit }) @ next,
+        config <= (mu Config { retries <= n @ retries, name <= "session" @ name }) @ config,
+    }
+}
+
+// ─── a form fed an enum: the consumer branches on the data it receives ───
+form Handler {
+    cmd: Cmd,
+    out: ↓-String,
+}
+
+fn handler() -> Handler {
+    select Handler {
+        Handler { cmd, out } => match cmd {
+            Quit => "quit" @ ↑out,
+            Step(k) => to_string(k) @ ↑out,
+        },
+    }
+}
+
+// ─── an enum payload holding a form value ───
+enum Slot {
+    Vacant,
+    Holds(Handler),
+}
+
+command main | (exit: -i32) {
+    let app = App { title: "demo", config: defaults() };
+    match app {
+        App { title, config } => {
+            println(title);
+            println(config.name);
+        },
+    };
+
+    let s = session(2);
+    println(s.config.retries);
+    match s.next {
+        Quit => println("quit"),
+        Step(k) => println(k),
+    };
+
+    println(mu String { ans <= Handler { cmd: Step(7), out: ↓ans } @ handler() });
+
+    match Holds(handler()) {
+        Vacant => println("idle"),
+        Holds(h) => println(mu String { ans <= Handler { cmd: Quit, out: ↓ans } @ h }),
+    };
+
+    0 @ exit
+}

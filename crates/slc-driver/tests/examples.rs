@@ -33,6 +33,14 @@ fn repository_example_suite_has_expected_results() {
         ),
         ("logical_units.sl", Expected { success: true, stdout: &["()", "()"], stderr: &[] }),
         (
+            "composition.sl",
+            Expected {
+                success: true,
+                stdout: &["\"demo\"", "\"slant\"", "2", "2", "\"7\"", "\"quit\""],
+                stderr: &[],
+            },
+        ),
+        (
             "comparison.sl",
             Expected {
                 success: true,
