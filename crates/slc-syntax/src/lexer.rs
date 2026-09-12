@@ -237,6 +237,8 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
             '=' => TokenKind::Assign,
+            '⟨' => TokenKind::CutOpen,
+            '⟩' => TokenKind::CutClose,
             '⊗' => TokenKind::Tensor,
             '⅋' => TokenKind::Par,
             '⊥' => TokenKind::Bot,

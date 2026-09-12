@@ -92,37 +92,6 @@ feature is mid-flight; what remains open is below.
 
 ## Deferred, for discussion
 
-- **The flow operator's two ambiguities, resolved by preference rather
-  than by rule.** `|` reads a step from the types at its ends, and twice
-  one type admits two readings. Both work today, decided by trying a
-  reading against a *copy* of the unification state (`would_fit` in
-  `crates/slc-check/src/expr.rs`), which costs nothing and commits
-  nothing — but where both readings fit, the winner is a preference no
-  one has agreed to, and nothing says a collision happened.
-
-  1. **A `Par` is a function and a consumer.** `A → B` is `-A ⅋ B`, and
-     `-A ⅋ -B` is `dual(A ⊗ B)`, so a stage of `Par` type may apply or
-     may consume a product: `21 | double` applies, `(7, "x") |
-     report_first(k)` cuts. *Preference:* the function reading is tried
-     first, and the consumer reading catches what it misses.
-
-  2. **A function is itself a value.** `f | k` composes when `k` takes
-     what `f` returns, and is the cut that sends `f` to `k` when `k`
-     takes `f` — `fn(x) { x } | k` in `examples/polymorphism.sl` means
-     the latter. *Preference:* the opposite one — a chain opens with a
-     function only when the next stage will **not** accept it as a
-     value, so the cut wins where both fit.
-
-  The two preferences point opposite ways, which is worth either a
-  reason or a change. Two cases make it concrete: a consumer whose type
-  is still unsolved takes the cut reading, so `f | k` with an
-  undetermined `k` never composes; and a function whose result has its
-  own type — `f: (A → A) → (A → A)` against `k: -(A → A)` — fits both
-  readings exactly, and silently cuts. To settle: whether the
-  preferences are the right defaults and get written into DESIGN as
-  rules, whether a collision should be reported rather than resolved,
-  and whether either reading deserves a way to say which was meant.
-
 - **A surface spelling for `0`.** ⊤'s value is settled as `(&)` (above).
   `0` has no values, and its consumer stays `select Empty {}`; whether the
   empty sum deserves an anonymous type spelling is still open.

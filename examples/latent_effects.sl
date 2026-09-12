@@ -19,8 +19,8 @@ menu Fallible / {Exn} {
 // to Fallible's latent row and are checked against it.
 fn checked(n: +i64) -> Fallible {
     mu Fallible {
-        value <= (if n >= 0 { n } else { throw("negative") }) | value,
-        doubled <= (if n >= 0 { n * 2 } else { throw("negative") }) | doubled,
+        value <= ⟨(if n >= 0 { n } else { throw("negative") }) | value⟩,
+        doubled <= ⟨(if n >= 0 { n * 2 } else { throw("negative") }) | doubled⟩,
     }
 }
 
@@ -39,7 +39,7 @@ menu Scaled / {Reader} {
 
 fn scaled(base: +i64) -> Scaled {
     mu Scaled {
-        amount: out <= base * config() | out,
+        amount: out <= ⟨base * config() | out⟩,
     }
 }
 
@@ -52,7 +52,7 @@ form Validated / {Exn} {
 
 fn admit() -> Validated {
     select Validated {
-        Validated { age, out } => (if age >= 18 { age } else { throw("too young") }) | out,
+        Validated { age, out } => ⟨(if age >= 18 { age } else { throw("too young") }) | out⟩,
     }
 }
 
@@ -67,7 +67,7 @@ command main | (exit: -i32) {
     // A consumer carries a latent row too: `risky | out` composes without
     // performing anything — the row fires when the consumer is FED, so the
     // handler belongs around the cut.
-    let n = handle (mu i64 { out <= 5 | risky | out }) {
+    let n = handle (mu i64 { out <= ⟨5 | risky | out⟩ }) {
         throw(m) => 0 - 1,
         return(x) => x,
     };
@@ -82,13 +82,13 @@ command main | (exit: -i32) {
 
     // Feeding a rowed form under a handler: the arm's throw fires at the
     // feed, in this extent, and lands in this handler.
-    println(handle (mu i64 { k <= Validated { age: 21, out: k } | admit() }) {
+    println(handle (mu i64 { k <= ⟨Validated { age: 21, out: k } | admit()⟩ }) {
         throw(m) => 0 - 1,
         return(n) => n,
     });
-    println(handle (mu i64 { k <= Validated { age: 15, out: k } | admit() }) {
+    println(handle (mu i64 { k <= ⟨Validated { age: 15, out: k } | admit()⟩ }) {
         throw(m) => 0 - 1,
         return(n) => n,
     });
-    0 | exit
+    ⟨0 | exit⟩
 }

@@ -17,5 +17,5 @@ fn name(c: Color) -> String {
 
 command main | (exit: -i32) {
     println(name(Color::Red));
-    0 | exit
+    ⟨0 | exit⟩
 }

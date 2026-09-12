@@ -52,17 +52,17 @@ fn label(a: +i64) -> String {
 
 fn area_of(out: -i64) <- Shape {
     select Shape {
-        Circle(r) => (3 * r * r) | out,
-        Rect(w, h) => (w * h) | out,
+        Circle(r) => ⟨(3 * r * r) | out⟩,
+        Rect(w, h) => ⟨(w * h) | out⟩,
     }
 }
 
 fn label_of(out: -String) <- +i64 {
     select +i64 {
         a => if a > 50 {
-            "big" | out
+            ⟨"big" | out⟩
         } else {
-            "small" | out
+            ⟨"small" | out⟩
         },
     }
 }
@@ -80,15 +80,15 @@ command main | (exit: -i32) {
     // Nothing returns here, so what comes next is written inside the last
     // consumer: the rest of the program *is* the continuation. That nesting
     // is exactly what a local `mu` removes — see `file_io.sl`.
-    Shape::Circle(5) | area_of(label_of(select +String {
+    ⟨Shape::Circle(5) | area_of(label_of(select +String {
         first => {
             println(first);
-            Shape::Rect(6, 7) | area_of(label_of(select +String {
+            ⟨Shape::Rect(6, 7) | area_of(label_of(select +String {
                 second => {
                     println(second);
-                    0 | exit
+                    ⟨0 | exit⟩
                 },
-            }))
+            }))⟩
         },
-    }))
+    }))⟩
 }

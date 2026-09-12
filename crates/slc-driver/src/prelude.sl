@@ -38,14 +38,14 @@ fn abs(n: +i64) -> i64 {
 
 // A tap: log a label and the value passing through, then forward it.
 fn traced<T>(label: +String, k: -T) -> -T {
-    fn(x: T) { println(label); println(x); x | k }
+    fn(x: T) { println(label); println(x); ⟨x | k⟩ }
 }
 
 // A failure consumer that discards the message and sends `fallback` onward
 // — pairs with the `-String` outcomes of `parse_int`, `read_file`, and the
 // other multi-outcome builtins.
 fn defaulting<T>(fallback: T, k: -T) -> -String {
-    fn(m: +String) { fallback | k }
+    fn(m: +String) { ⟨fallback | k⟩ }
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────
@@ -87,9 +87,9 @@ fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
 // the way the lookup builtins do.
 command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String) {
     match xs {
-        Nil => "nothing at that index" | missing,
+        Nil => ⟨"nothing at that index" | missing⟩,
         Cons(h, rest) => {
-            if i == 0 { h | found } else { nth(rest, i - 1, found, missing) }
+            if i == 0 { ⟨h | found⟩ } else { nth(rest, i - 1, found, missing) }
         },
     }
 }
@@ -145,22 +145,22 @@ menu Stream<T> {
 
 fn repeat<T>(x: T) -> Stream<T> {
     mu Stream {
-        head <= x | head,
-        tail <= repeat(x) | tail,
+        head <= ⟨x | head⟩,
+        tail <= ⟨repeat(x) | tail⟩,
     }
 }
 
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
-        head <= n | head,
-        tail <= count_from(n + 1) | tail,
+        head <= ⟨n | head⟩,
+        tail <= ⟨count_from(n + 1) | tail⟩,
     }
 }
 
 fn map_stream<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
     mu Stream {
-        head <= f(s.head) | head,
-        tail <= map_stream(f, s.tail) | tail,
+        head <= ⟨f(s.head) | head⟩,
+        tail <= ⟨map_stream(f, s.tail) | tail⟩,
     }
 }
 

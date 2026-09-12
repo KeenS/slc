@@ -439,27 +439,29 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
-## `|` is flow, and `@` is gone
+## `|` is flow, `⟨⟩` is the cut, and `@` is gone
 
-Everything moves left to right through one operator, and polarity says
-what each step means: a value into a function applies, a function into a
-function or a consumer composes, and a value into a consumer is the cut.
+Everything moves left to right through one operator, and every step
+composes. Brackets say where a chain is closed, and the stage beside a
+bracket takes its role from that — so nothing has to be inferred:
 
 ```sl
 v @ k                          // old
-v | k                          // new — the cut
+⟨v | k⟩                        // new — the cut
 
 then(f, k)                     // old — the prelude combinator, now deleted
-f | k                          // new — the same consumer
+f | k                          // new — the same consumer, composed
 
 21 @ then(double, out)         // old
-21 | double | out              // new
+⟨21 | double | out⟩            // new
 ```
 
-A chain is flat, because composition is associative: `v | f | g | k` may
-be read with any bracketing and means the same thing. A consumer stands
-only at the right end — nothing flows out of one. `@` keeps its other
-job, the as-pattern binder `c @ '0'..='9'`.
+The stage after `⟨` is a value, the stage before `⟩` consumes, and
+everything between is a function. Half-open chains are the two sides on
+their own: `⟨v | f` is a value awaiting a continuation, `f | k⟩` a
+consumer awaiting a value. A chain is flat, because composition is
+associative. `@` keeps its other job, the as-pattern binder
+`c @ '0'..='9'`.
 
 ## Calls and rows are unary
 

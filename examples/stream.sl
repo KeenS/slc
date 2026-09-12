@@ -14,9 +14,9 @@
 // menu, which must again cover every item.
 fn count_from(n: +i64) -> Stream<i64> {
     mu Stream {
-        head: out <= n | out,
-        tail: head: out <= n + 1 | out,
-        tail: tail: rest <= count_from(n + 2) | rest,
+        head: out <= ⟨n | out⟩,
+        tail: head: out <= ⟨n + 1 | out⟩,
+        tail: tail: rest <= ⟨count_from(n + 2) | rest⟩,
     }
 }
 
@@ -30,5 +30,5 @@ command main | (exit: -i32) {
     println(map_stream(double, s).tail.head);   // 22
     println(fmt(take(s, 3)));                   // "[10, 11, 12]"
     println(fmt(take(repeat(7), 2)));           // "[7, 7]"
-    0 | exit
+    ⟨0 | exit⟩
 }

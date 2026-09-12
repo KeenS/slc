@@ -2,5 +2,5 @@
 
 command main | (exit: -i32) {
     println(fn(x: +i32) -> i32 { x }(42));
-    0 | exit
+    ⟨0 | exit⟩
 }

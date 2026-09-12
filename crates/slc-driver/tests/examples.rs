@@ -52,7 +52,7 @@ fn repository_example_suite_has_expected_results() {
             "pipeline.sl",
             Expected {
                 success: true,
-                stdout: &["42", "14", "42", "42", "11", "7", "13", "13"],
+                stdout: &["42", "14", "42", "11", "11", "20", "7", "13", "13"],
                 stderr: &[],
             },
         ),

@@ -79,9 +79,11 @@ pub enum TokenKind {
     Bang,
 
     // Unicode
-    Tensor, // ⊗
-    Par,    // ⅋
-    Bot,    // ⊥
+    CutOpen,  // ⟨
+    CutClose, // ⟩
+    Tensor,   // ⊗
+    Par,      // ⅋
+    Bot,      // ⊥
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,6 +154,8 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Assign => write!(f, "`=`"),
             TokenKind::Pipe => write!(f, "`|`"),
             TokenKind::Amp => write!(f, "`&`"),
+            TokenKind::CutOpen => write!(f, "`⟨`"),
+            TokenKind::CutClose => write!(f, "`⟩`"),
             TokenKind::AmpAmp => write!(f, "`&&`"),
             TokenKind::PipePipe => write!(f, "`||`"),
             TokenKind::Bang => write!(f, "`!`"),

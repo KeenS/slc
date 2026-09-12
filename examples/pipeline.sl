@@ -1,21 +1,29 @@
-// `|` is flow: everything moves left to right, and polarity says what
-// each step means.
+// `|` is flow: everything moves left to right, and every step composes.
+// Brackets say where a chain is closed — and the stage beside a bracket
+// takes its role from it:
 //
-//   value    | function   apply       — the value flows in, a result out
-//   function | function   compose     — a function awaiting a value
-//   function | consumer   compose     — a consumer awaiting a value
-//   value    | consumer   cut         — closed at both ends: a command
+//   ⟨v | f | k⟩    closed at both ends: a value in, a consumer at the end
+//                  — a command, and the only thing that is
+//   ⟨v | f         closed at the left: a value flowing on, awaiting a
+//                  continuation
+//   f | k⟩         closed at the right: a consumer, awaiting a value
+//   f | g          neither: function composition, always
 //
-// A chain is flat because composition is associative, and a consumer may
-// stand only at the right end: nothing flows out of one.
+// So `f | k` never has to be read twice: unbracketed it composes, and the
+// cut that sends `f` itself to `k` is `⟨f | k⟩`.
 
 fn double(n: i64) -> i64 { n * 2 }
 fn incr(n: i64) -> i64 { n + 1 }
 
+// Closed at the right only: a consumer, awaiting a value.
+fn doubling(k: -i64) -> -i64 {
+    double | incr | k⟩
+}
+
 // A two-exit command, written unary: one value, one menu of exits, each
 // component naming what reaches it.
 command classify(n: i64) | (found: i64 & missing: String) {
-    if n > 0 { n | found } else { "nothing there" | missing }
+    if n > 0 { ⟨n | found⟩ } else { ⟨"nothing there" | missing⟩ }
 }
 
 // A row is a value: this one takes the whole menu and hands it on.
@@ -24,22 +32,26 @@ command forward(n: i64) | (row: (-i64 & -String)) {
 }
 
 command main | (exit: -i32) {
-    // apply, then a chain of applications
-    println(21 | double);
-    println(3 | double | incr | double);
+    // a value flowing through functions, awaiting a continuation
+    println(⟨21 | double);
+    println(⟨3 | double | incr | double);
 
-    // the cut — the same expression however the chain is split, because
-    // composition is associative
-    println(mu i64 { out <= 21 | double | out });
-    println(mu i64 { out <= 21 | (double | out) });
+    // the cut — closed at both ends
+    println(mu i64 { out <= ⟨21 | double | out⟩ });
 
-    // `double | incr | out` is a consumer, awaiting a value
-    println(mu i64 { out <= 5 | (double | incr | out) });
+    // the same chain, split: `double | k⟩` is a consumer on its own, so
+    // feeding it is the same command
+    println(mu i64 { out <= ⟨5 | double | incr | out⟩ });
+    println(mu i64 { out <= ⟨5 | doubling(out)⟩ });
 
-    // a two-exit command: its exits spread, then bundled
-    println(mu i64 { ok <= classify(7, ok, select +String { s => str_len(s) | ok }) });
-    println(mu i64 { ok <= classify(0 - 1, (ok & select +String { s => str_len(s) | ok })) });
-    println(mu i64 { ok <= forward(0 - 1, (ok & select +String { s => str_len(s) | ok })) });
+    // plain composition: two functions make a function
+    let quadruple = double | double;
+    println(⟨5 | quadruple);
 
-    0 | exit
+    // a two-exit command: its exits spread, then bundled, then forwarded
+    println(mu i64 { ok <= classify(7, ok, select +String { s => ⟨str_len(s) | ok⟩ }) });
+    println(mu i64 { ok <= classify(0 - 1, (ok & select +String { s => ⟨str_len(s) | ok⟩ })) });
+    println(mu i64 { ok <= forward(0 - 1, (ok & select +String { s => ⟨str_len(s) | ok⟩ })) });
+
+    ⟨0 | exit⟩
 }

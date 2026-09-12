@@ -5,5 +5,5 @@
 command main | (exit: -i32) {
     let x = 10;
     println(add(x, 20));
-    0 | exit
+    ⟨0 | exit⟩
 }

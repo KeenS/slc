@@ -2,5 +2,5 @@
 
 command main | (exit: -i32) {
     println("Hello, Slant!");
-    0 | exit
+    ⟨0 | exit⟩
 }

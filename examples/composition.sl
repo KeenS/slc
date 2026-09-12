@@ -21,8 +21,8 @@ menu Config {
 
 fn defaults() -> Config {
     mu Config {
-        retries <= 3 | retries,
-        name <= "slant" | name,
+        retries <= ⟨3 | retries⟩,
+        name <= ⟨"slant" | name⟩,
     }
 }
 
@@ -40,8 +40,8 @@ menu Session {
 
 fn session(n: +i64) -> Session {
     mu Session {
-        next <= (if n > 0 { Step(n) } else { Quit }) | next,
-        config <= (mu Config { retries <= n | retries, name <= "session" | name }) | config,
+        next <= ⟨(if n > 0 { Step(n) } else { Quit }) | next⟩,
+        config <= ⟨(mu Config { retries <= ⟨n | retries⟩, name <= ⟨"session" | name⟩ }) | config⟩,
     }
 }
 
@@ -54,8 +54,8 @@ form Handler {
 fn handler() -> Handler {
     select Handler {
         Handler { cmd, out } => match cmd {
-            Quit => "quit" | out,
-            Step(k) => to_string(k) | out,
+            Quit => ⟨"quit" | out⟩,
+            Step(k) => ⟨to_string(k) | out⟩,
         },
     }
 }
@@ -82,12 +82,12 @@ command main | (exit: -i32) {
         Step(k) => println(k),
     };
 
-    println(mu String { ans <= Handler { cmd: Step(7), out: ans } | handler() });
+    println(mu String { ans <= ⟨Handler { cmd: Step(7), out: ans } | handler()⟩ });
 
     match Holds(handler()) {
         Vacant => println("idle"),
-        Holds(h) => println(mu String { ans <= Handler { cmd: Quit, out: ans } | h }),
+        Holds(h) => println(mu String { ans <= ⟨Handler { cmd: Quit, out: ans } | h⟩ }),
     };
 
-    0 | exit
+    ⟨0 | exit⟩
 }

@@ -480,7 +480,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut arg.kind, stack, locals);
             }
         }
-        Expr::Pair(items) | Expr::Bundle(items) | Expr::Flow(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) | Expr::Flow { stages: items, .. } => {
             for item in items {
                 resolve_expr(&mut item.kind, stack, locals);
             }
@@ -675,7 +675,10 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut arg.kind, imported);
             }
         }
-        Expr::Pair(items) | Expr::Bundle(items) | Expr::Flow(items) | Expr::Block(items) => {
+        Expr::Pair(items)
+        | Expr::Bundle(items)
+        | Expr::Flow { stages: items, .. }
+        | Expr::Block(items) => {
             for item in items {
                 rewrite_expr_imports(&mut item.kind, imported);
             }

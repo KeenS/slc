@@ -31,11 +31,11 @@ command main | (exit: -i32) {
     let fresh = fn(u) {
         mu { k <= {
             println("capturing");
-            fn(x) { x } | k
+            ⟨fn(x) { x } | k⟩
         } }
     };
     println(fresh((,))(1) + 1);
     println(str_len(fresh((,))("again")));
 
-    0 | exit
+    ⟨0 | exit⟩
 }
