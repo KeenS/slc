@@ -40,7 +40,7 @@ fn area(s: Shape) -> i64 {
     }
 }
 
-fn label(a: +i64) -> String {
+fn label(a: i64) -> String {
     if a > 50 {
         "big"
     } else {
@@ -56,15 +56,15 @@ fn label(a: +i64) -> String {
 // shape apart exactly as `match` does — one arm per variant, binding the same
 // payload — but each arm ends in a cut instead of producing a value.
 
-fn area_of(out: -i64) <- Shape {
+fn area_of(out: i64) <- Shape {
     select Shape {
         Circle(r) => (3 * r * r) | out⟩,
         Rect(w, h) => (w * h) | out⟩,
     }
 }
 
-fn label_of(out: -String) <- +i64 {
-    select +i64 {
+fn label_of(out: String) <- i64 {
+    select i64 {
         a => if a > 50 {
             "big" | out⟩
         } else {
@@ -73,7 +73,7 @@ fn label_of(out: -String) <- +i64 {
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // Value-first: the shape flows through `area`, then `label`.
     Shape::Circle(5) | area | label | println;
     Shape::Rect(6, 7) | area | label | println;
@@ -88,7 +88,7 @@ command main | (exit: -i32) {
     // returns a String, and the continuation-first one ends in a cut. The
     // `mu` above is what turns the second back into a value; without it,
     // the rest of the program is written inside the last consumer.
-    Shape::Circle(5) | area_of | label_of | select +String {
+    Shape::Circle(5) | area_of | label_of | select String {
         answer => {
             "and directly: " + answer | println;
             0 | exit⟩

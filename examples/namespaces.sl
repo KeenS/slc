@@ -40,7 +40,7 @@ mod physics {
 // `use` makes one name local; everything else stays qualified.
 use geometry::area;
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     geometry::Shape::Circle(5) | area | println;
     geometry::Shape::Rect(6, 7) | physics::weight | println;
     match geometry::origin() {

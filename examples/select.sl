@@ -17,7 +17,7 @@ enum Color {
 
 // A negative function: it consumes the continuation `return` and produces the
 // continuation that a `Color` is cut against.
-fn code(return: -i32) <- Color {
+fn code(return: i32) <- Color {
     select Color {
         Red => 0 | return⟩,
         Green => 1 | return⟩,
@@ -31,7 +31,7 @@ enum Reading {
     Missing,
 }
 
-fn report(value: -i64 & absent: -i64) <- Reading {
+fn report(value: i64 & absent: i64) <- Reading {
     select Reading {
         Measured(measurement) => measurement | value⟩,
         Missing => -1 | absent⟩,
@@ -42,13 +42,13 @@ fn report(value: -i64 & absent: -i64) <- Reading {
 // arm, whose pattern is a plain binder naming the whole value. That consumer
 // is the core's value abstraction `μ̃x. c`: the same binder `let` lowers to,
 // written directly.
-fn twice(out: -i64) <- +i64 {
-    select +i64 {
+fn twice(out: i64) <- i64 {
+    select i64 {
         n => (n * 2) | out⟩,
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     (mu i32 { answer <= Color::Green | (answer | code)⟩ } | println);
     (mu i64 { answer <= Reading::Measured(42) | ((answer, answer) | report)⟩ } | println);
     (mu i64 { answer <= 50 | (answer | twice)⟩ } | println);

@@ -38,7 +38,7 @@ menu Session {
     config: Config,
 }
 
-fn session(n: +i64) -> Session {
+fn session(n: i64) -> Session {
     mu Session {
         next <= (if n > 0 { Step(n) } else { Quit }) | next⟩,
         config <= (mu Config { retries <= n | retries⟩, name <= "session" | name⟩ }) | config⟩,
@@ -66,7 +66,7 @@ enum Slot {
     Holds(Handler),
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let app = App { title: "demo", config: defaults() };
     match app {
         App { title, config } => {

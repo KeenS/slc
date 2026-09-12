@@ -35,7 +35,7 @@ fn sum(p: Pair) -> i64 {
 // ─── A ⅋ B ─── its dual: one consumer that must be given every part.
 // `dual(Pair)` is `-i64 ⅋ -i64`, so the arm binds both fields at once.
 
-fn report_sum(out: -i64) <- Pair {
+fn report_sum(out: i64) <- Pair {
     select Pair {
         Pair { left, right } => (left + right) | out⟩,
     }
@@ -57,8 +57,8 @@ fn total(out: -i64) -> Total {
 
 // A bare product needs no declaration either; its shape is written as the type.
 
-fn report_first(out: -i64) <- (+i64 ⊗ +String) {
-    select (+i64 ⊗ +String) {
+fn report_first(out: i64) <- (i64 ⊗ String) {
+    select (i64 ⊗ String) {
         (count, label) => count | out⟩,
     }
 }
@@ -82,7 +82,7 @@ fn name(c: Colour) -> String {
 // ─── A & B ─── its dual: one branch per variant, and the variant that
 // arrives chooses exactly one of them. The others are never evaluated.
 
-fn code(out: -i64) <- Colour {
+fn code(out: i64) <- Colour {
     select Colour {
         Red => 0 | out⟩,
         Green => 1 | out⟩,
@@ -116,7 +116,7 @@ fn done(k: -⊥) <- unit {
     (,) | k⟩
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // ⊗ : build every part, then take them apart.
     Pair { left: 2, right: 40 } | sum | println;
 

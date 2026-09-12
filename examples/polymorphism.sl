@@ -13,7 +13,7 @@
 
 fn id<T>(x: T) -> T { x }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // A generic declaration: every call chooses its own `T`.
     (7 | id) + 1 | println;
     "seven" | id | str_len | println;

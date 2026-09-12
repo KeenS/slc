@@ -13,15 +13,15 @@ enum IntList {
 }
 
 trait Show {
-    fn show(self: +Self) -> String;
+    fn show(self: Self) -> String;
 }
 
 impl Show for i64 {
-    fn show(self: +i64) -> String { self | int_to_str }
+    fn show(self: i64) -> String { self | int_to_str }
 }
 
 impl Show for bool {
-    fn show(self: +bool) -> String {
+    fn show(self: bool) -> String {
         if self { "true" } else { "false" }
     }
 }
@@ -29,7 +29,7 @@ impl Show for bool {
 // An impl that calls the trait on its elements: `show(h)` dispatches on the
 // element, `show(t)` on the tail.
 impl Show for IntList {
-    fn show(self: +IntList) -> String {
+    fn show(self: IntList) -> String {
         match self {
             // Qualified: the prelude's List also has Nil and Cons, so the
             // bare names are ambiguous here.
@@ -41,11 +41,11 @@ impl Show for IntList {
 
 // A bound generic: `T: Show` lets it call `show` on a value whose type is not
 // known here, discharged to a real impl at each call.
-fn labelled<T: Show>(label: +String, x: +T) -> String {
+fn labelled<T: Show>(label: String, x: T) -> String {
     label + ": " + (x | show)
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // dispatch on the argument's type
     42 | show | println;
     true | show | println;

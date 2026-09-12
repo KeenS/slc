@@ -12,17 +12,17 @@
 // does no work the consumer does not ask for, which is what lets `filter`
 // run over an infinite source.
 
-fn odd(n: +i64) -> bool { n % 2 == 1 }
-fn double(n: +i64) -> i64 { n * 2 }
-fn under_ten(n: +i64) -> bool { n < 10 }
+fn odd(n: i64) -> bool { n % 2 == 1 }
+fn double(n: i64) -> i64 { n * 2 }
+fn under_ten(n: i64) -> bool { n < 10 }
 
 // A step function is another way to write a stream: each step answers an
 // element and the seed the rest is built from.
-fn halving(n: +i64) -> (+i64 ⊗ +i64) {
+fn halving(n: i64) -> (i64 ⊗ i64) {
     (n, n / 2)
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let xs = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))));
 
     // Over data, `Seq` is an ordinary lazy pipeline: nothing runs until

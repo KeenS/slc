@@ -33,7 +33,7 @@ fn shouting(next: Report) -> Report {
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.

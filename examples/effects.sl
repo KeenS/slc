@@ -10,18 +10,18 @@
 // dual of a trait — a trait hands a value the functions it provides, an
 // effect hands a computation the answers it demands.
 
-effect Exn { fn throw(message: +String) -> i64; }
+effect Exn { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
 effect Choose { fn flip() -> bool; }
 
 // An exception: `throw` never returns, so its clause does not resume.
-fn checked_div(a: +i64, b: +i64) -> i64 / {Exn} {
+fn checked_div(a: i64, b: i64) -> i64 / {Exn} {
     if b == 0 { "division by zero" | throw } else { a / b }
 }
 
 // A reader: `config` asks the handler and continues — one resume, and work
 // after it composes.
-fn scaled(x: +i64) -> i64 / {Reader} {
+fn scaled(x: i64) -> i64 / {Reader} {
     x * config()
 }
 
@@ -40,17 +40,17 @@ fn pick() -> String / {Choose} {
 //
 // — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
 // handler around the call is what keeps `main` pure.
-fn half(n: +i64) -> i64 / {Exn} {
+fn half(n: i64) -> i64 / {Exn} {
     if n % 2 == 0 { n / 2 } else { "odd" | throw }
 }
 
 // A negative function carries its row in the same place — after the `<-`
 // arrow — and it means the same thing: performed on the function's watch.
-fn emit(out: -i64) <- i64 / {Reader} {
-    fn(x: +i64) { x * config() | out⟩ }
+fn emit(out: i64) <- i64 / {Reader} {
+    fn(x: i64) { x * config() | out⟩ }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // never resumes — the exception replaces the computation
     let safe = handle ((10, 0) | checked_div) { throw(m) => 0 - 1, return(n) => n };
     safe | println;                       // -1

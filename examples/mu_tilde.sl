@@ -12,11 +12,11 @@
 
 // A `mu` that hands its result to whatever consumer it is given — including
 // one built below.
-command twice(x: +i64) | (k: -i64) {
+command twice(x: i64) | (k: i64) {
     (x * 2) | k⟩
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet.  v ∥ μ̃x.  rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.
@@ -27,7 +27,7 @@ command main | (exit: -i32) {
     //    a positive type, and an atom is the degenerate product — one shape,
     //    one component — so its one arm binds the whole value with a plain
     //    name. This is `μ̃n. println(n) ∥ … ⟩`, spelled in the surface.
-    let show = select +i64 { n => n | println };
+    let show = select i64 { n => n | println };
 
     // Cutting a value against it substitutes: `n` is `42` inside the arm.
     doubled | show⟩;
@@ -36,18 +36,18 @@ command main | (exit: -i32) {
     //    name — and it is what sequencing lowers to. `e₁; e₂` runs `e₁`, binds
     //    its value to a name nobody mentions, and runs `e₂`; the two lines
     //    below are that, taken apart.
-    let discard = select +String { _ => "the value was consumed" | println };
+    let discard = select String { _ => "the value was consumed" | println };
     "thrown away" | discard⟩;
 
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `⅋` means.
-    let report = select (+i64 ⊗ +i64) { (left, right) => left + right | println };
+    let report = select (i64 ⊗ i64) { (left, right) => left + right | println };
     (10, 7) | report⟩;
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
-    50 | twice | select +i64 { n => n | println }⟩;
+    50 | twice | select i64 { n => n | println }⟩;
 
     0 | exit⟩
 }

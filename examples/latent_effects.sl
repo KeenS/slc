@@ -7,7 +7,7 @@
 // perform; every demand incurs it, and the handler that discharges it is
 // the one around the demand — not the one around the construction.
 
-effect Exn { fn throw(message: +String) -> i64; }
+effect Exn { fn throw(message: String) -> i64; }
 
 // The row belongs to the type: demanding a Fallible may throw.
 menu Fallible / {Exn} {
@@ -17,14 +17,14 @@ menu Fallible / {Exn} {
 
 // The constructor declares no row — it performs nothing. Its arms belong
 // to Fallible's latent row and are checked against it.
-fn checked(n: +i64) -> Fallible {
+fn checked(n: i64) -> Fallible {
     mu Fallible {
         value <= (if n >= 0 { n } else { "negative" | throw }) | value⟩,
         doubled <= (if n >= 0 { n * 2 } else { "negative" | throw }) | doubled⟩,
     }
 }
 
-fn risky(x: +i64) -> i64 / {Exn} {
+fn risky(x: i64) -> i64 / {Exn} {
     "late" | throw
 }
 
@@ -37,7 +37,7 @@ menu Scaled / {Reader} {
     amount: i64,
 }
 
-fn scaled(base: +i64) -> Scaled {
+fn scaled(base: i64) -> Scaled {
     mu Scaled {
         amount: out <= base * config() | out⟩,
     }
@@ -56,7 +56,7 @@ fn admit() -> Validated {
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let f = 21 | checked;
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.

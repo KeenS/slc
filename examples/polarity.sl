@@ -9,6 +9,11 @@
 //   negative type    a consumer arrives       the row of a `mu`
 //
 // The one combination a `mu` rejects is in `polarity_error.sl`.
+//
+// Two of the four are what the position already implies, and everywhere else
+// in the corpus they are left off: a value parameter is positive and a
+// continuation row is negative. This program writes every sign out, because
+// the signs are its subject.
 
 // A request enum: each variant carries the continuation that wants the
 // answer. Its dual is codata — a provider that answers one request.

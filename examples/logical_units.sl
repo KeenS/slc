@@ -21,7 +21,7 @@ fn top_value() -> Top {
     mu Top {}
 }
 
-command main | (exit: -i32) -> Bottom {
+command main | (exit: i32) -> Bottom {
     unit_value() | println;
     bottom_demand() | println;
     top_value();

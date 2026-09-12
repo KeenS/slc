@@ -16,15 +16,15 @@ form Bottom {}
 enum Empty {}
 menu Top {}
 
-fn min(a: +i64, b: +i64) -> i64 {
+fn min(a: i64, b: i64) -> i64 {
     if a < b { a } else { b }
 }
 
-fn max(a: +i64, b: +i64) -> i64 {
+fn max(a: i64, b: i64) -> i64 {
     if a > b { a } else { b }
 }
 
-fn abs(n: +i64) -> i64 {
+fn abs(n: i64) -> i64 {
     if n < 0 { 0 - n } else { n }
 }
 
@@ -37,7 +37,7 @@ fn abs(n: +i64) -> i64 {
 // *is* `-A`.
 
 // A tap: log a label and the value passing through, then forward it.
-fn traced<T>(label: +String, k: -T) -> -T {
+fn traced<T>(label: String, k: -T) -> -T {
     fn(x: T) { label | println; x | println; x | k⟩ }
 }
 
@@ -45,7 +45,7 @@ fn traced<T>(label: +String, k: -T) -> -T {
 // — pairs with the `-String` outcomes of `parse_int`, `read_file`, and the
 // other multi-outcome builtins.
 fn defaulting<T>(fallback: T, k: -T) -> -String {
-    fn(m: +String) { fallback | k⟩ }
+    fn(m: String) { fallback | k⟩ }
 }
 
 // ── Lists ────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
 
 // Indexing can find nothing, so it offers its outcomes to continuations,
 // the way the lookup builtins do.
-command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String) {
+command nth<T>(xs: List<T>, i: i64) | (found: T & missing: String) {
     match xs {
         Nil => "nothing at that index" | missing⟩,
         Cons(h, rest) => {
@@ -101,19 +101,19 @@ command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String) {
 // the same act as a plain function.
 
 trait Display {
-    fn fmt(self: +Self) -> String;
+    fn fmt(self: Self) -> String;
 }
 
 impl Display for i64 {
-    fn fmt(self: +i64) -> String { self | int_to_str }
+    fn fmt(self: i64) -> String { self | int_to_str }
 }
 
 impl Display for String {
-    fn fmt(self: +String) -> String { self }
+    fn fmt(self: String) -> String { self }
 }
 
 impl Display for bool {
-    fn fmt(self: +bool) -> String { if self { "true" } else { "false" } }
+    fn fmt(self: bool) -> String { if self { "true" } else { "false" } }
 }
 
 fn to_string<T: Display>(x: T) -> String { x | fmt }
@@ -127,7 +127,7 @@ fn fmt_items<T: Display>(xs: List<T>) -> String {
 }
 
 impl<T: Display> Display for List<T> {
-    fn fmt(self: +List<T>) -> String { "[" + (self | fmt_items) + "]" }
+    fn fmt(self: List<T>) -> String { "[" + (self | fmt_items) + "]" }
 }
 
 // ── The negative side: Stream and Lazy ───────────────────────────────────
@@ -150,7 +150,7 @@ fn repeat<T>(x: T) -> Stream<T> {
     }
 }
 
-fn count_from(n: +i64) -> Stream<i64> {
+fn count_from(n: i64) -> Stream<i64> {
     mu Stream {
         head <= n | head⟩,
         tail <= n + 1 | count_from | tail⟩,
@@ -165,7 +165,7 @@ fn map_stream<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
 }
 
 // The bridge back to data: the first `n` elements, as a list.
-fn take<T>(s: Stream<T>, n: +i64) -> List<T> {
+fn take<T>(s: Stream<T>, n: i64) -> List<T> {
     if n <= 0 { Nil } else { Cons(s.head, (s.tail, n - 1) | take) }
 }
 
@@ -203,7 +203,7 @@ fn zip_stream<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A ⊗ B)> {
 
 // Unlike the others this forces as it goes: `n` demands happen here rather
 // than at the first demand of the result.
-fn drop_stream<T>(s: Stream<T>, n: +i64) -> Stream<T> {
+fn drop_stream<T>(s: Stream<T>, n: i64) -> Stream<T> {
     if n <= 0 { s } else { (s.tail, n - 1) | drop_stream }
 }
 
@@ -282,7 +282,7 @@ fn filter_seq<T, E>(keep: (T -> bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
     }
 }
 
-fn take_seq<T>(s: Seq<T>, n: +i64) -> Seq<T> {
+fn take_seq<T>(s: Seq<T>, n: i64) -> Seq<T> {
     mu Seq {
         next <= if n <= 0 {
             SeqStep::Done | next⟩

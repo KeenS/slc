@@ -71,7 +71,7 @@ consumer transformer that mirrors it are one type:
 
 ```sl
 fn area(s: Shape) -> i64                  // -Shape ⅋ +i64
-fn area_of(out: -i64) <- Shape            // +i64 ⅋ -Shape — the same type
+fn area_of(out: i64) <- Shape             // +i64 ⅋ -Shape — the same type
 ```
 
 Either stands as a stage, and what flows in picks the reading; where
@@ -127,7 +127,7 @@ group, and the closing stage is the row. So a command reads like every
 other call, and ends where control leaves it:
 
 ```sl
-command nth<T>(xs: List<T>, i: +i64) | (found: -T & missing: -String)
+command nth<T>(xs: List<T>, i: i64) | (found: T & missing: String)
 
 (xs, 2) | nth | (found & missing)⟩
 ```
@@ -144,7 +144,7 @@ that happens to return: control does not come back, so nothing after it in a
 block runs, and its type is `⊥`.
 
 ```sl
-command route(x: +i32) | (k: -i32) {
+command route(x: i32) | (k: i32) {
     x | k⟩
 }
 ```
@@ -281,7 +281,7 @@ required by its position:
 
 ```sl
 fn id<T>(value: T) -> T { value }
-fn consume<T>(ok: -T) <- T { 0 | ok⟩ }
+fn consume<T>(ok: T) <- T { 0 | ok⟩ }
 ```
 
 An explicit sign is a constraint, not a change of representation. `+T` denotes
@@ -302,7 +302,7 @@ is refused with a pointer at `match`.
 ```sl
 let (a, b) = pair;
 let Point { x, y } = origin;
-fn skew((a, b): (+i64 ⊗ +i64), c: +i64) -> i64 { a * c - b }
+fn skew((a, b): (i64 ⊗ i64), c: i64) -> i64 { a * c - b }
 ```
 
 This is what the unary calling convention already stood on. A declaration
@@ -329,7 +329,7 @@ positive `fn` may still receive a consumer as a value it forwards — `-String`
 is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
-command route(x: +i32) | (k: -i32) {
+command route(x: i32) | (k: i32) {
     x | k⟩
 }
 ```
@@ -338,10 +338,10 @@ The declaration denotes a command. Its return type is bottom; an optional
 `-> ⊥` annotation may be used as documentation and does not change lowering.
 
 A group with nothing in it is left out rather than written empty: `command
-main | (exit: -i32)` takes no values, and `command log(message: +String)` takes
+main | (exit: i32)` takes no values, and `command log(message: String)` takes
 no continuations. An empty `()` is a parse error saying so.
 
-Conceptually, `command f(x: +A) | (k: -B) { E }` lowers to `λx. λk. E`: the
+Conceptually, `command f(x: A) | (k: B) { E }` lowers to `λx. λk. E`: the
 value parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
 continuations. `k` is a *parameter*: the caller passes it.
@@ -390,7 +390,7 @@ This is how a fallible operation is written. Rather than returning a result
 that a caller inspects, it takes the continuations its outcomes belong to:
 
 ```sl
-command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
     match (input, pos) | at {
         QUOTE => (input, pos) | parse_string | (ok & failed)⟩,
         _ => "expected JSON value" | failed⟩,
@@ -443,7 +443,7 @@ that type can take, a command. For an `enum` that is one arm per variant — the
 negative additive:
 
 ```sl
-fn k(return: -i32) <- Color {
+fn k(return: i32) <- Color {
     select Color {
         Red => 0 | return⟩,
         Green => 1 | return⟩,
@@ -642,7 +642,7 @@ Both multiplicative connectives are available as explicit *type* syntax, and
 are always parenthesized:
 
 ```sl
-fn sum_pair(p: (+i64 ⊗ +i64)) -> i64 { … }
+fn sum_pair(p: (i64 ⊗ i64)) -> i64 { … }
 command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 ```
 
@@ -808,10 +808,10 @@ the carried continuation the copattern way — after a colon, under any name
 (`resume` by convention) — or omits it, for a clause that never resumes:
 
 ```sl
-effect Exn    { fn throw(message: +String) -> i64; }
+effect Exn    { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let safe = handle (10, 0) | checked_div {
         throw(message) => 0 - 1,           // never resumes: an exception
         return(n) => n,
@@ -900,7 +900,7 @@ either, now that consumers are values — an operation takes them as
 ordinary parameters, and the clause cuts into whichever it picks:
 
 ```sl
-effect Judge { fn judge(n: +i64, ok: -String, bad: -String) -> ⊥; }
+effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> ⊥; }
 …
 judge(n, ok, bad) => if n > 3 { "big" | ok⟩ } else { "small" | bad⟩ },
 ```
@@ -929,8 +929,8 @@ cut has spoken — and the same deferral gives a trait a second method
 shape:
 
 ```sl
-trait Describe { fn describe(self: +Self) -> String; }   // receives Self
-trait Deliver  { fn deliver(out: -String) <- Self; }     // consumes Self
+trait Describe { fn describe(self: Self) -> String; }   // receives Self
+trait Deliver  { fn deliver(out: String) <- Self; }     // consumes Self
 ```
 
 A positive method takes `self: +Self` and dispatches on what it receives.
@@ -1033,6 +1033,23 @@ inside one may leave a type out when something else already says it:
 | a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used                             |
 | a `mu`'s produced type: `mu { k <= … }`        | the arm hands `k` to a slot whose type is declared, or cuts a value against it          |
 | a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
+| a type's sign: `x: +i64`, `k: -i64`             | it agrees with the position — see below                                                 |
+
+**A sign is omitted where the position implies it.** The table in §4 has a
+diagonal: a value parameter is positive, a continuation row is negative, and
+the type after `<-` is positive. On the diagonal the sign says nothing the
+position had not already said, so it is left out — `command nth<T>(xs:
+List<T>, i: i64) | (found: T & missing: String)` is the same declaration as
+the fully signed one. Off the diagonal the sign *is* the information, and is
+written: `note: -String` receives a consumer as data, `-> -T` returns one,
+`Refutes(-i64)` carries one in a variant, and `-(-T)` is double negation. The
+implication reaches into an `&` written out in a row — a menu of exits is
+still a menu of exits — but not into a `⅋`, an arrow, or a `dual`, each of
+which states its own polarity.
+
+Writing the implied sign stays legal: an explicit sign is a constraint, and
+on the diagonal it is one the position already meets. `examples/polarity.sl`
+writes all four cells out, because the four cells are its subject.
 
 ```sl
 // `k` goes to a slot `read_file` declares, so it is `-String`, and this
@@ -1042,15 +1059,15 @@ let source = mu { k <=
 };
 
 // `Red` is a variant of exactly one enum, so the type is `Color`.
-fn code(return: -i32) <- Color {
+fn code(return: i32) <- Color {
     select {
         Red => 0 | return⟩,
         Green => 1 | return⟩,
     }
 }
 
-// Nothing in the arm names a type, but `<- +i64` did.
-fn twice(out: -i64) <- +i64 {
+// Nothing in the arm names a type, but `<- i64` did.
+fn twice(out: i64) <- i64 {
     select {
         n => (n * 2) | out⟩,
     }
@@ -1073,7 +1090,7 @@ A program is a command, so its entry point is a `command`. It takes no values
 and exactly one continuation — the exit status:
 
 ```sl
-command main | (exit: -i32) {
+command main | (exit: i32) {
     "Hello, Slant!" | println;
     0 | exit⟩
 }
@@ -1089,7 +1106,7 @@ one it takes for itself. (An earlier design had a top-level `EXIT`; it let any
 function end the program behind `main`'s back, and it is gone.)
 
 ```sl
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let complain = select { message => { message | println; 1 | exit⟩ } };
     "input.txt" | read_file | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
 }
@@ -1222,7 +1239,7 @@ where the handle comes into scope.
 
 ```sl
 let handle = mu { k <= path | open_file | (k & complain)⟩ };
-let exit = select +i32 { status => { handle | close_file; status | exit⟩ } };
+let exit = select i32 { status => { handle | close_file; status | exit⟩ } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the
@@ -1311,7 +1328,7 @@ mod geometry {
 
 use geometry::area;
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     geometry::Shape::Circle(5) | area | println;
     0 | exit⟩
 }
@@ -1537,14 +1554,14 @@ it stands in:
 
 ```sl
 // ¬¬A → A: give the refuter this call's continuation.
-fn dne(refuter: +i64) -> i64 {
+fn dne(refuter: i64) -> i64 {
     mu { k <= k | refuter⟩ }
 }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
     mu { k <=
-        Choice::Refutes(select +i64 { a => Choice::Holds(a) | k⟩ }) | k⟩
+        Choice::Refutes(select i64 { a => Choice::Holds(a) | k⟩ }) | k⟩
     }
 }
 ```

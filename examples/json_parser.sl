@@ -28,19 +28,19 @@
 // The parser validates the complete input, including trailing characters
 // and trailing commas.
 
-const COMMA: +char = ',';
-const COLON: +char = ':';
-const OPEN_BRACKET: +char = '[';
-const CLOSE_BRACKET: +char = ']';
-const OPEN_BRACE: +char = '{';
-const CLOSE_BRACE: +char = '}';
-const QUOTE: +char = '"';
-const BACKSLASH: +char = '\\';
+const COMMA: char = ',';
+const COLON: char = ':';
+const OPEN_BRACKET: char = '[';
+const CLOSE_BRACKET: char = ']';
+const OPEN_BRACE: char = '{';
+const CLOSE_BRACE: char = '}';
+const QUOTE: char = '"';
+const BACKSLASH: char = '\\';
 
 // Reading one character past the end is not an error while looking ahead:
 // the end of the input cannot continue a JSON value. `at` reports a space
 // there, which no JSON value accepts and every value may be followed by.
-fn at(input: +String, pos: +i64) -> char {
+fn at(input: String, pos: i64) -> char {
     if pos < (input | str_len) {
         input[pos]
     } else {
@@ -48,7 +48,7 @@ fn at(input: +String, pos: +i64) -> char {
     }
 }
 
-fn parse_digits(input: +String, pos: +i64) -> i64 {
+fn parse_digits(input: String, pos: i64) -> i64 {
     if pos < (input | str_len) && ((input, pos) | at | is_digit) {
         (input, pos + 1) | parse_digits
     } else {
@@ -56,14 +56,14 @@ fn parse_digits(input: +String, pos: +i64) -> i64 {
     }
 }
 
-fn is_hex(c: +char) -> bool {
+fn is_hex(c: char) -> bool {
     match c {
         '0'..='9' | 'a'..='f' | 'A'..='F' => true,
         _ => false,
     }
 }
 
-command parse_json(input: +String) | (parsed: -String & failed: -String) {
+command parse_json(input: String) | (parsed: String & failed: String) {
     let start = (input, 0) | skip_ws;
     if start < (input | str_len) {
         let end = mu { k <= (input, start) | parse_value | (k & failed)⟩ };
@@ -77,7 +77,7 @@ command parse_json(input: +String) | (parsed: -String & failed: -String) {
     }
 }
 
-command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
     match ((input, pos) | at) {
         '0'..='9' | '-' => (input, pos) | parse_number | (ok & failed)⟩,
         QUOTE => (input, pos) | parse_string | (ok & failed)⟩,
@@ -90,7 +90,7 @@ command parse_value(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_number(input: String, pos: i64) | (ok: i64 & failed: String) {
     let after_sign = if ((input, pos) | at) == '-' {
         pos + 1
     } else {
@@ -104,7 +104,7 @@ command parse_number(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_number_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
     if ((input, pos) | at) == '.' {
         let after_fraction = mu { k <= (input, pos + 1) | parse_fraction | (k & failed)⟩ };
         (input, after_fraction) | parse_exponent | (ok & failed)⟩
@@ -113,7 +113,7 @@ command parse_number_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
     }
 }
 
-command parse_fraction(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_fraction(input: String, pos: i64) | (ok: i64 & failed: String) {
     if ((input, pos) | at | is_digit) {
         (input, pos) | parse_digits | ok⟩
     } else {
@@ -121,7 +121,7 @@ command parse_fraction(input: +String, pos: +i64) | (ok: -i64 & failed: -String)
     }
 }
 
-command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_exponent(input: String, pos: i64) | (ok: i64 & failed: String) {
     let ch = (input, pos) | at;
     if ch == 'e' || ch == 'E' {
         (input, pos + 1) | parse_exponent_tail | (ok & failed)⟩
@@ -130,7 +130,7 @@ command parse_exponent(input: +String, pos: +i64) | (ok: -i64 & failed: -String)
     }
 }
 
-command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_exponent_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
     let after_sign = if ((input, pos) | at) == '-' || ((input, pos) | at) == '+' {
         pos + 1
     } else {
@@ -143,11 +143,11 @@ command parse_exponent_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -St
     }
 }
 
-command parse_string(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_string(input: String, pos: i64) | (ok: i64 & failed: String) {
     (input, pos + 1) | parse_string_tail | (ok & failed)⟩
 }
 
-command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_string_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
     if pos >= (input | str_len) {
         "unterminated JSON string" | failed⟩
     } else {
@@ -164,7 +164,7 @@ command parse_string_tail(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
     }
 }
 
-command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_escape(input: String, pos: i64) | (ok: i64 & failed: String) {
     match ((input, pos) | at) {
         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => {
             (input, pos + 1) | parse_string_tail | (ok & failed)⟩
@@ -174,7 +174,7 @@ command parse_escape(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_hex4(input: String, pos: i64) | (ok: i64 & failed: String) {
     if ((input, pos) | at | is_hex)
         && ((input, pos + 1) | at | is_hex)
         && ((input, pos + 2) | at | is_hex)
@@ -186,7 +186,7 @@ command parse_hex4(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & failed: -String) {
+command parse_literal(input: String, pos: i64, text: String) | (ok: i64 & failed: String) {
     let end = pos + (text | str_len);
     if end <= (input | str_len) && input[pos..end] == text {
         end | ok⟩
@@ -195,7 +195,7 @@ command parse_literal(input: +String, pos: +i64, text: +String) | (ok: -i64 & fa
     }
 }
 
-command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_array(input: String, pos: i64) | (ok: i64 & failed: String) {
     let first = (input, pos + 1) | skip_ws;
     if ((input, first) | at) == CLOSE_BRACKET {
         first + 1 | ok⟩
@@ -204,7 +204,7 @@ command parse_array(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_array_body(input: String, pos: i64) | (ok: i64 & failed: String) {
     let value_end = mu { k <= (input, pos) | parse_value | (k & failed)⟩ };
     let after_value = (input, value_end) | skip_ws;
     let ch = (input, after_value) | at;
@@ -222,7 +222,7 @@ command parse_array_body(input: +String, pos: +i64) | (ok: -i64 & failed: -Strin
     }
 }
 
-command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_object(input: String, pos: i64) | (ok: i64 & failed: String) {
     let first = (input, pos + 1) | skip_ws;
     if ((input, first) | at) == CLOSE_BRACE {
         first + 1 | ok⟩
@@ -231,7 +231,7 @@ command parse_object(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
     }
 }
 
-command parse_object_body(input: +String, pos: +i64) | (ok: -i64 & failed: -String) {
+command parse_object_body(input: String, pos: i64) | (ok: i64 & failed: String) {
     if ((input, pos) | at) == QUOTE {
         let key_end = mu { k <= (input, pos) | parse_string | (k & failed)⟩ };
         let after_key = (input, key_end) | skip_ws;
@@ -259,17 +259,17 @@ command parse_object_body(input: +String, pos: +i64) | (ok: -i64 & failed: -Stri
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
 
     // One consumer per outcome, each ending in a cut against `exit`.
-    let parsed = select +String {
+    let parsed = select String {
         value => {
             "parsed: " + value | println;
             0 | exit⟩
         },
     };
-    let failed = select +String {
+    let failed = select String {
         message => {
             "error: " + message | println;
             1 | exit⟩

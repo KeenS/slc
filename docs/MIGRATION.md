@@ -217,7 +217,7 @@ A `command` writes only the groups it has.
 
 ```sl
 command main() | (exit: -i32) { … }   // old
-command main | (exit: -i32) { … }     // new
+command main | (exit: i32) { … }      // new
 
 command log(message: +String) | () { … }   // old
 command log(message: +String) { … }        // new
@@ -313,7 +313,7 @@ it is in scope.
 ```sl
 fn die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
 
-command main | (exit: -i32) {                            // new
+command main | (exit: i32) {                             // new
     let die = select { m => { m | println; 1 | exit⟩ } };
     …
 }
@@ -330,7 +330,7 @@ fn main() -> i32 {          // old
     42
 }
 
-command main | (exit: -i32) {  // new
+command main | (exit: i32) {  // new
     "hi" | println;
     0 | exit⟩
 }
@@ -394,11 +394,10 @@ continuation each outcome belongs to.
 ```sl
 let content = read_file(path);          // old: a runtime error if it fails
 
-read_file(path, fn(content: +String) -> ⊥ {   // new
-    ...
-}, fn(message: +String) -> ⊥ {
-    ...
-})
+path | read_file | (                          // new
+    select String { content => ... }
+    & select String { message => ... }
+)⟩
 ```
 
 The same applies to `write_file`, `char_at`, `list_get`, `map_get`, and
@@ -419,7 +418,7 @@ A declaration that takes both values and continuations is a `command`, not a `fn
 fn parse_value(input: +String, pos: +i64, report: -ParseResult) -> i64 { ... }
 
 // new: a command with a value group and a continuation group
-command parse_value(input: +String, pos: +i64) | (ok: -i64, report: -ParseResult) { ... }
+command parse_value(input: String, pos: i64) | (ok: i64 & report: ParseResult) { ... }
 ```
 
 The body of a `command` ends in a cut rather than returning: what was a returned
@@ -432,9 +431,7 @@ let value_end = parse_value(input, pos, report);
 ...
 
 // new
-parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
-    ...
-}, report)
+(input, pos) | parse_value | (select i64 { value_end => ... } & report)⟩
 ```
 
 A helper that only computes with values stays an ordinary positive `fn`.
@@ -493,10 +490,10 @@ menu of exits. Nothing written changes, but a row is now a value — it can
 be passed whole:
 
 ```sl
-command nth(xs: List<T>, i: +i64) | (found: -T & missing: -String)
+command nth(xs: List<T>, i: i64) | (found: T & missing: String)
 
-(xs, 2) | nth | (found & missing)⟩            // the exits, as one menu
-command forward(…) | (row: (-T & -String)) {  // or handed on unopened
+(xs, 2) | nth | (found & missing)⟩           // the exits, as one menu
+command forward(…) | (row: (T & String)) {   // or handed on unopened
     (xs, 2) | nth | row⟩
 }
 ```
@@ -606,10 +603,10 @@ consumer:
 ```sl
 enum ParseResult { Parsed(String), Failed(String) }
 
-fn deliver(ok: -String, err: -String) <- ParseResult {
+fn deliver(ok: String & err: String) <- ParseResult {
     select ParseResult {
-        Parsed(text) => text | ok,
-        Failed(message) => message | err,
+        Parsed(text) => text | ok⟩,
+        Failed(message) => message | err⟩,
     }
 }
 ```

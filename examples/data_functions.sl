@@ -23,7 +23,7 @@ enum Size {
 // ─── Positive ────────────────────────────────────────────────────────────
 
 // Takes a record and returns one: build a new value from the old.
-fn translate(p: Point, dx: +i64, dy: +i64) -> Point {
+fn translate(p: Point, dx: i64, dy: i64) -> Point {
     Point { x: p.x + dx, y: p.y + dy }
 }
 
@@ -49,7 +49,7 @@ fn overshoot(s: Size) -> i64 {
 
 // "Takes" a record: the function is a consumer of `Point`, and the arm
 // binds every field at once.
-fn area_of(out: -i64) <- Point {
+fn area_of(out: i64) <- Point {
     select Point {
         Point { x, y } => (x * y) | out⟩,
     }
@@ -57,15 +57,15 @@ fn area_of(out: -i64) <- Point {
 
 // Takes a record and "returns" one: the new value is cut against `out`
 // instead of travelling back through a return.
-fn reflect(out: -Point) <- Point {
+fn reflect(out: Point) <- Point {
     select Point {
         Point { x, y } => Point { x: y, y: x } | out⟩,
     }
 }
 
 // "Returns" an enum: consume a bare number, send one variant onward.
-fn classify_to(out: -Size) <- +i64 {
-    select +i64 {
+fn classify_to(out: Size) <- i64 {
+    select i64 {
         area => if area > 100 {
             Size::Big(area - 100) | out⟩
         } else {
@@ -75,14 +75,14 @@ fn classify_to(out: -Size) <- +i64 {
 }
 
 // "Takes" an enum: one arm per variant; only the arriving variant runs.
-fn overshoot_of(out: -i64) <- Size {
+fn overshoot_of(out: i64) <- Size {
     select Size {
         Small => 0 | out⟩,
         Big(over) => over | out⟩,
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     // Positive: data flows inward through the calls and back out.
     let p = (Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
     p.x | println;                                   // 10

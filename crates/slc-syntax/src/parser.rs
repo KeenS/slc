@@ -879,25 +879,30 @@ impl Parser {
             .into_iter()
             .map(|mut p| {
                 p.is_continuation = true;
-                p.ty = p.ty.map(|ty| match ty {
-                    // The sign is implied only where nothing was written and
-                    // the shape itself does not carry one: a name, an applied
-                    // declaration, a product, unit. A signed type, and any
-                    // shape that is already a consumer — `⅋`, `&`, an arrow,
-                    // `⊥`, a `dual` — says its own polarity and is left
-                    // exactly as written.
-                    TypeExpr::Base(_)
-                    | TypeExpr::Apply(..)
-                    | TypeExpr::Tensor(..)
-                    | TypeExpr::Unit => TypeExpr::Negative(Box::new(Node {
-                        span: Span { start: 0, end: 0 },
-                        kind: ty,
-                    })),
-                    signed => signed,
-                });
+                p.ty = p.ty.map(Self::imply_negative);
                 p
             })
             .collect()
+    }
+
+    /// The sign a continuation position implies. It is supplied only where
+    /// nothing was written and the shape itself does not carry one: a name,
+    /// an applied declaration, a product, unit. A signed type, and any shape
+    /// that is already a consumer — `⅋`, an arrow, `⊥`, a `dual` — says its
+    /// own polarity and is left exactly as written. An `&` is the one shape
+    /// the position reaches into: a menu of exits written out is still a
+    /// menu of exits, so each item is one.
+    fn imply_negative(ty: TypeExpr) -> TypeExpr {
+        fn bare(node: Node<TypeExpr>) -> Box<Node<TypeExpr>> {
+            Box::new(Node { span: node.span, kind: Parser::imply_negative(node.kind) })
+        }
+        match ty {
+            TypeExpr::Base(_) | TypeExpr::Apply(..) | TypeExpr::Tensor(..) | TypeExpr::Unit => {
+                TypeExpr::Negative(Box::new(Node { span: Span { start: 0, end: 0 }, kind: ty }))
+            }
+            TypeExpr::With(a, b) => TypeExpr::With(bare(*a), bare(*b)),
+            signed => signed,
+        }
     }
 
     fn parse_data_expr_fields(&mut self) -> Result<Vec<(String, Node<Expr>)>, ParseError> {

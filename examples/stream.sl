@@ -12,7 +12,7 @@
 // answers the first two elements directly, refining `.tail` with nested
 // copatterns — the arms sharing an outer destructor group into an inner
 // menu, which must again cover every item.
-fn count_from(n: +i64) -> Stream<i64> {
+fn count_from(n: i64) -> Stream<i64> {
     mu Stream {
         head: out <= n | out⟩,
         tail: head: out <= n + 1 | out⟩,
@@ -20,9 +20,9 @@ fn count_from(n: +i64) -> Stream<i64> {
     }
 }
 
-fn double(n: +i64) -> i64 { n * 2 }
+fn double(n: i64) -> i64 { n * 2 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let s = 10 | count_from;
     s.head | println;                            // 10
     s.tail.head | println;                       // 11

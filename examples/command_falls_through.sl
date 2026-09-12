@@ -9,10 +9,10 @@
 //
 //   slc run examples/command_falls_through.sl
 
-command bad(x: +i32) | (k: -i32) {
+command bad(x: i32) | (k: i32) {
     x
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     0 | exit⟩
 }

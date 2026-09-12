@@ -8,7 +8,7 @@
 // Type declarations take parameters — `List<T>`, and `List<i64>` at use —
 // and so do `data`, `menu`, and `form`.
 
-fn double(n: +i64) -> i64 { n * 2 }
+fn double(n: i64) -> i64 { n * 2 }
 
 fn sum(xs: List<i64>) -> i64 {
     match xs {
@@ -17,7 +17,7 @@ fn sum(xs: List<i64>) -> i64 {
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let xs = List::Cons(1, List::Cons(2, List::Cons(39, List::Nil)));
     xs | length | println;                    // 3
     xs | sum | println;                       // 42

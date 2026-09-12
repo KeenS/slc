@@ -47,7 +47,7 @@ fn reroute(k: -Config) -> -Config {
     }
 }
 
-command main | (exit: -i32) {
+command main | (exit: i32) {
     let cfg = config();
 
     // Demand one item off the menu: the mirror of record projection.
