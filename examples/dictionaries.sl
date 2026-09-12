@@ -18,5 +18,5 @@ command main | (exit: -i32) {
     println(show(42));      // 42  — concrete receiver, a direct impl call
     println(relay(7));      // [77] — i64 dictionary threaded through relay→twice
     println(relay(true));   // [TT] — bool dictionary, same code
-    0 @ exit
+    0 | exit
 }

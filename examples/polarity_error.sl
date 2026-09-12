@@ -11,9 +11,9 @@
 // something that is not a consumer. (`k` gives the body a real continuation
 // to reach, so the error left is the one about `j`.)
 command bad_continuation | (j: +i32 & k: -i32) {
-    0 @ k
+    0 | k
 }
 
 command main | (exit: -i32) {
-    0 @ exit
+    0 | exit
 }

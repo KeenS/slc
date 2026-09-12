@@ -57,5 +57,5 @@ command main | (exit: -i32) {
     // recursive dispatch: the list impl calls show on each element
     println(show(IntList::Cons(1, IntList::Cons(2, IntList::Nil))));
 
-    0 @ exit
+    0 | exit
 }

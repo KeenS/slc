@@ -7,5 +7,5 @@ command main | (exit: -i32) {
     println(10 >= 10);
     println('a' < 'b');
     println(true && !false);
-    0 @ exit
+    0 | exit
 }

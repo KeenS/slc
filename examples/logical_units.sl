@@ -25,5 +25,5 @@ command main | (exit: -i32) -> Bottom {
     println(unit_value());
     println(bottom_demand());
     top_value();
-    0 @ exit
+    0 | exit
 }

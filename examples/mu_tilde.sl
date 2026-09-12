@@ -13,7 +13,7 @@
 // A `mu` that hands its result to whatever consumer it is given — including
 // one built below.
 command twice(x: +i64) | (k: -i64) {
-    (x * 2) @ k
+    (x * 2) | k
 }
 
 command main | (exit: -i32) {
@@ -30,26 +30,26 @@ command main | (exit: -i32) {
     let show = select +i64 { n => println(n) };
 
     // Cutting a value against it substitutes: `n` is `42` inside the arm.
-    doubled @ show;
+    doubled | show;
 
     // 3. A binder that ignores its value is the same co-term with `_` for a
     //    name — and it is what sequencing lowers to. `e₁; e₂` runs `e₁`, binds
     //    its value to a name nobody mentions, and runs `e₂`; the two lines
     //    below are that, taken apart.
     let discard = select +String { _ => println("the value was consumed") };
-    "thrown away" @ discard;
+    "thrown away" | discard;
 
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `⅋` means.
     let report = select (+i64 ⊗ +i64) { (left, right) => println(left + right) };
-    (10, 7) @ report;
+    (10, 7) | report;
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
     twice(50, select +i64 { n => println(n) });
 
-    0 @ exit
+    0 | exit
 }
 
 // The labelled μ̃ — `μ̃[ L(x…). c … ]`, one branch per variant of an `enum` —

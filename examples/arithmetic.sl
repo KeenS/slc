@@ -11,5 +11,5 @@ command main | (exit: -i32) {
     println(6 * 7);
     println(100 / 10);
     println(-7 + 2);
-    0 @ exit
+    0 | exit
 }

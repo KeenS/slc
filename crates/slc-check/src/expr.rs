@@ -849,6 +849,33 @@ fn tail_expr(e: &Expr) -> &Expr {
     }
 }
 
+/// Would these meet, if we tried? The attempt runs on a copy of the
+/// unification state, so asking costs nothing: a flow reads its own shape
+/// this way, where one type admits two readings.
+fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> bool {
+    if actual == &Type::Bottom {
+        return true;
+    }
+    let mut probe = env.uni.clone();
+    if probe.unify(expected, actual).is_ok() {
+        return true;
+    }
+    // An integer literal takes the width its port requires, here too.
+    expr.is_some_and(is_integer_literal)
+        && is_numeric(&env.uni.apply(expected))
+        && is_numeric(actual)
+}
+
+/// What a stage can take: a `Par` reads either as a function, which takes
+/// its argument, or as a consumer of the product it is dual to — `-A ⅋ -B`
+/// consumes `A ⊗ B`. Anything else consumes its own dual.
+fn stage_accepts(ty: &Type) -> Vec<Type> {
+    match ty {
+        Type::Par(argument, _) => vec![argument.dual(), ty.dual()],
+        other => vec![other.dual()],
+    }
+}
+
 fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     // A value that never arrives constrains nothing.
     if actual == &Type::Bottom {
@@ -2389,25 +2416,64 @@ fn check_expr_unapplied(
                 .iter()
                 .map(|stage| check_expr(stage, enums, env, diags).map(|ty| env.uni.apply(&ty)))
                 .collect();
-            let opens = types
-                .first()
-                .and_then(|ty| ty.as_ref())
-                .is_some_and(|ty| !matches!(ty, Type::Var(_)) && ty.is_negative());
+            // Does the chain begin with a value, or with a function it
+            // composes from? The second stage answers: if it accepts the
+            // first as a value, the chain is closed at the left. A function
+            // is itself a value, so `f | k` may be either the composition
+            // or the cut that sends `f` to `k` — and only `k` says which.
+            let opens = match (types.first().and_then(|ty| ty.as_ref()), types.get(1)) {
+                (Some(first), Some(Some(second))) => !stage_accepts(second)
+                    .iter()
+                    .any(|accepts| would_fit(env, accepts, first, Some(&stages[0].kind))),
+                _ => false,
+            };
             let entry = env.uni.fresh_var();
             let mut acc = if opens {
                 entry.clone()
             } else {
                 types[0].clone().unwrap_or_else(|| env.uni.fresh_var())
             };
+            // What flows in, as it was written: an integer literal takes the
+            // width the next stage requires, and only the first stage can be
+            // one — everything later is the result of a step.
+            let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
             let mut cut = false;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
                 let Some(ty) = ty else { continue };
                 let last = index + 1 == types.len();
+                let shape = flowing.unwrap_or(&e.kind);
+                // An unsolved stage is whatever this position needs: the
+                // last one closes the chain, an earlier one passes it on.
+                if matches!(ty, Type::Var(_)) {
+                    let wanted = if last {
+                        cut = true;
+                        let closing = acc.dual();
+                        acc = Type::Bottom;
+                        closing
+                    } else {
+                        let result = env.uni.fresh_var();
+                        let stepping = Type::arrow(acc.clone(), result.clone());
+                        acc = result;
+                        stepping
+                    };
+                    if env.uni.unify(ty, &wanted).is_err() {
+                        diags.push(Diagnostic {
+                            message: format!("this stage cannot take {wanted}"),
+                            span: stages[index].span,
+                        });
+                    }
+                    flowing = None;
+                    continue;
+                }
                 match ty {
-                    // A function: the value flows in, its result flows on.
-                    Type::Par(argument, result) => {
+                    // A function, when what flows in is what it takes —
+                    // otherwise it is the consumer of a product, which is
+                    // the other thing a `Par` can be.
+                    Type::Par(argument, result)
+                        if would_fit(env, &argument.dual(), &acc, flowing) =>
+                    {
                         let expects = argument.dual();
-                        if !fits(env, &expects, &acc, &stages[index].kind) {
+                        if !fits(env, &expects, &acc, shape) {
                             let expects = env.uni.apply(&expects);
                             diags.push(Diagnostic {
                                 message: format!(
@@ -2418,12 +2484,17 @@ fn check_expr_unapplied(
                             });
                         }
                         acc = env.uni.apply(result);
+                        flowing = None;
                     }
-                    // A consumer: the chain closes here, and nothing flows
-                    // out of it.
-                    ty if ty.is_negative() && !matches!(ty, Type::Var(_)) => {
+                    // Anything else consumes what flows in, so the chain
+                    // closes here. Which types those are is not worth
+                    // classifying — a `menu` value consumes requests, a
+                    // continuation of codata is positive, a bundle is a
+                    // menu of exits — and duality settles it, exactly as it
+                    // settles a cut.
+                    ty => {
                         let expects = ty.dual();
-                        if !fits(env, &expects, &acc, &stages[index].kind) {
+                        if !fits(env, &expects, &acc, shape) {
                             let expects = env.uni.apply(&expects);
                             diags.push(Diagnostic {
                                 message: format!(
@@ -2443,16 +2514,6 @@ fn check_expr_unapplied(
                         }
                         cut = true;
                         acc = Type::Bottom;
-                    }
-                    other => {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "a stage receives what flows in, so it is a function or a \
-                                 consumer; this has type {other}"
-                            ),
-                            span: stages[index].span,
-                        });
-                        return None;
                     }
                 }
             }
