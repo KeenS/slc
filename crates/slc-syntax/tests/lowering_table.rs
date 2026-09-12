@@ -30,7 +30,7 @@ const ROWS: &[Row] = &[
     Row { id: "expr.lambda", source: "fn f() -> i32 { fn(x: +i32) -> i32 { x } }", core: "λx. x" },
     Row { id: "expr.pair", source: "fn f() -> i32 { (1, 2) }", core: "($int_1 ⊗ $int_2)" },
     Row {
-        id: "expr.cut", source: "fn f(k: -i32) <- i32 { 1 | k }", core: "μ__cut. ⟨$int_1 ∥ k⟩"
+        id: "expr.flow", source: "fn f(k: -i32) <- i32 { 1 | k }", core: "μ__cut. ⟨$int_1 ∥ k⟩"
     },
     Row {
         id: "expr.let", source: "fn f() -> i32 { let x = 1; x }", core: "μlet. ⟨$int_1 ∥ μ̃x."

@@ -59,108 +59,36 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **Flow, rows, and the nullary spellings — the composition redesign.**
-  Decided in discussion; the decisions first, then the steps.
+- **Irrefutable patterns at binders, as in Rust.** The one box of the
+  composition redesign still open; everything else in it has shipped.
+  `let p = e`, a parameter `p: T`, and a `mu` binder arm `p <= c` take a
+  pattern, not just a name. A header *is* such a pattern with typed
+  leaves — the value group a tuple pattern on the one argument, the
+  continuation group a bundle pattern on the one exit-menu — which is
+  what the unary calling convention already stands on, with plain names
+  where patterns belong.
 
-  *Decisions.* `|` is **flow**, and it is the only connective: `@` is
-  abandoned. `v | f` applies, `f | g` composes functions, `f | k`
-  composes a function into a consumer (retiring the prelude's `then`),
-  and `v | k` is the cut. A pipeline is named by its hole: `v | f` awaits
-  a continuation (it is a value), `f | k` awaits a value (it is a
-  consumer), and a pipeline closed at both ends — value at the left,
-  consumer at the right — is a command. The pipe reads left to right, so
-  the orientation rule survives as: a consumer may stand only at the
-  right end, and nothing flows out of one (`v | k | x` is refused, as
-  chaining a cut is today). Calls and rows become **unary**: `f(a, b)`
-  is `f((a, b))`, and a continuation row is one parameter — a **negative
-  additive**, since the caller supplies every exit and the callee takes
-  exactly one, and `dual(-A & -B) = A ⊕ B` says a two-exit command yields
-  one of two outcomes. A row is therefore an *anonymous menu of
-  consumers*, and `| (found, missing)` is its copattern, as `(x, y)` is a
-  tuple's. **Headers omit signs where the position decides them**: the
-  value group `(v1: T1, v2: T2)` is `T1 ⊗ T2`, and the continuation group
-  `(k1: T1 & k2: T2)` names what *reaches* each exit — its type is
-  `-T1 & -T2`, the sign implied by the group, the way a `menu` lists what
-  each item answers. So `command c(v1: T1, v2: T2) | (k1: T3 & k2: T4)`
-  has type `(T1 ⊗ T2) → (T3 ⊕ T4)`, and a negative function
-  `fn f(k1: T1 & k2: T2) <- T3` — no value group, only the bundle — is
-  `T3 → (T1 ⊕ T2)` by involution: it takes a `T3` and delivers to one
-  exit. A one-exit command is then the positive function's type exactly,
-  which is the two-styles story already told. Written as a standalone
-  *type expression*, `&` stays the plain connective and a bundle of
-  exits is `(-A & -B)` with its signs; only header groups imply them.
-  Spellings: `&` is lexed; the anonymous type is `(A & B)`; the
-  bundle literal is `(k1 & … & kn)` for two or more exits (a `mu` cannot
-  forward an existing continuation as an item — the arm would put a
-  consumer on the value side of a cut); one exit is the continuation
-  itself (`-A & ⊤ ≅ -A`); and *a paren holding only the separator is the
-  nullary form*: `(&)` is ⊤'s unique value (the empty menu — the prelude's
-  `menu Top {}`, not Bottom, which is the nullary form), `(,)` is unit,
-  replacing `()` as a value; `f()` remains the zero-argument call, which
-  also retires the runtime's separate no-arguments marker.
+  - [ ] `Expr::Let { name }` and `Param { name }` become patterns; a bare
+        name is the trivial one. The bundle copattern `(p & q)` and the
+        nullary `(,)`/`(&)` patterns already parse, so the grammar work is
+        in the binder positions.
+  - [ ] Refutability: a binder pattern must be exhaustive for its type —
+        reuse `exhaustive.rs` — so tuples, records, single-variant enums,
+        wildcards, and bundles pass, and a many-variant enum is refused
+        with a pointer at `match`.
+  - [ ] Lowering: `let p = e; rest` is the one-arm match, a parameter
+        pattern a match on the incoming argument (`bind_group` already
+        destructures a group; this generalises its binders), a bundle
+        pattern its projections. `let … else` stays out of scope.
+  - [ ] Nested patterns at every leaf: `fn f((a, b): (i64, i64), c: String)`.
+        Example and DESIGN note; MIGRATION needs nothing, since names stay
+        the trivial pattern.
 
-  - [ ] Lex `&`; parse `(A & B)` as `TypeExpr::With` lowering to
-        `Type::With`, and `(&)` in type position as the prelude's `Top`.
-  - [ ] Parse `(k1 & k2 & …)` to a bundle expression, `(&)` to ⊤'s value,
-        `(,)` to unit; remove `()` as a value expression (keep `f()`), and
-        drop `Value::NoArguments` in favour of unit. Migrate every `()`.
-  - [ ] Type the bundle as `With` of its components' types; project it
-        positionally (`out.0`, `out.1`) through `Expr::Project`, so
-        `n @ out.0` takes an exit. Runtime: a bundle is a pair chain, as a
-        tuple is — the machine is untyped.
-  - [ ] Retype rows: a command's continuation group `(k1: T1 & k2: T2)`
-        is one parameter of type `-T1 & -T2` — the group's `&` separates
-        components and implies their sign; a negative fn's group is the
-        same, and the polarity rule accepts a `With` of consumers as a
-        continuation parameter. The copattern `| (a & b)` binds the
-        components. Call sites pass a bundle; the positional per-slot
-        check becomes one type check. Headers: `(v: T)` in a value group
-        and `(k: T)` in a continuation group both omit the sign; a sign
-        stays legal and must agree. DESIGN's "row" wording moves from
-        positional to `&`, and its polarity section states the rule that
-        signs are written only where position does not decide.
-  - [ ] Irrefutable patterns at binders, as in Rust: `let p = e`, a
-        parameter `p: T`, and a `mu` binder arm `p <= c` take a pattern,
-        not just a name. A header *is* such a pattern with typed leaves —
-        the value group a tuple pattern on the one argument, the
-        continuation group a bundle pattern on the one exit-menu — so
-        this is what unary-ization stands on. The pattern grammar gains
-        the bundle copattern `(p & q)`, the anonymous menu's counterpart
-        to the tuple pattern, binding each exit; nested patterns are
-        allowed at every leaf. Refutability: a binder pattern must be
-        exhaustive for its type — reuse `exhaustive.rs` — so tuples,
-        records, single-variant enums, wildcards, and bundles pass, and a
-        many-variant enum is refused with a pointer at `match`. Lowering:
-        `let p = e; rest` is the one-arm match, a parameter pattern a
-        match on the incoming argument, a bundle pattern its projections.
-        AST: `Expr::Let { name }` and `Param { name }` become patterns
-        (a bare name is the trivial one). `let … else` stays out of
-        scope.
-  - [ ] Unary values: `f(a, b)` packs a tensor and the declaration
-        destructures it (`μ̃(x, y)`), replacing curried lowering; function
-        values then have single-argument types, and `parse_int`-style
-        builtins take their arguments the same way. This is the step
-        that makes every stage of a pipeline one-in, one-out.
-  - [ ] `|`: a binop at a new lowest level (below `||`), associative.
-        Checker: by the operands' polarity — value into function applies,
-        function into function composes, function into consumer builds a
-        consumer, value into consumer is the cut (type `⊥`); a consumer
-        anywhere but the right end is refused. Lowering: application, a
-        composed closure, the `then` shape, and today's `Expr::Cut`
-        respectively — the cut node stays internally as the closed case.
-  - [ ] Retire `@`: remove the token and the cut parse path; migrate
-        every `@` in the prelude, examples, tests, DESIGN, and the design
-        notes to `|`. The effect checker's cut-site charging (latent rows
-        at a feed, a rowed consumer parameter, a result-latent call in
-        consumer position) moves to the closed-pipeline case. DESIGN's
-        "the left of `@` is the value side" becomes the pipe's
-        orientation rule.
-  - [ ] Delete `then` from the prelude; rewrite its uses as `f | k`.
-  - [ ] Examples: `pipeline.sl` showing the three readings and the
-        associativity (`v | f | g @ k` and `v @ f | g | k` agree), a
-        two-exit command written unary. MIGRATION: `@` → `|`, `()` → `(,)`,
-        rows, `then`. DESIGN: the flow operator and its four readings,
-        rows as `&`, the nullary rule.
+- **Retire `Expr::Cut`.** Nothing constructs it now that `@` is gone —
+  a closed flow is the cut — but the node and its arms remain in the AST,
+  the checker, the effect checker, and lowering. Delete it, or keep it as
+  the internal representation a closed chain lowers *through* rather than
+  a parallel form.
 
 ## Deferred, for discussion
 

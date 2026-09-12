@@ -48,7 +48,33 @@ Evaluation proceeds by cuts. A proof meets a refutation; the interaction
 determines which reduction fires. There is no privileged application head and
 no language-level concurrency primitive.
 
-## 3. Application and cut
+## 3. Flow: application, composition, and the cut
+
+Everything moves left to right through one operator. `a | b` is **flow**,
+and what a step means follows from polarity — no other reading is
+available, so none has to be chosen:
+
+| left | right | the step | result |
+|---|---|---|---|
+| value `A` | function `A → B` | application | a value `B` |
+| function `A → B` | function `B → C` | composition | a function `A → C` |
+| function `A → B` | consumer `-B` | composition | a consumer `-A` |
+| value `A` | consumer `-A` | **the cut** | a command, `⊥` |
+
+A chain is flat, because composition is associative and the syntax says
+so: `v | f | g | k` may be bracketed any way and is the same expression.
+A chain is named by its hole — `v | f` awaits a continuation, `f | k`
+awaits a value — and one closed at both ends is a command. The
+orientation rule the cut always had survives as the direction of the
+pipe: **a consumer stands only at the right end**, since nothing flows
+out of one.
+
+Two of those readings share a type, and what flows in decides between
+them. A `Par` is both a function and the consumer of the product it is
+dual to — `-A ⅋ -B` consumes `A ⊗ B` — so `21 | double` applies while
+`(7, "x") | report_first(k)` cuts. And a function is itself a value, so
+`f | k` composes when `k` takes what `f` returns, and is the cut that
+sends `f` to `k` when `k` takes `f`.
 
 Two operations look alike in most languages and are different here.
 
@@ -73,9 +99,8 @@ command route(x: +i32) | (k: -i32) {
 }
 ```
 
-`@` binds more loosely than every operator, so `a + b | k` sends the sum. It
-is not associative: a cut has no result, so it cannot be the value of another
-cut. The consumer may be any expression that produces one — a name, or a
+`|` binds more loosely than every operator, so `a + b | k` sends the sum.
+The consumer may be any expression that produces one — a name, or a
 negative function applied to its row:
 
 ```sl
@@ -487,7 +512,7 @@ Three request forms complete the surface:
   the answer goes.
 
 A menu type is negative, but a menu is a *value*: it may be returned
-(`-> Config`), passed as a value parameter, and sit on the left of `@` — the
+(`-> Config`), passed as a value parameter, and sit at the left of a flow — the
 box discipline applies to consumers, and a menu is the thing consumers'
 requests are sent to, not a consumer.
 
@@ -909,7 +934,7 @@ fn dne<T>(t: -(-T)) -> T { t }
 dne(42)   // 42: -(-i64) and +i64 are one type
 ```
 
-One orientation rule remains, and it is load-bearing: **the left of `@` is
+One orientation rule remains, and it is load-bearing: **the left of `|` is
 the value side**. Without it, the involution would let any positive value
 pass for a consumer of consumers — `dual(-i64) = +i64`, so `⟨k ∥ 42⟩`
 would type — and the machine only runs cuts whose right side really
@@ -1027,11 +1052,11 @@ form — and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
 **`Display` trait** — `fn fmt(self: +Self) -> String`, user-facing
 formatting as in Rust, with impls for `i64`, `String`, `bool`, and
 `List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
-three **consumer combinators**: `then(f, k)` — the composition of a function with a
-continuation, `-A` from `A → B` and `-B` — `traced(label, k)`, a tap that
+two **consumer combinators**: `traced(label, k)`, a tap that
 logs what passes through and forwards it, and `defaulting(fallback, k)`, a
 `-String` failure consumer that discards the message and sends `fallback`
-onward, made for the multi-outcome builtins below.
+onward, made for the multi-outcome builtins below. (A third, `then(f, k)`,
+is gone: composing a function with a continuation is `f | k`.)
 
 The combinators share one shape, and it is forced: a negative `fn`'s
 parameters form its continuation row, and values do not ride in a row — so
@@ -1094,7 +1119,7 @@ let exit = select +i32 { status => { close_file(handle); status | exit } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the
-composed door, so every later `@ exit` — unhappy paths included — closes the
+composed door, so every later `| exit` — unhappy paths included — closes the
 file on its way through. `examples/file_io.sl` is written this way.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range index
@@ -1357,7 +1382,7 @@ nested left to right for several arguments.
 | `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
-| `expr.cut` | `v | k` | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut` |
+| `expr.flow` | `v | k`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut`. A chain that does not close is a fold of applications, and one that does not begin with a value is that fold under a λ |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
 | `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
@@ -1383,7 +1408,7 @@ become λ binders.
 | Core construct | Surface representation |
 |---|---|
 | `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
-| `μα. c` | local `mu` expression, `@` against a named consumer, and the lowering of `let`, blocks, and applications |
+| `μα. c` | local `mu` expression, a flow that closes against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `data` literals, `(A ⊗ B)` values |
 | `L(t)` | `enum` values and `data` values — a labelled product |
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |

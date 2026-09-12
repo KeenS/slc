@@ -439,6 +439,43 @@ parse_value(input, pos, fn(value_end: +i64) -> ⊥ {
 
 A helper that only computes with values stays an ordinary positive `fn`.
 
+## `|` is flow, and `@` is gone
+
+Everything moves left to right through one operator, and polarity says
+what each step means: a value into a function applies, a function into a
+function or a consumer composes, and a value into a consumer is the cut.
+
+```sl
+v @ k                          // old
+v | k                          // new — the cut
+
+then(f, k)                     // old — the prelude combinator, now deleted
+f | k                          // new — the same consumer
+
+21 @ then(double, out)         // old
+21 | double | out              // new
+```
+
+A chain is flat, because composition is associative: `v | f | g | k` may
+be read with any bracketing and means the same thing. A consumer stands
+only at the right end — nothing flows out of one. `@` keeps its other
+job, the as-pattern binder `c @ '0'..='9'`.
+
+## Calls and rows are unary
+
+A declaration binds one argument per group, so the parameters of a group
+are its parts: `f(a, b)` is `f((a, b))`, and a continuation row is one
+menu of exits. Nothing written changes, but a row is now a value — it can
+be passed whole:
+
+```sl
+command nth(xs: List<T>, i: +i64) | (found: -T & missing: -String)
+
+nth(xs, 2, found, missing)             // the exits spread
+nth(xs, 2, (found & missing))          // or handed over as one bundle
+command forward(…) | (row: (-T & -String)) { nth(xs, 2, row) }
+```
+
 ## Handler clauses bind their continuation after a colon
 
 An operation is a demand, and its clause binds the carried continuation
