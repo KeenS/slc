@@ -1125,19 +1125,6 @@ impl Parser {
                         });
                     }
                     let field_name = self.peek_kind().cloned();
-                    if matches!(field_name, Some(TokenKind::Ident(_)) | Some(TokenKind::Return))
-                        && self.tokens.get(self.pos + 1).map(|t| &t.kind)
-                            == Some(&TokenKind::LBrace)
-                    {
-                        let name = self.expect_name("data name")?;
-                        let fields = self.parse_data_expr_fields()?;
-                        let end = self.span_end();
-                        e = Node {
-                            span: Span { start: e.span.start, end },
-                            kind: Expr::Data { name, fields },
-                        };
-                        continue;
-                    }
                     // `base.0` — positional projection of a tuple.
                     if let Some(TokenKind::Int(n)) = field_name {
                         self.pos += 1;
