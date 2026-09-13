@@ -290,6 +290,14 @@ A row is supplied as one menu — the chain's closing stage — so a caller
 writes exactly one bundle, and a row of the wrong width is a type error
 at that stage rather than a miscount of arguments.
 
+Every item of a bundle is evaluated as the bundle is built, and the
+consumer chooses one afterwards. So an item that ends in a cut — a block
+`{ ⟨0 | exit⟩ }`, or a bare cut — is refused: it would jump before anything
+chose it, whether the slot is declared `(;)` or `-(,)`. The item is written
+as the consumer it means, `fn(_) { ⟨0 | exit⟩ }`. The rule is the bundle's
+alone. Elsewhere a `⊥` value is reached when it is meant to be: a
+`mu (;) { … }` passed as an argument captures the call it stands in.
+
 What *is* enforced is that control is **total**: a `command` body must be `⊥`
 — it reaches a continuation on every path — so a body that falls off the end
 (a bare value) or dangles (an `if` with no `else`, whose false path yields

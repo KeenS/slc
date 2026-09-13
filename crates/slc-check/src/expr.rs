@@ -2988,12 +2988,29 @@ fn check_expr_unapplied(
             Some(Type::Par(types))
         }
         // A bundle of exits: every component is supplied, and whoever
-        // holds it takes exactly one — the additive conjunction.
-        Expr::Bundle(items) => items
-            .iter()
-            .map(|item| check_expr(item, enums, env, diags))
-            .collect::<Option<Vec<_>>>()
-            .map(Type::With),
+        // holds it takes exactly one — the additive conjunction. Every item
+        // is evaluated as the bundle is built, so an item that ends in a cut
+        // would jump before anything chose it: it is refused, and the item
+        // is written as the consumer it meant to be.
+        Expr::Bundle(items) => {
+            let types = items
+                .iter()
+                .map(|item| {
+                    let ty = check_expr(item, enums, env, diags);
+                    if ty.as_ref().is_some_and(|ty| env.uni.apply(ty) == Type::BOTTOM) {
+                        diags.push(Diagnostic {
+                            message: "this item of a bundle ends in a cut, so it would jump \
+                                      while the bundle is built, before anything chooses it; \
+                                      write the consumer instead: `fn(_) { … }`"
+                                .into(),
+                            span: item.span,
+                        });
+                    }
+                    ty
+                })
+                .collect::<Vec<_>>();
+            types.into_iter().collect::<Option<Vec<_>>>().map(Type::With)
+        }
         Expr::Pair(items) if items.is_empty() => Some(Type::ONE),
         Expr::Pair(items) => items
             .iter()
@@ -3857,6 +3874,36 @@ mod tests {
     fn guard_must_be_bool() {
         let diags = check("fn f(c: +i64) -> i64 { match c { _ if c => 1 } }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("match guard")));
+    }
+
+    #[test]
+    fn a_bundle_item_that_ends_in_a_cut_is_refused() {
+        // Every item is built with the bundle, so a jump in one fires before
+        // anything chooses it — whether the row declares `(;)` or `-(,)`.
+        for (row, arm) in [("(;)", "then"), ("-(,)", "⟨(,) | then⟩")] {
+            let src = format!(
+                "command choose(c: bool) | (then: {row} & otherwise: {row}) {{
+                     match c {{ true => {arm}, _ => {arm} }}
+                 }}
+                 command main | (exit: -i32) {{
+                     ⟨1 < 0 | choose | ({{ ⟨0 | exit⟩ }} & {{ ⟨1 | exit⟩ }})⟩
+                 }}"
+            );
+            let diags = check(&src).unwrap_err();
+            assert!(diags.iter().any(|d| d.message.contains("ends in a cut")), "{row}: {diags:?}");
+        }
+        // The consumers the items meant are accepted.
+        assert!(
+            check(
+                "command choose(c: bool) | (then: -(,) & otherwise: -(,)) {
+                     match c { true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
+                 }
+                 command main | (exit: -i32) {
+                     ⟨1 < 0 | choose | (fn(_) { ⟨0 | exit⟩ } & fn(_) { ⟨1 | exit⟩ })⟩
+                 }"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

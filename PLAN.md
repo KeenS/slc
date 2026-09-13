@@ -23,7 +23,7 @@ reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The open work is a set of surface
 simplifications that remove syntax in favour of ordinary declarations, a
-documentation pass, and three defects.
+documentation pass, and two defects.
 
 ## Known limits
 
@@ -67,18 +67,6 @@ documentation pass, and three defects.
 
 ### Defects
 
-- **A `⊥` block in a bundle runs when the bundle is built.** A block that
-  ends in a cut is accepted as an item of a row, whether the row declares
-  `(;)` or `-(,)`, and nothing is reported. But the block is evaluated as the
-  bundle is built, like any other argument, so it jumps before whatever
-  consumes the bundle has chosen. Given
-  `command choose(c: bool) | (then: (;) & otherwise: (;))`,
-  `⟨1 < 0 | choose | ({ … ⟨0 | exit⟩ } & { … ⟨1 | exit⟩ })⟩` runs the first
-  block and exits 0, and
-  `mu i64 { r <= ⟨n <= 0 | choose | ({ ⟨0 | r⟩ } & { … })⟩ }` answers 0 for
-  `n = 3`. The fix is "A `⊥` block is refused where a value is built";
-  "Negative positions by name" would later make the block a thunk instead.
-
 - **A builtin's arguments are not checked against its signature.** `add` is
   declared `(i64, i64) -> i64`, yet `⟨(1, "b") | add` passes the checker and
   fails at run time with "add expects two integer arguments". The fix is
@@ -92,24 +80,9 @@ documentation pass, and three defects.
 
 ### Defects
 
-These fix the first two defects under "Known limits". The third,
+This fixes the first defect under "Known limits". The second,
 exhaustiveness over `bool`, is fixed by "`bool` is defined in the prelude",
 the last of the surface simplifications.
-
-- **A `⊥` block is refused where a value is built.** A block that ends in a
-  cut belongs where it is the last thing that happens: a function body, a
-  command body, a branch. Those positions already treat `⊥` themselves (a
-  body of type `⊥` is exempt from its return type, a command body must be
-  `⊥`, and `if` joins its branches by its own rule). Anywhere else the
-  block runs while the value around it is built, so its cut fires before
-  anything consumes that value: a call argument, a tuple component, an item
-  of a bundle passed as a row. Those positions should refuse it, whatever
-  the slot declares — a row slot declared `(;)` included. It gets in by two
-  routes today: `fits` accepts any `⊥` wherever anything is expected ("A
-  value that never arrives constrains nothing", `expr.rs`), and a slot
-  typed `(;)` matches it structurally. What the programmer writes instead
-  is a consumer, `fn(_) { … }`. If "Negative positions by name" is adopted,
-  a `⊥` item of a row becomes legal again, as a thunk.
 
 - **A builtin's arguments are checked against its signature.** The checker
   exempts builtins in `check_call_arguments` and in the chain-stage checks,
@@ -335,8 +308,10 @@ nothing left in the language is built on the built-in one.
   mu i64 { r <= ⟨n > 0 | if | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
   ```
 
-  This version parses and checks today but runs the wrong branch — the `⊥`
-  block defect. Only negative positions would change: delaying a positive
+  Today the checker refuses this bundle, because an item that ends in a cut
+  would jump while the bundle is built (`DESIGN.md` §4); by name, each item
+  would be a thunk and the refusal would lift. Only negative positions would
+  change: delaying a positive
   value without writing it would bring back the `↑` that §8 removed, so a
   value-returning `if` keeps its `mu`, `Lazy<T>` stays the spelling of a
   delayed value, and a `bool` operand of `&&` is not reached. A by-name
