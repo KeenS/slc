@@ -211,7 +211,12 @@ command route(x: i32) | (k: i32) {
 }
 ```
 
-`|` binds more loosely than every operator, so `⟨a + b | k⟩` sends the sum.
+There are no infix operators, so nothing competes with `|` for precedence:
+arithmetic and comparison are the prelude's trait methods — `add`, `sub`,
+`mul`, `div`, `rem`, `neg`, `eq`, `ne`, `lt`, `gt`, `le`, `ge` — that a group
+flows into, so `⟨(a, b) | add | k⟩` sends the sum. A `-` touching a number is
+part of it, `-1`, and a `String`'s character at a position is
+`⟨(s, i) | index`, a slice of it `⟨(s, i, j) | substring`.
 The consumer may be any expression that produces one — a name, or a
 negative function applied to its row:
 
@@ -407,7 +412,7 @@ is refused with a pointer at `match`.
 ```sl
 let (a, b) = pair;
 let Point { x, y } = origin;
-fn skew((a, b): (i64, i64), c: i64) -> i64 { a * c - b }
+fn skew((a, b): (i64, i64), c: i64) -> i64 { ⟨(a, c) | mul | x => (x, b) | sub }
 ```
 
 This is what the unary calling convention already stood on. A declaration
@@ -1146,7 +1151,7 @@ ordinary parameters, and the clause cuts into whichever it picks:
 ```sl
 effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
 …
-judge(n, ok, bad) => match n > 3 { true => ⟨"big" | ok⟩, _ => ⟨"small" | bad⟩ },
+judge(n, ok, bad) => match (⟨(n, 3) | gt) { true => ⟨"big" | ok⟩, _ => ⟨"small" | bad⟩ },
 ```
 
 Demand-time effects are the latent rows above. Between the three, a
@@ -1505,11 +1510,12 @@ The arm's `exit` is the outer one; everything after the shadow sees only the
 composed door, so every later `| exit` — unhappy paths included — closes the
 file on its way through. `examples/file_io.sl` is written this way.
 
-Two failures stay fatal rather than becoming outcomes: an out-of-range index
-`s[i]` and a division by zero. They are reached through operator syntax, which
-has nowhere to put a continuation, and — as in Rust, where `v[i]` panics while
-`v.get(i)` does not — they report a bug in the program rather than a case it
-was meant to handle. The checked forms are the `command`-shaped builtins above.
+Two failures stay fatal rather than becoming outcomes: an out-of-range
+`⟨(s, i) | index` and a division by zero. `index` and `div` are plain
+functions, which have nowhere to put a continuation, and — as in Rust, where
+`v[i]` panics while `v.get(i)` does not — they report a bug in the program
+rather than a case it was meant to handle. The checked forms are the
+`command`-shaped builtins above, `char_at` among them.
 
 A helper of your own that always ends in a cut is annotated `-> (;)`: it never
 returns, so it may stand where a consumer is expected.
@@ -1583,7 +1589,7 @@ brings one name into scope:
 mod geometry {
     pub enum Shape { Circle(i64), Rect(i64, i64) }
 
-    fn squared(n: i64) -> i64 { n * n }   // private: the module's own
+    fn squared(n: i64) -> i64 { ⟨(n, n) | mul }   // private: the module's own
 
     pub fn area(s: Shape) -> i64 { … }    // its own names are bare here
 }

@@ -110,48 +110,9 @@ delayed.
 ### Surface simplifications
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
-They depend on each other, so they are listed in the order they can land:
-`bool` becomes the prelude's `Bool` last, once nothing left in the language
-is built on the built-in one.
-
-- **Infix operators become functions.** `+ - * / % == != < > <= >=`,
-  prefix `-`, and indexing `a[i]` and `a[i..j]` leave the surface, and each
-  is an ordinary function a value flows into: `⟨(a, b) | add`. Most already
-  are one underneath — the operators lower to the builtins `add`, `sub`,
-  `mul`, `div`, `rem`, `eq`, `ne`, `lt`, `gt`, `le`, `ge` and `neg`, and
-  `⟨(1, 2) | add` runs today. Decided, and still to do:
-
-  - **Overloaded by traits.** The checker types an operator by hand today:
-    arithmetic at any integer width, `+` on `String`, comparison on numbers,
-    `char`, `String` and `bool`. As functions they are trait methods, the
-    way `Display` is: one trait per arithmetic operator — `Add`, `Sub`,
-    `Mul`, `Div`, `Rem`, `Neg` — with impls for each integer width and
-    `Add` for `String`, and comparison grouped as `Eq { eq, ne }` and
-    `Ord { lt, gt, le, ge }`. These have landed in the prelude over builtins
-    renamed `__add` and so on, and `⟨(a, b) | add` dispatches through them;
-    what is left is removing the operator syntax, which still lowers to the
-    builtins directly.
-  - **A negative literal is `-` touching a digit.** Prefix `-` goes, and
-    `-1` lexes as one literal, as a pattern already reads it; it adapts its
-    width as any integer literal does. `a -1` is then two expressions.
-  - **Literals keep adapting.** `⟨(1, x) | add` with `x: i32` is `i32`'s
-    `add`: a method's `Self` is read off its group with literals last, which
-    has landed.
-  - **Indexing is plain functions.** Only a `String` is indexed — by an
-    `i64`, giving a `char` — and a trait could not say that in general
-    without associated types. `a[i]` becomes the prelude's plain
-    `⟨(s, i) | index` over `__index` — `char_at` is already the command
-    with an out-of-range exit — and `a[i..j]` the builtin
-    `⟨(s, i, j) | substring`; an open range spells out its missing end,
-    `0` or `⟨s | str_len`.
-  - **Compound expressions stay one chain.** `a + b * c` becomes
-    `⟨(b, c) | mul | x => (a, x) | add`.
-  - **Precedence goes.** §3's rule that `|` binds more loosely than every
-    operator has nothing left to order.
-
-  Migration touches roughly two hundred arithmetic and comparison uses in
-  the stdlib, the examples, the docs and the Rust tests, so it wants a
-  converter, as `if` had.
+`if`, `!`, `&&`, `||`, the infix operators and indexing have gone; `bool`
+becoming the prelude's `Bool` is the last, now that nothing left in the
+language is built on the built-in one.
 
 - **`bool` becomes the prelude's `Bool`.** The last of these. It becomes an
   ordinary enum, `enum Bool { False, True }`,

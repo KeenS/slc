@@ -1103,6 +1103,34 @@ before, and a pair of strings is joined again:
 The builtins beneath them are `__add` and so on; a program that named a
 builtin directly names the method instead.
 
+## Infix operators, prefix `-` and indexing are gone
+
+Arithmetic and comparison are the prelude's trait methods, and a group flows
+into them. A run of operators is one chain of binder stages; a compound
+operand is its own parenthesised chain.
+
+```sl
+a + b                    // old
+⟨(a, b) | add            // new
+
+a * b + c                // old
+⟨(a, b) | mul | x => (x, c) | add       // new
+
+match n > 0 { … }        // old
+match (⟨(n, 0) | gt) { … }             // new
+
+-x                       // old
+⟨x | neg                 // new; `-1` is still a literal
+
+s[i]                     // old
+⟨(s, i) | index          // new
+s[i..j]                  // old
+⟨(s, i, j) | substring   // new; an open end is `0` or `(⟨s | str_len)`
+```
+
+An integer literal takes its width from the other operand, as before:
+`⟨(x, 1) | add` for `x: i32` is `i32`'s `add`.
+
 ## Removed constructs
 
 ### `spawn`
