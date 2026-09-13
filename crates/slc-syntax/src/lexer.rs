@@ -115,10 +115,18 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 }
                 i += 1;
             }
+            // A literal too large for its type is an error in the program,
+            // not in the compiler.
             let kind = if is_float {
-                TokenKind::Float(num.parse().unwrap())
+                num.parse().map(TokenKind::Float).ok()
             } else {
-                TokenKind::Int(num.parse().unwrap())
+                num.parse().map(TokenKind::Int).ok()
+            };
+            let Some(kind) = kind else {
+                return Err(LexError {
+                    message: format!("the number `{num}` does not fit in 64 bits"),
+                    span: Span { start, end: i },
+                });
             };
             tokens.push(Token { kind, span: Span { start, end: i } });
             continue;
@@ -360,5 +368,11 @@ mod tests {
     #[test]
     fn lex_error_bad_char() {
         assert!(lex("#").is_err());
+    }
+
+    #[test]
+    fn a_number_too_large_is_a_lex_error() {
+        let error = lex("fn main() -> i64 { 99999999999999999999 }").unwrap_err();
+        assert!(error.message.contains("does not fit in 64 bits"), "{error:?}");
     }
 }
