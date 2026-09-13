@@ -78,7 +78,7 @@ fn the_accepted_entry_point_is_a_command_with_one_exit_continuation() {
     // A value parameter, or a row that is not one exit status, is rejected.
     for rejected in [
         "command main(x: +i32) | (exit: -i32) { ⟨0 | exit⟩ }",
-        "command main | (a: -i32 & b: -i32) { match true { true => ⟨0 | a⟩, _ => ⟨1 | b⟩ } }",
+        "command main | (a: -i32 & b: -i32) { match True { True => ⟨0 | a⟩, _ => ⟨1 | b⟩ } }",
         "command main | (exit: -String) { ⟨\"done\" | exit⟩ }",
     ] {
         std::fs::write(&dir, rejected).unwrap();
@@ -128,7 +128,7 @@ fn checker_diagnostics_include_source_locations() {
     let cases = [
         (
             "slc_test_location_type.sl",
-            "command main | (exit: -i32) / {IO} { ⟨(1, true) | add | println; ⟨0 | exit⟩ }",
+            "command main | (exit: -i32) / {IO} { ⟨(1, True) | add | println; ⟨0 | exit⟩ }",
             ["type:", "1:51", "`add`"],
         ),
         (
@@ -166,7 +166,7 @@ fn earlier_diagnostic_phases_take_precedence_over_later_phases() {
 
     // A valid parse with a type error must stop before polarity checking.
     let dir = std::env::temp_dir().join("slc_test_phase_type_precedence.sl");
-    std::fs::write(&dir, "command bad(x: -i32) | (k: -i32) { k((⟨(1, true) | add)) }").unwrap();
+    std::fs::write(&dir, "command bad(x: -i32) | (k: -i32) { k((⟨(1, True) | add)) }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.starts_with("error: type:"), "stderr: {stderr}");
@@ -339,7 +339,7 @@ fn short_circuit_and_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { ⟨match false { true => match (⟨(1, 0) | div | x => (x, 1) | eq) { true => 1, _ => 2 }, _ => 2 } | println; ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match False { True => match (⟨(1, 0) | div | x => (x, 1) | eq) { True => 1, _ => 2 }, _ => 2 } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -353,7 +353,7 @@ fn short_circuit_or_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit_or.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { ⟨match true { true => 3, _ => match (⟨(1, 0) | div | x => (x, 1) | eq) { true => 3, _ => 4 } } | println; ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match True { True => 3, _ => match (⟨(1, 0) | div | x => (x, 1) | eq) { True => 3, _ => 4 } } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -407,7 +407,7 @@ fn named_error_propagation_success_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            match (⟨(input, "ok") | eq) { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
+            match (⟨(input, "ok") | eq) { True => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
             let ok = fn(value: +String) -> i32 { ⟨("ok: ", value) | add | println; ⟨0 | exit⟩ };
@@ -427,7 +427,7 @@ fn named_error_propagation_error_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            match (⟨(input, "ok") | eq) { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
+            match (⟨(input, "ok") | eq) { True => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
             let ok = fn(value: +String) -> i32 { ⟨("ok: ", value) | add | println; ⟨0 | exit⟩ };
@@ -449,7 +449,7 @@ fn json_selected_error_continuation_reports_parse_error() {
         r#"command parse_json(input: +String) | (ok: -String & err: -String) {
             let start = ⟨(input, 0) | skip_ws;
             match (⟨(start, (⟨input | str_len)) | lt) {
-                true => match (⟨(input, start) | index) {
+                True => match (⟨(input, start) | index) {
                     '0'..='9' => ⟨(input, start, (⟨(start, 1) | add)) | substring | ok⟩,
                     _ => ⟨"expected JSON value" | err⟩
                 },
@@ -928,7 +928,7 @@ fn the_prelude_is_available_and_shadowable() {
         r#"fn double(n: +i64) -> i64 { (⟨(n, 2) | mul) }
         command main | (exit: -i32) / {IO} {
             ⟨(⟨21 | double | to_string) | println;
-            ⟨(⟨true | fmt) | println;
+            ⟨(⟨True | fmt) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1022,7 +1022,7 @@ fn a_row_closes_the_chain_and_travels_whole() {
     std::fs::write(
         &dir,
         r#"command classify(n: i64) | (found: i64 & missing: String) {
-            match (⟨(n, 0) | gt) { true => ⟨n | found⟩, _ => ⟨"negative" | missing⟩ }
+            match (⟨(n, 0) | gt) { True => ⟨n | found⟩, _ => ⟨"negative" | missing⟩ }
         }
         command forward(n: i64) | (row: (-i64 & -String)) { ⟨n | classify | row⟩ }
         command main | (exit: -i32) / {IO} {
@@ -1172,7 +1172,7 @@ fn display_formats_through_bounded_impls() {
         command main | (exit: -i32) / {IO} {
             ⟨fmt(42) | println;
             ⟨fmt("plain") | println;
-            ⟨fmt(false) | println;
+            ⟨fmt(False) | println;
             ⟨(⟨7 | to_string) | println;
             let xs = List::Cons(1, List::Cons(2, List::Nil));
             ⟨fmt(xs) | println;
@@ -1451,17 +1451,17 @@ fn an_alternative_is_resolved_against_the_sum_its_context_gives() {
     let dir = std::env::temp_dir().join("slc_test_resolved_alternatives.sl");
     std::fs::write(
         &dir,
-        r#"fn pick(x: (i64 | bool | String)) -> String {
+        r#"fn pick(x: (i64 | Bool | String)) -> String {
             match x {
                 ::0(n) => ⟨n | int_to_str,
-                ::1(b) => match b { true => "yes", _ => "no" },
+                ::1(b) => match b { True => "yes", _ => "no" },
                 _ => "other",
             }
         }
-        fn middle() -> (i64 | bool | String) { ::1(true) }
+        fn middle() -> (i64 | Bool | String) { ::1(True) }
         command main | (exit: i32) -> (;) / {IO} {
             let last: (i64 | String) = ::1("two");
-            let third: (i64 | bool | String) = ::2("three");
+            let third: (i64 | Bool | String) = ::2("three");
             ⟨middle() | pick | println;
             ⟨third | pick | println;
             ⟨::0(5) | pick | println;
@@ -1481,8 +1481,8 @@ fn an_alternative_outside_its_sum_is_refused() {
     let dir = std::env::temp_dir().join("slc_test_refused_alternatives.sl");
     std::fs::write(
         &dir,
-        r#"fn missing(out: String) <- (i64 | bool | String) {
-            select (i64 | bool | String) { ::0(n) => ⟨"x" | out⟩, ::1(b) => ⟨"y" | out⟩ }
+        r#"fn missing(out: String) <- (i64 | Bool | String) {
+            select (i64 | Bool | String) { ::0(n) => ⟨"x" | out⟩, ::1(b) => ⟨"y" | out⟩ }
         }
         fn twice(out: String) <- (i64 | String) {
             select (i64 | String) { ::0(n) => ⟨"x" | out⟩, ::1(s) => ⟨"y" | out⟩, ::0(m) => ⟨"z" | out⟩ }
@@ -1515,13 +1515,13 @@ fn nesting_is_significant_and_a_position_needs_no_sum() {
         &dir,
         r#"fn second(t: (i64, (i64, i64))) -> (i64, i64) { t.1 }
         fn third(t: (i64, i64, i64)) -> i64 { t.2 }
-        fn nested(x: (i64 | (bool | String))) -> String {
+        fn nested(x: (i64 | (Bool | String))) -> String {
             match x {
                 ::0(n) => ⟨n | int_to_str,
-                ::1(rest) => match rest { ::0(b) => match b { true => "yes", _ => "no" }, ::1(s) => s },
+                ::1(rest) => match rest { ::0(b) => match b { True => "yes", _ => "no" }, ::1(s) => s },
             }
         }
-        fn flat(x: (i64 | bool | String)) -> String {
+        fn flat(x: (i64 | Bool | String)) -> String {
             match x { ::0(n) => ⟨n | int_to_str, ::1(b) => "bool", ::2(s) => s }
         }
         command main | (exit: i32) / {IO} {
@@ -1543,7 +1543,7 @@ fn nesting_is_significant_and_a_position_needs_no_sum() {
     let dir = std::env::temp_dir().join("slc_test_nested_alternative_checked.sl");
     std::fs::write(
         &dir,
-        r#"fn nested(x: (i64 | (bool | String))) -> i64 { 0 }
+        r#"fn nested(x: (i64 | (Bool | String))) -> i64 { 0 }
         command main | (exit: i32) / {IO} { ⟨::1(::1(5)) | nested | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
@@ -1583,7 +1583,7 @@ fn binder_stages_keep_a_chain_flat() {
     let dir = std::env::temp_dir().join("slc_test_value_binder.sl");
     std::fs::write(
         &dir,
-        r#"fn odd(n: i64) -> bool { (⟨(n, 2) | rem | x => (x, 1) | eq) }
+        r#"fn odd(n: i64) -> Bool { (⟨(n, 2) | rem | x => (x, 1) | eq) }
         command main | (exit: i32) / {IO} {
             ⟨1 | stream::count_from | seq::of_stream
                | s => (odd, s) | seq::filter
@@ -1606,7 +1606,7 @@ fn a_consumer_binder_builds_a_row_from_the_rest_of_the_chain() {
     let program = |start: i64| {
         format!(
             r#"command halve(n: i64) | (ok: i64 & odd: String) {{
-                match (⟨(n, 2) | rem | x => (x, 0) | eq) {{ true => ⟨(n, 2) | div | ok⟩, _ => ⟨"odd" | odd⟩ }}
+                match (⟨(n, 2) | rem | x => (x, 0) | eq) {{ True => ⟨(n, 2) | div | ok⟩, _ => ⟨"odd" | odd⟩ }}
             }}
             command main | (exit: i32) / {{IO}} {{
                 let odd = select String {{ m => {{ ⟨m | println; ⟨1 | exit⟩ }} }};
@@ -1652,7 +1652,7 @@ fn anonymous_data_types_display() {
             ⟨(⟨(1, 2, 3, 4, 5, 6, 7, 8) | fmt) | println;
             let c: (i64 | String) = ::1("right");
             ⟨(⟨c | fmt) | println;
-            ⟨(⟨((1, true), (,)) | fmt) | println;
+            ⟨(⟨((1, True), (,)) | fmt) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1732,12 +1732,12 @@ fn a_bundle_item_that_ends_in_a_cut_runs_only_when_chosen() {
     let dir = std::env::temp_dir().join("slc_test_by_name_bundle.sl");
     std::fs::write(
         &dir,
-        r#"command pick(c: bool) | (then: (;) & otherwise: (;)) {
-            match c { true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
+        r#"command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+            match c { True => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
         }
 
         command main | (exit: -i32) / {IO} {
-            ⟨true | pick | ({ ⟨"then" | println; ⟨0 | exit⟩ } & { ⟨"otherwise" | println; ⟨1 | exit⟩ })⟩
+            ⟨True | pick | ({ ⟨"then" | println; ⟨0 | exit⟩ } & { ⟨"otherwise" | println; ⟨1 | exit⟩ })⟩
         }"#,
     )
     .unwrap();
@@ -1753,16 +1753,16 @@ fn an_exit_named_as_a_command_runs_and_passed_on_it_does_not() {
     let dir = std::env::temp_dir().join("slc_test_exit_as_command.sl");
     std::fs::write(
         &dir,
-        r#"command pick(c: bool) | (then: (;) & otherwise: (;)) {
-            match c { true => then, _ => otherwise }
+        r#"command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+            match c { True => then, _ => otherwise }
         }
 
-        command forward(c: bool) | (then: (;) & otherwise: (;)) {
+        command forward(c: Bool) | (then: (;) & otherwise: (;)) {
             ⟨c | pick | (then & otherwise)⟩
         }
 
         command main | (exit: -i32) / {IO} {
-            ⟨false | forward | ({ ⟨"then" | println; ⟨1 | exit⟩ } & { ⟨"otherwise" | println; ⟨0 | exit⟩ })⟩
+            ⟨False | forward | ({ ⟨"then" | println; ⟨1 | exit⟩ } & { ⟨"otherwise" | println; ⟨0 | exit⟩ })⟩
         }"#,
     )
     .unwrap();
@@ -1822,14 +1822,14 @@ fn a_match_on_true_and_false_is_exhaustive_without_a_wildcard() {
     let dir = std::env::temp_dir().join("slc_test_bool_exhaustive.sl");
     std::fs::write(
         &dir,
-        r#"fn describe(b: bool) -> String {
-            match b { true => "yes", false => "no" }
+        r#"fn describe(b: Bool) -> String {
+            match b { True => "yes", False => "no" }
         }
 
         command main | (exit: -i32) / {IO} {
-            ⟨true | describe | println;
+            ⟨True | describe | println;
             ⟨(⟨(2, 1) | lt) | describe | println;
-            ⟨match (⟨(1, 2) | lt) { true => 1, false => 0 } | println;
+            ⟨match (⟨(1, 2) | lt) { True => 1, False => 0 } | println;
             ⟨0 | exit⟩
         }"#,
     )

@@ -346,11 +346,11 @@ An exit is taken by naming it where a command stands — an arm, a block's
 statement or its end — and passed on by naming it anywhere else:
 
 ```sl
-command pick(c: bool) | (then: (;) & otherwise: (;)) {
-    match c { true => then, _ => otherwise }       // runs the exit
+command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+    match c { True => then, _ => otherwise }       // runs the exit
 }
 
-command forward(c: bool) | (then: (;) & otherwise: (;)) {
+command forward(c: Bool) | (then: (;) & otherwise: (;)) {
     ⟨c | pick | (then & otherwise)⟩               // passes them on
 }
 ```
@@ -966,7 +966,7 @@ overloaded on its first argument's type — `x | show`, never `x.show()`:
 ```sl
 trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
-impl Show for bool { fn show(self: bool) -> String { match self { true => "t", _ => "f" } } }
+impl Show for Bool { fn show(self: Bool) -> String { match self { True => "t", _ => "f" } } }
 
 fn labelled<+T: Show>(x: T) -> String { (⟨("= ", (⟨x | show)) | add) }
 ```

@@ -368,7 +368,7 @@ mod tests {
         // The empty product is the unit, `(,)`.
         assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::ONE);
         // The declaration itself keeps its opaque named type.
-        let out = infer("data D { left: i64, right: bool }").unwrap();
+        let out = infer("data D { left: i64, right: Bool }").unwrap();
         assert_eq!(out[0].ty, Type::Named("D".into(), Vec::new()));
     }
 

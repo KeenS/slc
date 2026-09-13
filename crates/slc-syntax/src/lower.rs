@@ -2172,7 +2172,7 @@ mod tests {
         // A negative function's parameters are its menu of exits, and a
         // group is one argument: it binds that, then destructures it into
         // the exits the body names.
-        let out = lower_str("fn k(return: -i32 & other: -bool) <- bool { return(0) }");
+        let out = lower_str("fn k(return: -i32 & other: -Bool) <- Bool { return(0) }");
         let printed = format!("{}", out[0].1);
         assert!(printed.starts_with("λ__args."), "the group is one binder: {printed}");
         assert!(

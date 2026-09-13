@@ -3522,7 +3522,7 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
         // An arm that yields a value falls through on its path.
         let diags = check(
-            "command bad(x: +i32) | (k: -i32) { match __eq(x, 0) { true => ⟨x | k⟩, _ => (,) } }",
+            "command bad(x: +i32) | (k: -i32) { match __eq(x, 0) { True => ⟨x | k⟩, _ => (,) } }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
@@ -3881,7 +3881,7 @@ mod tests {
     fn continuation_row_rejects_an_incompatible_continuation_type() {
         let diags = check(
             "command route(x: +i32) | (k: -i32) { ⟨x | k⟩ }
-             fn main() -> i32 { mu bool { out <= route(1, out) } }",
+             fn main() -> i32 { mu Bool { out <= route(1, out) } }",
         )
         .unwrap_err();
         assert!(
@@ -3896,8 +3896,8 @@ mod tests {
         // The row is ordered: swapping two continuations of different types
         // is rejected even though both types appear in the declaration.
         let diags = check(
-            "command route(a: -i32, b: -bool) | (c: -i32 & d: -bool) { ⟨0 | c⟩ }
-             command caller | (first: -i32 & second: -bool) { route(0, true, second, first) }",
+            "command route(a: -i32, b: -Bool) | (c: -i32 & d: -Bool) { ⟨0 | c⟩ }
+             command caller | (first: -i32 & second: -Bool) { route(0, True, second, first) }",
         )
         .unwrap_err();
         assert!(
@@ -3927,13 +3927,13 @@ mod tests {
 
     #[test]
     fn comparison_char_and_int_mismatch_rejected() {
-        let diags = check("fn f(a: +char, b: +i32) -> bool { (⟨(a, b) | __lt) }").unwrap_err();
+        let diags = check("fn f(a: +char, b: +i32) -> Bool { (⟨(a, b) | __lt) }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
     #[test]
     fn char_comparison_ok() {
-        assert!(check("fn f(a: +char, b: +char) -> bool { (⟨(a, b) | __lt) }").is_ok());
+        assert!(check("fn f(a: +char, b: +char) -> Bool { (⟨(a, b) | __lt) }").is_ok());
     }
 
     #[test]
@@ -3947,8 +3947,8 @@ mod tests {
         // only when it is chosen — whether the row declares `(;)` or `-(,)`.
         for row in ["(;)", "-(,)"] {
             let src = format!(
-                "command choose(c: bool) | (then: {row} & otherwise: {row}) {{
-                     match c {{ true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }}
+                "command choose(c: Bool) | (then: {row} & otherwise: {row}) {{
+                     match c {{ True => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }}
                  }}
                  command main | (exit: -i32) {{
                      ⟨(1, 0) | __lt | choose | ({{ ⟨0 | exit⟩ }} & {{ ⟨1 | exit⟩ }})⟩
@@ -3959,8 +3959,8 @@ mod tests {
         // The consumers the items meant are accepted.
         assert!(
             check(
-                "command choose(c: bool) | (then: -(,) & otherwise: -(,)) {
-                     match c { true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
+                "command choose(c: Bool) | (then: -(,) & otherwise: -(,)) {
+                     match c { True => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
                  }
                  command main | (exit: -i32) {
                      ⟨(1, 0) | __lt | choose | (fn(_) { ⟨0 | exit⟩ } & fn(_) { ⟨1 | exit⟩ })⟩
@@ -3996,7 +3996,7 @@ mod tests {
     #[test]
     fn index_type_checked() {
         let diags =
-            check("fn f(s: +String, i: +bool) -> char { (⟨(s, i) | __index) }").unwrap_err();
+            check("fn f(s: +String, i: +Bool) -> char { (⟨(s, i) | __index) }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
@@ -4180,11 +4180,11 @@ mod tests {
         // Multi-shot: the clause resumes twice and combines both results.
         assert!(
             check(
-                "effect C { fn c() -> bool; }
-                 fn f() -> i64 / {C} { match c() { true => 1, _ => 2 } }
+                "effect C { fn c() -> Bool; }
+                 fn f() -> i64 / {C} { match c() { True => 1, _ => 2 } }
                  command main | (exit: -i32) / {IO} {
                      let r = handle f() {
-                         c(): resume => (⟨(resume(true), resume(false)) | __add),
+                         c(): resume => (⟨(resume(True), resume(False)) | __add),
                          return(n) => n,
                      };
                      ⟨r | println; ⟨0 | exit⟩
@@ -4281,7 +4281,7 @@ mod tests {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) / {IO} { ⟨show(true) | println; ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { ⟨show(True) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("no `impl Show for Bool`")), "{diags:?}");
@@ -4640,7 +4640,7 @@ mod tests {
             check(&format!(
                 "{prelude} command main | (exit: -i32) / {{IO}} {{
                      ⟨mu String {{ s <= ⟨42 | emit | s⟩ }} | println;
-                     ⟨mu String {{ s <= ⟨true | emit | s⟩ }} | println;
+                     ⟨mu String {{ s <= ⟨True | emit | s⟩ }} | println;
                      ⟨0 | exit⟩
                  }}"
             ))
@@ -4671,7 +4671,7 @@ mod tests {
             check(&format!(
                 "{prelude} command main | (exit: -i32) / {{IO}} {{
                      ⟨mu String {{ s <= ⟨42 | deliver(s)⟩ }} | println;
-                     ⟨mu String {{ s <= ⟨true | deliver(s)⟩ }} | println;
+                     ⟨mu String {{ s <= ⟨True | deliver(s)⟩ }} | println;
                      ⟨0 | exit⟩
                  }}"
             ))

@@ -2999,15 +2999,15 @@ mod tests {
     #[test]
     fn there_is_no_if() {
         let errors =
-            parse(lex("fn f(b: bool) -> i64 { if b { 1 } else { 2 } }").unwrap()).unwrap_err();
+            parse(lex("fn f(b: Bool) -> i64 { if b { 1 } else { 2 } }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("there is no `if`"), "got: {errors:?}");
     }
 
     #[test]
     fn there_is_no_and_or() {
         for source in [
-            "fn f(a: bool, b: bool) -> bool { a && b }",
-            "fn f(a: bool, b: bool) -> bool { a || b }",
+            "fn f(a: Bool, b: Bool) -> Bool { a && b }",
+            "fn f(a: Bool, b: Bool) -> Bool { a || b }",
         ] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(errors[0].message.contains("there is no `&&` or `||`"), "{source}: {errors:?}");
@@ -3075,7 +3075,7 @@ mod tests {
 
     #[test]
     fn there_is_no_bang() {
-        let errors = parse(lex("fn f(b: bool) -> bool { !b }").unwrap()).unwrap_err();
+        let errors = parse(lex("fn f(b: Bool) -> Bool { !b }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("there is no `!`"), "got: {errors:?}");
     }
 
