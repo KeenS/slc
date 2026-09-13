@@ -23,7 +23,7 @@ reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The open work is a set of surface
 simplifications that remove syntax in favour of ordinary declarations, a
-documentation pass, and two defects.
+documentation pass, and one defect.
 
 ## Known limits
 
@@ -67,41 +67,11 @@ documentation pass, and two defects.
 
 ### Defects
 
-- **A builtin's arguments are not checked against its signature.** `add` is
-  declared `(i64, i64) -> i64`, yet `⟨(1, "b") | add` passes the checker and
-  fails at run time with "add expects two integer arguments". The fix is
-  "A builtin's arguments are checked against its signature".
-
 - **Exhaustiveness does not know `bool`.** A `match` with `true` and `false`
   arms is reported non-exhaustive unless it adds a `_`. The fix is
   "`bool` is defined in the prelude".
 
 ## Next
-
-### Defects
-
-This fixes the first defect under "Known limits". The second,
-exhaustiveness over `bool`, is fixed by "`bool` is defined in the prelude",
-the last of the surface simplifications.
-
-- **A builtin's arguments are checked against its signature.** The checker
-  exempts builtins in `check_call_arguments` and in the chain-stage checks,
-  nine `signature.builtin` tests in all, on the stated ground that "the
-  builtin table already checks" their arguments. Nothing does at check time,
-  so `⟨(1, "b") | add` fails only at run time. Most signatures can be
-  enforced as written (`str_len`, `int_to_str`, the file primitives), and
-  `println` and the comparisons already take a template variable. Two things
-  change with it:
-
-  - **Builtins lose partial application.** `DESIGN.md` §3 keeps them as the
-    exception to a stage supplying its whole group, because the runtime
-    accumulates their arguments. No partial application of a builtin turns
-    up in the stdlib, the examples or the tests.
-  - **`add` and its siblings become strict.** They are declared
-    `(i64, i64) -> i64`, so `⟨("a", "b") | add`, which runs today, is
-    refused, and so is `add` at another integer width. `str_concat` is the
-    function for strings. The operators keep their own typing until
-    "Infix operators become functions" gives the functions theirs.
 
 ### Documentation
 
@@ -220,8 +190,8 @@ nothing left in the language is built on the built-in one.
   - **Overloading.** The checker types an operator by hand: arithmetic at
     any integer width, with a literal adapting to the other side; `+` on
     `String`; comparison on numbers, `char`, `String` and `bool`. The
-    builtins' signatures are `(i64, i64) -> i64` and the like, and are not
-    even enforced (the builtin-arguments defect). As functions they need
+    builtins' signatures are `(i64, i64) -> i64` and the like, and a stage is
+    held to them, so `⟨("a", "b") | add` is refused. As functions they need
     traits, the way `Display` works, or one name per type.
   - **Short-circuiting.** `&&` and `||` expand to the `if` expression so
     their right operand runs only when needed. As functions (`and` and `or`

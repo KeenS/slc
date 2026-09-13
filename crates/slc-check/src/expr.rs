@@ -3106,7 +3106,7 @@ fn check_expr_unapplied(
                     let split = signature.continuations.iter().filter(|c| !**c).count();
                     let values = packed_group(signature.params[..split].iter().cloned());
                     let row = exit_row(signature.params[split..].iter().cloned());
-                    if !signature.builtin && !fits(env, &values, &acc, shape) {
+                    if !fits(env, &values, &acc, shape) {
                         let values = env.uni.apply(&values);
                         diags.push(Diagnostic {
                             message: format!(
@@ -3116,7 +3116,6 @@ fn check_expr_unapplied(
                         });
                     }
                     if let Some(exits) = types[index + 1].as_ref()
-                        && !signature.builtin
                         && !fits(env, &row, exits, &stages[index + 1].kind)
                     {
                         let row = env.uni.apply(&row);
@@ -3153,8 +3152,7 @@ fn check_expr_unapplied(
                         let packed = packed_group(fresh.params.iter().cloned());
                         let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
                         let probe = Env { uni: probe, ..env.clone() };
-                        signature.builtin
-                            || piecewise
+                        piecewise
                             || would_fit(&probe, &packed, &acc, Some(shape))
                             || (flowing.is_some() && commutes(&probe.uni, &packed, &acc))
                     }
@@ -3176,7 +3174,6 @@ fn check_expr_unapplied(
                             )
                     });
                     let fitted = piecewise
-                        || signature.builtin
                         || match flowing {
                             // What flows in is a written value, so it can be
                             // turned around where it stands.
@@ -3289,7 +3286,6 @@ fn check_expr_unapplied(
                     && env.lookup(name).is_none()
                     && let Some(signature) = env.functions.get(name)
                     && signature.continuations.iter().any(|c| !*c)
-                    && !signature.builtin
                 {
                     let values: Vec<String> = signature
                         .params
@@ -3904,6 +3900,21 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_builtin_stage_is_held_to_its_signature() {
+        // What flows into a builtin is checked the way it is for a declared
+        // function: `add` takes two integers, and the whole group at once.
+        for (body, expected) in [
+            (r#"let n = ⟨(1, "b") | add;"#, "what flows in"),
+            ("let inc = ⟨1 | add;", "not applied to part of a group"),
+        ] {
+            let diags =
+                check(&format!("command main | (exit: -i32) {{ {body} ⟨0 | exit⟩ }}")).unwrap_err();
+            assert!(diags.iter().any(|d| d.message.contains(expected)), "{body}: {diags:?}");
+        }
+        assert!(check("command main | (exit: -i32) { let n = ⟨(1, 2) | add; ⟨0 | exit⟩ }").is_ok());
     }
 
     #[test]
