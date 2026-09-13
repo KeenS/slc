@@ -97,6 +97,8 @@ fn builtin_functions() -> Vec<Builtin> {
         function("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
+        // The character at a position, beneath the prelude's `index`.
+        function("__index", vec![string.clone(), i64.clone()], Some(char_.clone())),
         function("__file_exists", vec![string.clone()], Some(bool_.clone())),
         // Parsing, input/output, and lookup can fail or find nothing, so they
         // offer their outcomes to continuations.

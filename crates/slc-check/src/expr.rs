@@ -281,6 +281,15 @@ fn receiver_of_group(
     let self_ty = env.uni.fresh_var();
     let mut order: Vec<usize> = (0..params.len()).collect();
     order.sort_by_key(|&i| written[i].is_some_and(is_integer_literal));
+    // Only literals give `Self`: it is the default integer, as a bare
+    // literal is.
+    let all_literal = params.iter().zip(&written).all(|(param, written)| {
+        !matches!(&param.ty, Some(TypeExpr::Base(name)) if name == "Self")
+            || written.is_some_and(is_integer_literal)
+    });
+    if all_literal {
+        let _ = env.uni.unify(&self_ty, &Type::Pos(Base::I64));
+    }
     for index in order {
         let Some(expected) =
             params[index].ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))

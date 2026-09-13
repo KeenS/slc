@@ -182,6 +182,10 @@ impl Ord for bool {
     fn ge(self: bool, other: bool) -> bool { ⟨(self, other) | __ge }
 }
 
+// The character of a `String` at a position, failing at run time when the
+// position is out of range; `char_at` offers that outcome to a continuation.
+fn index(s: String, i: i64) -> char { ⟨(s, i) | __index }
+
 // ── Display for anonymous data ───────────────────────────────────────────
 //
 // The unit, tuples and choices, up to eight components, each rendered as it

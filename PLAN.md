@@ -139,8 +139,9 @@ is built on the built-in one.
     has landed.
   - **Indexing is plain functions.** Only a `String` is indexed — by an
     `i64`, giving a `char` — and a trait could not say that in general
-    without associated types. `a[i]` becomes the prelude's
-    `⟨(s, i) | char_at` over `__index`, and `a[i..j]` the builtin
+    without associated types. `a[i]` becomes the prelude's plain
+    `⟨(s, i) | index` over `__index` — `char_at` is already the command
+    with an out-of-range exit — and `a[i..j]` the builtin
     `⟨(s, i, j) | substring`; an open range spells out its missing end,
     `0` or `⟨s | str_len`.
   - **Compound expressions stay one chain.** `a + b * c` becomes
