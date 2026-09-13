@@ -363,43 +363,35 @@ impl Parser {
                 self.pos += 1;
                 Ok(Type::Neg(self.base()?))
             }
-            Some('⊥') => {
-                self.pos += 1;
-                Ok(Type::BOTTOM)
-            }
-            Some('1') => {
-                self.pos += 1;
-                Ok(Type::ONE)
-            }
-            Some('0') => {
-                self.pos += 1;
-                Ok(Type::ZERO)
-            }
-            Some('⊤') => {
-                self.pos += 1;
-                Ok(Type::TOP)
-            }
             Some('(') => {
                 self.pos += 1;
+                // A paren holding only its separator is that connective's unit.
+                for (unit, ty) in
+                    [(",)", Type::ONE), (";)", Type::BOTTOM), ("&)", Type::TOP), ("|)", Type::ZERO)]
+                {
+                    if self.eat(unit) {
+                        return Ok(ty);
+                    }
+                }
                 let left = self.ty()?;
-                let connective = ["⊗", "⅋", "&", "+", "->"]
+                let separator = ["->", ",", ";", "&", "|"]
                     .into_iter()
-                    .find(|connective| self.eat(connective))
+                    .find(|separator| self.eat(separator))
                     .ok_or_else(|| self.error("expected a type connective"))?;
                 let right = self.ty()?;
-                if connective == "->" {
+                if separator == "->" {
                     self.expect(")")?;
-                    // `A -> B` is `-A ⅋ B`.
+                    // `A -> B` is `(dual(A) ; B)`.
                     return Ok(Type::arrow(left, right));
                 }
                 let mut items = vec![left, right];
-                while self.eat(connective) {
+                while self.eat(separator) {
                     items.push(self.ty()?);
                 }
                 self.expect(")")?;
-                Ok(match connective {
-                    "⊗" => Type::Tensor(items),
-                    "⅋" => Type::Par(items),
+                Ok(match separator {
+                    "," => Type::Tensor(items),
+                    ";" => Type::Par(items),
                     "&" => Type::With(items),
                     _ => Type::Sum(items),
                 })

@@ -130,7 +130,7 @@ fn repository_example_suite_has_expected_results() {
             "connectives.sl",
             Expected {
                 success: true,
-                // ⊗, then ⅋ three ways, then ⊕, &, a menu's two items, and
+                // `,`, then `;` three ways, then `|`, `&`, a menu's two items, and
                 // the units.
                 stdout: &["42", "7", "\"green\"", "1", "3", "\"slant\"", "(,)"],
                 stderr: &[],

@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn the_connective_glyphs_are_not_surface_syntax() {
-        // The surface is ASCII: `,` `;` `|` `&` join types, and `(;)` is ⊥.
+        // The surface is ASCII: `,` `;` `|` `&` join types, and `(;)` is the unit of `;`.
         for glyph in ["⊗", "⅋", "⊥"] {
             assert!(lex(glyph).is_err(), "{glyph} lexed");
         }

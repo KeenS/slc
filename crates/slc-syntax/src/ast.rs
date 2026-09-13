@@ -255,9 +255,9 @@ pub enum TypeExpr {
     /// `(A, B, …)`: a product of any number of components; `(,)` is the
     /// product of none. Nesting is significant: `(A, (B, C))` has two.
     Tensor(Vec<Node<TypeExpr>>),
-    /// `(A ; B ; …)`: the negative product; `(;)`, of none, is ⊥.
+    /// `(A ; B ; …)`: the negative product; `(;)`, of none, is what a command is.
     Par(Vec<Node<TypeExpr>>),
-    /// `(A & B & …)`: a menu of anonymous items; `(&)` is ⊤. A continuation
+    /// `(A & B & …)`: a menu of anonymous items; `(&)` has none. A continuation
     /// row is one of these.
     With(Vec<Node<TypeExpr>>),
     /// `(A | B | …)`: an enum of anonymous alternatives; `(|)` is 0.
@@ -269,7 +269,7 @@ pub enum TypeExpr {
 }
 
 impl TypeExpr {
-    /// Is this `(;)` — ⊥, what a command is?
+    /// Is this `(;)`, what a command is?
     pub fn is_bottom(&self) -> bool {
         matches!(self, TypeExpr::Par(items) if items.is_empty())
     }
@@ -492,7 +492,7 @@ pub enum Decl {
     /// `form Name { field: Type, … }` — the negative multiplicative: the
     /// mirror of `data`. A record carries every field at once; a form wants
     /// every field at once. Each field names what flows in, so a form
-    /// denotes `-A ⅋ -B`, and its demand is the record its fields describe.
+    /// denotes `(-A ; -B)`, and its demand is the record its fields describe.
     Form {
         name: String,
         /// `pub` — visible outside the module that declares it. A

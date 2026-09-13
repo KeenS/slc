@@ -676,8 +676,8 @@ an explicit tensor is structural.
 
 ### Connective spellings
 
-The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core and of
-this document's prose, never of a program. Every connective is written three
+The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core's terms
+and of this document's prose, never of a program or of its diagnostics. Every connective is written three
 ways — declared by name, anonymously, and nullary, as a paren holding only
 its separator. Each anonymous type has a name of its own:
 
@@ -1543,11 +1543,11 @@ CoTerm    e ::= α                     co-variable
 Command   c ::= ⟨ t ∥ e ⟩             cut
 
 Type      A ::= +B | -B               positive / negative atom
-              | (A ⊗ … ⊗ A) | (A ⅋ … ⅋ A)  multiplicatives, any number of components
-              | 1 | ⊥                 their units: no components
-              | (A + … + A) | (A & … & A)  additives, any number of components
-              | 0 | ⊤                 their units
-              | A → A                 function
+              | (A, …, A) | (A ; … ; A)   multiplicatives, any number of components
+              | (,) | (;)             their units: no components
+              | (A | … | A) | (A & … & A) additives, any number of components
+              | (|) | (&)             their units
+              | (A -> A)              function: (dual(A) ; A)
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
 
@@ -1604,6 +1604,12 @@ co-terms, commands, and types in exactly this syntax, and reads them back
 unchanged. Printing is therefore a faithful view of the IR rather than an
 approximation of it, and a printed declaration can be compared, stored, or
 re-parsed without loss.
+
+Types print in the surface's own spelling — `(A, B)`, `(A ; B)`, `(A & B)`,
+`(A | B)`, their units `(,)`, `(;)`, `(&)` and `(|)`, and `dual(A)` — so a
+diagnostic shows a type the way a program writes it. A two-component `;`
+whose first half is a consumer prints as the function it is, `(A -> B)`.
+Only the core's terms keep their own notation.
 
 ### Reduction
 

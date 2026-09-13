@@ -1022,7 +1022,7 @@ impl Parser {
                 self.pos += 1;
                 // A paren holding only the separator is the nullary form:
                 // `(,)` the empty tuple, `(|)` the empty sum, `(&)` the empty
-                // menu, and `(;)` the unit of `;`, ⊥.
+                // menu, and `(;)` the unit of `;`.
                 if self.eat(&TokenKind::Amp) {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Node {
@@ -1745,7 +1745,7 @@ impl Parser {
             Some(TokenKind::Select) => {
                 self.pos += 1;
                 // The type whose consumer this builds: a declaration name, or
-                // an explicit connective such as `(+i64 ⊗ +String)`. It may be
+                // an explicit connective such as `(+i64, +String)`. It may be
                 // left out when an arm's pattern names it.
                 let ty = match self.peek_kind() {
                     Some(TokenKind::LBrace) => None,
@@ -1871,7 +1871,7 @@ impl Parser {
             {
                 // A paren holding only the separator is the nullary form of
                 // that connective: `(,)` the empty tuple, `(&)` the empty
-                // menu — ⊤, whose value is unique.
+                // menu, whose value is unique.
                 if self.eat(&TokenKind::Comma) {
                     self.expect(TokenKind::RParen, "`)` after `(,`")?;
                     return Ok(Node {
@@ -1900,7 +1900,7 @@ impl Parser {
                         span: Span { start, end: self.span_end() },
                     });
                 }
-                // `(;)` is ⊥, what a command is: it has no value.
+                // `(;)` is what a command is: it has no value.
                 if self.peek_kind() == Some(&TokenKind::Semicolon)
                     && self.tokens.get(self.pos + 1).map(|token| &token.kind)
                         == Some(&TokenKind::RParen)

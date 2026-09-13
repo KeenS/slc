@@ -25,17 +25,17 @@ pub enum Type {
     Pos(Base),
     /// Negative atom: `-B`.
     Neg(Base),
-    /// Tensor: `A ⊗ B ⊗ …`, the positive product of its components — any
-    /// number of them, so `A ⊗ (B ⊗ C)` and `A ⊗ B ⊗ C` are different types.
-    /// With none it is the unit, 1.
+    /// Tensor: `(A, B, …)`, the positive product of its components — any
+    /// number of them, so `(A, (B, C))` and `(A, B, C)` are different types.
+    /// With none it is the unit, `(,)`.
     Tensor(Vec<Type>),
-    /// Par: `A ⅋ B ⅋ …`, the negative product; with no components, ⊥.
+    /// Par: `(A ; B ; …)`, the negative product; with no components, `(;)`.
     Par(Vec<Type>),
     /// Explicit dual application.
     Dual(Box<Type>),
-    /// Additive with: `A & B & …`; with no components, ⊤.
+    /// With: `(A & B & …)`, the negative sum; with no components, `(&)`.
     With(Vec<Type>),
-    /// Additive sum: `A + B + …`; with no components, 0.
+    /// Sum: `(A | B | …)`, the positive sum; with no components, `(|)`.
     Sum(Vec<Type>),
     /// A declaration's type parameter, by position: what `T` becomes inside
     /// the declaration's own field and payload types. It never reaches
@@ -49,13 +49,13 @@ pub enum Type {
 }
 
 impl Type {
-    /// 1, the tensor of nothing.
+    /// `(,)`, the tensor of nothing.
     pub const ONE: Type = Type::Tensor(Vec::new());
-    /// ⊥, the par of nothing.
+    /// `(;)`, the par of nothing.
     pub const BOTTOM: Type = Type::Par(Vec::new());
-    /// 0, the sum of nothing.
+    /// `(|)`, the sum of nothing.
     pub const ZERO: Type = Type::Sum(Vec::new());
-    /// ⊤, the with of nothing.
+    /// `(&)`, the with of nothing.
     pub const TOP: Type = Type::With(Vec::new());
 
     /// Substitute a declaration's arguments for its parameters: `Param(i)`
@@ -76,9 +76,10 @@ impl Type {
         }
     }
 
-    /// A function type: `A → B` is `-A ⅋ B`, so its dual is `A ⊗ -B` — an
-    /// argument together with a continuation for the result, which is what a
-    /// call stack is. `A → ⊥` is `-A`, since `⊥` is the unit of `⅋`.
+    /// A function type: `A -> B` is `(dual(A) ; B)`, so its dual is
+    /// `(A, dual(B))` — an argument together with a continuation for the
+    /// result, which is what a call stack is. `(A -> (;))` is `dual(A)`, since
+    /// `(;)` is the unit of `;`.
     pub fn arrow(argument: Type, result: Type) -> Type {
         if result == Type::BOTTOM {
             return argument.dual();

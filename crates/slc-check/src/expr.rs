@@ -163,7 +163,7 @@ fn check_trait_method_call(
 /// Would these meet, if we tried? The attempt runs on a copy of the
 /// unification state, so a stage can ask before committing — a declared
 /// callee whose parameters do not take what flows in may still read the
-/// other way round, as `⅋` being commutative allows.
+/// other way round, as `;` being commutative allows.
 fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> bool {
     if actual == &Type::BOTTOM {
         return true;
@@ -784,7 +784,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             }
             let body_type = check_expr(body, enums, env, diags);
             // A `command` consumes: every terminating path must reach a
-            // continuation, so the body is `⊥`. A body that produces a value
+            // continuation, so the body is `(;)`. A body that produces a value
             // (a bare value, or an `if` that falls through with no `else`)
             // does not, and is rejected. Which continuation, or how many, is
             // not constrained — the core is classical. A body whose type the
@@ -1170,8 +1170,8 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     is_integer_literal(expr) && is_numeric(&env.uni.apply(expected)) && is_numeric(actual)
 }
 
-/// `A ⅋ B` and `B ⅋ A` are one type, so a value of one may be cut into a
-/// consumer of the other. The unifier stays structural — a value of `⅋` is a
+/// `(A ; B)` and `(B ; A)` are one type, so a value of one may be cut into a
+/// consumer of the other. The unifier stays structural — a value of `;` is a
 /// closure facing one way, and a commutation buried inside a constructor has
 /// no single value to turn around — so this is tried only where one value
 /// meets one consumer, after the forward reading has failed, and what it
@@ -1200,7 +1200,7 @@ fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<slc_syntax::
     })
 }
 
-/// Forward, or else the mirrored `⅋` reading, recorded as a swap on `value`
+/// Forward, or else the mirrored `;` reading, recorded as a swap on `value`
 /// so lowering turns it around. If neither fits, the unifier is left as the
 /// forward attempt left it, so a refusal reads exactly as it did before.
 fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr>) -> bool {
@@ -2081,7 +2081,7 @@ fn check_expr_unapplied(
             env.pop();
             // A lambda is a function value, and its result is what the body
             // produces. A body that ends in a cut produces nothing, and
-            // `A → ⊥` is `-A`, so such a lambda simply *is* a consumer.
+            // `(A -> (;))` is `-A`, so such a lambda simply *is* a consumer.
             let result = result.unwrap_or_else(|| env.uni.fresh_var());
             Some(Type::arrow(param_ty, result))
         }
@@ -2125,8 +2125,8 @@ fn check_expr_unapplied(
                 return Some(Type::Named(declaration, type_args));
             }
             // A continuation is not applied: it is cut against a value. Only
-            // an atomic consumer is certainly not a function — `A → B` is
-            // `-A ⅋ B`, so a function is negative too, and a `⅋` may be
+            // an atomic consumer is certainly not a function — `A -> B` is
+            // `(dual(A) ; B)`, so a function is negative too, and a `;` may be
             // either a function or a consumer of a product.
             // Nor is data applied: a `+A` is a value, and a value is not a
             // function.
@@ -2239,7 +2239,7 @@ fn check_expr_unapplied(
                 return signature.result.map(|ty| env.uni.apply(&ty));
             }
             // A local callee: a closure, or a binder whose type its uses
-            // decide. `A → B` is `-A ⅋ B`, so application peels a `⅋`, and
+            // decide. `A -> B` is `(dual(A) ; B)`, so application peels a `;`, and
             // an unknown callee becomes one.
             let callee_ty = callee_ty.map(|ty| env.uni.apply(&ty));
             match callee_ty {
@@ -2310,7 +2310,7 @@ fn check_expr_unapplied(
             let Some(otherwise) = otherwise else {
                 // No `else`: the then-branch's value is discarded and the
                 // false path yields unit, so the `if` is a unit statement —
-                // never `⊥`, even when the then-branch ends in a cut.
+                // never `(;)`, even when the then-branch ends in a cut.
                 return Some(Type::ONE);
             };
             let else_ty = check_expr(otherwise, enums, env, diags);
@@ -2618,7 +2618,7 @@ fn check_expr_unapplied(
                         .collect::<Option<Vec<_>>>();
                     Some((n.clone(), args))
                 }
-                // `(&)`: the empty menu, ⊤ itself, which answers no demand.
+                // `(&)`: the empty menu itself, which answers no demand.
                 Some(TypeExpr::With(items)) if items.is_empty() => {
                     if !arms.is_empty() {
                         diags.push(Diagnostic {
@@ -2876,8 +2876,8 @@ fn check_expr_unapplied(
                         };
                     }
                     // A form is fed whole, never read a field at a time:
-                    // from `-A ⅋ -B` there is no `-A` to be had, the way
-                    // `A ⊗ B` yields its `A`. Say so, rather than leaving it
+                    // from `(-A ; -B)` there is no `-A` to be had, the way
+                    // `(A, B)` yields its `A`. Say so, rather than leaving it
                     // at "not a record".
                     if let Type::Dual(inner) = &base_ty
                         && let Type::Named(form, _) = inner.as_ref()
@@ -3021,7 +3021,7 @@ fn check_expr_unapplied(
         // the last one consume, and every other step composes. A chain
         // that does not begin with a value denotes one that would, read as
         // `λx. x | …`, which gives composition its type for free —
-        // `arrow(x, ⊥)` is a consumer, `arrow(x, B)` a function.
+        // `arrow(x, (;))` is a consumer, `arrow(x, B)` a function.
         Expr::Flow { stages, from_value, into_consumer } => {
             let types: Vec<Option<Type>> = stages
                 .iter()
@@ -3071,7 +3071,7 @@ fn check_expr_unapplied(
                 // A command takes two groups, so a chain hands it both:
                 // what flows in is its values, and the rest of the chain —
                 // the closing stage — is its menu of exits. The chain ends
-                // there, in a call, and its type is `⊥`.
+                // there, in a call, and its type is `(;)`.
                 if *into_consumer
                     && index + 2 == types.len()
                     && let Expr::Ident(name) = &stages[index].kind
@@ -3079,10 +3079,10 @@ fn check_expr_unapplied(
                     && !env.traits.is_method(name)
                     && let Some(signature) = env.functions.get(name)
                     && signature.continuations.iter().any(|c| *c)
-                    // Only a command: it answers `⊥`, so the chain ends
+                    // Only a command: it answers `(;)`, so the chain ends
                     // in it. A negative function also carries a continuation
                     // but answers a consumer, and composes on — that is the
-                    // commuted ⅋ reading below.
+                    // commuted `;` reading below.
                     && signature.result.as_ref() == Some(&Type::BOTTOM)
                 {
                     let (signature, _) = instantiate(signature, &mut env.uni);
@@ -3226,7 +3226,7 @@ fn check_expr_unapplied(
                         return Some(Type::BOTTOM);
                     }
                     let expects = ty.dual();
-                    // The ⊥/1 corner: `-⊥` resolves to `1`, so the
+                    // The `(;)`/`(,)` corner: `-(;)` resolves to `(,)`, so the
                     // idiomatic `⟨(,) | k⟩` is unit meeting unit.
                     let units = acc == Type::ONE && ty == &Type::ONE;
                     let before = env.uni.clone();
@@ -3252,8 +3252,8 @@ fn check_expr_unapplied(
                     continue;
                 }
                 // A function: what flows in is its argument, its result
-                // flows on. `⅋` is commutative, so a stage `A ⅋ B` reads
-                // both ways — `dual(A) → B` and `dual(B) → A` — and the two
+                // flows on. `;` is commutative, so a stage `(A ; B)` reads
+                // both ways — `(dual(A) -> B)` and `(dual(B) -> A)` — and the two
                 // styles meet here: `area: Shape -> i64` and
                 // `area_of(out: -i64) <- Shape` are one type, so either
                 // stands in a pipeline. What flows in picks the reading,
@@ -3261,7 +3261,7 @@ fn check_expr_unapplied(
                 // A declared callee with a value group has had its chance in
                 // the signature arm, which supplies the whole group or
                 // nothing. Reaching here means what flows in is only part of
-                // it: `⅋` is associative, so the callee's type presents its
+                // it: `;` is associative, so the callee's type presents its
                 // first parameter alone, and reading it that way would apply
                 // `route` to `"high"` and leave the rest for later — a
                 // partial application the calling convention does not have,
@@ -3283,7 +3283,7 @@ fn check_expr_unapplied(
                         .collect();
                     let group = match values.as_slice() {
                         [one] => one.clone(),
-                        many => format!("({})", many.join(" ⊗ ")),
+                        many => format!("({})", many.join(", ")),
                     };
                     let is_command = signature.continuations.iter().any(|c| *c);
                     // The values may all be there, with only the exits
@@ -3716,7 +3716,7 @@ mod tests {
 
     #[test]
     fn a_cut_is_a_command() {
-        // A cut has type ⊥: it produces nothing and control does not return,
+        // A cut has type `(;)`: it produces nothing and control does not return,
         // so a branch that ends in one leaves the `if` type to the other.
         let ok = check(
             "fn parse(input: +String, err: -String) -> i64 {
@@ -3948,7 +3948,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("has type 1")),
+            diags.iter().any(|d| d.message.contains("has type (,)")),
             "unit fit everything once: {diags:?}"
         );
     }
@@ -4311,7 +4311,7 @@ mod tests {
     #[test]
     fn a_call_is_not_applied_to_part_of_its_group() {
         // A command given only some of its values was accepted — its
-        // `⅋`-nested type presented the first parameter alone — and then
+        // `;`-nested type presented the first parameter alone — and then
         // crashed at run time, where the group is bound as one argument.
         let route = "command route(tag: String, x: i64) | (k: i64) { ⟨x | k⟩ }\n";
         for body in [r#"let h = ⟨"high" | route; ⟨0 | exit⟩"#, r#"⟨"high" | route; ⟨0 | exit⟩"#]
@@ -4364,7 +4364,7 @@ mod tests {
 
     #[test]
     fn a_value_is_cut_into_a_consumer_at_the_mirrored_spelling_of_its_type() {
-        // `+String ⅋ -i64` into a slot of `-i64 ⅋ +String`: one type.
+        // `(+String ; -i64)` into a slot of `(-i64 ; +String)`: one type.
         assert!(
             check(
                 "menu Deliver { deliver: (i64 -> String) }
@@ -4544,7 +4544,7 @@ mod tests {
     #[test]
     fn data_is_not_applied() {
         // A `+A` is a value. Applying one used to be accepted, which let a
-        // `¬¬A` — the same type, by the involution — be called like a
+        // `-(-A)` — the same type, by the involution — be called like a
         // function.
         let diags = check("fn f(x: +i64) -> i64 { x(1) }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("which is not a function")), "{diags:?}");

@@ -92,7 +92,7 @@ impl Declarations {
             TypeExpr::Sum(items) => {
                 Type::Sum(items.iter().map(|item| resolve(&item.kind)).collect::<Option<_>>()?)
             }
-            // `A → B` is `-A ⅋ B`.
+            // `A -> B` is `(dual(A) ; B)`.
             TypeExpr::Fun(a, b) => Type::arrow(resolve(&a.kind)?, resolve(&b.kind)?),
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.

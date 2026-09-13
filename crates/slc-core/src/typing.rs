@@ -182,7 +182,7 @@ impl Unification {
             (Type::Var(_), _) | (_, Type::Var(_)) => {
                 Err(TypeError::Mismatch { expected: expected.clone(), actual: actual.clone() })
             }
-            // `1` and `+unit` are one type written twice: `()` is the only
+            // `(,)` and `+unit` are one type written twice: `(,)` is the only
             // value of either.
             (Type::Tensor(xs), Type::Pos(crate::types::Base::Unit))
             | (Type::Pos(crate::types::Base::Unit), Type::Tensor(xs))
@@ -318,7 +318,7 @@ pub fn infer_term(
         }
 
         Term::CoMatch { owner, branches } => {
-            // `(&)`: the empty menu is ⊤ itself, not a declaration.
+            // `(&)`: the empty menu is the unit of `&` itself, not a declaration.
             if owner == "(&)" && branches.is_empty() {
                 return Ok(Type::TOP);
             }
@@ -367,7 +367,7 @@ pub fn infer_coterm(
 
         CoTerm::App(v, e) => {
             // `v · e` refutes a function: with `v : A` and `e` refuting `B`,
-            // the stack consumes `A → B`.
+            // the stack consumes `(A -> B)`.
             let vt = infer_term(v, gamma, delta)?;
             let et = infer_coterm(e, gamma, delta)?;
             Ok(Type::arrow(vt, et))
@@ -636,14 +636,14 @@ mod tests {
         let expected = Type::arrow(a.clone(), Type::Pos(Base::I32));
         let actual = Type::arrow(Type::Pos(Base::Bool), Type::Pos(Base::I32));
         u.unify(&expected, &actual).unwrap();
-        // `A → B` is `-A ⅋ B`, and `dual` is semantic: the wrapped variable
+        // `A -> B` is `(dual(A) ; B)`, and `dual` is semantic: the wrapped variable
         // meets `-bool` by becoming `+bool` — the argument itself.
         assert_eq!(u.apply(&a), Type::Pos(Base::Bool));
     }
 
     #[test]
     fn the_two_spellings_of_unit_are_one_type() {
-        // `()` is `1`, and the written type `unit` is `+unit`; a value of
+        // `(,)` is the unit, and the written type `unit` is `+unit`; a value of
         // one is a value of the other.
         let mut u = Unification::new();
         assert!(u.unify(&Type::ONE, &Type::Pos(Base::Unit)).is_ok());

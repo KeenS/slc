@@ -5,10 +5,10 @@
 // at once (multiplicative), and which side holds the value.
 //
 //   type    declared   a value of it is              fed by
-//   A ⊗ B   data       every field, at once          —  (it is the data)
-//   A ⊕ B   enum       one tagged variant            —  (it is the data)
-//   A ⅋ B   form       a consumer wanting all        its record   (⊗)
-//   A & B   menu       a value answering one item    its request  (⊕)
+//   (A, B)  data       every field, at once          —  (it is the data)
+//   (A | B) enum       one tagged variant            —  (it is the data)
+//   (A ; B) form       a consumer wanting all        its record   (,)
+//   (A & B) menu       a value answering one item    its request  (|)
 //
 // Three constructs cover all four. `match` takes a *named* scrutinee apart,
 // on either side. `select` answers data: it builds the consumer of whatever
@@ -19,7 +19,7 @@
 // already has a dual, and `select` builds it. What `form` and `menu` add is
 // a *name* for the negative side, so a signature can speak of it directly.
 
-// ─── A ⊗ B ─── the positive product: a value carries every part.
+// ─── (A, B) ─── the positive product: a value carries every part.
 
 data Pair {
     left: i64,
@@ -32,8 +32,8 @@ fn sum(p: Pair) -> i64 {
     }
 }
 
-// ─── A ⅋ B ─── its dual: one consumer that must be given every part.
-// `dual(Pair)` is `-i64 ⅋ -i64`, so the arm binds both fields at once.
+// ─── (A ; B) ─── its dual: one consumer that must be given every part.
+// `dual(Pair)` is `(-i64 ; -i64)`, so the arm binds both fields at once.
 
 fn report_sum(out: i64) <- Pair {
     select Pair {
@@ -63,7 +63,7 @@ fn report_first(out: i64) <- (i64, String) {
     }
 }
 
-// ─── A ⊕ B ─── the positive sum: a value is one tagged variant.
+// ─── (A | B) ─── the positive sum: a value is one tagged variant.
 
 enum Colour {
     Red,
@@ -108,25 +108,25 @@ fn config() -> Config {
     }
 }
 
-// ─── 1 and ⊥ ─── the units of the multiplicatives, written `(,)` and `(;)`:
+// ─── (,) and (;) ─── the units of the multiplicatives:
 // the empty product, and its dual, the consumer that accepts it. The additive
-// units, 0 and ⊤, are `(|)` and `(&)` (examples/logical_units.sl).
+// units are `(|)` and `(&)` (examples/logical_units.sl).
 
 fn done(k: -(;)) <- unit {
     ⟨(,) | k⟩
 }
 
 command main | (exit: i32) / {IO} {
-    // ⊗ : build every part, then take them apart.
+    // , : build every part, then take them apart.
     ⟨Pair { left: 2, right: 40 } | sum | println;
 
-    // ⅋ : hand the consumer the whole product — as the dual of a declared
+    // ; : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
     (⟨mu i64 { answer <= ⟨Pair { left: 2, right: 40 } | (⟨answer | report_sum)⟩ } | println);
     (⟨mu i64 { answer <= ⟨Total { left: 2, right: 40 } | (⟨answer | total)⟩ } | println);
     (⟨mu i64 { answer <= ⟨(7, "ignored") | (⟨answer | report_first)⟩ } | println);
 
-    // ⊕ : build one variant, then branch on it.
+    // | : build one variant, then branch on it.
     ⟨Colour::Green | name | println;
 
     // & : hand the consumer one variant; only its branch runs.
@@ -136,7 +136,7 @@ command main | (exit: i32) / {IO} {
     ⟨config().retries | println;
     ⟨config().name | println;
 
-    // 1 and ⊥.
+    // (,) and (;).
     ⟨mu (;) { k <= (⟨k | done) } | println;
 
     ⟨0 | exit⟩

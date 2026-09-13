@@ -14,8 +14,8 @@
 //   let y = x | f; rest               x | f_of(select +B { y => rest })⟩
 //
 // The last two rows are the point: `f: A -> B` and `f_of(k: -B) <- A` are
-// *one type* — `⅋` is commutative, so `-A ⅋ B` read the other way round is
-// `dual(B) ⅋ dual(A)` — and a pipeline takes either. The two halves below
+// *one type* — `;` is commutative, so `(-A ; B)` read the other way round is
+// `(dual(B) ; dual(A))` — and a pipeline takes either. The two halves below
 // therefore end up written the same way, which is what "the same program,
 // twice" was always trying to say.
 //

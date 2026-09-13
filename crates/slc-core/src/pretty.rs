@@ -27,11 +27,22 @@ impl std::fmt::Display for Type {
             Type::Var(v) => write!(f, "?{v}"),
             Type::Pos(b) => write!(f, "+{b}"),
             Type::Neg(b) => write!(f, "-{b}"),
-            Type::Tensor(xs) => connective(f, xs, " ⊗ ", "1"),
-            Type::Par(xs) => connective(f, xs, " ⅋ ", "⊥"),
+            Type::Tensor(xs) => connective(f, xs, ", ", "(,)"),
+            // A function is the two-component `;` whose first half is the
+            // consumer of its argument, and prints as the function it is.
+            Type::Par(xs) => match xs.as_slice() {
+                [argument, result]
+                    if argument.is_negative()
+                        && !matches!(argument, Type::Var(_) | Type::Param(_))
+                        && *result != Type::BOTTOM =>
+                {
+                    write!(f, "({} -> {result})", argument.dual())
+                }
+                _ => connective(f, xs, " ; ", "(;)"),
+            },
             Type::Dual(t) => write!(f, "dual({t})"),
-            Type::With(xs) => connective(f, xs, " & ", "⊤"),
-            Type::Sum(xs) => connective(f, xs, " + ", "0"),
+            Type::With(xs) => connective(f, xs, " & ", "(&)"),
+            Type::Sum(xs) => connective(f, xs, " | ", "(|)"),
             Type::Param(i) => write!(f, "%{i}"),
             Type::Named(name, args) => {
                 write!(f, "{name}")?;
@@ -48,8 +59,9 @@ impl std::fmt::Display for Type {
     }
 }
 
-/// A connective's components joined by its symbol, in parentheses — or its
-/// unit, when there are none.
+/// A connective's components joined by its separator, in parentheses — or
+/// its unit, the separator alone, when there are none: the surface's own
+/// spelling, so a diagnostic shows a type the way a program writes it.
 fn connective(
     f: &mut std::fmt::Formatter<'_>,
     components: &[Type],

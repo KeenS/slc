@@ -2,7 +2,7 @@
 //! polarity-checked consistently.
 //!
 //! The surface writes the multiplicative connectives, the function arrow, the
-//! list former, `dual`, and `⊥` explicitly. Each has to survive the whole
+//! list former, `dual`, and `(;)` explicitly. Each has to survive the whole
 //! front end with the same meaning.
 
 use slc_check::inference::{DeclarationType, infer_program};
@@ -89,7 +89,7 @@ fn a_paren_joins_any_number_of_components_with_one_connective() {
 
 #[test]
 fn a_function_into_bottom_is_a_consumer() {
-    // `A → ⊥` and `-A` are one type, not two that convert: a function that
+    // `(A -> (;))` and `-A` are one type, not two that convert: a function that
     // never returns is a consumer of its argument.
     assert_eq!(
         lower_type(&parameter_type("command f | (k: (+i32 -> (;))) { ⟨0 | k⟩ }")),
@@ -127,7 +127,7 @@ fn explicit_connectives_reach_inference() {
     let out = declared("command f | (k: (-i64 ; -i64)) { k(0) }");
     assert_eq!(
         out[0].ty,
-        // `A → ⊥` is `-A`, so a `command`'s type is the dual of its row.
+        // `(A -> (;))` is `-A`, so a `command`'s type is the dual of its row.
         Type::Par(vec![Type::Neg(Base::I64), Type::Neg(Base::I64)]).dual()
     );
 }
@@ -144,7 +144,7 @@ fn connective_polarity_is_enforced_by_position() {
     assert!(check("command f(p: (-i64 ; -i64)) | (k: -i32) { ⟨0 | k⟩ }").is_ok());
 
     // Bottom is negative too.
-    // A value parameter holds either side, ⊥ included — it is the same
+    // A value parameter holds either side, `(;)` included — it is the same
     // type the prelude names `Bottom`.
     assert!(check("command f(p: (;)) | (k: -i32) { ⟨0 | k⟩ }").is_ok());
 }

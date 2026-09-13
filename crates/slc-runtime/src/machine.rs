@@ -402,7 +402,7 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
             bind_components(branch.arity, *payload, &mut env2)?;
             State::Command(branch.body, env2)
         }
-        // ⟨ v ∥ prj:index ⟩ → the index-th spine component of v. A struct is
+        // ⟨ v ∥ prj:index ⟩ → the index-th component of v. A struct is
         // a tagged product, so unwrap the tag first; then walk `index` tails
         // and take the head, or the whole remainder when it is the bare last.
         Node::Prj(index) => State::Return(project_value(v, index)?),

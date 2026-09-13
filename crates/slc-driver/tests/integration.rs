@@ -173,7 +173,7 @@ fn earlier_diagnostic_phases_take_precedence_over_later_phases() {
 #[test]
 fn a_command_body_must_reach_a_continuation() {
     // A command whose body is a bare value reaches no continuation: its body
-    // is not `⊥`, so it is rejected by the type checker.
+    // is not `(;)`, so it is rejected by the type checker.
     let dir = std::env::temp_dir().join("slc_test_bottom.sl");
     std::fs::write(&dir, "command bad(x: +i32) | (k: -i32) { x }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1392,7 +1392,7 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
 
 #[test]
 fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
-    // `A ⅋ B` and `B ⅋ A` are one type. A negative function stored where the
+    // `(A ; B)` and `(B ; A)` are one type. A negative function stored where the
     // positive spelling is declared, and a positive function where the
     // negative one is, must both *run* — which is what proves the value was
     // turned around at the cut rather than merely accepted.

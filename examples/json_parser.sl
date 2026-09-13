@@ -11,7 +11,7 @@
 //
 // The row is the outcome type. An `enum` of outcomes sent to a single
 // continuation says the same thing with a wrapper around it: the consumer of
-// `A ⊕ B` is a consumer of `A` and a consumer of `B`, which is what a row of
+// `(A | B)` is a consumer of `A` and a consumer of `B`, which is what a row of
 // two continuations already is. Writing them separately also lets each
 // parser's type say which outcomes it actually has — every parser below can
 // fail, but only `parse_json` can succeed with a value.

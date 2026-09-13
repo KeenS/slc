@@ -35,7 +35,7 @@ thread_local! {
     static CALL_GROUPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     static FLOWS: RefCell<HashMap<Span, FlowShape>> = RefCell::new(HashMap::new());
     /// Expression span → the swap its value needs: it is used at the
-    /// mirrored `⅋` spelling of its type.
+    /// mirrored `;` spelling of its type.
     static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
     static PARS: RefCell<HashMap<Span, Vec<bool>>> = RefCell::new(HashMap::new());
 }
@@ -90,8 +90,8 @@ pub struct DispatchInfo {
     /// Flow span → what the chain turned out to be. Two bits settle it,
     /// since every middle step is an application.
     pub flows: HashMap<Span, FlowShape>,
-    /// Expression span → the swap its value needs, where a value of `A ⅋ B`
-    /// is stored at, passed as, or returned for `B ⅋ A`.
+    /// Expression span → the swap its value needs, where a value of `(A ; B)`
+    /// is stored at, passed as, or returned for `(B ; A)`.
     pub swaps: HashMap<Span, Swap>,
     /// Form value span → whether each component is positive: a consumer takes
     /// its part, and a value is taken by it.
@@ -110,20 +110,20 @@ pub struct FlowShape {
     /// the rest of the chain as its menu of exits, so the chain ends there
     /// in a two-group call rather than a cut.
     pub row_stage: Option<usize>,
-    /// The stage at which the chain turns around. `⅋` is commutative, so a
+    /// The stage at which the chain turns around. `;` is commutative, so a
     /// stage may read as a consumer transformer instead of a function —
     /// `area_of(out: -i64) <- Shape` takes the *rest of the chain* as its
     /// continuation — and from here on the stages fold right, building the
     /// consumer that what flows in is cut against.
     pub commuted_from: Option<usize>,
     /// The value cut into the closing consumer has the consumer's type at
-    /// its other spelling: `A ⅋ B` where `B ⅋ A` is wanted. The two are one
+    /// its other spelling: `(A ; B)` where `(B ; A)` is wanted. The two are one
     /// type, but a value of it is a closure facing one way, so it is lowered
     /// through the swap that faces it the other.
     pub swap: Option<Swap>,
 }
 
-/// The polarities of a `⅋` value's two halves, `left ⅋ right`, which is what
+/// The polarities of a `;` value's two halves, `(left ; right)`, which is what
 /// the swap needs to orient itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Swap {
@@ -131,7 +131,7 @@ pub struct Swap {
     pub right_positive: bool,
 }
 
-/// `left ⅋ right → right ⅋ left` for a value `f`: a closure taking
+/// `(left ; right)` to `(right ; left)` for a value `f`: a closure taking
 /// `dual(left)` becomes one taking `dual(right)` and giving back a `left`.
 ///
 /// How it gives one back follows `left`'s polarity, because the runtime only
@@ -318,7 +318,7 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
             "File" => Ok(Type::Pos(Base::File)),
             other => Err(LowerError::UnknownType(other.to_string())),
         },
-        // `-⊥` is not the dual of `⊥`; bottom is the impossible command
+        // `-(;)` is not the dual of `(;)`; it is the impossible command
         // type. It is negative already.
         TypeExpr::Negative(inner) if inner.kind.is_bottom() => Ok(Type::BOTTOM),
         TypeExpr::Positive(inner) => Ok(lower_type(&inner.kind)?.dual().dual()),
@@ -327,7 +327,7 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Par(items) => Ok(Type::Par(lower_types(items)?)),
         TypeExpr::With(items) => Ok(Type::With(lower_types(items)?)),
         TypeExpr::Sum(items) => Ok(Type::Sum(lower_types(items)?)),
-        // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
+        // `A -> B` is `(dual(A) ; B)`, so a function is negative and `(A -> (;))` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
         // The effect row is the effect checker's concern; the core type is
@@ -348,7 +348,7 @@ fn lower_types(items: &[Node<TypeExpr>]) -> Result<Vec<Type>, LowerError> {
 /// Lower an expression in an explicit lexical continuation scope. New
 /// continuation binders extend `continuations` for their body only.
 /// Lower an expression, turned around first if the checker found its value
-/// used at the mirrored `⅋` spelling of its type.
+/// used at the mirrored `;` spelling of its type.
 fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
     let term = lower_expr_facing(e, continuations)?;
     Ok(match SWAPS.with(|cell| cell.borrow().get(&e.span).copied()) {
@@ -1902,7 +1902,7 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
             }
             Pattern::Tuple(items) | Pattern::Bundle(items) => {
                 // A bundle is the same right-nested pair a tuple is, so it
-                // matches the same way: the checker tells `&` from `⊗`.
+                // matches the same way: the checker tells `&` from `,`.
                 out.push('(');
                 for (i, item) in items.iter().enumerate() {
                     if i > 0 {

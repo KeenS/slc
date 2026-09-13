@@ -73,6 +73,3 @@ Nothing is queued.
   both, can. Where such a pattern would bind anything, and what, is open.
 - **Replacing `⟨` and `⟩`.** The cut brackets are the last non-ASCII
   surface syntax; their replacement is to be designed.
-- **How diagnostics print types.** They print the core's notation — `⊗`,
-  `⅋`, `⊥`, `+` for a sum — which the ASCII surface no longer writes.
-  Whether they should print the surface spelling instead is open.

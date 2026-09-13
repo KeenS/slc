@@ -138,7 +138,7 @@ pub fn variant_type(
 }
 
 /// The tensor representation of a struct declaration: the product of its
-/// field types. A struct with no fields is the tensor unit.
+/// field types. A struct with no fields is the unit, `(,)`.
 pub fn record_representation(
     fields: &[(String, slc_syntax::ast::TypeExpr)],
 ) -> Result<Type, InferenceError> {
@@ -205,7 +205,7 @@ fn infer_decl(
 
             // A negative function produces the *consumer* of the type written
             // after `<-`; its row is unchanged. Dualizing the whole function
-            // type would give `A ⊗ -B`, which is a call stack, not a function.
+            // type would give `(A, dual(B))`, which is a call stack, not a function.
             let output = if *polarity == slc_syntax::ast::FunctionPolarity::Negative {
                 output.dual()
             } else {
@@ -366,7 +366,7 @@ mod tests {
             record_representation(&fields("data One { only: i64 }")).unwrap(),
             Type::Pos(Base::I64)
         );
-        // The empty product is the tensor unit.
+        // The empty product is the unit, `(,)`.
         assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::ONE);
         // The declaration itself keeps its opaque named type.
         let out = infer("data D { left: i64, right: bool }").unwrap();
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn negative_fn_infers_dual_function_type() {
-        // It takes a consumer and produces one: `-i32 → -i32`.
+        // It takes a consumer and produces one: `(-i32 -> -i32)`.
         let out = infer("fn k(x: -i32) <- i32 { x }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
     }
@@ -410,7 +410,7 @@ mod tests {
         let out = infer("fn k(return: -i32) <- i32 { return(0) }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
-        // The row and the result stay independent: `-i32 → -bool`.
+        // The row and the result stay independent: `(-i32 -> -bool)`.
         let out = infer("fn k(return: -i32) <- bool { return(true) }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::Bool)));
     }

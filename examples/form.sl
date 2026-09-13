@@ -5,13 +5,13 @@
 // one item the consumer demanded. `data`/`form` are the multiplicatives,
 // where nobody chooses — every field is in play at once:
 //
-//   enum Colour { Red, Green }                  ⊕  one variant
+//   enum Colour { Red, Green }                  |  one variant
 //   menu Config { retries: i64 }                &  one item
-//   data Report { value: i64, label: String }   ⊗  every field, given
-//   form Report { value: i64, label: String }   ⅋  every field, wanted
+//   data Report { value: i64, label: String }   ,  every field, given
+//   form Report { value: i64, label: String }   ;  every field, wanted
 //
 // A record carries every field; a form wants every field. Its fields name
-// what flows *in*, so `form Report` denotes `-i64 ⅋ -String`.
+// what flows *in*, so `form Report` denotes `(-i64 ; -String)`.
 
 form Report { value: i64, label: String }
 
@@ -41,8 +41,8 @@ command main | (exit: i32) / {IO} {
 
     (⟨mu i64 { a <= ⟨Report { value: 7, label: "relabelled" } | (⟨a | printer | shouting)⟩ } | println);
 
-    // What a form cannot do is give up one field: from `-A ⅋ -B` there is no
-    // `-A` to be had, the way `A ⊗ B` yields its `A`. Reading `p.x` off a
+    // What a form cannot do is give up one field: from `(-A ; -B)` there is no
+    // `-A` to be had, the way `(A, B)` yields its `A`. Reading `p.x` off a
     // record is fine because the other fields can be discarded; a form would
     // have to invent them. So a form is always fed whole.
 
