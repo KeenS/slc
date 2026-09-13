@@ -41,7 +41,7 @@ const BACKSLASH: char = '\\';
 // the end of the input cannot continue a JSON value. `at` reports a space
 // there, which no JSON value accepts and every value may be followed by.
 fn at(input: String, pos: i64) -> char {
-    match (⟨(pos, (⟨input | str_len)) | lt) { true => {
+    match (⟨(pos, (⟨input | str_len)) | lt) { True => {
         (⟨(input, pos) | index)
     }, _ => {
         ' '
@@ -49,26 +49,26 @@ fn at(input: String, pos: i64) -> char {
 }
 
 fn parse_digits(input: String, pos: i64) -> i64 {
-    let more = match (⟨(pos, (⟨input | str_len)) | lt) { true => (⟨(input, pos) | at | is_digit), _ => false };
-    match more { true => {
+    let more = match (⟨(pos, (⟨input | str_len)) | lt) { True => (⟨(input, pos) | at | is_digit), _ => False };
+    match more { True => {
         ⟨(input, (⟨(pos, 1) | add)) | parse_digits
     }, _ => {
         pos
     } }
 }
 
-fn is_hex(c: char) -> bool {
+fn is_hex(c: char) -> Bool {
     match c {
-        '0'..='9' | 'a'..='f' | 'A'..='F' => true,
-        _ => false,
+        '0'..='9' | 'a'..='f' | 'A'..='F' => True,
+        _ => False,
     }
 }
 
 command parse_json(input: String) | (parsed: String & failed: String) {
     let start = ⟨(input, 0) | skip_ws;
-    match (⟨(start, (⟨input | str_len)) | lt) { true => {
+    match (⟨(start, (⟨input | str_len)) | lt) { True => {
         let end = mu { k <= ⟨(input, start) | parse_value | (k & failed)⟩ };
-        match (⟨((⟨(input, end) | skip_ws), (⟨input | str_len)) | eq) { true => {
+        match (⟨((⟨(input, end) | skip_ws), (⟨input | str_len)) | eq) { True => {
             ⟨(input, start, end) | substring | parsed⟩
         }, _ => {
             ⟨"trailing characters after JSON value" | failed⟩
@@ -92,13 +92,13 @@ command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_number(input: String, pos: i64) | (ok: i64 & failed: String) {
-    let after_sign = match (⟨((⟨(input, pos) | at), '-') | eq) { true => {
+    let after_sign = match (⟨((⟨(input, pos) | at), '-') | eq) { True => {
         (⟨(pos, 1) | add)
     }, _ => {
         pos
     } };
     let integer_end = ⟨(input, after_sign) | parse_digits;
-    match (⟨(integer_end, after_sign) | gt) { true => {
+    match (⟨(integer_end, after_sign) | gt) { True => {
         ⟨(input, integer_end) | parse_number_tail | (ok & failed)⟩
     }, _ => {
         ⟨"expected integer part in number" | failed⟩
@@ -106,7 +106,7 @@ command parse_number(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_number_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨((⟨(input, pos) | at), '.') | eq) { true => {
+    match (⟨((⟨(input, pos) | at), '.') | eq) { True => {
         let after_fraction = mu { k <= ⟨(input, (⟨(pos, 1) | add)) | parse_fraction | (k & failed)⟩ };
         ⟨(input, after_fraction) | parse_exponent | (ok & failed)⟩
     }, _ => {
@@ -115,7 +115,7 @@ command parse_number_tail(input: String, pos: i64) | (ok: i64 & failed: String) 
 }
 
 command parse_fraction(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨(input, pos) | at | is_digit) { true => {
+    match (⟨(input, pos) | at | is_digit) { True => {
         ⟨(input, pos) | parse_digits | ok⟩
     }, _ => {
         ⟨"expected digit after decimal point" | failed⟩
@@ -124,8 +124,8 @@ command parse_fraction(input: String, pos: i64) | (ok: i64 & failed: String) {
 
 command parse_exponent(input: String, pos: i64) | (ok: i64 & failed: String) {
     let ch = ⟨(input, pos) | at;
-    let exponent = match (⟨(ch, 'e') | eq) { true => true, _ => (⟨(ch, 'E') | eq) };
-    match exponent { true => {
+    let exponent = match (⟨(ch, 'e') | eq) { True => True, _ => (⟨(ch, 'E') | eq) };
+    match exponent { True => {
         ⟨(input, (⟨(pos, 1) | add)) | parse_exponent_tail | (ok & failed)⟩
     }, _ => {
         ⟨pos | ok⟩
@@ -133,13 +133,13 @@ command parse_exponent(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_exponent_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
-    let signed = match (⟨((⟨(input, pos) | at), '-') | eq) { true => true, _ => (⟨((⟨(input, pos) | at), '+') | eq) };
-    let after_sign = match signed { true => {
+    let signed = match (⟨((⟨(input, pos) | at), '-') | eq) { True => True, _ => (⟨((⟨(input, pos) | at), '+') | eq) };
+    let after_sign = match signed { True => {
         (⟨(pos, 1) | add)
     }, _ => {
         pos
     } };
-    match (⟨(input, after_sign) | at | is_digit) { true => {
+    match (⟨(input, after_sign) | at | is_digit) { True => {
         ⟨(input, after_sign) | parse_digits | ok⟩
     }, _ => {
         ⟨"expected digit in exponent" | failed⟩
@@ -151,15 +151,15 @@ command parse_string(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_string_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨(pos, (⟨input | str_len)) | ge) { true => {
+    match (⟨(pos, (⟨input | str_len)) | ge) { True => {
         ⟨"unterminated JSON string" | failed⟩
     }, _ => {
         let ch = ⟨(input, pos) | at;
-        match (⟨(ch, QUOTE) | eq) { true => {
+        match (⟨(ch, QUOTE) | eq) { True => {
             ⟨(pos, 1) | add | ok⟩
-        }, _ => match (⟨(ch, BACKSLASH) | eq) { true => {
+        }, _ => match (⟨(ch, BACKSLASH) | eq) { True => {
             ⟨(input, (⟨(pos, 1) | add)) | parse_escape | (ok & failed)⟩
-        }, _ => match (⟨(ch, ' ') | lt) { true => {
+        }, _ => match (⟨(ch, ' ') | lt) { True => {
             ⟨"raw control character in JSON string" | failed⟩
         }, _ => {
             ⟨(input, (⟨(pos, 1) | add)) | parse_string_tail | (ok & failed)⟩
@@ -179,15 +179,15 @@ command parse_escape(input: String, pos: i64) | (ok: i64 & failed: String) {
 
 // Whether `count` hexadecimal digits start at `pos`, looking no further than
 // the first that is not one.
-fn hex_digits(input: String, pos: i64, count: i64) -> bool {
-    match (⟨(count, 0) | eq) { true => true, _ => match (⟨(input, pos) | at | is_hex) {
-        true => ⟨(input, (⟨(pos, 1) | add), (⟨(count, 1) | sub)) | hex_digits,
-        _ => false,
+fn hex_digits(input: String, pos: i64, count: i64) -> Bool {
+    match (⟨(count, 0) | eq) { True => True, _ => match (⟨(input, pos) | at | is_hex) {
+        True => ⟨(input, (⟨(pos, 1) | add), (⟨(count, 1) | sub)) | hex_digits,
+        _ => False,
     } }
 }
 
 command parse_hex4(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨(input, pos, 4) | hex_digits) { true => {
+    match (⟨(input, pos, 4) | hex_digits) { True => {
         ⟨(input, (⟨(pos, 4) | add)) | parse_string_tail | (ok & failed)⟩
     }, _ => {
         ⟨"invalid hexadecimal digit in \\u escape" | failed⟩
@@ -197,8 +197,8 @@ command parse_hex4(input: String, pos: i64) | (ok: i64 & failed: String) {
 command parse_literal(input: String, pos: i64, text: String) | (ok: i64 & failed: String) {
     let end = (⟨(pos, (⟨text | str_len)) | add);
     // The slice is taken only once it is known to be in range.
-    let matches = match (⟨(end, (⟨input | str_len)) | le) { true => (⟨((⟨(input, pos, end) | substring), text) | eq), _ => false };
-    match matches { true => {
+    let matches = match (⟨(end, (⟨input | str_len)) | le) { True => (⟨((⟨(input, pos, end) | substring), text) | eq), _ => False };
+    match matches { True => {
         ⟨end | ok⟩
     }, _ => {
         ⟨"invalid JSON literal" | failed⟩
@@ -207,7 +207,7 @@ command parse_literal(input: String, pos: i64, text: String) | (ok: i64 & failed
 
 command parse_array(input: String, pos: i64) | (ok: i64 & failed: String) {
     let first = ⟨(input, (⟨(pos, 1) | add)) | skip_ws;
-    match (⟨((⟨(input, first) | at), CLOSE_BRACKET) | eq) { true => {
+    match (⟨((⟨(input, first) | at), CLOSE_BRACKET) | eq) { True => {
         ⟨(first, 1) | add | ok⟩
     }, _ => {
         ⟨(input, first) | parse_array_body | (ok & failed)⟩
@@ -218,14 +218,14 @@ command parse_array_body(input: String, pos: i64) | (ok: i64 & failed: String) {
     let value_end = mu { k <= ⟨(input, pos) | parse_value | (k & failed)⟩ };
     let after_value = ⟨(input, value_end) | skip_ws;
     let ch = ⟨(input, after_value) | at;
-    match (⟨(ch, COMMA) | eq) { true => {
+    match (⟨(ch, COMMA) | eq) { True => {
         let next = ⟨(input, (⟨(after_value, 1) | add)) | skip_ws;
-        match (⟨((⟨(input, next) | at), CLOSE_BRACKET) | eq) { true => {
+        match (⟨((⟨(input, next) | at), CLOSE_BRACKET) | eq) { True => {
             ⟨"trailing comma in array" | failed⟩
         }, _ => {
             ⟨(input, next) | parse_array_body | (ok & failed)⟩
         } }
-    }, _ => match (⟨(ch, CLOSE_BRACKET) | eq) { true => {
+    }, _ => match (⟨(ch, CLOSE_BRACKET) | eq) { True => {
         ⟨(after_value, 1) | add | ok⟩
     }, _ => {
         ⟨"expected `,` or `]` in array" | failed⟩
@@ -234,7 +234,7 @@ command parse_array_body(input: String, pos: i64) | (ok: i64 & failed: String) {
 
 command parse_object(input: String, pos: i64) | (ok: i64 & failed: String) {
     let first = ⟨(input, (⟨(pos, 1) | add)) | skip_ws;
-    match (⟨((⟨(input, first) | at), CLOSE_BRACE) | eq) { true => {
+    match (⟨((⟨(input, first) | at), CLOSE_BRACE) | eq) { True => {
         ⟨(first, 1) | add | ok⟩
     }, _ => {
         ⟨(input, first) | parse_object_body | (ok & failed)⟩
@@ -242,21 +242,21 @@ command parse_object(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_object_body(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨((⟨(input, pos) | at), QUOTE) | eq) { true => {
+    match (⟨((⟨(input, pos) | at), QUOTE) | eq) { True => {
         let key_end = mu { k <= ⟨(input, pos) | parse_string | (k & failed)⟩ };
         let after_key = ⟨(input, key_end) | skip_ws;
-        match (⟨((⟨(input, after_key) | at), COLON) | eq) { true => {
+        match (⟨((⟨(input, after_key) | at), COLON) | eq) { True => {
             let value_end = mu { k <= ⟨(input, ⟨(input, (⟨(after_key, 1) | add)) | skip_ws) | parse_value | (k & failed)⟩ };
             let after_value = ⟨(input, value_end) | skip_ws;
             let ch = ⟨(input, after_value) | at;
-            match (⟨(ch, COMMA) | eq) { true => {
+            match (⟨(ch, COMMA) | eq) { True => {
                 let next = ⟨(input, (⟨(after_value, 1) | add)) | skip_ws;
-                match (⟨((⟨(input, next) | at), CLOSE_BRACE) | eq) { true => {
+                match (⟨((⟨(input, next) | at), CLOSE_BRACE) | eq) { True => {
                     ⟨"trailing comma in object" | failed⟩
                 }, _ => {
                     ⟨(input, next) | parse_object_body | (ok & failed)⟩
                 } }
-            }, _ => match (⟨(ch, CLOSE_BRACE) | eq) { true => {
+            }, _ => match (⟨(ch, CLOSE_BRACE) | eq) { True => {
                 ⟨(after_value, 1) | add | ok⟩
             }, _ => {
                 ⟨"expected `,` or `}` in object" | failed⟩

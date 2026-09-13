@@ -16,11 +16,11 @@ use list::map;
 
 effect Exn { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
-effect Choose { fn flip() -> bool; }
+effect Choose { fn flip() -> Bool; }
 
 // An exception: `throw` never returns, so its clause does not resume.
 fn checked_div(a: i64, b: i64) -> i64 / {Exn} {
-    match (⟨(b, 0) | eq) { true => { ⟨"division by zero" | throw }, _ => { (⟨(a, b) | div) } }
+    match (⟨(b, 0) | eq) { True => { ⟨"division by zero" | throw }, _ => { (⟨(a, b) | div) } }
 }
 
 // A reader: `config` asks the handler and continues — one resume, and work
@@ -31,8 +31,8 @@ fn scaled(x: i64) -> i64 / {Reader} {
 
 // Nondeterminism: two choices, and the handler takes both by resuming twice.
 fn pick() -> String / {Choose} {
-    let a = match flip() { true => { "H" }, _ => { "T" } };
-    let b = match flip() { true => { "H" }, _ => { "T" } };
+    let a = match flip() { True => { "H" }, _ => { "T" } };
+    let b = match flip() { True => { "H" }, _ => { "T" } };
     (⟨(a, b) | add)
 }
 
@@ -45,7 +45,7 @@ fn pick() -> String / {Choose} {
 // — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
 // handler around the call is what keeps `main` pure.
 fn half(n: i64) -> i64 / {Exn} {
-    match (⟨(n, 2) | rem | x => (x, 0) | eq) { true => { (⟨(n, 2) | div) }, _ => { ⟨"odd" | throw } }
+    match (⟨(n, 2) | rem | x => (x, 0) | eq) { True => { (⟨(n, 2) | div) }, _ => { ⟨"odd" | throw } }
 }
 
 // A negative function carries its row in the same place — after the `<-`
@@ -68,7 +68,7 @@ command main | (exit: i32) / {IO} {
 
     // resumes twice, combining both branches of every choice
     let all = handle pick() {
-        flip(): resume => (⟨((⟨true | resume), " ") | add | x => (x, (⟨false | resume)) | add),
+        flip(): resume => (⟨((⟨True | resume), " ") | add | x => (x, (⟨False | resume)) | add),
         return(s) => s,
     };
     ⟨all | println;                        // "HH HT TH TT"

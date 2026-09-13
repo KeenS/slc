@@ -40,7 +40,7 @@ menu Session {
 
 fn session(n: i64) -> Session {
     mu Session {
-        next <= ⟨(match (⟨(n, 0) | gt) { true => { Step(n) }, _ => { Quit } }) | next⟩,
+        next <= ⟨(match (⟨(n, 0) | gt) { True => { Step(n) }, _ => { Quit } }) | next⟩,
         config <= ⟨(mu Config { retries <= ⟨n | retries⟩, name <= ⟨"session" | name⟩ }) | config⟩,
     }
 }

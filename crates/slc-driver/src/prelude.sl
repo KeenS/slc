@@ -49,8 +49,8 @@ impl Display for String {
     fn fmt(self: String) -> String { self }
 }
 
-impl Display for bool {
-    fn fmt(self: bool) -> String { match self { true => { "true" }, _ => { "false" } } }
+impl Display for Bool {
+    fn fmt(self: Bool) -> String { match self { True => { "true" }, _ => { "false" } } }
 }
 
 fn to_string<+T: Display>(x: T) -> String { ⟨x | fmt }
@@ -108,85 +108,85 @@ impl Neg for i64 { fn neg(self: i64) -> i64 { ⟨self | __neg } }
 impl Neg for i32 { fn neg(self: i32) -> i32 { ⟨self | __neg } }
 
 trait Eq {
-    fn eq(self: Self, other: Self) -> bool;
-    fn ne(self: Self, other: Self) -> bool;
+    fn eq(self: Self, other: Self) -> Bool;
+    fn ne(self: Self, other: Self) -> Bool;
 }
 impl Eq for i64 {
-    fn eq(self: i64, other: i64) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: i64, other: i64) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: i64, other: i64) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: i64, other: i64) -> Bool { ⟨(self, other) | __ne }
 }
 impl Eq for i32 {
-    fn eq(self: i32, other: i32) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: i32, other: i32) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: i32, other: i32) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: i32, other: i32) -> Bool { ⟨(self, other) | __ne }
 }
 impl Eq for u64 {
-    fn eq(self: u64, other: u64) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: u64, other: u64) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: u64, other: u64) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: u64, other: u64) -> Bool { ⟨(self, other) | __ne }
 }
 impl Eq for u32 {
-    fn eq(self: u32, other: u32) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: u32, other: u32) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: u32, other: u32) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: u32, other: u32) -> Bool { ⟨(self, other) | __ne }
 }
 impl Eq for char {
-    fn eq(self: char, other: char) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: char, other: char) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: char, other: char) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: char, other: char) -> Bool { ⟨(self, other) | __ne }
 }
 impl Eq for String {
-    fn eq(self: String, other: String) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: String, other: String) -> bool { ⟨(self, other) | __ne }
+    fn eq(self: String, other: String) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: String, other: String) -> Bool { ⟨(self, other) | __ne }
 }
-impl Eq for bool {
-    fn eq(self: bool, other: bool) -> bool { ⟨(self, other) | __eq }
-    fn ne(self: bool, other: bool) -> bool { ⟨(self, other) | __ne }
+impl Eq for Bool {
+    fn eq(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __eq }
+    fn ne(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __ne }
 }
 
 trait Ord {
-    fn lt(self: Self, other: Self) -> bool;
-    fn gt(self: Self, other: Self) -> bool;
-    fn le(self: Self, other: Self) -> bool;
-    fn ge(self: Self, other: Self) -> bool;
+    fn lt(self: Self, other: Self) -> Bool;
+    fn gt(self: Self, other: Self) -> Bool;
+    fn le(self: Self, other: Self) -> Bool;
+    fn ge(self: Self, other: Self) -> Bool;
 }
 impl Ord for i64 {
-    fn lt(self: i64, other: i64) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: i64, other: i64) -> bool { ⟨(self, other) | __gt }
-    fn le(self: i64, other: i64) -> bool { ⟨(self, other) | __le }
-    fn ge(self: i64, other: i64) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: i64, other: i64) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: i64, other: i64) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: i64, other: i64) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: i64, other: i64) -> Bool { ⟨(self, other) | __ge }
 }
 impl Ord for i32 {
-    fn lt(self: i32, other: i32) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: i32, other: i32) -> bool { ⟨(self, other) | __gt }
-    fn le(self: i32, other: i32) -> bool { ⟨(self, other) | __le }
-    fn ge(self: i32, other: i32) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: i32, other: i32) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: i32, other: i32) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: i32, other: i32) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: i32, other: i32) -> Bool { ⟨(self, other) | __ge }
 }
 impl Ord for u64 {
-    fn lt(self: u64, other: u64) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: u64, other: u64) -> bool { ⟨(self, other) | __gt }
-    fn le(self: u64, other: u64) -> bool { ⟨(self, other) | __le }
-    fn ge(self: u64, other: u64) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: u64, other: u64) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: u64, other: u64) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: u64, other: u64) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: u64, other: u64) -> Bool { ⟨(self, other) | __ge }
 }
 impl Ord for u32 {
-    fn lt(self: u32, other: u32) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: u32, other: u32) -> bool { ⟨(self, other) | __gt }
-    fn le(self: u32, other: u32) -> bool { ⟨(self, other) | __le }
-    fn ge(self: u32, other: u32) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: u32, other: u32) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: u32, other: u32) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: u32, other: u32) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: u32, other: u32) -> Bool { ⟨(self, other) | __ge }
 }
 impl Ord for char {
-    fn lt(self: char, other: char) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: char, other: char) -> bool { ⟨(self, other) | __gt }
-    fn le(self: char, other: char) -> bool { ⟨(self, other) | __le }
-    fn ge(self: char, other: char) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: char, other: char) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: char, other: char) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: char, other: char) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: char, other: char) -> Bool { ⟨(self, other) | __ge }
 }
 impl Ord for String {
-    fn lt(self: String, other: String) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: String, other: String) -> bool { ⟨(self, other) | __gt }
-    fn le(self: String, other: String) -> bool { ⟨(self, other) | __le }
-    fn ge(self: String, other: String) -> bool { ⟨(self, other) | __ge }
+    fn lt(self: String, other: String) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: String, other: String) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: String, other: String) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: String, other: String) -> Bool { ⟨(self, other) | __ge }
 }
-impl Ord for bool {
-    fn lt(self: bool, other: bool) -> bool { ⟨(self, other) | __lt }
-    fn gt(self: bool, other: bool) -> bool { ⟨(self, other) | __gt }
-    fn le(self: bool, other: bool) -> bool { ⟨(self, other) | __le }
-    fn ge(self: bool, other: bool) -> bool { ⟨(self, other) | __ge }
+impl Ord for Bool {
+    fn lt(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __lt }
+    fn gt(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __gt }
+    fn le(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __le }
+    fn ge(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __ge }
 }
 
 // The character of a `String` at a position, failing at run time when the
@@ -263,6 +263,6 @@ impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Displa
 // There is no `!`: negation is an ordinary function a `bool` flows into,
 // `⟨b | not`. (The `_` arm stands for `false` until `bool` is declared.)
 
-fn not(b: bool) -> bool {
-    match b { true => false, _ => true }
+fn not(b: Bool) -> Bool {
+    match b { True => False, _ => True }
 }

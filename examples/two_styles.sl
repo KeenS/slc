@@ -41,7 +41,7 @@ fn area(s: Shape) -> i64 {
 }
 
 fn label(a: i64) -> String {
-    match (⟨(a, 50) | gt) { true => {
+    match (⟨(a, 50) | gt) { True => {
         "big"
     }, _ => {
         "small"
@@ -65,7 +65,7 @@ fn area_of(out: i64) <- Shape {
 
 fn label_of(out: String) <- i64 {
     select i64 {
-        a => match (⟨(a, 50) | gt) { true => {
+        a => match (⟨(a, 50) | gt) { True => {
             ⟨"big" | out⟩
         }, _ => {
             ⟨"small" | out⟩

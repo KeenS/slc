@@ -38,7 +38,7 @@ mod fs {
         ⟨file | __close_file
     }
 
-    pub fn exists(path: String) -> bool / {IO} {
+    pub fn exists(path: String) -> Bool / {IO} {
         ⟨path | __file_exists
     }
 }

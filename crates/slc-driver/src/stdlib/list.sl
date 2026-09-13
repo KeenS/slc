@@ -41,7 +41,7 @@ mod list {
         match xs {
             Nil => ⟨"nothing at that index" | missing⟩,
             Cons(h, rest) => {
-                match (⟨(i, 0) | eq) { true => { ⟨h | found⟩ }, _ => { ⟨(rest, (⟨(i, 1) | sub)) | nth | (found & missing)⟩ } }
+                match (⟨(i, 0) | eq) { True => { ⟨h | found⟩ }, _ => { ⟨(rest, (⟨(i, 1) | sub)) | nth | (found & missing)⟩ } }
             },
         }
     }

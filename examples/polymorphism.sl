@@ -32,7 +32,7 @@ command main | (exit: i32) / {IO} {
     ⟨((⟨(nothing, 2) | or_else), 10) | mul | println;
     ⟨((⟨(nothing, "both") | or_else), "!") | add | println;
     let also = nothing;
-    ⟨(also, true) | or_else | println;
+    ⟨(also, True) | or_else | println;
 
     // The by-name idiom. `fresh` is a lambda, hence a value — and every use
     // runs its own capture.

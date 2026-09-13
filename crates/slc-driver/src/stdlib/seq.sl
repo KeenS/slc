@@ -64,11 +64,11 @@ mod seq {
 
     // A dropped element is not a step of the result, so the arm demands
     // the rest itself rather than answering — the loop lives in the demand.
-    pub fn filter<+T, E>(keep: (T -> bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
+    pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
         mu Seq {
             next <= match s.next {
                 Step::Done => ⟨Step::Done | next⟩,
-                Step::Yield(h, rest) => match ⟨h | keep { true => {
+                Step::Yield(h, rest) => match ⟨h | keep { True => {
                     ⟨Step::Yield(h, ⟨(keep, rest) | filter) | next⟩
                 }, _ => {
                     ⟨(⟨(keep, rest) | filter).next | next⟩
@@ -79,7 +79,7 @@ mod seq {
 
     pub fn take<+T>(s: Seq<T>, n: i64) -> Seq<T> {
         mu Seq {
-            next <= match (⟨(n, 0) | le) { true => {
+            next <= match (⟨(n, 0) | le) { True => {
                 ⟨Step::Done | next⟩
             }, _ => {
                 match s.next {
@@ -93,9 +93,9 @@ mod seq {
     // The other bridge: a stream, cut where a value stops passing. The
     // result can end, so it is a `Seq` — the type says what the function
     // does.
-    pub fn take_while<+T, E>(keep: (T -> bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
+    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
         mu Seq {
-            next <= match ⟨s.head | keep { true => {
+            next <= match ⟨s.head | keep { True => {
                 ⟨Step::Yield(s.head, ⟨(keep, s.tail) | take_while) | next⟩
             }, _ => {
                 ⟨Step::Done | next⟩

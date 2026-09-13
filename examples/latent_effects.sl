@@ -19,8 +19,8 @@ menu Fallible / {Exn} {
 // to Fallible's latent row and are checked against it.
 fn checked(n: i64) -> Fallible {
     mu Fallible {
-        value <= ⟨(match (⟨(n, 0) | ge) { true => { n }, _ => { ⟨"negative" | throw } }) | value⟩,
-        doubled <= ⟨(match (⟨(n, 0) | ge) { true => { (⟨(n, 2) | mul) }, _ => { ⟨"negative" | throw } }) | doubled⟩,
+        value <= ⟨(match (⟨(n, 0) | ge) { True => { n }, _ => { ⟨"negative" | throw } }) | value⟩,
+        doubled <= ⟨(match (⟨(n, 0) | ge) { True => { (⟨(n, 2) | mul) }, _ => { ⟨"negative" | throw } }) | doubled⟩,
     }
 }
 
@@ -52,7 +52,7 @@ form Validated / {Exn} {
 
 fn admit() -> Validated {
     select Validated {
-        Validated { age, out } => ⟨(match (⟨(age, 18) | ge) { true => { age }, _ => { ⟨"too young" | throw } }) | out⟩,
+        Validated { age, out } => ⟨(match (⟨(age, 18) | ge) { True => { age }, _ => { ⟨"too young" | throw } }) | out⟩,
     }
 }
 

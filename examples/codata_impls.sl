@@ -87,9 +87,9 @@ impl Deliver for i64 {
     }
 }
 
-impl Deliver for bool {
-    fn deliver(out: String) <- bool {
-        fn(b: bool) { ⟨match b { true => { "affirmative" }, _ => { "negative" } } | out⟩ }
+impl Deliver for Bool {
+    fn deliver(out: String) <- Bool {
+        fn(b: Bool) { ⟨match b { True => { "affirmative" }, _ => { "negative" } } | out⟩ }
     }
 }
 
@@ -106,6 +106,6 @@ command main | (exit: i32) / {IO} {
 
     // the Self-consuming method, dispatched by what the cut sends
     (⟨mu String { s <= ⟨42 | deliver(s)⟩ } | println);
-    (⟨mu String { s <= ⟨true | deliver(s)⟩ } | println);
+    (⟨mu String { s <= ⟨True | deliver(s)⟩ } | println);
     ⟨0 | exit⟩
 }

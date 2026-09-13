@@ -20,9 +20,9 @@ impl Show for i64 {
     fn show(self: i64) -> String { ⟨self | int_to_str }
 }
 
-impl Show for bool {
-    fn show(self: bool) -> String {
-        match self { true => { "true" }, _ => { "false" } }
+impl Show for Bool {
+    fn show(self: Bool) -> String {
+        match self { True => { "true" }, _ => { "false" } }
     }
 }
 
@@ -48,11 +48,11 @@ fn labelled<+T: Show>(label: String, x: T) -> String {
 command main | (exit: i32) / {IO} {
     // dispatch on the argument's type
     ⟨42 | show | println;
-    ⟨true | show | println;
+    ⟨True | show | println;
 
     // the generic, at two types
     ⟨("int", 7) | labelled | println;
-    ⟨("bool", false) | labelled | println;
+    ⟨("bool", False) | labelled | println;
 
     // recursive dispatch: the list impl calls show on each element
     ⟨IntList::Cons(1, IntList::Cons(2, IntList::Nil)) | show | println;
