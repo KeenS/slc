@@ -21,9 +21,9 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The open work is a set of surface
-simplifications that remove syntax in favour of ordinary declarations, and
-one defect.
+No large feature is mid-flight. The open work is settling evaluation by
+polarity, a set of surface simplifications that remove syntax in favour of
+ordinary declarations, and one defect.
 
 ## Known limits
 
@@ -94,27 +94,62 @@ operand is delayed is part of that design.
 
 - **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
   the choice between by-value and by-name, and it is settled for the
-  producer at every type today (`reduce.rs`). Settled by polarity instead, a
-  `⊥` item of a row would be a thunk, run by naming it, and a command that
-  picks one exit, such as this `choose`, would need no `fn(_)` wrappers:
+  producer at every type today (`reduce.rs`). It is to be settled by
+  polarity instead: a computation of negative type is not run where it is
+  written, but each time it is used. Decided:
 
-  ```sl
-  command choose(c: bool) | (then: (;) & otherwise: (;)) {
-      match c { true => then, false => otherwise }
-  }
+  - **Every negative position.** An argument, a tuple component, a bundle
+    item and a binding all delay a negative computation — a block that ends
+    in a cut, a call that returns a consumer or a menu. A positive value is
+    still computed where it is written: delaying one would bring back the
+    `↑` that §8 removed, so `Lazy<T>` stays the spelling of a delayed value,
+    and a `bool` operand of `&&` is not reached.
+  - **Run by naming it.** A delayed computation runs where its name is used
+    as the thing it stands for, so a command that picks an exit needs no
+    `fn(_)` wrappers:
 
-  mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
-  ```
+    ```sl
+    command choose(c: bool) | (then: (;) & otherwise: (;)) {
+        match c { true => then, false => otherwise }
+    }
 
-  Today the checker refuses this bundle, because an item that ends in a cut
-  would jump while the bundle is built (`DESIGN.md` §4); by name, each item
-  would be a thunk and the refusal would lift. Only negative positions would
-  change: delaying a positive
-  value without writing it would bring back the `↑` that §8 removed, so a
-  value-returning `choose` keeps its `mu`, `Lazy<T>` stays the spelling of a
-  delayed value, and a `bool` operand of `&&` is not reached. A by-name
-  continuation named twice runs twice, which is consistent with
-  continuations already being multi-shot.
+    mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
+    ```
+
+    Passing it on unrun — `(then & otherwise)`, `⟨then | forward⟩` — is not
+    a use, so the rule has to tell the two apart. Named twice, it runs
+    twice, as continuations are already multi-shot.
+  - **Effects are latent.** Nothing is performed where a delayed
+    computation is written: its row moves onto its type, and each use
+    performs it, so the handler that must discharge it is the one around the
+    use. It is the rule rowed menus and returned consumers
+    (`-> (-A / {..E})`) already follow. Only a concrete row can ride on a
+    type today, so until the rows-in-types upgrade that "Effect tracking
+    follows names" names, a computation in a by-name position whose row is a
+    variable is refused.
+  - **`let+` and `let-`.** A plain `let` follows the polarity of its type.
+    `let+` computes now whatever the type — the way to perform a delayed
+    computation's effects under the handler in scope — and `let-` delays.
+  - **Generic types state their polarity.** A type variable carries no
+    polarity, so a generic type parameter is declared with one, `<+T>` or
+    `<-T>`. The mark goes on the declaration, since `-T` in a type already
+    means `dual(T)`.
+
+  What it changes, as found so far:
+
+  - The refusal of a bundle item that ends in a cut (`DESIGN.md` §4) lifts:
+    the item is delayed instead. Written by hand as the consumer of unit it
+    is, `select unit { u => … }`, such an item already runs only when the
+    command sends it `⟨(,) | then⟩`.
+  - A bare `then` passes the checker today and does nothing at run time —
+    `main` ends holding the consumer — so running by naming is new work in
+    the checker, which knows where a name stands for a command, and in
+    lowering.
+  - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
+    prints `(,)` because it runs at once; under this rule it is a negative
+    computation in an argument, and delayed.
+  - Lowering needs each position's polarity from the checker, as `pars`
+    already carries a joint's components.
 
 ### Surface simplifications
 
