@@ -106,13 +106,13 @@ Every function now requires an arrow.
 Unsupported:
 
 ```sl
-fn add(x: +i32, y: +i32) { x + y }
+fn plus(x: +i32, y: +i32) { x + y }
 ```
 
 Write:
 
 ```sl
-fn add(x: +i32, y: +i32) -> i32 { x + y }
+fn plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
 ```
 
 ### `+fn`
@@ -122,13 +122,13 @@ The polarity prefix is removed.
 Unsupported:
 
 ```sl
-+fn add(x: +i32, y: +i32) -> i32 { x + y }
++fn plus(x: +i32, y: +i32) -> i32 { x + y }
 ```
 
 Write:
 
 ```sl
-fn add(x: +i32, y: +i32) -> i32 { x + y }
+fn plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
 ```
 
 ### `-fn`
@@ -296,7 +296,8 @@ EXIT(0)     // old
 0 | EXIT    // later — and `EXIT` itself is now gone, see below
 ```
 
-`|` binds more loosely than every operator, so `<a + b | k>` sends the sum.
+What flows in may be any value, a group included: `<(a, b) | add | k>`
+sends the sum.
 The consumer may be any expression that produces one, including a negative
 function applied to its row: `<Color::Blue | code | answer>`.
 
@@ -356,11 +357,11 @@ select Color {                     // one arm per variant — the negative addit
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } => <(<value | int_to_str) + unit | out>,
+    Reading { value, unit } => <((<value | int_to_str), unit) | add | out>,
 }
 
 select (+i64, +i64) {              // a bare product names its type
-    (left, right) => <left + right | out>,
+    (left, right) => <(left, right) | add | out>,
 }
 ```
 
@@ -538,7 +539,7 @@ command main | (exit: i32) / {IO} {             // new
     <0 | exit>
 }
 
-fn greet(name: String) -> (,) / {IO} { <"hello, " + name | println }
+fn greet(name: String) -> (,) / {IO} { <("hello, ", name) | add | println }
 ```
 
 A program can now handle its own output: a `handle` with a `write_line`
@@ -609,7 +610,7 @@ fn stop(k: -i32) -> ⊥ { 0 | k⟩ }                   // old
 fn stop(k: -i32) -> (;) { <0 | k> }               // new
 
 2 ⊗ 3                                              // old
-2 * 3                                              // new
+<(2, 3) | mul                                      // new
 ```
 
 ## The logical units are the nullary connectives
@@ -824,8 +825,8 @@ is that a binder may take its value apart:
 let pair = make(); let a = pair.0; let b = pair.1;   // old
 let (a, b) = make();                                 // new
 
-fn norm(p: Point) -> i64 { p.x * p.x + p.y * p.y }   // still fine
-fn norm(Point { x, y }: Point) -> i64 { x * x + y * y }
+fn norm(p: Point) -> i64 { <(p.x, p.x) | mul | sum => (sum, (<(p.y, p.y) | mul)) | add }   // still fine
+fn norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, (<(y, y) | mul)) | add }
 ```
 
 A binder must be irrefutable — it stands for every value of its type — so a
@@ -841,7 +842,7 @@ gone:
 
 ```sl
 throw(m) resume => 0 - 1               // old
-throw(m) => 0 - 1                      // new: never resumes, no binder
+throw(m) => -1                         // new: never resumes, no binder
 
 config() resume => resume(10)          // old
 config(): resume => <10 | resume        // new: bound after the colon
@@ -947,7 +948,7 @@ arm:
 
 ```sl
 match n { m if m > 0 => <m | ok>, _ => <0 | ok> }   // old
-match n > 0 { true => <n | ok>, _ => <0 | ok> }      // new
+match (<(n, 0) | gt) { True => <n | ok>, False => <0 | ok> }   // new
 ```
 
 The exhaustiveness diagnostic says "add a `_` arm" rather than "an unguarded
@@ -978,14 +979,14 @@ against the builtin's signature, with its whole value group:
 
 ## There is no `if`
 
-A choice on a `bool` is a `match` on it. The `_` arm stands for `false`:
+A choice on a `Bool` is a `match` on its two variants:
 
 ```sl
 if n > 0 { n } else { 0 - n }                          // old
-match n > 0 { true => n, _ => 0 - n }                  // new
+match (<(n, 0) | gt) { True => n, False => <n | neg }   // new
 
 if a { x } else if b { y } else { z }                  // old
-match a { true => x, _ => match b { true => y, _ => z } }   // new
+match a { True => x, False => match b { True => y, False => z } }   // new
 ```
 
 An `if` with no `else` yielded unit on the false path; write that arm
@@ -1007,10 +1008,10 @@ right side only when it is needed:
 
 ```sl
 ok && <x | valid                                   // old
-match ok { true => <x | valid, _ => false }        // new
+match ok { True => <x | valid, False => False }    // new
 
 a || b                                             // old
-match a { true => true, _ => b }                   // new
+match a { True => True, False => b }               // new
 ```
 
 ## `println` and `print` render through `Display`
@@ -1084,7 +1085,7 @@ the polymorphic function.
 let f = fn(x) { x };               // old: generalized; now refused
 fn id<+T>(x: T) -> T { x }         // new: a declaration
 
-let inc = fn(x) { x + 1 };         // still accepted: `+` fixes `x`
+let inc = fn(x) { <(x, 1) | add };  // still accepted: the literal fixes `x`
 ```
 
 ## Arithmetic and comparison are trait methods
@@ -1144,6 +1145,22 @@ fn positive(n: i64) -> Bool { match (<(n, 0) | gt) { True => True, False => Fals
 ```
 
 A `Bool` still prints as `true` or `false`.
+
+## A chain is `<value | stage | consumer>`
+
+`⟨` and `⟩` are gone. With no operator left to read them, `<` marks what
+flows into a chain and `>` the consumer that closes it, and the old brackets
+are refused with the new ones.
+
+```sl
+⟨x | f | k⟩              // old
+<x | f | k>              // new
+
+⟨-1 | k⟩                 // old
+<-1 | k>                 // new: a number touching `<-` opens the chain
+```
+
+The core's own cut, `⟨ v ∥ k ⟩`, is unchanged.
 
 ## Removed constructs
 
