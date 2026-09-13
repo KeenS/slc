@@ -773,6 +773,20 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    let mut reported = std::collections::HashSet::new();
+    for (span, name, ty) in std::mem::take(&mut env.pending_params) {
+        let ty = env.uni.apply(&ty);
+        // A lambda checked twice, as a probe and for real, is one parameter.
+        if type_polarity(&ty, env).is_none() && reported.insert(span) {
+            diags.push(Diagnostic {
+                message: format!(
+                    "the parameter `{name}` of this `fn` has type {ty}, whose polarity is not \
+                     known: annotate it, `fn({name}: T)`"
+                ),
+                span,
+            });
+        }
+    }
     for span in std::mem::take(&mut env.pending_names) {
         if env.expr_types.get(&span).is_some_and(|ty| env.uni.apply(ty) == Type::BOTTOM) {
             env.dispatch.runs.insert(span);
@@ -2333,6 +2347,9 @@ fn check_expr_unapplied(
                 .and_then(|ty| resolve_in_body(ty, env, enums))
                 .or_else(|| infer_param_type(param, body, enums, env))
                 .unwrap_or_else(|| env.uni.fresh_var());
+            if param_type.is_none() {
+                env.pending_params.push((e.span, param.clone(), param_ty.clone()));
+            }
             env.define(param, param_ty.clone());
             let result = check_expr(body, enums, env, diags);
             env.pop();
@@ -4489,16 +4506,44 @@ mod tests {
         // identifier is a value form.
         assert!(
             check(
-                "command main | (exit: -i32) / {IO} {
-                     let f = fn(x) { x };
-                     ⟨f(1) + 1 | println;
-                     ⟨str_len(f(\"s\")) | println;
-                     let alias = f;
-                     ⟨alias(true) | println;
+                "enum Maybe<+T> { Nothing, Just(T) }
+                 fn or_else<+T>(m: Maybe<T>, fallback: T) -> T {
+                     match m { Maybe::Just(x) => x, Maybe::Nothing => fallback }
+                 }
+                 command main | (exit: -i32) / {IO} {
+                     let nothing = Maybe::Nothing;
+                     ⟨(nothing, 1) | or_else | println;
+                     ⟨(nothing, \"s\") | or_else | println;
+                     let alias = nothing;
+                     ⟨(alias, true) | or_else | println;
                      ⟨0 | exit⟩
                  }"
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_lambda_parameter_of_unknown_polarity_is_refused() {
+        // A lambda nothing pins down no longer generalizes: its parameter's
+        // polarity is unknown, and it asks for an annotation.
+        let diags = check(
+            "command main | (exit: -i32) / {IO} {
+                 let f = fn(x) { x };
+                 ⟨0 | exit⟩
+             }",
+        )
+        .unwrap_err();
+        assert_eq!(
+            diags.iter().filter(|d| d.message.contains("the parameter `x`")).count(),
+            1,
+            "{diags:?}"
+        );
+        // A use that fixes the type is enough.
+        assert!(
+            check("fn f() -> i64 { let g = fn(x) { x + 1 }; ⟨1 | g }").is_ok(),
+            "{:?}",
+            check("fn f() -> i64 { let g = fn(x) { x + 1 }; ⟨1 | g }")
         );
     }
 
@@ -4534,15 +4579,15 @@ mod tests {
     }
 
     #[test]
-    fn eta_expansion_recovers_polymorphism_by_name() {
+    fn eta_expansion_reruns_the_capture() {
         // Wrapping the capture in a lambda makes it a value: each use
-        // re-runs the capture at its own instantiation, visibly.
+        // re-runs the capture.
         assert!(
             check(
                 "command main | (exit: -i32) / {IO} {
-                     let fresh = fn(u) { mu { k <= ⟨fn(x) { x } | k⟩ } };
+                     let fresh = fn(u: (,)) { mu { k <= ⟨fn(x: i64) { x } | k⟩ } };
                      ⟨fresh((,))(1) + 1 | println;
-                     ⟨str_len(fresh((,))(\"s\")) | println;
+                     ⟨fresh((,))(2) + 1 | println;
                      ⟨0 | exit⟩
                  }"
             )

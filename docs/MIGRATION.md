@@ -1073,6 +1073,20 @@ let+ shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };   // run
 A `let` of a computation whose type inference cannot tell its polarity is
 an error; annotate it, or write `let+` or `let-`.
 
+## A lambda's parameter has a known polarity
+
+A lambda parameter left unannotated must have its type — at least its
+polarity — fixed by how the lambda is used by the end of the declaration.
+A lambda nothing pins down no longer generalizes; annotate it, or declare
+the polymorphic function.
+
+```sl
+let f = fn(x) { x };               // old: generalized; now refused
+fn id<+T>(x: T) -> T { x }         // new: a declaration
+
+let inc = fn(x) { x + 1 };         // still accepted: `+` fixes `x`
+```
+
 ## Removed constructs
 
 ### `spawn`

@@ -1195,10 +1195,15 @@ values, a plain name. Every use of such a binding instantiates its variables
 afresh:
 
 ```sl
-let f = fn(x) { x };
-⟨(⟨1 | f) + 1 | println;       // a := +i64
-⟨"s" | f | str_len | println;    // a := +String
+let nothing = Maybe::Nothing;
+⟨(nothing, 1) | or_else | println;      // T := +i64
+⟨(nothing, "s") | or_else | println;    // T := +String
 ```
+
+A lambda is a value too, but its parameter must have a known polarity by
+the end of the declaration, so `let f = fn(x) { x }`, which nothing pins
+down, is refused and asks for an annotation: a polymorphic function is a
+declaration, `fn id<+T>(x: T) -> T`.
 
 Anything that computes stays monomorphic — `mu { k <= c }` above all, and every
 application. A value ran nothing, so no two instantiations can disagree
@@ -1206,8 +1211,8 @@ about anything that happened; a computation may have captured its
 continuation, and generalizing that is the classical unsoundness (the
 Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
-per-use behaviour is wanted, write it: `fn(u) { mu { k <= … } }` is a value,
-generalizes, and visibly re-runs its capture at each use.
+per-use behaviour is wanted, write it: `fn(u: (,)) { mu { k <= … } }` is a
+value, and visibly re-runs its capture at each use.
 `examples/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
 
@@ -1275,7 +1280,7 @@ inside one may leave a type out when something else already says it:
 
 | written                                         | may be omitted when                                                                     |
 |-------------------------------------------------|-----------------------------------------------------------------------------------------|
-| a lambda's parameter and result: `fn(x) { … }` | always — the body is checked against how the value is used                             |
+| a lambda's parameter and result: `fn(x) { … }` | how the value is used fixes the parameter's polarity by the end of the declaration    |
 | a `mu`'s produced type: `mu { k <= … }`        | the arm hands `k` to a slot whose type is declared, or cuts a value against it          |
 | a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
 | a type's sign: `x: +i64`, `k: -i64`             | it agrees with the position — see below                                                 |

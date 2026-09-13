@@ -114,6 +114,10 @@ pub(crate) struct Env<'a> {
     /// Every name used, by span: one of type `(;)` that stands as a command
     /// is run there, which lowering does where the position is a command's.
     pub(crate) pending_names: Vec<slc_syntax::token::Span>,
+    /// Unannotated lambda parameters — the lambda's span, the name and the
+    /// type inference gave it — whose polarity must be known by the end of
+    /// the declaration.
+    pub(crate) pending_params: Vec<(slc_syntax::token::Span, String, Type)>,
     /// The type each checked expression was found to have, by span, for
     /// what is settled at the end of the declaration.
     pub(crate) expr_types: HashMap<slc_syntax::token::Span, Type>,
@@ -153,6 +157,7 @@ impl<'a> Env<'a> {
             pending_lets: Vec::new(),
             pending_by_name: Vec::new(),
             pending_names: Vec::new(),
+            pending_params: Vec::new(),
             expr_types: HashMap::new(),
             rigid_signs: HashMap::new(),
             pending_methods: Vec::new(),

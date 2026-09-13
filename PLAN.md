@@ -105,12 +105,6 @@ delayed.
   concrete row can ride on a type today, so until the rows-in-types upgrade
   that "Effect tracking follows names" names, a computation in a by-name
   position whose row is a variable is refused.
-- **An unknown polarity is an error for a lambda parameter too.** A `let`
-  of a computation whose polarity inference cannot tell is refused, asking
-  for an annotation, `let+` or `let-`; a lambda parameter whose type
-  inference leaves a variable is to be refused the same way, asking for an
-  annotation.
-
 ### Surface simplifications
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
@@ -128,17 +122,24 @@ is built on the built-in one.
   - **Overloaded by traits.** The checker types an operator by hand today:
     arithmetic at any integer width, `+` on `String`, comparison on numbers,
     `char`, `String` and `bool`. As functions they are trait methods, the
-    way `Display` is, with impls for each integer width and for `+` on
-    `String`. Traits today have one `Self`, no associated types, and method
-    names unique across traits, which these fit.
-  - **Literals keep adapting.** `1 + x` with `x: i32` adapts the literal to
-    `i32` today. With dispatch on the first argument the literal would
-    default to `i64` and fail, so an integer literal has to keep taking its
-    width from the other operand.
+    way `Display` is: one trait per arithmetic operator — `Add`, `Sub`,
+    `Mul`, `Div`, `Rem`, `Neg` — with impls for each integer width and
+    `Add` for `String`, and comparison grouped as `Eq { eq, ne }` and
+    `Ord { lt, gt, le, ge }`. The builtins beneath become `__add` and so on,
+    so the methods can take their names. A method of several parameters
+    already reads `Self` off its group (`DESIGN.md` "Traits").
+  - **A negative literal is `-` touching a digit.** Prefix `-` goes, and
+    `-1` lexes as one literal, as a pattern already reads it; it adapts its
+    width as any integer literal does. `a -1` is then two expressions.
+  - **Literals keep adapting.** `⟨(1, x) | add` with `x: i32` is `i32`'s
+    `add`: a method's `Self` is read off its group with literals last, which
+    has landed.
   - **Indexing is plain functions.** Only a `String` is indexed — by an
     `i64`, giving a `char` — and a trait could not say that in general
-    without associated types. `a[i]` and `a[i..j]` become functions over the
-    builtins `__index` and `substring` beneath them today.
+    without associated types. `a[i]` becomes the prelude's
+    `⟨(s, i) | char_at` over `__index`, and `a[i..j]` the builtin
+    `⟨(s, i, j) | substring`; an open range spells out its missing end,
+    `0` or `⟨s | str_len`.
   - **Compound expressions stay one chain.** `a + b * c` becomes
     `⟨(b, c) | mul | x => (a, x) | add`.
   - **Precedence goes.** §3's rule that `|` binds more loosely than every
