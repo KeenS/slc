@@ -114,7 +114,8 @@ whatever its head is, and composes: `f | g` is a function, and `f | k⟩` a
 consumer. So a value must be marked to flow in — `⟨"hi" | println` applies,
 and `"hi" | println` is refused, since `"hi"` is not a function. A chain
 says what it is at both ends: `⟨` makes it an application, `⟩` a delivery,
-and the two together a cut. A function sent on as a value is marked the
+and the two together a cut. And `⟨` needs a stage to send its value into:
+`⟨1` alone is refused, since the value on its own needs no mark. A function sent on as a value is marked the
 same way as any other value:
 
 ```sl
@@ -170,6 +171,34 @@ unopened — `command forward(…) | (row: (-T & -String)) { ⟨(xs, 2) | nth | 
 A negative function is *not* this case: it answers a consumer rather than
 `⊥`, so it composes on, and its exits are the rest of the chain
 (`⟨shape | area_of | label_of | out⟩`).
+
+**A stage can name what it is given.** A stage that takes more than what
+flows in would otherwise need the chain so far packed into a tuple with the
+rest, one level of nesting per such stage. Instead, a stage after `|` may
+begin with a binder, one for each side of the chain:
+
+- `x => e` names the value flowing in and passes on `e`, built from it. It
+  is the function `fn(x) { e }`, standing as a stage.
+- `k <= e` names the consumer the rest of the chain builds, and gives the
+  stage before it `e`, built from it. So the chain must close on a consumer,
+  and something must follow the binder.
+
+```sl
+⟨1 | stream::count_from | seq::of_stream
+   | s => (odd, s) | seq::filter
+   | s => (s, 4)   | seq::take            // [1, 3, 5, 7]
+
+// `halve` offers `(ok: i64 & odd: String)`: each step supplies its failure
+// exit, and the chain carries on with the success.
+⟨12 | halve | ok <= (ok & odd) | halve | ok <= (ok & odd) | out⟩
+```
+
+A binder builds nothing itself, so every connective is written in its own
+syntax — `x => ::1(x)` for a choice, `k <= (k ; other)` for a joint — and the
+name says what is abstracted, where a placeholder would leave open which
+parenthesis it belongs to. Its body is one stage, ending at the next `|`,
+and only a stage after `|` can be one: the head of a chain and a `match` arm
+keep their meaning.
 
 **A cut** `⟨v | k⟩` sends the value `v` to the consumer `k`. It is the surface
 spelling of the core's `⟨ v ∥ k ⟩`, and it is a *command*, not an expression
@@ -1301,7 +1330,7 @@ what neither neighbour can do — so `seq::filter` over an infinite source is a
 terminating program as long as something downstream stops asking:
 
 ```sl
-⟨(⟨(odd, ⟨1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take  // [1, 3, 5, 7]
+⟨1 | stream::count_from | seq::of_stream | s => (odd, s) | seq::filter | s => (s, 4) | seq::take  // [1, 3, 5, 7]
 ```
 
 Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
@@ -1674,7 +1703,7 @@ nested left to right for several arguments.
 | `expr.ident` | `x` | `x` |
 | `expr.enum` | `Color::Red`, `Shape::Circle(r)` | `Color::Red(unit)`, `Shape::Circle(⟦r⟧)` — several payload values pack into one tensor |
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
-| `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧` |
+| `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧`. A stage `x => e` is `fn(x) { e }`, and a stage `k <= e` followed by `rest⟩` is the closing consumer `⟨rest⟩ \| fn(k) { e }` |
 | `expr.pair` | `(a, b, …)`, `(,)` | the tuple `(⟦a⟧ ⊗ ⟦b⟧ ⊗ …)`; `(,)` is `unit` |
 | `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |

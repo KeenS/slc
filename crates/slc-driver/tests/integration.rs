@@ -1595,3 +1595,67 @@ fn a_form_value_hands_each_continuation_its_part_in_order() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "\"seven\"", "1", "8", "\"eight\""]);
 }
+
+#[test]
+fn binder_stages_keep_a_chain_flat() {
+    // `s => e` names what flows in, so a stage's other arguments are written
+    // where it stands instead of nesting the chain so far.
+    let dir = std::env::temp_dir().join("slc_test_value_binder.sl");
+    std::fs::write(
+        &dir,
+        r#"fn odd(n: i64) -> bool { n % 2 == 1 }
+        command main | (exit: i32) / {IO} {
+            ⟨1 | stream::count_from | seq::of_stream
+               | s => (odd, s) | seq::filter
+               | s => (s, 4) | seq::take
+               | seq::to_list | fmt | println;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert!(stdout.contains("[1, 3, 5, 7]"), "stdout: {stdout}");
+}
+
+#[test]
+fn a_consumer_binder_builds_a_row_from_the_rest_of_the_chain() {
+    // `ok <= (ok & odd)` names the consumer the rest of the chain builds, so
+    // each step that can fail supplies its failure exit and the chain carries on.
+    let dir = std::env::temp_dir().join("slc_test_consumer_binder.sl");
+    let program = |start: i64| {
+        format!(
+            r#"command halve(n: i64) | (ok: i64 & odd: String) {{
+                match n % 2 == 0 {{ true => ⟨n / 2 | ok⟩, _ => ⟨"odd" | odd⟩ }}
+            }}
+            command main | (exit: i32) / {{IO}} {{
+                let odd = select String {{ m => {{ ⟨m | println; ⟨1 | exit⟩ }} }};
+                let quarter = mu i64 {{ out <=
+                    ⟨{start} | halve | ok <= (ok & odd) | halve | ok <= (ok & odd) | out⟩
+                }};
+                ⟨quarter | println;
+                ⟨0 | exit⟩
+            }}"#
+        )
+    };
+    std::fs::write(&dir, program(12)).unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert!(stdout.contains('3'), "stdout: {stdout}");
+
+    std::fs::write(&dir, program(6)).unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "6 halves to 3, which is odd: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("odd"), "stdout: {stdout}");
+}
+
+#[test]
+fn a_value_alone_is_not_opened_with_a_bracket() {
+    // This used to pass every check and then crash in lowering.
+    let dir = std::env::temp_dir().join("slc_test_stageless_open.sl");
+    std::fs::write(&dir, "command main | (exit: i32) { let x = ⟨1; ⟨0 | exit⟩ }").unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("has none"), "stderr: {stderr}");
+    assert!(!stderr.contains("panicked"), "stderr: {stderr}");
+}

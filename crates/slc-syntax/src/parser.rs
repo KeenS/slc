@@ -22,6 +22,81 @@ const MU_ARROW: &str = "a `mu` arm answers a demand, which reaches back: `copatt
 
 /// Whether a pattern matches a continuation — a request shape — so that its
 /// `match` arm writes `<=`.
+/// A stage as written. A consumer binder `k <= e` names the consumer the rest
+/// of its chain builds, so it is resolved once the whole chain is read.
+enum ChainStage {
+    Plain(Node<Expr>),
+    Consumer { name: String, body: Node<Expr>, span: Span },
+}
+
+/// Resolve consumer binders from the right: `… | k <= e | rest…⟩` is
+/// `… | (⟨rest…⟩ | fn(k) { e })⟩`. The binder becomes the chain's closing
+/// consumer, built from the one the rest of the chain composes.
+fn resolve_consumer_binders(
+    written: Vec<ChainStage>,
+    into_consumer: bool,
+) -> Result<Vec<Node<Expr>>, ParseError> {
+    // Built right to left, and turned round at the end.
+    let mut stages: Vec<Node<Expr>> = Vec::new();
+    for stage in written.into_iter().rev() {
+        let (name, body, span) = match stage {
+            ChainStage::Plain(node) => {
+                stages.push(node);
+                continue;
+            }
+            ChainStage::Consumer { name, body, span } => (name, body, span),
+        };
+        if !into_consumer {
+            return Err(ParseError {
+                message: format!(
+                    "`{name} <= …` names the consumer the rest of the chain builds, so the chain \
+                     closes on a consumer: `… | {name} <= … | consumer⟩`"
+                ),
+                span,
+            });
+        }
+        if stages.is_empty() {
+            return Err(ParseError {
+                message: format!(
+                    "`{name} <= …` names what the rest of the chain builds, and nothing follows it"
+                ),
+                span,
+            });
+        }
+        stages.reverse();
+        let rest = if stages.len() == 1 {
+            stages.pop().expect("one stage")
+        } else {
+            let span =
+                Span { start: stages[0].span.start, end: stages.last().expect("stages").span.end };
+            Node {
+                span,
+                kind: Expr::Flow {
+                    stages: std::mem::take(&mut stages),
+                    from_value: false,
+                    into_consumer: true,
+                },
+            }
+        };
+        let end = rest.span.end;
+        let binder = Node {
+            span,
+            kind: Expr::Lambda {
+                param: name,
+                param_type: None,
+                return_type: None,
+                body: Box::new(body),
+            },
+        };
+        stages = vec![Node {
+            span: Span { start: span.start, end },
+            kind: Expr::Flow { stages: vec![rest, binder], from_value: true, into_consumer: false },
+        }];
+    }
+    stages.reverse();
+    Ok(stages)
+}
+
 fn pattern_is_copattern(pattern: &Pattern) -> bool {
     match pattern {
         Pattern::Dtor { .. } => true,
@@ -1167,12 +1242,12 @@ impl Parser {
         if !from_value && self.peek_kind() != Some(&TokenKind::Pipe) {
             return Ok(first);
         }
-        let mut stages = vec![first];
+        let mut written = vec![ChainStage::Plain(first)];
         while self.eat(&TokenKind::Pipe) {
-            stages.push(self.parse_flow_stage()?);
+            written.push(self.parse_chain_stage()?);
         }
         let into_consumer = self.eat(&TokenKind::CutClose);
-        if from_value && into_consumer && stages.len() < 2 {
+        if from_value && into_consumer && written.len() < 2 {
             return Err(ParseError {
                 message: "a cut sends a value to a consumer, so it has both: \
                           `value | consumer⟩`"
@@ -1180,6 +1255,16 @@ impl Parser {
                 span: Span { start, end: self.span_end() },
             });
         }
+        // `⟨` marks a value flowing into a stage; a value alone needs no mark.
+        if from_value && written.len() < 2 {
+            return Err(ParseError {
+                message: "`⟨` sends a value into a stage, and this one has none: \
+                          write `⟨value | stage`, or the value on its own"
+                    .into(),
+                span: Span { start, end: self.span_end() },
+            });
+        }
+        let stages = resolve_consumer_binders(written, into_consumer)?;
         let span = Span { start, end: self.span_end() };
         Ok(Node { span, kind: Expr::Flow { stages, from_value, into_consumer } })
     }
@@ -1196,6 +1281,49 @@ impl Parser {
             });
         }
         Ok(value)
+    }
+
+    /// A stage after `|`: an expression, or a binder that names what the stage
+    /// is given. `x => e` names the value flowing in, and is `fn(x) { e }`;
+    /// `k <= e` names the consumer the rest of the chain builds. A binder's
+    /// body is one stage, so it ends at the next `|`.
+    fn parse_chain_stage(&mut self) -> Result<ChainStage, ParseError> {
+        let start = self.span_start();
+        let binder = match (self.peek_kind(), self.tokens.get(self.pos + 1).map(|t| &t.kind)) {
+            (Some(TokenKind::Ident(name)), Some(arrow @ (TokenKind::FatArrow | TokenKind::Le))) => {
+                Some((name.clone(), *arrow == TokenKind::FatArrow))
+            }
+            _ => None,
+        };
+        let Some((name, flows_in)) = binder else {
+            return Ok(ChainStage::Plain(self.parse_flow_stage()?));
+        };
+        self.pos += 2;
+        let body = match self.parse_chain_stage()? {
+            ChainStage::Plain(body) => body,
+            ChainStage::Consumer { span, .. } => {
+                return Err(ParseError {
+                    message: "a binder's body is one stage, and cannot itself name the rest of \
+                              the chain: write each `k <= …` as its own stage"
+                        .into(),
+                    span,
+                });
+            }
+        };
+        let span = Span { start, end: body.span.end };
+        Ok(if flows_in {
+            ChainStage::Plain(Node {
+                span,
+                kind: Expr::Lambda {
+                    param: name,
+                    param_type: None,
+                    return_type: None,
+                    body: Box::new(body),
+                },
+            })
+        } else {
+            ChainStage::Consumer { name, body, span }
+        })
     }
 
     fn parse_binary(&mut self, min_prec: u8) -> Result<Node<Expr>, ParseError> {
@@ -2775,6 +2903,65 @@ mod tests {
             panic!("expected main declaration");
         };
         assert!(matches!(&body.kind, Expr::BinOp { op: BinOp::Or, .. }));
+    }
+
+    #[test]
+    fn a_value_binder_is_a_lambda_stage() {
+        let p = parse_str("⟨xs | s => (s, 4) | take");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        let Expr::Flow { stages, .. } = &body.kind else {
+            panic!("expected a chain: {body:?}");
+        };
+        assert_eq!(stages.len(), 3, "{stages:?}");
+        assert!(
+            matches!(&stages[1].kind, Expr::Lambda { param, .. } if param == "s"),
+            "{stages:?}"
+        );
+    }
+
+    #[test]
+    fn a_consumer_binder_takes_the_rest_of_its_chain() {
+        // `⟨p | read | ok <= (ok & failed) | size | out⟩` is
+        // `⟨p | read | (⟨(size | out⟩) | fn(ok) { (ok & failed) })⟩`.
+        let p = parse_str("⟨p | read | ok <= (ok & failed) | size | out⟩");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected main declaration");
+        };
+        let Expr::Flow { stages, into_consumer: true, .. } = &body.kind else {
+            panic!("expected a closed chain: {body:?}");
+        };
+        assert_eq!(stages.len(), 3, "{stages:?}");
+        let Expr::Flow { stages: binder, from_value: true, into_consumer: false } = &stages[2].kind
+        else {
+            panic!("expected the binder applied to the rest: {:?}", stages[2]);
+        };
+        assert!(matches!(
+            &binder[0].kind,
+            Expr::Flow { stages: rest, from_value: false, into_consumer: true } if rest.len() == 2
+        ));
+        assert!(matches!(&binder[1].kind, Expr::Lambda { param, .. } if param == "ok"));
+    }
+
+    #[test]
+    fn a_consumer_binder_needs_a_consumer_after_it() {
+        for (source, expected) in [
+            (
+                "fn f(p: i64) -> i64 { ⟨p | read | ok <= (ok & failed) | size }",
+                "closes on a consumer",
+            ),
+            ("fn f(p: i64) -> i64 { ⟨p | read | ok <= (ok & failed)⟩ }", "nothing follows"),
+        ] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains(expected), "{source}: {errors:?}");
+        }
+    }
+
+    #[test]
+    fn a_value_alone_is_not_opened() {
+        let errors = parse(lex("fn f() -> i64 { ⟨1 }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("has none"), "got: {errors:?}");
     }
 
     #[test]
