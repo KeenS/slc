@@ -871,11 +871,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut item.kind, stack, locals);
             }
         }
-        Expr::BinOp { lhs, rhs, .. } => {
-            resolve_expr(&mut lhs.kind, stack, locals);
-            resolve_expr(&mut rhs.kind, stack, locals);
-        }
-        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
+        Expr::Project { base: body, .. } => {
             resolve_expr(&mut body.kind, stack, locals);
         }
         Expr::Handle { body, clauses, ret } => {
@@ -891,19 +887,6 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 locals.push(HashSet::from([binder.clone()]));
                 resolve_expr(&mut rbody.kind, stack, locals);
                 locals.pop();
-            }
-        }
-        Expr::Index { value, index } => {
-            resolve_expr(&mut value.kind, stack, locals);
-            resolve_expr(&mut index.kind, stack, locals);
-        }
-        Expr::Slice { value, start, end } => {
-            resolve_expr(&mut value.kind, stack, locals);
-            if let Some(start) = start {
-                resolve_expr(&mut start.kind, stack, locals);
-            }
-            if let Some(end) = end {
-                resolve_expr(&mut end.kind, stack, locals);
             }
         }
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => {}
@@ -1039,7 +1022,7 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut arm.command.kind, imported);
             }
         }
-        Expr::Lambda { body, .. } | Expr::UnOp { body, .. } | Expr::Mu { body, .. } => {
+        Expr::Lambda { body, .. } | Expr::Mu { body, .. } => {
             rewrite_expr_imports(&mut body.kind, imported)
         }
         Expr::Call { callee, args } => {
@@ -1069,10 +1052,6 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut body.kind, imported);
             }
         }
-        Expr::BinOp { lhs, rhs, .. } => {
-            rewrite_expr_imports(&mut lhs.kind, imported);
-            rewrite_expr_imports(&mut rhs.kind, imported);
-        }
         Expr::Request { arg: expr, .. } => rewrite_expr_imports(&mut expr.kind, imported),
         Expr::Project { base, .. } => rewrite_expr_imports(&mut base.kind, imported),
         Expr::Handle { body, clauses, ret } => {
@@ -1082,16 +1061,6 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
             }
             if let Some((_, ret)) = ret {
                 rewrite_expr_imports(&mut ret.kind, imported);
-            }
-        }
-        Expr::Index { value, index } => {
-            rewrite_expr_imports(&mut value.kind, imported);
-            rewrite_expr_imports(&mut index.kind, imported);
-        }
-        Expr::Slice { value, start, end } => {
-            rewrite_expr_imports(&mut value.kind, imported);
-            for endpoint in [start, end].into_iter().flatten() {
-                rewrite_expr_imports(&mut endpoint.kind, imported);
             }
         }
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => {}

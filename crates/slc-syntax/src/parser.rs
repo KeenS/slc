@@ -1316,7 +1316,7 @@ impl Parser {
 
     /// One stage of a flow: everything that binds tighter than `|`.
     fn parse_flow_stage(&mut self) -> Result<Node<Expr>, ParseError> {
-        let value = self.parse_binary(0)?;
+        let value = self.parse_operand()?;
         if self.peek_kind() == Some(&TokenKind::At) {
             return Err(ParseError {
                 message: "`@` is gone: everything flows left to right through `|`, so a cut \
@@ -1371,42 +1371,46 @@ impl Parser {
         })
     }
 
-    fn parse_binary(&mut self, min_prec: u8) -> Result<Node<Expr>, ParseError> {
-        let mut lhs = self.parse_unary()?;
-        loop {
-            let (op, prec) = match self.peek_kind() {
-                Some(TokenKind::Plus) => (BinOp::Add, 3),
-                Some(TokenKind::Minus) => (BinOp::Sub, 3),
-                Some(TokenKind::Star) => (BinOp::Mul, 4),
-                Some(TokenKind::Slash) => (BinOp::Div, 4),
-                Some(TokenKind::Percent) => (BinOp::Mod, 4),
-                Some(TokenKind::EqEq) => (BinOp::Eq, 2),
-                Some(TokenKind::NotEq) => (BinOp::Ne, 2),
-                Some(TokenKind::Lt) => (BinOp::Lt, 2),
-                Some(TokenKind::Gt) => (BinOp::Gt, 2),
-                Some(TokenKind::Le) => (BinOp::Le, 2),
-                Some(TokenKind::Ge) => (BinOp::Ge, 2),
-                // There is no `&&` or `||`: a choice on a `bool` is a `match`.
-                // The tokens stay only so that writing one says so.
-                Some(TokenKind::AmpAmp | TokenKind::PipePipe) => {
-                    return Err(ParseError {
-                        message: "there is no `&&` or `||`: a choice on a `bool` is a `match`, \
-                                  `match a { true => b, _ => false }`"
-                            .into(),
-                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
-                    });
-                }
-                _ => break,
-            };
-            if prec < min_prec {
-                break;
-            }
-            self.pos += 1;
-            let rhs = self.parse_binary(prec + 1)?;
-            let span = Span { start: lhs.span.start, end: rhs.span.end };
-            lhs = Node { span, kind: Expr::BinOp { op, lhs: Box::new(lhs), rhs: Box::new(rhs) } };
+    /// One operand. There are no infix operators: arithmetic and comparison
+    /// are functions a group flows into, so an operator written after an
+    /// operand is refused with the function that replaces it.
+    fn parse_operand(&mut self) -> Result<Node<Expr>, ParseError> {
+        let operand = self.parse_unary()?;
+        let replacement = match self.peek_kind() {
+            Some(TokenKind::Plus) => Some(("+", "add")),
+            Some(TokenKind::Minus) => Some(("-", "sub")),
+            Some(TokenKind::Star) => Some(("*", "mul")),
+            Some(TokenKind::Slash) => Some(("/", "div")),
+            Some(TokenKind::Percent) => Some(("%", "rem")),
+            Some(TokenKind::EqEq) => Some(("==", "eq")),
+            Some(TokenKind::NotEq) => Some(("!=", "ne")),
+            Some(TokenKind::Lt) => Some(("<", "lt")),
+            Some(TokenKind::Gt) => Some((">", "gt")),
+            Some(TokenKind::Le) => Some(("<=", "le")),
+            Some(TokenKind::Ge) => Some((">=", "ge")),
+            _ => None,
+        };
+        let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
+        if let Some((operator, function)) = replacement {
+            return Err(ParseError {
+                message: format!(
+                    "there is no `{operator}` operator: flow the operands into `{function}`, \
+                     `⟨(a, b) | {function}`"
+                ),
+                span,
+            });
         }
-        Ok(lhs)
+        // There is no `&&` or `||`: a choice on a `bool` is a `match`. The
+        // tokens stay only so that writing one says so.
+        if matches!(self.peek_kind(), Some(TokenKind::AmpAmp | TokenKind::PipePipe)) {
+            return Err(ParseError {
+                message: "there is no `&&` or `||`: a choice on a `bool` is a `match`, \
+                          `match a { true => b, _ => false }`"
+                    .into(),
+                span,
+            });
+        }
+        Ok(operand)
     }
 
     fn parse_unary(&mut self) -> Result<Node<Expr>, ParseError> {
@@ -1419,15 +1423,29 @@ impl Parser {
                 span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
             });
         }
+        // A `-` touching a number is part of it. There is no prefix `-`:
+        // negating is the function `neg`.
         if self.peek_kind() == Some(&TokenKind::Minus) {
-            let start = self.span_start();
-            self.pos += 1;
-            let body = self.parse_unary()?;
-            let end = self.span_end();
-            return Ok(Node {
-                span: Span { start, end },
-                kind: Expr::UnOp { op: UnOp::Neg, body: Box::new(body) },
-            });
+            let minus = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
+            let touching = self
+                .tokens
+                .get(self.pos + 1)
+                .filter(|t| t.span.start == minus.end)
+                .map(|t| t.kind.clone());
+            let kind = match touching {
+                Some(TokenKind::Int(n)) => Expr::Int(-n),
+                Some(TokenKind::Float(n)) => Expr::Float(-n),
+                _ => {
+                    return Err(ParseError {
+                        message: "there is no prefix `-`: negate with `neg`, `⟨x | neg`; a \
+                                  negative number is `-` touching its digits, `-1`"
+                            .into(),
+                        span: minus,
+                    });
+                }
+            };
+            self.pos += 2;
+            return Ok(Node { span: Span { start: minus.start, end: self.span_end() }, kind });
         }
         self.parse_postfix()
     }
@@ -1510,42 +1528,12 @@ impl Parser {
                     }
                 }
                 Some(TokenKind::LBracket) => {
-                    self.pos += 1;
-                    let start_expr = if self.peek_kind() == Some(&TokenKind::DotDot) {
-                        None
-                    } else {
-                        Some(Box::new(self.parse_expr()?))
-                    };
-                    let mut end_expr = None;
-                    let mut is_range = false;
-                    if self.eat(&TokenKind::DotDot) {
-                        is_range = true;
-                        if self.peek_kind() != Some(&TokenKind::RBracket) {
-                            end_expr = Some(Box::new(self.parse_expr()?));
-                        }
-                    }
-                    self.expect(TokenKind::RBracket, "`]`")?;
-                    let end = self.span_end();
-                    e = if let Some(index) = (!is_range).then(|| start_expr.clone()).flatten() {
-                        Node {
-                            span: Span { start: e.span.start, end },
-                            kind: Expr::Index { value: Box::new(e), index },
-                        }
-                    } else if is_range {
-                        Node {
-                            span: Span { start: e.span.start, end },
-                            kind: Expr::Slice {
-                                value: Box::new(e),
-                                start: start_expr,
-                                end: end_expr,
-                            },
-                        }
-                    } else {
-                        return Err(ParseError {
-                            message: "indexing requires an index".into(),
-                            span: Span { start: e.span.start, end },
-                        });
-                    };
+                    return Err(ParseError {
+                        message: "there is no indexing: the character at a position is \
+                                  `⟨(s, i) | index`, and a slice is `⟨(s, i, j) | substring`"
+                            .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(e.span),
+                    });
                 }
                 _ => break,
             }
@@ -2462,7 +2450,7 @@ mod tests {
 
     #[test]
     fn parse_fn_def() {
-        let p = parse_str("fn add(x: +i32, y: +i32) -> i32 { x + y }");
+        let p = parse_str("fn add(x: +i32, y: +i32) -> i32 { ⟨(x, y) | __add }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
         assert!(
@@ -2610,7 +2598,7 @@ mod tests {
 
     #[test]
     fn parse_lambda() {
-        let p = parse_str("fn(x: +i32) -> i32 { x + 1 }");
+        let p = parse_str("fn(x: +i32) -> i32 { ⟨(x, 1) | __add }");
         assert_eq!(p.decls.len(), 1);
     }
 
@@ -2864,17 +2852,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_flow_binds_more_loosely_than_every_operator() {
-        // `1 + 2 | k` sends the sum along, so the sum is one stage.
-        let p = parse_str("fn main() -> i32 { ⟨1 + 2 | k⟩ }");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
-        let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
-        let Expr::Flow { stages, .. } = &exprs[0].kind else {
-            panic!("expected a flow: {:?}", exprs[0].kind)
-        };
-        assert_eq!(stages.len(), 2);
-        assert!(matches!(stages[0].kind, Expr::BinOp { .. }), "value: {:?}", stages[0].kind);
-        assert!(matches!(&stages[1].kind, Expr::Ident(name) if name == "k"));
+    fn an_operator_is_refused_with_its_function() {
+        // Arithmetic and comparison are functions a group flows into.
+        for (source, operator, function) in
+            [("⟨1 + 2 | k⟩", "+", "add"), ("⟨a < b | k⟩", "<", "lt"), ("⟨a == b | k⟩", "==", "eq")]
+        {
+            let errors =
+                parse(lex(&format!("fn main() -> i32 {{ {source} }}")).unwrap()).unwrap_err();
+            assert!(
+                errors[0].message.contains(&format!("there is no `{operator}` operator"))
+                    && errors[0].message.contains(&format!("`{function}`")),
+                "{source}: {errors:?}"
+            );
+        }
     }
 
     #[test]
@@ -3077,18 +3067,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_index_and_slice() {
-        let p = parse_str("input[pos]");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(&body.kind, Expr::Index { .. }));
+    fn indexing_is_refused_with_its_functions() {
+        for source in ["input[pos]", "input[start..end]"] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(
+                errors[0].message.contains("there is no indexing")
+                    && errors[0].message.contains("index")
+                    && errors[0].message.contains("substring"),
+                "{source}: {errors:?}"
+            );
+        }
+    }
 
-        let p = parse_str("input[start..end]");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(&body.kind, Expr::Slice { .. }));
+    #[test]
+    fn a_negative_number_is_a_literal_and_prefix_minus_is_refused() {
+        let p = parse_str("-1");
+        let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+        assert!(matches!(body.kind, Expr::Int(-1)), "{:?}", body.kind);
+        for source in ["- 1", "-x"] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains("there is no prefix `-`"), "{source}: {errors:?}");
+        }
     }
 
     #[test]

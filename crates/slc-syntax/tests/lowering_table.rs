@@ -40,16 +40,6 @@ const ROWS: &[Row] = &[
     },
     Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "μ̃__discarded." },
     Row {
-        id: "expr.binop", source: "fn f() -> i32 { 1 + 2 }", core: "⟨__add ∥ $int_1 · __call⟩"
-    },
-    Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨__neg ∥" },
-    Row { id: "expr.index", source: "fn f(s: +String) -> char { s[0] }", core: "⟨__index ∥" },
-    Row {
-        id: "expr.slice",
-        source: "fn f(s: +String) -> String { s[0..1] }",
-        core: "⟨substring ∥",
-    },
-    Row {
         id: "expr.mu",
         source: "fn f() -> i32 { mu i32 { k <= k(1) } }",
         core: "μk. ⟨μ__call. ⟨k ∥ $int_1 · __call⟩ ∥ k⟩",

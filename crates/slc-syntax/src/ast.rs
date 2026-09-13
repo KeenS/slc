@@ -80,15 +80,6 @@ pub enum Expr {
         /// `let`, `let+` or `let-`: when the value is computed.
         mode: LetMode,
     },
-    BinOp {
-        op: BinOp,
-        lhs: Box<Node<Expr>>,
-        rhs: Box<Node<Expr>>,
-    },
-    UnOp {
-        op: UnOp,
-        body: Box<Node<Expr>>,
-    },
     /// `base.0` / `base.field`: project one component of a product. The
     /// component's index and the product's arity are resolved from `base`'s
     /// type in the checker (the right-nested encoding needs the arity), so the
@@ -148,15 +139,6 @@ pub enum Expr {
     },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
-    Index {
-        value: Box<Node<Expr>>,
-        index: Box<Node<Expr>>,
-    },
-    Slice {
-        value: Box<Node<Expr>>,
-        start: Option<Box<Node<Expr>>>,
-        end: Option<Box<Node<Expr>>>,
-    },
 }
 
 impl Expr {
@@ -170,7 +152,7 @@ impl Expr {
             | Expr::Char(_)
             | Expr::Bool(_)
             | Expr::Ident(_) => Vec::new(),
-            Expr::Lambda { body, .. } | Expr::UnOp { body, .. } | Expr::Mu { body, .. } => {
+            Expr::Lambda { body, .. } | Expr::Mu { body, .. } => {
                 vec![body]
             }
             Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
@@ -190,17 +172,11 @@ impl Expr {
             Expr::Let { value, body, .. } => {
                 std::iter::once(&**value).chain(body.iter().map(|b| &**b)).collect()
             }
-            Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Project { base, .. } => vec![base],
             Expr::Request { arg, .. } => vec![arg],
             Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))
-                .collect(),
-            Expr::Index { value, index } => vec![value, index],
-            Expr::Slice { value, start, end } => std::iter::once(&**value)
-                .chain(start.iter().map(|e| &**e))
-                .chain(end.iter().map(|e| &**e))
                 .collect(),
         }
     }
@@ -417,21 +393,6 @@ impl Pattern {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Eq,
-    Ne,
-    Lt,
-    Gt,
-    Le,
-    Ge,
-}
-
 /// The polarity a generic parameter declares: a `+T` stands for positive
 /// types, a `-T` for negative ones. A type variable carries no polarity of
 /// its own, so a generic parameter states it.
@@ -470,11 +431,6 @@ pub enum LetMode {
     /// `let-`: not here. The binding holds the computation, which runs each
     /// time its result is demanded — applied, cut into, or asked for an item.
     Delay,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum UnOp {
-    Neg,
 }
 
 #[derive(Debug, Clone, PartialEq)]

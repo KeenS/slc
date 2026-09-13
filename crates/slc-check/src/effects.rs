@@ -698,7 +698,7 @@ mod tests {
         let src = |main_body: &str| {
             format!(
                 "{EXN} fn app<E>(f: (+i64 -> +i64 / {{..E}}), x: +i64) -> i64 / {{..E}} {{ f(x) }}
-                 fn inc(x: +i64) -> i64 {{ x + 1 }}
+                 fn inc(x: +i64) -> i64 {{ ⟨(x, 1) | __add }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) / {{IO}} {{ {main_body}; ⟨0 | exit⟩ }}"
             )
@@ -764,7 +764,7 @@ mod tests {
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) / {{IO}} {{
-                     let r = handle twice(risky, 8) {{ throw(m) => 0 - 1, return(n) => n }};
+                     let r = handle twice(risky, 8) {{ throw(m) => -1, return(n) => n }};
                      ⟨r | println; ⟨0 | exit⟩
                  }}"
             ))
@@ -793,7 +793,7 @@ mod tests {
                  }}
                  fn risky(x: +i64) -> i64 / {{Exn}} {{ throw(\"boom\") }}
                  command main | (exit: -i32) / {{IO}} {{
-                     let r = handle guard(risky, 1) {{ throw(m) => 0 - 1, return(n) => n }};
+                     let r = handle guard(risky, 1) {{ throw(m) => -1, return(n) => n }};
                      ⟨r | println; ⟨0 | exit⟩
                  }}"
             ))
@@ -806,14 +806,14 @@ mod tests {
         // A stage is a call, so the effect follows it: `x | throw` is
         // charged exactly as `throw(x)` is.
         let diags = check(&format!(
-            "{EXN} fn risky(n: i64) -> i64 {{ match n > 0 {{ true => n, _ => ⟨\"no\" | throw }} }}
+            "{EXN} fn risky(n: i64) -> i64 {{ match (⟨(n, 0) | __gt) {{ true => n, _ => ⟨\"no\" | throw }} }}
              command main | (exit: -i32) / {{IO}} {{ ⟨0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`risky` performs `Exn`")), "{diags:?}");
         assert!(
             check(&format!(
-                "{EXN} fn risky(n: i64) -> i64 / {{Exn}} {{ match n > 0 {{ true => n, _ => ⟨\"no\" | throw }} }}
+                "{EXN} fn risky(n: i64) -> i64 / {{Exn}} {{ match (⟨(n, 0) | __gt) {{ true => n, _ => ⟨\"no\" | throw }} }}
                  command main | (exit: -i32) / {{IO}} {{ ⟨0 | exit⟩ }}"
             ))
             .is_ok()
@@ -875,7 +875,7 @@ mod tests {
             check(&format!(
                 "{EXN}{FALLIBLE} command main | (exit: -i32) / {{IO}} {{
                      ⟨handle checked(1).value {{
-                         throw(m) => 0 - 1, return(n) => n
+                         throw(m) => -1, return(n) => n
                      }} | println;
                      ⟨0 | exit⟩
                  }}"
@@ -929,7 +929,7 @@ mod tests {
             "{EXN}{after} command main | (exit: -i32) / {{IO}} {{
                  let n = mu i64 {{ out <= {{
                      let c = handle after(risky, out) {{
-                         throw(m) => 0 - 1, return(x) => x
+                         throw(m) => -1, return(x) => x
                      }};
                      ⟨5 | c⟩
                  }} }};
@@ -943,7 +943,7 @@ mod tests {
             check(&format!(
                 "{EXN}{after} command main | (exit: -i32) / {{IO}} {{
                      let n = handle (mu i64 {{ out <= ⟨5 | after(risky, out)⟩ }}) {{
-                         throw(m) => 0 - 1, return(x) => x
+                         throw(m) => -1, return(x) => x
                      }};
                      ⟨n | println; ⟨0 | exit⟩
                  }}"
@@ -994,7 +994,7 @@ mod tests {
         assert!(
             check(&format!(
                 "{EXN} command main | (exit: -i32) / {{IO}} {{
-                     let r = handle throw(\"x\") {{ throw(m) => 0 - 1, return(n) => n }};
+                     let r = handle throw(\"x\") {{ throw(m) => -1, return(n) => n }};
                      ⟨r | println; ⟨0 | exit⟩
                  }}"
             ))

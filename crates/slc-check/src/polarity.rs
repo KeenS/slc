@@ -450,26 +450,7 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 check_expr(a, declared, diags);
             }
         }
-        Expr::BinOp { lhs, rhs, .. } => {
-            check_expr(lhs, declared, diags);
-            check_expr(rhs, declared, diags);
-        }
-        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
-            check_expr(body, declared, diags)
-        }
-        Expr::Index { value, index } => {
-            check_expr(value, declared, diags);
-            check_expr(index, declared, diags);
-        }
-        Expr::Slice { value, start, end } => {
-            check_expr(value, declared, diags);
-            if let Some(start) = start {
-                check_expr(start, declared, diags);
-            }
-            if let Some(end) = end {
-                check_expr(end, declared, diags);
-            }
-        }
+        Expr::Project { base: body, .. } => check_expr(body, declared, diags),
         Expr::Select { arms, .. } => {
             for arm in arms {
                 check_expr(&arm.command, declared, diags);

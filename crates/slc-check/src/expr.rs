@@ -1357,20 +1357,6 @@ fn check_pattern(
     }
 }
 
-fn expected_index_type(value_ty: &Type) -> Option<Type> {
-    match value_ty {
-        Type::Pos(Base::Str) => Some(Type::Pos(Base::I64)),
-        _ => None,
-    }
-}
-
-fn index_result_type(value_ty: &Type) -> Option<Type> {
-    match value_ty {
-        Type::Pos(Base::Str) => Some(Type::Pos(Base::Char)),
-        _ => None,
-    }
-}
-
 /// Does a value written as `expr`, inferred as `actual`, fit a port that
 /// requires `expected`?
 ///
@@ -1467,20 +1453,11 @@ fn tail_node(e: &Node<Expr>) -> &Node<Expr> {
 }
 
 fn is_integer_literal(expr: &Expr) -> bool {
-    match expr {
-        Expr::Int(_) => true,
-        Expr::UnOp { op: slc_syntax::ast::UnOp::Neg, body } => is_integer_literal(&body.kind),
-        _ => false,
-    }
+    matches!(expr, Expr::Int(_))
 }
 
 fn is_numeric(ty: &Type) -> bool {
     matches!(ty, Type::Pos(Base::I32 | Base::I64 | Base::U32 | Base::U64))
-}
-
-fn is_comparable(ty: &Type) -> bool {
-    is_numeric(ty)
-        || matches!(ty, Type::Pos(Base::Char) | Type::Pos(Base::Str) | Type::Pos(Base::Bool))
 }
 
 /// A declaration's continuation row is positional and invariant: the
@@ -2593,132 +2570,6 @@ fn check_expr_unapplied(
             let result = body.as_ref().and_then(|body| check_expr(body, enums, env, diags));
             env.pop();
             result
-        }
-        Expr::BinOp { op, lhs, rhs } => {
-            let lhs_ty = check_expr(lhs, enums, env, diags);
-            let rhs_ty = check_expr(rhs, enums, env, diags);
-            match op {
-                slc_syntax::ast::BinOp::Add
-                | slc_syntax::ast::BinOp::Sub
-                | slc_syntax::ast::BinOp::Mul
-                | slc_syntax::ast::BinOp::Div
-                | slc_syntax::ast::BinOp::Mod => {
-                    if let (Some(lhs_ty), Some(rhs_ty)) = (lhs_ty.clone(), rhs_ty.clone()) {
-                        // The operands agree — an integer literal adapting
-                        // to the other side's width.
-                        let agree = fits(env, &lhs_ty, &rhs_ty, &rhs.kind)
-                            || fits(env, &rhs_ty, &lhs_ty, &lhs.kind);
-                        let mut joined = env.uni.apply(&lhs_ty);
-                        // An operand nothing constrains is the default
-                        // integer, exactly as a bare literal is.
-                        if agree && matches!(joined, Type::Var(_)) {
-                            let _ = env.uni.unify(&joined, &Type::Pos(Base::I64));
-                            joined = env.uni.apply(&joined);
-                        }
-                        let string_add = agree
-                            && matches!(op, slc_syntax::ast::BinOp::Add)
-                            && joined == Type::Pos(Base::Str);
-                        if string_add {
-                            return Some(Type::Pos(Base::Str));
-                        }
-                        if !agree || !is_numeric(&joined) {
-                            let lhs_ty = env.uni.apply(&lhs_ty);
-                            let rhs_ty = env.uni.apply(&rhs_ty);
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "arithmetic operands have types {lhs_ty} and {rhs_ty}"
-                                ),
-                                span: e.span,
-                            });
-                        }
-                        return Some(joined);
-                    }
-                    lhs_ty.or(rhs_ty)
-                }
-                slc_syntax::ast::BinOp::Eq
-                | slc_syntax::ast::BinOp::Ne
-                | slc_syntax::ast::BinOp::Lt
-                | slc_syntax::ast::BinOp::Gt
-                | slc_syntax::ast::BinOp::Le
-                | slc_syntax::ast::BinOp::Ge => {
-                    if let (Some(lhs_ty), Some(rhs_ty)) = (lhs_ty, rhs_ty)
-                        && !{
-                            let agree = fits(env, &lhs_ty, &rhs_ty, &rhs.kind)
-                                || fits(env, &rhs_ty, &lhs_ty, &lhs.kind);
-                            let joined = env.uni.apply(&lhs_ty);
-                            agree && (matches!(joined, Type::Var(_)) || is_comparable(&joined))
-                        }
-                    {
-                        let lhs_ty = env.uni.apply(&lhs_ty);
-                        let rhs_ty = env.uni.apply(&rhs_ty);
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "comparison operands have types {lhs_ty} and {rhs_ty}"
-                            ),
-                            span: e.span,
-                        });
-                    }
-                    Some(Type::Pos(Base::Bool))
-                }
-            }
-        }
-        Expr::UnOp { op: slc_syntax::ast::UnOp::Neg, body } => {
-            let body_ty = check_expr(body, enums, env, diags);
-            if body_ty.as_ref().is_some_and(|ty| !is_numeric(ty)) {
-                diags.push(Diagnostic {
-                    message: format!("unary `-` operand has type {body_ty:?}; expected numeric"),
-                    span: body.span,
-                });
-            }
-            body_ty
-        }
-        Expr::Index { value, index } => {
-            let value_ty = check_expr(value, enums, env, diags);
-            let index_ty = check_expr(index, enums, env, diags);
-            if let Some(value_ty) = value_ty.clone() {
-                match expected_index_type(&value_ty) {
-                    Some(expected_index) => {
-                        if index_ty != Some(expected_index.clone()) {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "index has type {}; expected {expected_index}",
-                                    index_ty
-                                        .map(|ty| ty.to_string())
-                                        .unwrap_or_else(|| "unknown".into())
-                                ),
-                                span: index.span,
-                            });
-                        }
-                    }
-                    None => {
-                        diags.push(Diagnostic {
-                            message: format!("type {value_ty} is not indexable"),
-                            span: value.span,
-                        });
-                    }
-                }
-                index_result_type(&value_ty)
-            } else {
-                None
-            }
-        }
-        Expr::Slice { value, start, end } => {
-            let value_ty = check_expr(value, enums, env, diags);
-            for endpoint in [start, end].into_iter().flatten() {
-                let endpoint_ty = check_expr(endpoint, enums, env, diags);
-                if endpoint_ty != Some(Type::Pos(Base::I64)) {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "range endpoint has type {}; expected +i64",
-                            endpoint_ty
-                                .map(|ty| ty.to_string())
-                                .unwrap_or_else(|| "unknown".into())
-                        ),
-                        span: endpoint.span,
-                    });
-                }
-            }
-            value_ty
         }
         Expr::Match { scrutinee, arms } => {
             let scrutinee_ty = check_expr(scrutinee, enums, env, diags);
@@ -4104,7 +3955,7 @@ mod tests {
                      match c {{ true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }}
                  }}
                  command main | (exit: -i32) {{
-                     ⟨1 < 0 | choose | ({{ ⟨0 | exit⟩ }} & {{ ⟨1 | exit⟩ }})⟩
+                     ⟨(1, 0) | __lt | choose | ({{ ⟨0 | exit⟩ }} & {{ ⟨1 | exit⟩ }})⟩
                  }}"
             );
             assert!(check(&src).is_ok(), "{row}: {:?}", check(&src));

@@ -1606,7 +1606,7 @@ fn a_consumer_binder_builds_a_row_from_the_rest_of_the_chain() {
     let program = |start: i64| {
         format!(
             r#"command halve(n: i64) | (ok: i64 & odd: String) {{
-                match n % 2 == 0 {{ true => ⟨n / 2 | ok⟩, _ => ⟨"odd" | odd⟩ }}
+                match (⟨(n, 2) | rem | x => (x, 0) | eq) {{ true => ⟨(n, 2) | div | ok⟩, _ => ⟨"odd" | odd⟩ }}
             }}
             command main | (exit: i32) / {{IO}} {{
                 let odd = select String {{ m => {{ ⟨m | println; ⟨1 | exit⟩ }} }};

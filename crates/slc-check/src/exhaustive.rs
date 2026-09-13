@@ -235,26 +235,7 @@ fn check_expr(
                 check_expr(b, enums, bindings, diags);
             }
         }
-        Expr::BinOp { lhs, rhs, .. } => {
-            check_expr(lhs, enums, bindings, diags);
-            check_expr(rhs, enums, bindings, diags);
-        }
-        Expr::UnOp { body, .. } | Expr::Project { base: body, .. } => {
-            check_expr(body, enums, bindings, diags)
-        }
-        Expr::Index { value, index } => {
-            check_expr(value, enums, bindings, diags);
-            check_expr(index, enums, bindings, diags);
-        }
-        Expr::Slice { value, start, end } => {
-            check_expr(value, enums, bindings, diags);
-            if let Some(start) = start {
-                check_expr(start, enums, bindings, diags);
-            }
-            if let Some(end) = end {
-                check_expr(end, enums, bindings, diags);
-            }
-        }
+        Expr::Project { base: body, .. } => check_expr(body, enums, bindings, diags),
         Expr::Handle { body, clauses, ret, .. } => {
             check_expr(body, enums, bindings, diags);
             for c in clauses {
