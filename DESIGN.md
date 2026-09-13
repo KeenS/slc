@@ -1301,7 +1301,7 @@ what neither neighbour can do — so `seq::filter` over an infinite source is a
 terminating program as long as something downstream stops asking:
 
 ```sl
-⟨(⟨(odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take   // [1, 3, 5, 7]
+⟨(⟨(odd, ⟨1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take  // [1, 3, 5, 7]
 ```
 
 Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
