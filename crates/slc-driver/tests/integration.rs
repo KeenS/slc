@@ -1646,3 +1646,27 @@ fn a_value_alone_is_not_opened_with_a_bracket() {
     assert!(stderr.contains("has none"), "stderr: {stderr}");
     assert!(!stderr.contains("panicked"), "stderr: {stderr}");
 }
+
+#[test]
+fn anonymous_data_types_display() {
+    // The unit, tuples and choices carry `Display` up to eight components,
+    // each rendered as it is written.
+    let dir = std::env::temp_dir().join("slc_test_anonymous_display.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: i32) / {IO} {
+            ⟨(⟨(1, "a") | fmt) | println;
+            ⟨(⟨(1, 2, 3, 4, 5, 6, 7, 8) | fmt) | println;
+            let c: (i64 | String) = ::1("right");
+            ⟨(⟨c | fmt) | println;
+            ⟨(⟨((1, true), (,)) | fmt) | println;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    for expected in ["(1, a)", "(1, 2, 3, 4, 5, 6, 7, 8)", "::1(right)", "((1, true), (,))"] {
+        assert!(stdout.contains(expected), "missing {expected}: {stdout}");
+    }
+}

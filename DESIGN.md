@@ -906,6 +906,11 @@ argument; the function forwards it to any bounded call it makes, so the impl
 is chosen once, by whoever supplied the concrete type. A single-method trait's
 dictionary is just its impl.
 
+An impl may be for an anonymous type too — a tuple, a choice or the unit. It
+keys by its connective and width, and its components stand where a
+declaration's type arguments do, so each bound is read off the component in
+its position: `impl<A: Display, B: Display> Display for (A, B)`.
+
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and
@@ -1289,8 +1294,9 @@ through the same pipeline as user code.
 **The prelude** (`crates/slc-driver/src/prelude.sl`) is what every program
 sees unasked: the `effect IO` the runtime handles, and the
 **`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
-as in Rust) with impls for `i64`, `String`, `bool` and `to_string<T:
-Display>` — and `not`, which negates a `bool`, since there is no `!`. A
+as in Rust) with impls for `i64`, `String`, `bool`, and the unit, tuples and
+choices up to eight components, rendered as they are written — and
+`to_string<T: Display>` — and `not`, which negates a `bool`, since there is no `!`. A
 program's own declaration of a prelude name shadows it.
 
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,

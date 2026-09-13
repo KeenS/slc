@@ -69,8 +69,18 @@ pub fn type_key(ty: &TypeExpr) -> Option<String> {
         // A generic declaration keys by its name: `impl<T: …> … for List<T>`
         // covers every instantiation, its bound discharged per element type.
         TypeExpr::Apply(name, _) => Some(name.clone()),
+        // An anonymous type keys by its connective and width, and its
+        // components stand where a declaration's type arguments do.
+        TypeExpr::Tensor(items) => Some(anonymous_key("tuple", items.len())),
+        TypeExpr::Sum(items) if !items.is_empty() => Some(anonymous_key("choice", items.len())),
         _ => None,
     }
+}
+
+/// The key of an anonymous type: `$unit`, `$tuple3`, `$choice2`. The `$`
+/// keeps it apart from every declared name, which cannot begin with one.
+pub fn anonymous_key(kind: &str, width: usize) -> String {
+    if kind == "tuple" && width == 0 { "$unit".to_string() } else { format!("${kind}{width}") }
 }
 
 /// Mangled name of an impl method: opaque, cannot collide with a source name.
@@ -138,14 +148,18 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                 // arguments, so a call can read the element type off the
                 // receiver.
                 let positioned_bounds: Vec<(usize, String)> = match &for_type {
-                    TypeExpr::Apply(_, args) => bounds
-                        .iter()
-                        .filter_map(|(param, tr)| {
-                            args.iter()
-                                .position(|a| matches!(&a.kind, TypeExpr::Base(n) if n == param))
-                                .map(|i| (i, tr.clone()))
-                        })
-                        .collect(),
+                    TypeExpr::Apply(_, args) | TypeExpr::Tensor(args) | TypeExpr::Sum(args) => {
+                        bounds
+                            .iter()
+                            .filter_map(|(param, tr)| {
+                                args.iter()
+                                    .position(
+                                        |a| matches!(&a.kind, TypeExpr::Base(n) if n == param),
+                                    )
+                                    .map(|i| (i, tr.clone()))
+                            })
+                            .collect()
+                    }
                     _ => Vec::new(),
                 };
                 if !positioned_bounds.is_empty() {

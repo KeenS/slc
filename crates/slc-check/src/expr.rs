@@ -53,6 +53,10 @@ fn type_key(ty: &Type) -> Option<String> {
         Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
         Type::Named(n, _) => Some(n.clone()),
         Type::Dual(t) => type_key(t),
+        Type::Tensor(items) => Some(slc_syntax::traits::anonymous_key("tuple", items.len())),
+        Type::Sum(items) if !items.is_empty() => {
+            Some(slc_syntax::traits::anonymous_key("choice", items.len()))
+        }
         _ => None,
     }
 }
@@ -944,6 +948,8 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
 fn scrutinee_args(scrutinee: &Type) -> &[Type] {
     match scrutinee {
         Type::Named(_, args) => args,
+        // A tuple's or a choice's components are its arguments.
+        Type::Tensor(items) | Type::Sum(items) => items,
         Type::Dual(inner) => scrutinee_args(inner),
         _ => &[],
     }
