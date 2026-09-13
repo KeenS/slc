@@ -317,9 +317,6 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::With(a, b) => {
             Ok(Type::With(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
         }
-        TypeExpr::Sum(a, b) => {
-            Ok(Type::Sum(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
-        }
         // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
@@ -460,9 +457,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 acc = Term::Pair(Box::new(t), Box::new(acc));
             }
             Ok(acc)
-        }
-        Expr::Inject { index, arity, value } => {
-            Ok(injection_term(*index, *arity, lower_expr(value, continuations)?))
         }
         Expr::Pair(items) => {
             // (e1, e2) → e1' ⊗ e2'
@@ -897,28 +891,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                      `mu Menu { item: k <= c, … }`"
                         .into(),
                 ));
-            }
-            // A sum's alternatives, by position: `(x |)`, `(| y)`.
-            if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
-                let mut rows = Vec::new();
-                for arm in arms {
-                    let Pattern::Inject { index, arity, pattern } = &arm.pattern else {
-                        return Err(LowerError::Unsupported(
-                            "a `select` over a sum covers its alternatives, `(x |)` and \
-                             `(| y)`, and nothing else"
-                                .into(),
-                        ));
-                    };
-                    let command = lower_select_command(&arm.command, continuations)?;
-                    rows.push((*index, *arity, pattern.as_ref(), command));
-                }
-                return injection_table(rows)?.map(|table| Term::Co(Box::new(table))).ok_or_else(
-                    || {
-                        LowerError::Unsupported(
-                            "a `select` over a sum has one arm per alternative".into(),
-                        )
-                    },
-                );
             }
             let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
                 TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
@@ -1442,20 +1414,6 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
             _ => false,
         }
     }
-    // A sum's alternatives build their own nested table, when every arm is
-    // one and binds its payload plainly.
-    if arms.iter().any(|(pattern, _)| matches!(pattern, Pattern::Inject { .. })) {
-        let mut rows = Vec::new();
-        for (pattern, body) in arms {
-            match pattern {
-                Pattern::Inject { index, arity, pattern } if canonical_component(pattern) => {
-                    rows.push((*index, *arity, pattern.as_ref(), body))
-                }
-                _ => return Ok(None),
-            }
-        }
-        return injection_table(rows);
-    }
     // One pass over the arms, sorting them into a labelled table, a single
     // product, or a single whole-value binder. Any mix the core's branch
     // tables cannot express aborts to the dispatch path.
@@ -1564,77 +1522,6 @@ fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Comma
 /// Build a labelled consumer while retaining the declaration it refutes.
 /// Nonempty tables can recover that declaration from their first qualified
 /// label; empty tables must receive it from the surface type annotation.
-/// The labels of a sum's two alternatives. A sum of more is nested to the
-/// right, as its type is, so two are all the core needs: `(| | v)` is the
-/// right alternative whose payload is the right alternative of the rest.
-pub const INJECT_LEFT: &str = "|0";
-pub const INJECT_RIGHT: &str = "|1";
-/// The owner a sum's branch table retains: it has no declaration.
-const SUM_OWNER: &str = "(|)";
-/// What the right alternative binds when deeper arms take it apart.
-const INJECT_REST: &str = "__inject_rest";
-
-/// `(| v |)`: the right alternatives the slot passes over, around the left
-/// alternative it is — or around the bare payload, in the last slot.
-fn injection_term(index: usize, arity: usize, payload: Term) -> Term {
-    let mut term =
-        if index + 1 < arity { Term::Tag(INJECT_LEFT.into(), Box::new(payload)) } else { payload };
-    for _ in 0..index {
-        term = Term::Tag(INJECT_RIGHT.into(), Box::new(term));
-    }
-    term
-}
-
-/// The consumer of a sum, from arms that each cover one alternative by
-/// position. The left alternative binds its payload; the right one binds the
-/// rest of the sum — directly, or through the table the deeper arms build.
-/// `Ok(None)` is a set of arms that is no table: two arms for one
-/// alternative, or an arm for the rest beside arms inside it.
-fn injection_table(
-    arms: Vec<(usize, usize, &Pattern, Command)>,
-) -> Result<Option<CoTerm>, LowerError> {
-    let mut left = None;
-    let mut rest = None;
-    let mut inner = Vec::new();
-    for (index, arity, payload, body) in arms {
-        let slot = match (index, arity) {
-            _ if arity < 2 || index >= arity => return Ok(None),
-            (0, _) => &mut left,
-            (1, 2) => &mut rest,
-            _ => {
-                inner.push((index - 1, arity - 1, payload, body));
-                continue;
-            }
-        };
-        if slot.is_some() {
-            return Ok(None);
-        }
-        *slot = Some(components(std::iter::once(payload), body)?);
-    }
-    let mut branches = Vec::new();
-    if let Some((binders, body)) = left {
-        branches.push(CoCaseBranch { label: INJECT_LEFT.into(), binders, body: Box::new(body) });
-    }
-    match (rest, inner.is_empty()) {
-        (Some(_), false) => return Ok(None),
-        (Some((binders, body)), true) => branches.push(CoCaseBranch {
-            label: INJECT_RIGHT.into(),
-            binders,
-            body: Box::new(body),
-        }),
-        (None, false) => {
-            let Some(table) = injection_table(inner)? else { return Ok(None) };
-            branches.push(CoCaseBranch {
-                label: INJECT_RIGHT.into(),
-                binders: vec![INJECT_REST.into()],
-                body: Box::new(Command::Cut(Term::Var(INJECT_REST.into()), table)),
-            });
-        }
-        (None, true) => {}
-    }
-    Ok(Some(CoTerm::CoCase { owner: SUM_OWNER.into(), branches }))
-}
-
 fn lower_cocase(
     qualifier: Option<&str>,
     branches: Vec<CoCaseBranch>,
@@ -1959,21 +1846,6 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                     _ => out.push('*'),
                 }
                 out.push(')');
-            }
-            // An alternative by position, nested as the value is: the right
-            // alternatives it passes over, then the left one it is.
-            Pattern::Inject { index, arity, pattern } => {
-                let mut open = 0;
-                for _ in 0..*index {
-                    out.push_str(&format!("\"{INJECT_RIGHT}\"("));
-                    open += 1;
-                }
-                if index + 1 < *arity {
-                    out.push_str(&format!("\"{INJECT_LEFT}\"("));
-                    open += 1;
-                }
-                write(pattern, out);
-                out.push_str(&")".repeat(open));
             }
             Pattern::Tuple(items) | Pattern::Bundle(items) => {
                 // A bundle is the same right-nested pair a tuple is, so it

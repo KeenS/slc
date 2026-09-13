@@ -226,9 +226,6 @@ impl Value {
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
             }
-            // An alternative of an anonymous sum, spelled as it is written.
-            Value::Tagged(label, payload) if label == "|0" => format!("({} |)", payload.display()),
-            Value::Tagged(label, payload) if label == "|1" => format!("(| {})", payload.display()),
             Value::Tagged(label, payload) => match payload.as_ref() {
                 Value::Unit => label.clone(),
                 payload => format!("{label}({})", payload.display()),

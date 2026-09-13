@@ -103,15 +103,6 @@ fn check_expr(
             }
         }
         Expr::Select { ty, arms } => {
-            // A sum's alternatives, by position: each covered exactly once.
-            if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
-                let rows: Vec<&Pattern> = arms.iter().map(|arm| &arm.pattern).collect();
-                check_alternative_coverage("select", &rows, e.span, diags);
-                for arm in arms {
-                    check_expr(&arm.command, enums, bindings, diags);
-                }
-                return;
-            }
             // A `select` covers each shape of its type exactly once: one arm
             // per variant of an `enum`, and exactly one for a product.
             // The written type, or the one an arm names: `Red` is a variant
@@ -200,7 +191,6 @@ fn check_expr(
                 check_expr(a, enums, bindings, diags);
             }
         }
-        Expr::Inject { value, .. } => check_expr(value, enums, bindings, diags),
         Expr::Pair(items) | Expr::Bundle(items) => {
             for i in items {
                 check_expr(i, enums, bindings, diags);
@@ -296,7 +286,6 @@ fn refutable_shape(pattern: &Pattern) -> String {
         Pattern::Or(_) => "an or-pattern".into(),
         Pattern::Range { .. } => "a range".into(),
         Pattern::Dtor { dtor, .. } => format!("the request `.{dtor}`"),
-        Pattern::Inject { .. } => "an alternative of a sum".into(),
         Pattern::Tuple(_) | Pattern::Bundle(_) => "this pattern".into(),
         _ => "a literal".into(),
     }
@@ -455,90 +444,6 @@ fn arm_variant(pattern: &Pattern) -> Option<String> {
     }
 }
 
-/// The coverage law for a sum's alternatives. An arm is a path down the
-/// right-nesting — `(x | |)` goes left, `(| y |)` right then left, and
-/// `(| | z)` or `(| rest)` stops at the right, covering all of it — and the
-/// arms cover the sum when every path down it meets one. A `select` answers
-/// each alternative exactly once, so it also refuses an overlap.
-fn check_alternative_coverage(
-    keyword: &str,
-    rows: &[&Pattern],
-    span: Span,
-    diags: &mut Vec<Diagnostic>,
-) {
-    let paths: Vec<String> = rows
-        .iter()
-        .filter_map(|row| match row {
-            Pattern::Inject { index, arity, .. } => {
-                Some("1".repeat(*index) + if index + 1 < *arity { "0" } else { "" })
-            }
-            _ => None,
-        })
-        .collect();
-    if keyword == "select" {
-        if paths.len() != rows.len() {
-            diags.push(Diagnostic {
-                message: "a `select` over a sum covers its alternatives, `(x |)` and `(| y)`, \
-                          and nothing else"
-                    .into(),
-                span,
-            });
-        }
-        for (i, path) in paths.iter().enumerate() {
-            if paths[..i]
-                .iter()
-                .any(|seen| path.starts_with(seen.as_str()) || seen.starts_with(path.as_str()))
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "`select` answers the alternative `{}` in more than one arm",
-                        spell_alternative(path)
-                    ),
-                    span,
-                });
-            }
-        }
-    }
-    let missing = uncovered_alternatives(&paths, String::new());
-    if !missing.is_empty() {
-        diags.push(Diagnostic {
-            message: format!(
-                "non-exhaustive `{keyword}`: missing alternative{} {}",
-                if missing.len() > 1 { "s" } else { "" },
-                missing
-                    .iter()
-                    .map(|path| format!("`{}`", spell_alternative(path)))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            span,
-        });
-    }
-}
-
-/// The paths down a sum that no arm's path meets, below `prefix`.
-fn uncovered_alternatives(paths: &[String], prefix: String) -> Vec<String> {
-    if paths.iter().any(String::is_empty) {
-        return Vec::new();
-    }
-    if paths.is_empty() {
-        return vec![prefix];
-    }
-    let side = |bit: char| -> Vec<String> {
-        paths.iter().filter_map(|path| path.strip_prefix(bit)).map(str::to_string).collect()
-    };
-    let mut missing = uncovered_alternatives(&side('0'), format!("{prefix}0"));
-    missing.extend(uncovered_alternatives(&side('1'), format!("{prefix}1")));
-    missing
-}
-
-/// A path down a sum, spelled as the nested injection pattern that covers it.
-fn spell_alternative(path: &str) -> String {
-    path.chars().rev().fold("_".to_string(), |inner, bit| {
-        if bit == '0' { format!("({inner} |)") } else { format!("(| {inner})") }
-    })
-}
-
 /// A variant pattern must bind exactly the payload its variant declares.
 fn check_pattern_arity(
     pattern: &Pattern,
@@ -571,7 +476,6 @@ fn check_pattern_arity(
                 check_pattern_arity(alternative, enums, span, diags);
             }
         }
-        Pattern::Inject { pattern, .. } => check_pattern_arity(pattern, enums, span, diags),
         Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 check_pattern_arity(item, enums, span, diags);
@@ -602,23 +506,6 @@ fn check_match(
 
     for arm in arms {
         check_pattern_arity(&arm.pattern, enums, span, diags);
-    }
-
-    // A sum's alternatives, by position. Only an arm that always matches
-    // its alternative covers it; a later arm for the same one is merely
-    // unreachable, as it is anywhere in a `match`.
-    if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
-        let rows: Vec<&Pattern> = arms
-            .iter()
-            .filter(|arm| {
-                arm.guard.is_none()
-                    && matches!(&arm.pattern,
-                        Pattern::Inject { pattern, .. } if is_irrefutable(pattern, enums))
-            })
-            .map(|arm| &arm.pattern)
-            .collect();
-        check_alternative_coverage("match", &rows, span, diags);
-        return;
     }
 
     // Collect enum patterns used: Name(variant, _).

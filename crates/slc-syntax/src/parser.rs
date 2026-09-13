@@ -914,7 +914,7 @@ impl Parser {
 
     /// The sign a continuation position implies. It is supplied only where
     /// nothing was written and the shape itself does not carry one: a name,
-    /// an applied declaration, a product, a sum, unit. A signed type, and any shape
+    /// an applied declaration, a product, unit. A signed type, and any shape
     /// that is already a consumer — `⅋`, an arrow, `⊥`, a `dual` — says its
     /// own polarity and is left exactly as written. An `&` is the one shape
     /// the position reaches into: a menu of exits written out is still a
@@ -924,11 +924,7 @@ impl Parser {
             Box::new(Node { span: node.span, kind: Parser::imply_negative(node.kind) })
         }
         match ty {
-            TypeExpr::Base(_)
-            | TypeExpr::Apply(..)
-            | TypeExpr::Tensor(..)
-            | TypeExpr::Sum(..)
-            | TypeExpr::Unit => {
+            TypeExpr::Base(_) | TypeExpr::Apply(..) | TypeExpr::Tensor(..) | TypeExpr::Unit => {
                 TypeExpr::Negative(Box::new(Node { span: Span { start: 0, end: 0 }, kind: ty }))
             }
             TypeExpr::With(a, b) => TypeExpr::With(bare(*a), bare(*b)),
@@ -1025,8 +1021,7 @@ impl Parser {
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // A paren holding only the separator is the nullary form:
-                // `(&)` is the empty menu, ⊤, `(,)` the empty tuple, 1, `(|)`
-                // the empty sum, 0, and `(⅋)` the unit of par, ⊥.
+                // `(&)` is the empty menu, ⊤, and `(,)` the empty tuple.
                 if self.eat(&TokenKind::Amp) {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Node {
@@ -1039,20 +1034,6 @@ impl Parser {
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
                         kind: TypeExpr::Unit,
-                    });
-                }
-                if self.eat(&TokenKind::Pipe) {
-                    self.expect(TokenKind::RParen, "`)` after `(|`")?;
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Base("Empty".into()),
-                    });
-                }
-                if self.eat(&TokenKind::Par) {
-                    self.expect(TokenKind::RParen, "`)` after `(⅋`")?;
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Bottom,
                     });
                 }
                 let left = self.parse_type()?;
@@ -1078,39 +1059,36 @@ impl Parser {
                             row,
                         )
                     }
-                } else if let Some(connective) = self.peek_kind().and_then(type_connective) {
-                    // One connective, any number of components, nested to
-                    // the right as the value is: `(A, B, C)` is `(A, (B, C))`.
-                    let mut items = vec![left];
-                    while let Some(next) = self.peek_kind().and_then(type_connective) {
-                        if next != connective {
-                            return Err(ParseError {
-                                message: "a parenthesised type joins its components with one \
-                                          connective; group the others: `(A, (B | C))`"
-                                    .into(),
-                                span: self
-                                    .peek()
-                                    .map(|t| t.span)
-                                    .unwrap_or(Span { start, end: start }),
-                            });
-                        }
-                        self.pos += 1;
-                        items.push(self.parse_type()?);
-                    }
+                } else if self.eat(&TokenKind::Tensor) {
+                    let right = self.parse_type()?;
                     self.expect(TokenKind::RParen, "`)`")?;
-                    let mut acc = items.pop().expect("a connective joins at least two components");
-                    while let Some(item) = items.pop() {
-                        let span = Span { start: item.span.start, end: acc.span.end };
-                        let (item, rest) = (Box::new(item), Box::new(acc));
-                        let kind = match connective {
-                            TokenKind::Comma => TypeExpr::Tensor(item, rest),
-                            TokenKind::Amp => TypeExpr::With(item, rest),
-                            TokenKind::Pipe => TypeExpr::Sum(item, rest),
-                            _ => TypeExpr::Par(item, rest),
-                        };
-                        acc = Node { span, kind };
-                    }
-                    acc.kind
+                    TypeExpr::Tensor(
+                        Box::new(left),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
+                    )
+                } else if self.eat(&TokenKind::Amp) {
+                    let right = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    TypeExpr::With(
+                        Box::new(left),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
+                    )
+                } else if self.eat(&TokenKind::Par) {
+                    let right = self.parse_type()?;
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    TypeExpr::Par(
+                        Box::new(left),
+                        Box::new(Node {
+                            span: Span { start, end: self.span_end() },
+                            kind: right.kind,
+                        }),
+                    )
                 } else if self.peek_kind() == Some(&TokenKind::Slash) {
                     // `(-A / {Exn})` — a latent row on the type itself: what
                     // consuming (or otherwise running) the value may perform.
@@ -1132,19 +1110,6 @@ impl Parser {
             Some(TokenKind::Bot) => {
                 self.pos += 1;
                 TypeExpr::Bottom
-            }
-            // The units by their logical names: `1`, `0`, `⊤` (and `⊥` above).
-            Some(TokenKind::Top) => {
-                self.pos += 1;
-                TypeExpr::Base("Top".into())
-            }
-            Some(TokenKind::Int(1)) => {
-                self.pos += 1;
-                TypeExpr::Unit
-            }
-            Some(TokenKind::Int(0)) => {
-                self.pos += 1;
-                TypeExpr::Base("Empty".into())
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
@@ -1192,12 +1157,11 @@ impl Parser {
         let start = self.span_start();
         let from_value = self.eat(&TokenKind::CutOpen);
         let first = self.parse_flow_stage()?;
-        if !from_value && !self.at_separating_pipe() {
+        if !from_value && self.peek_kind() != Some(&TokenKind::Pipe) {
             return Ok(first);
         }
         let mut stages = vec![first];
-        while self.at_separating_pipe() {
-            self.pos += 1;
+        while self.eat(&TokenKind::Pipe) {
             stages.push(self.parse_flow_stage()?);
         }
         let into_consumer = self.eat(&TokenKind::CutClose);
@@ -1243,7 +1207,7 @@ impl Parser {
                 Some(TokenKind::Le) => (BinOp::Le, 2),
                 Some(TokenKind::Ge) => (BinOp::Ge, 2),
                 Some(TokenKind::AmpAmp) => (BinOp::And, 1),
-                Some(TokenKind::PipePipe) if !self.pipe_closes_slot() => (BinOp::Or, 0),
+                Some(TokenKind::PipePipe) => (BinOp::Or, 0),
                 _ => break,
             };
             if prec < min_prec {
@@ -1866,38 +1830,9 @@ impl Parser {
         }
     }
 
-    /// Does the `|` or `||` here close an empty slot of an injection —
-    /// `(v |)`, `(| v |)` — rather than continue a chain, an or-pattern or an
-    /// `||`? An empty slot is followed by `)` or by the next slot's `|`.
-    fn pipe_closes_slot(&self) -> bool {
-        matches!(
-            self.tokens.get(self.pos + 1).map(|token| &token.kind),
-            Some(TokenKind::RParen | TokenKind::Pipe | TokenKind::PipePipe)
-        )
-    }
-
-    /// A `|` that separates: a chain's next stage, or an or-pattern's next
-    /// alternative.
-    fn at_separating_pipe(&self) -> bool {
-        self.peek_kind() == Some(&TokenKind::Pipe) && !self.pipe_closes_slot()
-    }
-
-    /// The empty slots of an injection, counted; `||` is two.
-    fn eat_slot_pipes(&mut self) -> usize {
-        let mut count = 0;
-        loop {
-            match self.peek_kind() {
-                Some(TokenKind::Pipe) => count += 1,
-                Some(TokenKind::PipePipe) => count += 2,
-                _ => return count,
-            }
-            self.pos += 1;
-        }
-    }
-
     /// The body of a parenthesised expression, after the `(`: the nullary
-    /// forms `(,)` and `(&)`, a grouping `(e)`, a tuple `(e1, e2, …)`, a
-    /// bundle of exits `(k1 & k2 & …)`, or an injection `(v |)`, `(| v)`.
+    /// forms `(,)` and `(&)`, a grouping `(e)`, a tuple `(e1, e2, …)`, or a
+    /// bundle of exits `(k1 & k2 & …)`.
     fn parse_paren_expr(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
         {
             {
@@ -1932,30 +1867,7 @@ impl Parser {
                         span: Span { start, end: self.span_end() },
                     });
                 }
-                // `(| v)` — the value fills one slot of a sum, and the pipes
-                // around it are the others.
-                let leading = self.eat_slot_pipes();
-                if leading > 0 && self.peek_kind() == Some(&TokenKind::RParen) {
-                    return Err(ParseError {
-                        message: "`(|)` is the empty sum, 0, which has no value; its consumer \
-                                  is `select (|) {}`"
-                            .into(),
-                        span: Span { start, end: self.span_end() },
-                    });
-                }
                 let first = self.parse_expr()?;
-                let trailing = self.eat_slot_pipes();
-                if leading + trailing > 0 {
-                    self.expect(TokenKind::RParen, "`)` after an injection")?;
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: Expr::Inject {
-                            index: leading,
-                            arity: leading + 1 + trailing,
-                            value: Box::new(first),
-                        },
-                    });
-                }
                 // `(k1 & k2 & …)` — a bundle of exits.
                 if self.peek_kind() == Some(&TokenKind::Amp) {
                     let mut items = vec![first];
@@ -2059,21 +1971,19 @@ impl Parser {
         if self.peek_kind() == Some(&TokenKind::DotDotEq) {
             self.pos += 1;
             let end = self.parse_single_pattern()?;
-            if self.at_separating_pipe() {
+            if self.peek_kind() == Some(&TokenKind::Pipe) {
                 let mut alternatives =
                     vec![Pattern::Range { start: Box::new(first), end: Box::new(end) }];
-                while self.at_separating_pipe() {
-                    self.pos += 1;
+                while self.eat(&TokenKind::Pipe) {
                     alternatives.push(self.parse_pattern()?);
                 }
                 return Ok(Pattern::Or(alternatives));
             }
             return Ok(Pattern::Range { start: Box::new(first), end: Box::new(end) });
         }
-        if self.at_separating_pipe() {
+        if self.peek_kind() == Some(&TokenKind::Pipe) {
             let mut alternatives = vec![first];
-            while self.at_separating_pipe() {
-                self.pos += 1;
+            while self.eat(&TokenKind::Pipe) {
                 alternatives.push(self.parse_single_pattern()?);
             }
             return Ok(Pattern::Or(alternatives));
@@ -2222,26 +2132,6 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Pattern::Bundle(Vec::new()));
                 }
-                // `(| p)` — the injection pattern, as in expressions.
-                let leading = self.eat_slot_pipes();
-                if leading > 0 {
-                    if self.peek_kind() == Some(&TokenKind::RParen) {
-                        return Err(ParseError {
-                            message: "`(|)` is the empty sum, 0, which has no value to match; \
-                                      `select (|) {}` has no arms"
-                                .into(),
-                            span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
-                        });
-                    }
-                    let pattern = self.parse_pattern()?;
-                    let trailing = self.eat_slot_pipes();
-                    self.expect(TokenKind::RParen, "`)` after an injection pattern")?;
-                    return Ok(Pattern::Inject {
-                        index: leading,
-                        arity: leading + 1 + trailing,
-                        pattern: Box::new(pattern),
-                    });
-                }
                 if self.peek_kind() == Some(&TokenKind::RParen) {
                     return Err(ParseError {
                         message: "`()` is not a pattern; the empty tuple is `(,)` and the \
@@ -2251,15 +2141,6 @@ impl Parser {
                     });
                 }
                 let mut items = vec![self.parse_pattern()?];
-                let trailing = self.eat_slot_pipes();
-                if trailing > 0 {
-                    self.expect(TokenKind::RParen, "`)` after an injection pattern")?;
-                    return Ok(Pattern::Inject {
-                        index: 0,
-                        arity: 1 + trailing,
-                        pattern: Box::new(items.pop().expect("one pattern was parsed")),
-                    });
-                }
                 // `(p & q)` — the bundle copattern, binding each exit.
                 if self.peek_kind() == Some(&TokenKind::Amp) {
                     while self.eat(&TokenKind::Amp) {
@@ -2301,19 +2182,6 @@ impl Parser {
 pub fn parse(tokens: Vec<Token>) -> Result<Program, Vec<ParseError>> {
     let mut p = Parser::new(tokens);
     p.parse_program()
-}
-
-/// The connective a separator writes between the components of a
-/// parenthesised type, by its ASCII spelling: `,` and `⊗` join a product, `&`
-/// a menu, `|` and `⊕` a sum, `⅋` a par.
-fn type_connective(kind: &TokenKind) -> Option<TokenKind> {
-    match kind {
-        TokenKind::Comma | TokenKind::Tensor => Some(TokenKind::Comma),
-        TokenKind::Amp => Some(TokenKind::Amp),
-        TokenKind::Pipe | TokenKind::Oplus => Some(TokenKind::Pipe),
-        TokenKind::Par => Some(TokenKind::Par),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

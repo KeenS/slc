@@ -241,7 +241,6 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 check_expr(b, declared, diags);
             }
         }
-        Expr::Inject { value, .. } => check_expr(value, declared, diags),
         Expr::Pair(items) => {
             for i in items {
                 check_expr(i, declared, diags);

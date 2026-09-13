@@ -39,15 +39,6 @@ pub enum Expr {
     /// introduction: every component is supplied, and whoever holds it
     /// takes exactly one. Its type is the `&` of its components'.
     Bundle(Vec<Node<Expr>>),
-    /// `(v |)`, `(| v)`, `(| v |)` — an injection, the anonymous sum's
-    /// introduction: one alternative is supplied, the one whose slot the
-    /// value fills. `index` counts the empty slots before it, `arity` every
-    /// slot. Its type is the `|` of the alternatives.
-    Inject {
-        index: usize,
-        arity: usize,
-        value: Box<Node<Expr>>,
-    },
     Match {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
@@ -175,7 +166,6 @@ impl Expr {
                 vec![body]
             }
             Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
-            Expr::Inject { value, .. } => vec![value],
             Expr::Pair(items)
             | Expr::Bundle(items)
             | Expr::Block(items)
@@ -254,9 +244,6 @@ pub enum TypeExpr {
     /// The additive conjunction, `(A & B)`: a menu of two items, written
     /// anonymously. A continuation row is one of these.
     With(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
-    /// The additive disjunction, `(A | B)`: an enum of two alternatives,
-    /// written anonymously.
-    Sum(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
     Effectful(Box<Node<TypeExpr>>, EffectRow),
@@ -362,13 +349,6 @@ pub enum Pattern {
     /// `(p & q)` — the bundle copattern: the anonymous menu's counterpart
     /// to the tuple pattern, binding each exit.
     Bundle(Vec<Pattern>),
-    /// `(p |)`, `(| p)` — the injection pattern: the alternative whose slot
-    /// `p` fills, its payload matched by `p`.
-    Inject {
-        index: usize,
-        arity: usize,
-        pattern: Box<Pattern>,
-    },
     Data {
         name: String,
         fields: Vec<(String, Pattern)>,

@@ -548,30 +548,6 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
-## The units and the anonymous sum are spelled out
-
-`Empty` and `Top` had no concise spelling, a sum had no anonymous type, and a
-product type was written only with `⊗`. Every connective now has its
-anonymous and nullary spelling, and every unit its logical name:
-
-```sl
-select Empty {}                         // old
-select (|) {}                           // new; `0` names it too
-
-fn f() -> Top { (&) }                   // old
-fn f() -> ⊤ { (&) }                     // new; `(&)` names it too
-
-fn sum_pair(p: (i64 ⊗ i64)) -> i64      // still accepted
-fn sum_pair(p: (i64, i64)) -> i64       // new
-
-enum Outcome { Number(i64), Text(String) }   // old: a declaration per sum
-(i64 | String), (7 |), (| "text")            // new: written anonymously
-```
-
-Nothing that parsed before changes meaning: a `|` is a slot only beside an
-empty one, where it was an error. Type diagnostics print a sum as `(A ⊕ B)`
-rather than `(A + B)`.
-
 ## A `⅋` value fits the other spelling of its type
 
 A slot declared at one spelling of `A ⅋ B` used to refuse a value written at

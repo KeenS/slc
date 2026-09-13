@@ -1,11 +1,10 @@
-// The four logical units, and the spellings of their connectives.
+// The four logical units, supplied by the prelude.
 //
-// Each connective is written by name (`data`, `enum`, `menu`, `form`),
-// anonymously — `(T1, T2)`, `(T1 | T2)`, `(T1 & T2)`, `(T1 ⅋ T2)` — and
-// nullary, as a paren holding only its separator: `(,)`, `(|)`, `(&)`, `(⅋)`.
-// The units have their logical names too: `1`, `0`, `⊤`, `⊥`.
+// Unit and Bottom name the multiplicative units already written `(,)` and
+// `⊥`. Empty and Top are the nullary additive declarations; concise aliases
+// for them remain deliberately unsettled.
 
-fn unit_value() -> 1 {
+fn unit_value() -> Unit {
     (,)
 }
 
@@ -14,21 +13,15 @@ fn bottom_demand() -> Unit {
     Bottom {}
 }
 
-// `0` has no value, so a function from it never has to produce one...
-fn use_empty<T>(empty: (|)) -> T {
+fn use_empty<T>(empty: Empty) -> T {
     match empty {}
 }
 
-// ...and its consumer has no arms.
-fn absurd(out: i64) <- 0 {
-    select (|) {}
+fn top_value() -> Top {
+    mu Top {}
 }
 
-fn top_value() -> ⊤ {
-    (&)
-}
-
-command main | (exit: i32) -> (⅋) / {IO} {
+command main | (exit: i32) -> Bottom / {IO} {
     unit_value() | println;
     bottom_demand() | println;
     top_value();

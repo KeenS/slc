@@ -243,8 +243,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '⊗' => TokenKind::Tensor,
             '⅋' => TokenKind::Par,
             '⊥' => TokenKind::Bot,
-            '⊕' => TokenKind::Oplus,
-            '⊤' => TokenKind::Top,
             other => {
                 return Err(LexError {
                     message: format!("unexpected character: {other}"),
