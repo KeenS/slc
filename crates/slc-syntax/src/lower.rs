@@ -2195,13 +2195,13 @@ mod tests {
 
     #[test]
     fn generic_positive_and_negative_functions_lower_structurally() {
-        let positive = lower_str("fn id<T>(value: T) -> T { value }")[0].1.clone();
+        let positive = lower_str("fn id<+T>(value: T) -> T { value }")[0].1.clone();
         assert!(
             matches!(&positive, Term::Lam(name, body) if name == "value" && matches!(&**body, Term::Var(v) if v == "value")),
             "positive generic parameter should lower as a lambda binder: {positive:?}"
         );
 
-        let negative = lower_str("fn k<T>(ok: -T) <- T { ok(0) }")[0].1.clone();
+        let negative = lower_str("fn k<+T>(ok: -T) <- T { ok(0) }")[0].1.clone();
         assert!(
             matches!(&negative, Term::Lam(name, _) if name == "ok"),
             "negative generic continuation parameter should lower as a co-abstraction binder: {negative:?}"

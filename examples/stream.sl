@@ -1,7 +1,7 @@
 // Streams — the prelude's coinductive mirror of `List` — and nested
 // copatterns.
 //
-// `menu Stream<T> { head: T, tail: Stream<T> }` lives in the prelude with
+// `menu Stream<+T> { head: T, tail: Stream<T> }` lives in the prelude with
 // `repeat`, `count_from`, `map`, and `take` beside it. Only the
 // demanded branch of a menu ever runs, so an infinite stream is just a
 // menu that offers itself again — and `take` is the bridge back to data:

@@ -133,12 +133,13 @@ delayed.
   - **`let+` and `let-`.** A plain `let` follows the polarity of its type.
     `let+` computes now whatever the type — the way to perform a delayed
     computation's effects under the handler in scope — and `let-` delays.
-  - **Every generic parameter states its polarity.** A type variable carries
-    no polarity, so each is declared with one, `<+T>` or `<-T>`, in type
-    declarations, functions, commands and impls alike: `enum List<+T>`, and
-    a list of consumers is a declaration of its own. The mark goes on the
-    declaration, since `-T` in a type already means `dual(T)`. The prelude,
-    stdlib and examples declare 61 such parameters across 46 declarations.
+  - **Every generic parameter's polarity is held against its uses.** Each
+    parameter declares `<+T>` or `<-T>` and a row variable none (`DESIGN.md`
+    §4, "Generic function parameters"). What remains is enforcement: an
+    instantiation of `<+T>` at a negative type, or of `<-T>` at a positive
+    one, is refused — at a call, where `instantiate` in `signatures.rs`
+    freshens the parameters, and at a type application such as `List<-i64>`.
+    A list of consumers is then a declaration of its own.
   - **An unknown polarity is an error.** A binding or lambda parameter whose
     type inference leaves a variable is refused, asking for an annotation or
     for `let+`/`let-`.
@@ -243,7 +244,7 @@ is built on the built-in one.
   What does not work is offering that handler for reuse. `handle` installs
   clauses only where it is written, so `fs` has nothing to export as "the
   real file system". A function that installs the handler around a lambda,
-  `fn with_real_fs<T, E>(body: ((,) -> T / {Fs, ..E})) -> T / {IO, ..E}`, is
+  `fn with_real_fs<+T, E>(body: ((,) -> T / {Fs, ..E})) -> T / {IO, ..E}`, is
   refused: the lambda's `Fs` is charged to the declaration that wrote it
   ("Effect tracking follows names"), so the caller is told it performs
   `Fs`. Eff answers this with first-class handlers — `handler { … }` is a

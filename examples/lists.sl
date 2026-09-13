@@ -1,6 +1,6 @@
 // Lists — an ordinary recursive enum, defined in the prelude.
 //
-// Nothing about List is built in: `enum List<T> { Nil, Cons(T, List<T>) }`
+// Nothing about List is built in: `enum List<+T> { Nil, Cons(T, List<T>) }`
 // is prelude source, and `length`, `map`, `append`, and `nth` are ordinary
 // declarations over it. `nth` can find nothing, so it is a `command`
 // offering its outcomes to continuations, like the lookup builtins.

@@ -430,6 +430,15 @@ pub enum BinOp {
     Ge,
 }
 
+/// The polarity a generic parameter declares: a `+T` stands for positive
+/// types, a `-T` for negative ones. A type variable carries no polarity of
+/// its own, so a generic parameter states it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamPolarity {
+    Positive,
+    Negative,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnOp {
     Neg,
@@ -445,6 +454,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         fields: Vec<(String, TypeExpr)>,
     },
     Enum {
@@ -455,6 +467,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         variants: Vec<(String, Vec<TypeExpr>)>,
     },
     /// `menu Name { item: Type, … }` — the negative additive: the mirror of
@@ -469,6 +484,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         /// The latent row: what a demand on a value of this menu may
         /// perform. Arms of a `mu` over the menu are checked against it,
         /// and every demand incurs it — the work of codata runs on the
@@ -488,6 +506,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         /// The latent row: what feeding a value of this form may perform.
         effects: EffectRow,
         fields: Vec<(String, TypeExpr)>,
@@ -500,6 +521,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         /// Trait bounds on the type parameters: `(T, Show)` for `<T: Show>`.
         bounds: Vec<(String, String)>,
         polarity: FunctionPolarity,
@@ -521,6 +545,9 @@ pub enum Decl {
         /// is in no module, is visible everywhere.
         is_public: bool,
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         bounds: Vec<(String, String)>,
         value_params: Vec<Param>,
         continuation_params: Vec<Param>,
@@ -573,8 +600,11 @@ pub enum Decl {
     /// `Trait`. Each method is a `Fn` or `Command` declaration with a body.
     Impl {
         trait_name: String,
-        /// `impl<T: Show>` type parameters and bounds, shared by the methods.
+        /// `impl<+T: Show>` type parameters and bounds, shared by the methods.
         type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+T>` or `<-T>`.
+        /// A row variable declares none.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         bounds: Vec<(String, String)>,
         for_type: TypeExpr,
         methods: Vec<Node<Decl>>,

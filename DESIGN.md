@@ -161,7 +161,7 @@ group, and the closing stage is the row. So a command reads like every
 other call, and ends where control leaves it:
 
 ```sl
-command nth<T>(xs: List<T>, i: i64) | (found: T & missing: String)
+command nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String)
 
 ⟨(xs, 2) | nth | (found & missing)⟩
 ```
@@ -344,14 +344,22 @@ an argument whose type is known.
 
 ### Generic function parameters
 
-A declaration may declare type parameters. In a positive function, a bare
-generic parameter is positive; in a negative function or continuation row, a
-bare generic parameter is negative. Thus `T` instantiates to the polarity
-required by its position:
+A declaration may declare type parameters, and each states its polarity on
+the declaration: `<+T>` ranges over positive types, `<-T>` over negative
+ones. A type variable carries no polarity of its own, so the mark is
+required — on type declarations, functions, commands and impls alike — and
+it goes on the declaration because `-T` in a type already means `dual(T)`.
+A row variable, used as `..E`, ranges over effects rather than types and
+takes no mark: `fn map<+A, +B, E>`. (The mark is not yet held against the
+types a use instantiates it with; `PLAN.md` has that step.)
+
+In a positive function, a bare use of a generic parameter is positive; in a
+negative function or continuation row, it is negative. Thus `T` instantiates
+to the polarity required by its position:
 
 ```sl
-fn id<T>(value: T) -> T { value }
-fn consume<T>(ok: T) <- T { ⟨0 | ok⟩ }
+fn id<+T>(value: T) -> T { value }
+fn consume<+T>(ok: T) <- T { ⟨0 | ok⟩ }
 ```
 
 An explicit sign is a constraint, not a change of representation. `+T` denotes
@@ -872,7 +880,7 @@ one exactly as a `data` or an `enum` does — `impl Describe for Config`
 with the method demanding `self.retries` — including bounded impls for
 generic menus.
 
-A bounded impl — `impl<T: Display> Display for List<T>` — keys by the
+A bounded impl — `impl<+T: Display> Display for List<T>` — keys by the
 declaration's name and covers every instantiation; its dictionary is
 **constructed** at each use, the impl's global applied to one dictionary per
 bound, read off the use's type arguments and built recursively:
@@ -890,7 +898,7 @@ trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
 impl Show for bool { fn show(self: bool) -> String { match self { true => "t", _ => "f" } } }
 
-fn labelled<T: Show>(x: T) -> String { "= " + (⟨x | show) }
+fn labelled<+T: Show>(x: T) -> String { "= " + (⟨x | show) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -909,7 +917,7 @@ dictionary is just its impl.
 An impl may be for an anonymous type too — a tuple, a choice or the unit. It
 keys by its connective and width, and its components stand where a
 declaration's type arguments do, so each bound is read off the component in
-its position: `impl<A: Display, B: Display> Display for (A, B)`.
+its position: `impl<+A: Display, +B: Display> Display for (A, B)`.
 
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
@@ -968,7 +976,7 @@ row variable is declared as a generic parameter and used with the `..`
 may incur —
 
 ```sl
-fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
+fn map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
 ```
 
 A call instantiates the callee's row variables from the arguments standing
@@ -1080,13 +1088,13 @@ twice is nondeterminism, the same captured continuation run with two answers.
 Operation names are unique across effects.
 
 Bounds and effect rows are independent of a function's polarity: a negative
-function carries them in the same places — `fn emit<T: Show>(out: -String)
+function carries them in the same places — `fn emit<+T: Show>(out: -String)
 <- i64 / {Log}` — because a bound constrains a type parameter and a row
 describes what the body performs, neither of which depends on whether the
 function returns a value or a consumer.
 
 A bound on a negative function is discharged by the **cut**, not by an
-argument: in `fn emit<T: Display>(out: -String) <- T`, nothing the call
+argument: in `fn emit<+T: Display>(out: -String) <- T`, nothing the call
 receives mentions `T`, and `⟨42 | emit(s)` is what fixes it. So dictionary
 solving waits until a declaration's body is fully checked — by then every
 cut has spoken — and the same deferral gives a trait a second method
@@ -1107,7 +1115,7 @@ bound forwards through either.
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —
-`fn id<T>(x: T) -> T` — which are rigid inside their own body and
+`fn id<+T>(x: T) -> T` — which are rigid inside their own body and
 instantiated afresh at every call. And a `let` generalizes, under the
 **value restriction**: only when its right-hand side is a syntactic value —
 a literal, a `fn`, a `select`, a constructor, record, tuple, or box of
@@ -1133,12 +1141,13 @@ generalized `let`, and the by-name idiom.
 
 ### Generic declarations
 
-Every type declaration takes parameters, written as a function's are:
+Every type declaration takes parameters, written as a function's are, each
+with its polarity:
 
 ```sl
-enum List<T> { Nil, Cons(T, List<T>) }
-data Boxed<T> { inner: T }
-menu Stream<T> { head: T, tail: Stream<T> }
+enum List<+T> { Nil, Cons(T, List<T>) }
+data Boxed<+T> { inner: T }
+menu Stream<+T> { head: T, tail: Stream<T> }
 ```
 
 A use applies the declaration — `List<i64>`, `Stream<String>` — and every
@@ -1164,7 +1173,7 @@ they erased at lowering — a boxed consumer and the consumer were already
 the same value at run time — and the declared negatives made them
 redundant. A menu or form value always stored bare, so the box taxed only
 the *structural* negatives; and both shift roles are one declaration away
-when a name is wanted — `menu Lazy<T> { force: T }` is the computation
+when a name is wanted — `menu Lazy<+T> { force: T }` is the computation
 returning `T`, and a one-field `form` is a named, storable consumer.
 
 So a consumer travels bare everywhere a value does: an enum payload
@@ -1174,7 +1183,7 @@ involution on the nose: `-(-T)` *is* `T`, and double-negation elimination
 is the identity function.
 
 ```sl
-fn dne<T>(t: -(-T)) -> T { t }
+fn dne<+T>(t: -(-T)) -> T { t }
 
 ⟨42 | dne   // 42: -(-i64) and +i64 are one type
 ```
@@ -1202,7 +1211,7 @@ inside one may leave a type out when something else already says it:
 **A sign is omitted where the position implies it.** The table in §4 has a
 diagonal: a value parameter is positive, a continuation row is negative, and
 the type after `<-` is positive. On the diagonal the sign says nothing the
-position had not already said, so it is left out — `command nth<T>(xs:
+position had not already said, so it is left out — `command nth<+T>(xs:
 List<T>, i: i64) | (found: T & missing: String)` is the same declaration as
 the fully signed one. Off the diagonal the sign *is* the information, and is
 written: `note: -String` receives a consumer as data, `-> -T` returns one,
@@ -1308,7 +1317,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 
 | module | what it offers |
 |---|---|
-| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `⟨(s, n) | take` is the honest form |
@@ -1329,8 +1338,8 @@ item answers *whether* there is more, so the recursion lives in the codata
 and the branching in the data:
 
 ```sl
-enum Step<T> { Done, Yield(T, Seq<T>) }
-menu Seq<T> { next: Step<T> }
+enum Step<+T> { Done, Yield(T, Seq<T>) }
+menu Seq<+T> { next: Step<T> }
 ```
 
 It is produced a step at a time and only as far as it is demanded, which is

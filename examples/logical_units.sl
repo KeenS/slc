@@ -6,7 +6,7 @@ fn unit_value() -> (,) {
 }
 
 // `(|)` has no value, so a function from it never has to produce one...
-fn use_empty<T>(empty: (|)) -> T {
+fn use_empty<+T>(empty: (|)) -> T {
     match empty {}
 }
 

@@ -854,8 +854,8 @@ A higher-order function forwards an argument's effects by declaring a
 in a row, on its own arrow and on the parameter's:
 
 ```sl
-fn map<A, B>(f: (A -> B), xs: List<A>) -> List<B>              // old: f had to be pure
-fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
+fn map<+A, +B>(f: (A -> B), xs: List<A>) -> List<B>              // old: f had to be pure
+fn map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
 ```
 
 A bare arrow still means pure — now enforced against arguments too:
@@ -886,10 +886,10 @@ fn describe(note: -String) -> (;) { ⟨"…" | note⟩ }  // new
 ```
 
 With no box to go through, `dual` is an involution on the nose: `-(-T)`
-*is* `T`, and double-negation elimination is `fn dne<T>(t: -(-T)) -> T
+*is* `T`, and double-negation elimination is `fn dne<+T>(t: -(-T)) -> T
 { t }`. The one rule that remains is orientation: the left of `|` is the
 value side, so a continuation is passed as an argument, never cut against
-data. Where a named box is still wanted, declare it — `menu Lazy<T>
+data. Where a named box is still wanted, declare it — `menu Lazy<+T>
 { force: T }` is the computation returning `T`, and a one-field `form` is
 a named, storable consumer.
 
@@ -1028,6 +1028,25 @@ println(x);            // old: accepted as a builtin
 
 The prelude has `Display` for the base types, for the unit, and for tuples
 and choices up to eight components.
+
+## A type parameter states its polarity
+
+Every generic parameter of a `fn`, `command`, `impl`, `enum`, `data`, `menu`
+or `form` is declared `+` or `-`. A row variable, used as `..E`, keeps no
+mark.
+
+```sl
+enum List<T> { Nil, Cons(T, List<T>) }                  // old
+enum List<+T> { Nil, Cons(T, List<T>) }                 // new
+
+fn map<A, B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}    // old
+fn map<+A, +B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}  // new
+```
+
+A missing mark is an error naming the parameter. Marking `+` each parameter
+that is not a row variable migrates a program today; the mark is not yet
+checked against what a use instantiates it with, and a parameter that stands
+for consumers, functions or menus will want `-` once it is.
 
 ## Removed constructs
 

@@ -44,7 +44,7 @@ impl Describe for Sink {
 
 // A bounded impl for a generic menu: describing a Stream<T> needs T
 // displayable, and the dictionary composes at the use.
-impl<T: Display> Describe for Stream<T> {
+impl<+T: Display> Describe for Stream<T> {
     fn describe(self: Stream<T>) -> String {
         "stream starting " + (⟨self.head | fmt)
     }
@@ -65,13 +65,13 @@ fn keeper() -> Sink {
 
 // A bound discharged at codata types: `label` never knows its argument is
 // a menu or a form.
-fn label<T: Describe>(x: T) -> String {
+fn label<+T: Describe>(x: T) -> String {
     ⟨x | describe
 }
 
 // A bounded negative function: `T` is fixed by the cut, and `fmt`'s
 // dictionary travels in from the caller's side.
-fn emit<T: Display>(out: String) <- T {
+fn emit<+T: Display>(out: String) <- T {
     fn(x: T) { ⟨x | fmt | out⟩ }
 }
 

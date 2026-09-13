@@ -5,12 +5,12 @@
 // would be the wrong connective: it wants every field at once.)
 
 mod option {
-    pub enum Option<T> {
+    pub enum Option<+T> {
         None,
         Some(T),
     }
 
-    pub fn unwrap_or<T>(o: Option<T>, fallback: T) -> T {
+    pub fn unwrap_or<+T>(o: Option<T>, fallback: T) -> T {
         match o {
             Option::None => fallback,
             Option::Some(x) => x,

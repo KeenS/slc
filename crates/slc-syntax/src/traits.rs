@@ -66,7 +66,7 @@ pub fn type_key(ty: &TypeExpr) -> Option<String> {
             type_key(&inner.kind)
         }
         TypeExpr::Base(name) => Some(name.clone()),
-        // A generic declaration keys by its name: `impl<T: …> … for List<T>`
+        // A generic declaration keys by its name: `impl<+T: …> … for List<T>`
         // covers every instantiation, its bound discharged per element type.
         TypeExpr::Apply(name, _) => Some(name.clone()),
         // An anonymous type keys by its connective and width, and its
@@ -119,7 +119,7 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
     for d in &program.decls {
         match &d.kind {
             Decl::Trait { .. } => {}
-            Decl::Impl { trait_name, type_params, bounds, for_type, methods } => {
+            Decl::Impl { trait_name, type_params, type_param_signs, bounds, for_type, methods } => {
                 let Some(key) = type_key(for_type) else {
                     errors.push(TraitError {
                         message: "this type cannot carry an impl in v1".into(),
@@ -143,7 +143,7 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                     });
                     continue;
                 }
-                // `impl<T: Show> Display for List<T>`: each bound points at
+                // `impl<+T: Show> Display for List<T>`: each bound points at
                 // the position its parameter holds in the for-type's
                 // arguments, so a call can read the element type off the
                 // receiver.
@@ -174,7 +174,13 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                         .insert(key.clone(), mangled.clone());
                     out.push(Node {
                         span: method.span,
-                        kind: rename_decl(&method.kind, &mangled, type_params, bounds),
+                        kind: rename_decl(
+                            &method.kind,
+                            &mangled,
+                            type_params,
+                            type_param_signs,
+                            bounds,
+                        ),
                     });
                 }
             }
@@ -196,25 +202,36 @@ fn rename_decl(
     d: &Decl,
     new_name: &str,
     impl_params: &[String],
+    impl_signs: &[(String, ParamPolarity)],
     impl_bounds: &[(String, String)],
 ) -> Decl {
     let mut d = d.clone();
     match &mut d {
-        Decl::Fn { name, type_params, bounds, .. } => {
+        Decl::Fn { name, type_params, type_param_signs, bounds, .. } => {
             *name = new_name.to_string();
-            // The impl's `<T: Show>` becomes the method's, so its body checks
-            // generically with `T` rigid and its bound in scope.
+            // The impl's `<+T: Show>` becomes the method's, so its body checks
+            // generically with `T` rigid, its polarity and bound in scope.
             prepend(type_params, impl_params);
+            prepend_signs(type_param_signs, impl_signs);
             prepend_bounds(bounds, impl_bounds);
         }
-        Decl::Command { name, type_params, bounds, .. } => {
+        Decl::Command { name, type_params, type_param_signs, bounds, .. } => {
             *name = new_name.to_string();
             prepend(type_params, impl_params);
+            prepend_signs(type_param_signs, impl_signs);
             prepend_bounds(bounds, impl_bounds);
         }
         _ => {}
     }
     d
+}
+
+fn prepend_signs(into: &mut Vec<(String, ParamPolarity)>, extra: &[(String, ParamPolarity)]) {
+    for sign in extra {
+        if !into.iter().any(|(name, _)| name == &sign.0) {
+            into.push(sign.clone());
+        }
+    }
 }
 
 fn prepend(into: &mut Vec<String>, extra: &[String]) {

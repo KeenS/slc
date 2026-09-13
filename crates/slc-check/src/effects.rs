@@ -6,7 +6,7 @@
 //! rest of the language writes generics, explicitly:
 //!
 //! ```text
-//! fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
+//! fn map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
 //! ```
 //!
 //! `E` is a **row variable**, declared like any generic parameter and used

@@ -2,7 +2,7 @@
 
 use crate::declarations::{Declarations, enum_types};
 use slc_core::types::Type;
-use slc_syntax::ast::{Decl, Expr, FunctionPolarity, Node, Param, Program, TypeExpr};
+use slc_syntax::ast::{Decl, EffectRow, Expr, FunctionPolarity, Node, Param, Program, TypeExpr};
 use slc_syntax::lower::LowerError;
 use slc_syntax::lower::lower_type;
 
@@ -32,6 +32,7 @@ pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
 }
 
 fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnostic>) {
+    check_type_param_signs(d, diags);
     match &d.kind {
         Decl::Fn { params, polarity, type_params, .. } => {
             let generics: std::collections::HashSet<&str> =
@@ -120,6 +121,105 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
                     span: d.span,
                 });
             }
+        }
+    }
+}
+
+/// Every generic type parameter states its polarity, `<+T>` or `<-T>`: a type
+/// variable carries none of its own, and what is delayed or run depends on
+/// it. A row variable — a parameter written `..E` in the signature — ranges
+/// over effects, which have no polarity, so it takes no mark.
+fn check_type_param_signs(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
+    let mut types: Vec<&TypeExpr> = Vec::new();
+    let mut rows: Vec<&EffectRow> = Vec::new();
+    let (type_params, signs) = match &d.kind {
+        Decl::Data { type_params, type_param_signs, fields, .. } => {
+            types.extend(fields.iter().map(|(_, ty)| ty));
+            (type_params, type_param_signs)
+        }
+        Decl::Enum { type_params, type_param_signs, variants, .. } => {
+            types.extend(variants.iter().flat_map(|(_, fields)| fields));
+            (type_params, type_param_signs)
+        }
+        Decl::Menu { type_params, type_param_signs, effects, items, .. }
+        | Decl::Form { type_params, type_param_signs, effects, fields: items, .. } => {
+            types.extend(items.iter().map(|(_, ty)| ty));
+            rows.push(effects);
+            (type_params, type_param_signs)
+        }
+        Decl::Fn { type_params, type_param_signs, params, return_type, effects, .. } => {
+            types.extend(params.iter().filter_map(|p| p.ty.as_ref()));
+            types.extend(return_type);
+            rows.push(effects);
+            (type_params, type_param_signs)
+        }
+        Decl::Command {
+            type_params,
+            type_param_signs,
+            value_params,
+            continuation_params,
+            return_type,
+            effects,
+            ..
+        } => {
+            types.extend(
+                value_params.iter().chain(continuation_params).filter_map(|p| p.ty.as_ref()),
+            );
+            types.extend(return_type);
+            rows.push(effects);
+            (type_params, type_param_signs)
+        }
+        _ => return,
+    };
+    for ty in types {
+        collect_rows(ty, &mut rows);
+    }
+    let is_row = |name: &str| rows.iter().any(|row| row.tails.iter().any(|tail| tail == name));
+    for param in type_params {
+        let signed = signs.iter().any(|(name, _)| name == param);
+        if is_row(param) && signed {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{param}` is a row variable, written `..{param}`, and a row has no \
+                     polarity: declare it `<{param}>`, without `+` or `-`"
+                ),
+                span: d.span,
+            });
+        } else if !is_row(param) && !signed {
+            diags.push(Diagnostic {
+                message: format!(
+                    "type parameter `{param}` does not state its polarity: declare it \
+                     `<+{param}>` for positive types or `<-{param}>` for negative ones"
+                ),
+                span: d.span,
+            });
+        }
+    }
+}
+
+/// The effect rows a written type mentions, at any depth.
+fn collect_rows<'a>(ty: &'a TypeExpr, rows: &mut Vec<&'a EffectRow>) {
+    match ty {
+        TypeExpr::Base(_) => {}
+        TypeExpr::Apply(_, args)
+        | TypeExpr::Tensor(args)
+        | TypeExpr::Par(args)
+        | TypeExpr::With(args)
+        | TypeExpr::Sum(args) => {
+            for arg in args {
+                collect_rows(&arg.kind, rows);
+            }
+        }
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            collect_rows(&inner.kind, rows)
+        }
+        TypeExpr::Fun(from, to) => {
+            collect_rows(&from.kind, rows);
+            collect_rows(&to.kind, rows);
+        }
+        TypeExpr::Effectful(inner, row) => {
+            rows.push(row);
+            collect_rows(&inner.kind, rows);
         }
     }
 }
@@ -330,17 +430,32 @@ mod tests {
     }
 
     #[test]
-    fn generic_parameters_are_polarity_polymorphic() {
-        let r = check("fn k<T>(ok: -T) <- T { ok(0) }");
-        assert!(r.is_ok());
+    fn generic_parameters_state_their_polarity() {
+        assert!(check("fn k<+T>(ok: -T) <- T { ok(0) }").is_ok());
+        assert!(check("fn k<+T>(value: T) -> T { value }").is_ok());
+        assert!(check("fn k<-T>(value: T) -> T { value }").is_ok());
+        assert!(check("enum Two<+A, -B> { One(A), Other(B) }").is_ok());
 
-        let r = check("fn k<T>(value: T) -> T { value }");
-        assert!(r.is_ok());
+        let diags = check("fn k<T>(value: T) -> T { value }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`T` does not state its polarity")),
+            "{diags:?}"
+        );
+        let diags = check("menu Lazy<T> { force: T }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`<+T>`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_row_variable_takes_no_polarity() {
+        assert!(check("fn run<+A, E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").is_ok());
+        let diags =
+            check("fn run<+A, +E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`E` is a row variable")), "{diags:?}");
     }
 
     #[test]
     fn signed_generic_parameters_still_have_polarity() {
-        let r = check("fn bad<T>(ok: +T) <- T { ok(0) }");
+        let r = check("fn bad<+T>(ok: +T) <- T { ok(0) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("expected negative (-) polarity"));
     }

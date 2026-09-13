@@ -46,7 +46,7 @@ impl Display for bool {
     fn fmt(self: bool) -> String { match self { true => { "true" }, _ => { "false" } } }
 }
 
-fn to_string<T: Display>(x: T) -> String { ⟨x | fmt }
+fn to_string<+T: Display>(x: T) -> String { ⟨x | fmt }
 
 impl Display for i32 { fn fmt(self: i32) -> String { ⟨self | __display } }
 impl Display for u32 { fn fmt(self: u32) -> String { ⟨self | __display } }
@@ -56,8 +56,8 @@ impl Display for unit { fn fmt(self: unit) -> String { "(,)" } }
 impl Display for File { fn fmt(self: File) -> String { ⟨self | __display } }
 
 // Printing renders through `Display`, then performs `IO`'s operation.
-fn println<T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write_line }
-fn print<T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write }
+fn println<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write_line }
+fn print<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write }
 
 // ── Display for anonymous data ───────────────────────────────────────────
 //
@@ -68,59 +68,59 @@ impl Display for (,) {
     fn fmt(self: (,)) -> String { "(,)" }
 }
 
-impl<A: Display, B: Display> Display for (A, B) {
+impl<+A: Display, +B: Display> Display for (A, B) {
     fn fmt(self: (A, B)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display> Display for (A, B, C) {
+impl<+A: Display, +B: Display, +C: Display> Display for (A, B, C) {
     fn fmt(self: (A, B, C)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display> Display for (A, B, C, D) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A, B, C, D) {
     fn fmt(self: (A, B, C, D)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ", " + (⟨self.3 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display> Display for (A, B, C, D, E) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display> Display for (A, B, C, D, E) {
     fn fmt(self: (A, B, C, D, E)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ", " + (⟨self.3 | fmt) + ", " + (⟨self.4 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display> Display for (A, B, C, D, E, F) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display> Display for (A, B, C, D, E, F) {
     fn fmt(self: (A, B, C, D, E, F)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ", " + (⟨self.3 | fmt) + ", " + (⟨self.4 | fmt) + ", " + (⟨self.5 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display, G: Display> Display for (A, B, C, D, E, F, G) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display> Display for (A, B, C, D, E, F, G) {
     fn fmt(self: (A, B, C, D, E, F, G)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ", " + (⟨self.3 | fmt) + ", " + (⟨self.4 | fmt) + ", " + (⟨self.5 | fmt) + ", " + (⟨self.6 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display, G: Display, H: Display> Display for (A, B, C, D, E, F, G, H) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display, +H: Display> Display for (A, B, C, D, E, F, G, H) {
     fn fmt(self: (A, B, C, D, E, F, G, H)) -> String { "(" + (⟨self.0 | fmt) + ", " + (⟨self.1 | fmt) + ", " + (⟨self.2 | fmt) + ", " + (⟨self.3 | fmt) + ", " + (⟨self.4 | fmt) + ", " + (⟨self.5 | fmt) + ", " + (⟨self.6 | fmt) + ", " + (⟨self.7 | fmt) + ")" }
 }
 
-impl<A: Display, B: Display> Display for (A | B) {
+impl<+A: Display, +B: Display> Display for (A | B) {
     fn fmt(self: (A | B)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display> Display for (A | B | C) {
+impl<+A: Display, +B: Display, +C: Display> Display for (A | B | C) {
     fn fmt(self: (A | B | C)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display> Display for (A | B | C | D) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A | B | C | D) {
     fn fmt(self: (A | B | C | D)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")", ::3(x) => "::3(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display> Display for (A | B | C | D | E) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display> Display for (A | B | C | D | E) {
     fn fmt(self: (A | B | C | D | E)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")", ::3(x) => "::3(" + (⟨x | fmt) + ")", ::4(x) => "::4(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display> Display for (A | B | C | D | E | F) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display> Display for (A | B | C | D | E | F) {
     fn fmt(self: (A | B | C | D | E | F)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")", ::3(x) => "::3(" + (⟨x | fmt) + ")", ::4(x) => "::4(" + (⟨x | fmt) + ")", ::5(x) => "::5(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display, G: Display> Display for (A | B | C | D | E | F | G) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display> Display for (A | B | C | D | E | F | G) {
     fn fmt(self: (A | B | C | D | E | F | G)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")", ::3(x) => "::3(" + (⟨x | fmt) + ")", ::4(x) => "::4(" + (⟨x | fmt) + ")", ::5(x) => "::5(" + (⟨x | fmt) + ")", ::6(x) => "::6(" + (⟨x | fmt) + ")" } }
 }
 
-impl<A: Display, B: Display, C: Display, D: Display, E: Display, F: Display, G: Display, H: Display> Display for (A | B | C | D | E | F | G | H) {
+impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display, +H: Display> Display for (A | B | C | D | E | F | G | H) {
     fn fmt(self: (A | B | C | D | E | F | G | H)) -> String { match self { ::0(x) => "::0(" + (⟨x | fmt) + ")", ::1(x) => "::1(" + (⟨x | fmt) + ")", ::2(x) => "::2(" + (⟨x | fmt) + ")", ::3(x) => "::3(" + (⟨x | fmt) + ")", ::4(x) => "::4(" + (⟨x | fmt) + ")", ::5(x) => "::5(" + (⟨x | fmt) + ")", ::6(x) => "::6(" + (⟨x | fmt) + ")", ::7(x) => "::7(" + (⟨x | fmt) + ")" } }
 }
 

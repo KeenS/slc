@@ -747,7 +747,7 @@ mod tests {
         assert!(
             check(
                 "enum Empty {}
-                 fn absurd<T>(empty: Empty) -> T { match empty {} }"
+                 fn absurd<+T>(empty: Empty) -> T { match empty {} }"
             )
             .is_ok()
         );

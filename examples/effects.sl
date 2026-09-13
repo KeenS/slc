@@ -40,7 +40,7 @@ fn pick() -> String / {Choose} {
 // generic parameter, used with the `..` "rest" spelling. The prelude's map
 // says exactly what it forwards —
 //
-//   fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
+//   fn map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
 //
 // — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
 // handler around the call is what keeps `main` pure.

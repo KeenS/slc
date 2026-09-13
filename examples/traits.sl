@@ -41,7 +41,7 @@ impl Show for IntList {
 
 // A bound generic: `T: Show` lets it call `show` on a value whose type is not
 // known here, discharged to a real impl at each call.
-fn labelled<T: Show>(label: String, x: T) -> String {
+fn labelled<+T: Show>(label: String, x: T) -> String {
     label + ": " + (⟨x | show)
 }
 

@@ -16,12 +16,12 @@ impl Show for String { fn show(self: String) -> String { self } }
 impl Width for i64 { fn width(self: i64) -> i64 { ⟨self | int_to_str | str_len } }
 
 // Two type parameters, two bounds: `show` resolves on each argument's type.
-fn pair<A: Show, B: Show>(a: A, b: B) -> String {
+fn pair<+A: Show, +B: Show>(a: A, b: B) -> String {
     (⟨a | show) + ", " + (⟨b | show)
 }
 
 // Bounds from two different traits at once.
-fn show_with_width<T: Show, N: Width>(label: T, n: N) -> String {
+fn show_with_width<+T: Show, +N: Width>(label: T, n: N) -> String {
     (⟨label | show) + " (" + (⟨n | width | int_to_str) + " digits)"
 }
 

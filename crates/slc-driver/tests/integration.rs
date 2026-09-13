@@ -60,7 +60,7 @@ fn malformed_parameterized_main_is_rejected() {
 #[test]
 fn malformed_generic_main_is_rejected() {
     let dir = std::env::temp_dir().join("slc_test_generic_main.sl");
-    std::fs::write(&dir, "fn main<T>() -> i32 { 0 }").unwrap();
+    std::fs::write(&dir, "fn main<+T>() -> i32 { 0 }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("entry point must be"), "stderr: {stderr}");
@@ -1068,7 +1068,7 @@ fn the_four_logical_units_are_nullary_connectives() {
         &dir,
         r#"fn unit_value() -> (,) { (,) }
         fn top_value() -> (&) { (&) }
-        fn use_empty<T>(empty: (|)) -> T { match empty {} }
+        fn use_empty<+T>(empty: (|)) -> T { match empty {} }
         fn absurd(out: -i64) <- (|) { select (|) {} }
         command halt | (exit: -i32) -> (;) { ⟨0 | exit⟩ }
         command main | (exit: -i32) / {IO} {
@@ -1267,7 +1267,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         &dir,
         r#"menu Config { retries: i64, name: String }
         form Report { value: i32, label: String }
-        menu Stream2<T> { head: T, tail: Stream2<T> }
+        menu Stream2<+T> { head: T, tail: Stream2<T> }
 
         trait Describe { fn describe(self: +Self) -> String; }
 
@@ -1279,7 +1279,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         impl Describe for Report {
             fn describe(self: +Report) -> String { "a report sink" }
         }
-        impl<T: Display> Describe for Stream2<T> {
+        impl<+T: Display> Describe for Stream2<T> {
             fn describe(self: +Stream2<T>) -> String {
                 "stream starting " + fmt(self.head)
             }
@@ -1294,7 +1294,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         fn ones() -> Stream2<i64> {
             mu Stream2 { head: out <= ⟨1 | out⟩, tail: out <= ⟨ones() | out⟩ }
         }
-        fn label<T: Describe>(x: T) -> String { describe(x) }
+        fn label<+T: Describe>(x: T) -> String { describe(x) }
 
         command main | (exit: -i32) / {IO} {
             ⟨describe(config()) | println;

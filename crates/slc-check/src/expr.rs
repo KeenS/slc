@@ -267,7 +267,7 @@ fn resolve_method_dispatch(
             .and_then(|key| env.traits.method_impls.get(method).and_then(|m| m.get(&key)))
             .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone())),
     };
-    // A static dispatch into a bounded impl — `impl<T: Display> Display for
+    // A static dispatch into a bounded impl — `impl<+T: Display> Display for
     // List<T>` — supplies one dictionary per impl bound, read off the
     // receiver's type arguments.
     if let Some(slc_syntax::lower::MethodDispatch::Static(_)) = &resolution
@@ -3972,7 +3972,7 @@ mod tests {
         assert!(
             check(
                 "trait T { fn m(self: Self) -> Self; }
-                 fn g<A>(x: A) -> (A | i64) { ::0(x) }"
+                 fn g<+A>(x: A) -> (A | i64) { ::0(x) }"
             )
             .is_ok()
         );
@@ -3997,10 +3997,10 @@ mod tests {
         // A declaration's own type parameters, and itself, are names it may use.
         assert!(
             check(
-                "data Box<T> { value: T }
-                 form Put<T> { put: T }
-                 menu Get<T> { get: T }
-                 enum Chain<T> { Link(T, Chain<T>), End }
+                "data Box<+T> { value: T }
+                 form Put<+T> { put: T }
+                 menu Get<+T> { get: T }
+                 enum Chain<+T> { Link(T, Chain<T>), End }
                  fn f() -> i64 { let x: Box<i64> = Box { value: 1 }; 0 }"
             )
             .is_ok()
@@ -4068,7 +4068,7 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { ⟨self | int_to_str } }
-                 fn label<T: Show>(x: +T) -> String { ⟨x | show }
+                 fn label<+T: Show>(x: +T) -> String { ⟨x | show }
                  command main | (exit: -i32) / {IO} { ⟨1 | label | println; ⟨0 | exit⟩ }"
             )
             .is_ok()
@@ -4104,7 +4104,7 @@ mod tests {
         let poly = resolve(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { ⟨self | int_to_str } }
-             fn label<T: Show>(x: +T) -> String { ⟨x | show }
+             fn label<+T: Show>(x: +T) -> String { ⟨x | show }
              command main | (exit: -i32) / {IO} { ⟨1 | label | println; ⟨0 | exit⟩ }",
         );
         // `show(x)` inside `label` projects from the dictionary parameter;
@@ -4129,14 +4129,14 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-                 fn emit<T: Show>(out: -String & v: +T) <- i64 { ⟨show(v) | out⟩ }"
+                 fn emit<+T: Show>(out: -String & v: +T) <- i64 { ⟨show(v) | out⟩ }"
             )
             .is_ok()
         );
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             fn emit<T>(out: -String & v: +T) <- i64 { ⟨show(v) | out⟩ }",
+             fn emit<+T>(out: -String & v: +T) <- i64 { ⟨show(v) | out⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
@@ -4158,7 +4158,7 @@ mod tests {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             fn bad<T>(x: +T) -> String { show(x) }",
+             fn bad<+T>(x: +T) -> String { show(x) }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
@@ -4202,7 +4202,7 @@ mod tests {
         // An application is not a value either: it may run a command, and
         // its result may hold a captured continuation.
         let diags = check(
-            "fn id<T>(x: T) -> T { x }
+            "fn id<+T>(x: T) -> T { x }
              command main | (exit: -i32) / {IO} {
                  let h = id(fn(x) { x });
                  ⟨h(1) + 1 | println;
@@ -4264,7 +4264,7 @@ mod tests {
         // Two calls choose two types.
         assert!(
             check(
-                "fn id<T>(x: T) -> T { x }
+                "fn id<+T>(x: T) -> T { x }
                  command main | (exit: -i32) / {IO} {
                      ⟨(⟨42 | id) + 1 | println;
                      ⟨\"each call its own T\" | id | str_len | println;
@@ -4276,7 +4276,7 @@ mod tests {
 
         // Within one call, T is one type.
         let diags = check(
-            "fn id<T>(x: T) -> T { x }
+            "fn id<+T>(x: T) -> T { x }
              command main | (exit: -i32) / {IO} { ⟨str_len(id(42)) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
@@ -4297,14 +4297,14 @@ mod tests {
     fn a_type_parameter_is_rigid_inside_the_body() {
         // `T` is whatever the caller chose, so the body may not treat it as
         // a number…
-        let diags = check("fn sneaky<T>(x: T) -> T { x + 1 }").unwrap_err();
+        let diags = check("fn sneaky<+T>(x: T) -> T { x + 1 }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("arithmetic operands")), "{diags:?}");
 
         // …or hand back some other parameter's type.
-        let diags = check("fn swap<T, U>(x: T, y: U) -> T { y }").unwrap_err();
+        let diags = check("fn swap<+T, +U>(x: T, y: U) -> T { y }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
 
-        assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
+        assert!(check("fn id<+T>(x: T) -> T { x }").is_ok());
     }
 
     #[test]
@@ -4408,7 +4408,7 @@ mod tests {
         let prelude = "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
              impl Show for bool { fn show(self: +bool) -> String { \"b\" } }
-             fn emit<T: Show>(out: -String) <- T { fn(x: T) { ⟨x | show | out⟩ } }\n";
+             fn emit<+T: Show>(out: -String) <- T { fn(x: T) { ⟨x | show | out⟩ } }\n";
         // Nothing the call receives mentions T; the cut fixes it, at two
         // different types in the same declaration.
         assert!(
@@ -4472,7 +4472,7 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
-                 fn wrap<T: Show>(x: T) -> String { let f = fn(y: T) { show(y) }; f(x) }"
+                 fn wrap<+T: Show>(x: T) -> String { let f = fn(y: T) { show(y) }; f(x) }"
             )
             .is_ok()
         );
@@ -4480,7 +4480,7 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
-                 fn annotated<T: Show>(x: T) -> String { let y: T = x; show(y) }"
+                 fn annotated<+T: Show>(x: T) -> String { let y: T = x; show(y) }"
             )
             .is_ok()
         );
@@ -4489,7 +4489,7 @@ mod tests {
             check(
                 "trait Show { fn show(self: +Self) -> String; }
                  impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
-                 fn emit<T: Show>(out: -String) <- T { fn(x: T) { ⟨show(x) | out⟩ } }"
+                 fn emit<+T: Show>(out: -String) <- T { fn(x: T) { ⟨show(x) | out⟩ } }"
             )
             .is_ok()
         );
@@ -4520,7 +4520,7 @@ mod tests {
         // `T`, and double-negation elimination is the identity function.
         assert!(
             check(
-                "fn dne<T>(t: -(-T)) -> T { t }
+                "fn dne<+T>(t: -(-T)) -> T { t }
                  command main | (exit: -i32) / {IO} { ⟨42 | dne | println; ⟨0 | exit⟩ }",
             )
             .is_ok()

@@ -3,8 +3,8 @@
 // The stdlib has both neighbours: `List` is data, and `Stream` is codata that
 // never ends. `Seq` is the one in between —
 //
-//     enum Step<T> { Done, Yield(T, Seq<T>) }
-//     menu Seq<T> { next: Step<T> }
+//     enum Step<+T> { Done, Yield(T, Seq<T>) }
+//     menu Seq<+T> { next: Step<T> }
 //
 // — a menu whose single item answers *whether* there is more. The recursion
 // lives in the codata and the branching in the data, so only the step that

@@ -5,7 +5,7 @@
 // value form of it, for when the choice has to be kept rather than taken.
 
 mod either {
-    pub enum Either<L, R> {
+    pub enum Either<+L, +R> {
         Left(L),
         Right(R),
     }

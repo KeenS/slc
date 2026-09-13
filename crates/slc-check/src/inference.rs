@@ -433,13 +433,13 @@ mod tests {
 
     #[test]
     fn generic_type_variables_are_supported() {
-        let out = infer("fn id<T>(x: +T) -> T { x }").unwrap();
+        let out = infer("fn id<+T>(x: +T) -> T { x }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 
     #[test]
     fn generic_negative_functions_preserve_declared_polarity() {
-        let out = infer("fn k<T>(ok: -T) <- T { ok(0) }").unwrap();
+        let out = infer("fn k<+T>(ok: -T) <- T { ok(0) }").unwrap();
         // A bare generic atom erases its sign (it is polarity-polymorphic),
         // and the negative declaration produces the consumer of `T` — whose
         // dual now stays wrapped around the variable instead of collapsing.
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn generic_function_bare_type_positions_instantiate_to_variables() {
-        let out = infer("fn k<T>(value: T) -> T { value }").unwrap();
+        let out = infer("fn k<+T>(value: T) -> T { value }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 

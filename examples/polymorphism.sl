@@ -11,7 +11,7 @@
 // value, so it generalizes — and each use re-runs the capture, which the
 // print inside makes visible.
 
-fn id<T>(x: T) -> T { x }
+fn id<+T>(x: T) -> T { x }
 
 command main | (exit: i32) / {IO} {
     // A generic declaration: every call chooses its own `T`.

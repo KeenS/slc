@@ -6,7 +6,7 @@
 // negation is an involution on the nose, `-(-A)` *is* `A`, and double
 // negation elimination is not a program but the identity:
 
-fn dne<T>(t: -(-T)) -> T {
+fn dne<+T>(t: -(-T)) -> T {
     t
 }
 

@@ -158,7 +158,7 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
 }
 
 /// Type parameters with their trait bounds.
-type TypeParams = (Vec<String>, Vec<(String, String)>);
+type TypeParams = (Vec<String>, Vec<(String, String)>, Vec<(String, ParamPolarity)>);
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -325,6 +325,7 @@ impl Parser {
                             name: "main".into(),
                             is_public: true,
                             type_params: vec![],
+                            type_param_signs: vec![],
                             bounds: vec![],
                             polarity: FunctionPolarity::Positive,
                             params: vec![],
@@ -373,6 +374,7 @@ impl Parser {
                         name: "main".into(),
                         is_public: true,
                         type_params: vec![],
+                        type_param_signs: vec![],
                         bounds: vec![],
                         polarity: FunctionPolarity::Positive,
                         params: vec![],
@@ -389,7 +391,7 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Data, "`data`")?;
         let name = self.expect_name("data name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
                 message: "a type declaration's parameters carry no bounds".into(),
@@ -411,14 +413,17 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Data { name, is_public, type_params, fields } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Data { name, is_public, type_params, type_param_signs, fields },
+        })
     }
 
     fn parse_form(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Form, "`form`")?;
         let name = self.expect_name("form name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
                 message: "a type declaration's parameters carry no bounds".into(),
@@ -443,7 +448,7 @@ impl Parser {
         }
         Ok(Node {
             span: t.span,
-            kind: Decl::Form { name, is_public, type_params, effects, fields },
+            kind: Decl::Form { name, is_public, type_params, type_param_signs, effects, fields },
         })
     }
 
@@ -451,7 +456,7 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Menu, "`menu`")?;
         let name = self.expect_ident("menu name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
                 message: "a type declaration's parameters carry no bounds".into(),
@@ -474,14 +479,17 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Menu { name, is_public, type_params, effects, items } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Menu { name, is_public, type_params, type_param_signs, effects, items },
+        })
     }
 
     fn parse_enum(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Enum, "`enum`")?;
         let name = self.expect_ident("enum name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
                 message: "a type declaration's parameters carry no bounds".into(),
@@ -515,7 +523,10 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Enum { name, is_public, type_params, variants } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Enum { name, is_public, type_params, type_param_signs, variants },
+        })
     }
 
     /// An optional effect row: `/ { E1, E2, ..R }`, or nothing for pure.
@@ -548,7 +559,7 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         let (params, separator) = self.parse_params_with()?;
         let (polarity, return_type) = self.parse_fn_arrow()?;
         let effects = self.parse_effect_row()?;
@@ -560,6 +571,7 @@ impl Parser {
                 name,
                 is_public,
                 type_params,
+                type_param_signs,
                 bounds,
                 polarity,
                 params,
@@ -590,23 +602,38 @@ impl Parser {
         }
     }
 
-    /// Type parameters with their bounds: `<T: Show, U>` yields `["T", "U"]`
-    /// and `[("T", "Show")]`.
+    /// Type parameters with their bounds and polarities: `<+T: Show, U>`
+    /// yields `["T", "U"]`, `[("T", "Show")]` and `[("T", Positive)]`. A type
+    /// parameter states its polarity; a row variable, used as `..U`, has none.
     fn parse_type_params_bounded(&mut self) -> Result<TypeParams, ParseError> {
         let mut params = Vec::new();
         let mut bounds = Vec::new();
-        if !self.eat(&TokenKind::Lt) {
-            return Ok((params, bounds));
+        let mut signs = Vec::new();
+        // `<-T>` opens with the negative arrow: the lexer reads `<-` as one
+        // token, and here it is the bracket and the first parameter's sign.
+        let opened_negative = self.eat(&TokenKind::ReverseArrow);
+        if !opened_negative && !self.eat(&TokenKind::Lt) {
+            return Ok((params, bounds, signs));
         }
+        let mut pending = opened_negative.then_some(ParamPolarity::Negative);
         loop {
-            if self.eat(&TokenKind::Gt) {
+            if pending.is_none() && self.eat(&TokenKind::Gt) {
                 break;
             }
+            let sign = match pending.take() {
+                Some(sign) => Some(sign),
+                None if self.eat(&TokenKind::Plus) => Some(ParamPolarity::Positive),
+                None if self.eat(&TokenKind::Minus) => Some(ParamPolarity::Negative),
+                None => None,
+            };
             let name = self.expect_ident("type parameter")?;
             // `T: Show` — one bound today; `T: Show + Ord` is deferred.
             while self.eat(&TokenKind::Colon) {
                 let trait_name = self.expect_ident("a trait bound")?;
                 bounds.push((name.clone(), trait_name));
+            }
+            if let Some(sign) = sign {
+                signs.push((name.clone(), sign));
             }
             params.push(name);
             if !self.eat(&TokenKind::Comma) {
@@ -614,14 +641,14 @@ impl Parser {
                 break;
             }
         }
-        Ok((params, bounds))
+        Ok((params, bounds, signs))
     }
 
     fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Command, "`command`")?;
         let name = self.expect_ident("`command` name")?;
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         let (value_params, continuation_params) = self.parse_command_params()?;
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
@@ -641,6 +668,7 @@ impl Parser {
                 name,
                 is_public,
                 type_params,
+                type_param_signs,
                 bounds,
                 value_params,
                 continuation_params,
@@ -845,7 +873,7 @@ impl Parser {
         let t = self.expect(TokenKind::Impl, "`impl`")?;
         // impl<...> bounds are parsed and kept on the methods, not the header,
         // in v1: a generic impl's methods carry the bound.
-        let (type_params, bounds) = self.parse_type_params_bounded()?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         let trait_name = self.expect_ident("a trait name")?;
         self.expect(TokenKind::For, "`for` in an `impl`")?;
         let for_type = self.parse_type()?.kind;
@@ -862,7 +890,14 @@ impl Parser {
         }
         Ok(Node {
             span: t.span,
-            kind: Decl::Impl { trait_name, type_params, bounds, for_type, methods },
+            kind: Decl::Impl {
+                trait_name,
+                type_params,
+                type_param_signs,
+                bounds,
+                for_type,
+                methods,
+            },
         })
     }
 
@@ -2855,6 +2890,24 @@ mod tests {
             &params[0].ty,
             Some(TypeExpr::Apply(name, args)) if name == "Command" && args.len() == 2
         ));
+    }
+
+    #[test]
+    fn a_type_parameter_states_its_polarity() {
+        use ParamPolarity::{Negative, Positive};
+        let p = parse_str("enum Two<+A, -B, E> { One(A), Other(B) }");
+        let Decl::Enum { type_params, type_param_signs, .. } = &p.decls[0].kind else {
+            panic!("expected an enum")
+        };
+        assert_eq!(type_params, &["A", "B", "E"]);
+        assert_eq!(type_param_signs, &[("A".to_string(), Positive), ("B".to_string(), Negative)]);
+        // `<-` lexes as one token; opening a parameter list it is `<` and `-`.
+        let p = parse_str("fn f<-T: Show>(k: T) <- i64 { k }");
+        let Decl::Fn { type_param_signs, bounds, .. } = &p.decls[0].kind else {
+            panic!("expected a fn")
+        };
+        assert_eq!(type_param_signs, &[("T".to_string(), Negative)]);
+        assert_eq!(bounds, &[("T".to_string(), "Show".to_string())]);
     }
 
     #[test]

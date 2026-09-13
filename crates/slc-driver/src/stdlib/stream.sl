@@ -10,12 +10,12 @@
 mod stream {
     use list::List::*;
 
-    pub menu Stream<T> {
+    pub menu Stream<+T> {
         head: T,
         tail: Stream<T>,
     }
 
-    pub fn repeat<T>(x: T) -> Stream<T> {
+    pub fn repeat<+T>(x: T) -> Stream<T> {
         mu Stream {
             head <= ⟨x | head⟩,
             tail <= ⟨x | repeat | tail⟩,
@@ -29,7 +29,7 @@ mod stream {
         }
     }
 
-    pub fn map<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
+    pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
         mu Stream {
             head <= ⟨s.head | f | head⟩,
             tail <= ⟨(f, s.tail) | map | tail⟩,
@@ -37,7 +37,7 @@ mod stream {
     }
 
     // The bridge back to data: the first `n` elements, as a list.
-    pub fn take<T>(s: Stream<T>, n: i64) -> list::List<T> {
+    pub fn take<+T>(s: Stream<T>, n: i64) -> list::List<T> {
         match n <= 0 { true => { Nil }, _ => { Cons(s.head, ⟨(s.tail, n - 1) | take) } }
     }
 
@@ -47,21 +47,21 @@ mod stream {
     // *is* the element. Only the demanded arm runs, so the step runs once
     // per demand.
 
-    pub fn unfold<S, T>(step: (S -> (T, S)), seed: S) -> Stream<T> {
+    pub fn unfold<+S, +T>(step: (S -> (T, S)), seed: S) -> Stream<T> {
         mu Stream {
             head <= ⟨(⟨seed | step).0 | head⟩,
             tail <= ⟨(step, (⟨seed | step).1) | unfold | tail⟩,
         }
     }
 
-    pub fn iterate<T>(f: (T -> T), x: T) -> Stream<T> {
+    pub fn iterate<+T>(f: (T -> T), x: T) -> Stream<T> {
         mu Stream {
             head <= ⟨x | head⟩,
             tail <= ⟨(f, ⟨x | f) | iterate | tail⟩,
         }
     }
 
-    pub fn zip<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A, B)> {
+    pub fn zip<+A, +B>(a: Stream<A>, b: Stream<B>) -> Stream<(A, B)> {
         mu Stream {
             head <= ⟨(a.head, b.head) | head⟩,
             tail <= ⟨(a.tail, b.tail) | zip | tail⟩,
@@ -70,7 +70,7 @@ mod stream {
 
     // Unlike the others this forces as it goes: `n` demands happen here
     // rather than at the first demand of the result.
-    pub fn drop<T>(s: Stream<T>, n: i64) -> Stream<T> {
+    pub fn drop<+T>(s: Stream<T>, n: i64) -> Stream<T> {
         match n <= 0 { true => { s }, _ => { ⟨(s.tail, n - 1) | drop } }
     }
 }
