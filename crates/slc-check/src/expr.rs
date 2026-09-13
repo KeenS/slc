@@ -1087,7 +1087,6 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Float(_)
         | Expr::Str(_)
         | Expr::Char(_)
-        | Expr::Bool(_)
         | Expr::Ident(_)
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
@@ -1109,7 +1108,7 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
 
 fn is_constant_initializer(e: &Expr, env: &Env) -> bool {
     match e {
-        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => true,
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) => true,
         Expr::Ident(name) => env.constants.contains_key(name),
         _ => false,
     }
@@ -1121,7 +1120,6 @@ fn literal_type(e: &Expr) -> Option<Type> {
         Expr::Float(_) => Type::ONE,
         Expr::Str(_) => Type::Pos(Base::Str),
         Expr::Char(_) => Type::Pos(Base::Char),
-        Expr::Bool(_) => Type::Pos(Base::Bool),
         _ => return None,
     })
 }
@@ -1132,7 +1130,6 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
         Pattern::Int(_) => Type::Pos(Base::I64),
         Pattern::Str(_) => Type::Pos(Base::Str),
         Pattern::Char(_) => Type::Pos(Base::Char),
-        Pattern::Bool(_) => Type::Pos(Base::Bool),
         Pattern::Float(_) => Type::ONE,
         Pattern::Range { start, .. } => pattern_type(start)?,
         Pattern::Or(alternatives) => {
@@ -3510,7 +3507,8 @@ mod tests {
     fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
         // Printing lives in the prelude, which these checks do not load; a
         // stand-in is appended, so no diagnostic's position moves.
-        let s = &format!("{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\n");
+        let s =
+            &format!("{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\nenum Bool {{ False, True }}\n");
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -3887,10 +3885,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            diags
-                .iter()
-                .any(|d| d.message.contains("continuation row mismatch")
-                    && d.message.contains("-bool")),
+            diags.iter().any(|d| d.message.contains("continuation row mismatch")
+                && d.message.contains("dual(Bool)")),
             "diags: {diags:?}"
         );
     }
@@ -4217,7 +4213,9 @@ mod tests {
         // `show(x)` under `<T: Show>` stays dynamic (the map does not name it).
         let resolve = |s: &str| {
             // The prelude's printing, stood in for as `check` does.
-            let s = &format!("{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\n");
+            let s = &format!(
+                "{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\nenum Bool {{ False, True }}\n"
+            );
             let toks = lex(s).unwrap();
             let prog = parse(toks).unwrap();
             let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -4286,7 +4284,7 @@ mod tests {
              command main | (exit: -i32) / {IO} { ⟨show(true) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("no `impl Show for bool`")), "{diags:?}");
+        assert!(diags.iter().any(|d| d.message.contains("no `impl Show for Bool`")), "{diags:?}");
     }
 
     #[test]

@@ -51,8 +51,8 @@ fn explicit_connectives_parse_and_lower() {
             Type::Par(vec![Type::Neg(Base::I64), Type::Neg(Base::I64)]),
         ),
         (
-            "fn f(g: (+i64 -> +bool)) -> i64 { 0 }",
-            Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Bool)),
+            "fn f(g: (+i64 -> +char)) -> i64 { 0 }",
+            Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Char)),
         ),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
@@ -107,19 +107,19 @@ fn a_function_into_bottom_is_a_consumer() {
 
     // An ordinary function type is unaffected.
     assert_eq!(
-        lower_type(&parameter_type("fn f(g: (+i64 -> +bool)) -> i64 { 0 }")),
-        Ok(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Bool)))
+        lower_type(&parameter_type("fn f(g: (+i64 -> +char)) -> i64 { 0 }")),
+        Ok(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::Char)))
     );
 }
 
 #[test]
 fn explicit_connectives_reach_inference() {
-    let out = declared("fn f(p: (+i64, +i64)) -> bool { true }");
+    let out = declared("fn f(p: (+i64, +i64)) -> char { 'c' }");
     assert_eq!(
         out[0].ty,
         Type::arrow(
             Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::I64)]),
-            Type::Pos(Base::Bool)
+            Type::Pos(Base::Char)
         )
     );
 

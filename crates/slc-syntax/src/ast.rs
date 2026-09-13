@@ -22,7 +22,6 @@ pub enum Expr {
     Float(f64),
     Str(String),
     Char(char),
-    Bool(bool),
     Ident(String),
     Lambda {
         param: String,
@@ -146,12 +145,9 @@ impl Expr {
     /// expression needs no case for each node this way.
     pub fn children(&self) -> Vec<&Node<Expr>> {
         match self {
-            Expr::Int(_)
-            | Expr::Float(_)
-            | Expr::Str(_)
-            | Expr::Char(_)
-            | Expr::Bool(_)
-            | Expr::Ident(_) => Vec::new(),
+            Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Ident(_) => {
+                Vec::new()
+            }
             Expr::Lambda { body, .. } | Expr::Mu { body, .. } => {
                 vec![body]
             }
@@ -324,7 +320,6 @@ pub enum Pattern {
     Int(i64),
     Str(String),
     Char(char),
-    Bool(bool),
     Float(f64),
     Or(Vec<Pattern>),
     Range {

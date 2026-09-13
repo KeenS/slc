@@ -179,12 +179,6 @@ fn parse_runtime_pattern_inner(
                 }
                 return RuntimePattern::Binding(name, Box::new(parse_runtime_pattern_inner(chars)));
             }
-            if name == "true" {
-                return RuntimePattern::Literal(Value::Bool(true));
-            }
-            if name == "false" {
-                return RuntimePattern::Literal(Value::Bool(false));
-            }
             RuntimePattern::Binding(name, Box::new(RuntimePattern::Wildcard))
         }
         None => RuntimePattern::Wildcard,

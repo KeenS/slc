@@ -49,7 +49,8 @@ fn builtin_functions() -> Vec<Builtin> {
     use Base::*;
     let i64 = Type::Pos(I64);
     let string = Type::Pos(Str);
-    let bool_ = Type::Pos(Bool);
+    // The prelude's `enum Bool`.
+    let bool_ = Type::Named("Bool".into(), Vec::new());
     let char_ = Type::Pos(Char);
     // Template variables: instantiated afresh at every call, so `same`
     // relates two slots of one call and promises nothing across calls.

@@ -413,7 +413,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         Expr::Float(n) => Ok(Term::Var(format!("$float_{n}"))),
         Expr::Str(s) => Ok(Term::Var(format!("$str_{s:?}"))),
         Expr::Char(c) => Ok(Term::Var(format!("$char_{c}"))),
-        Expr::Bool(b) => Ok(Term::Var(if *b { "true" } else { "false" }.to_string())),
         Expr::Ident(s) => {
             // An unambiguous bare variant resolves to its label, the way
             // the checker resolves it — `None` is `Option::None`. A variant
@@ -1044,7 +1043,6 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                     Expr::Char(c) => Some(Pattern::Char(*c)),
                     Expr::Int(n) => Some(Pattern::Int(*n)),
                     Expr::Str(s) => Some(Pattern::Str(s.clone())),
-                    Expr::Bool(b) => Some(Pattern::Bool(*b)),
                     _ => None,
                 };
                 pattern.map(|pattern| (name.clone(), pattern))
@@ -1787,9 +1785,6 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                     c => out.push(*c),
                 }
                 out.push('\'');
-            }
-            Pattern::Bool(b) => {
-                out.push_str(if *b { "true" } else { "false" });
             }
             Pattern::Float(n) => {
                 out.push('%');

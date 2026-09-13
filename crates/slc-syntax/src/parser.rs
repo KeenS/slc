@@ -1259,6 +1259,9 @@ impl Parser {
                         break;
                     }
                     TypeExpr::Apply(s, args)
+                } else if s == "bool" {
+                    // `bool` is the prelude's `Bool`.
+                    TypeExpr::Base("Bool".into())
                 } else {
                     TypeExpr::Base(s)
                 }
@@ -1599,9 +1602,14 @@ impl Parser {
                 self.pos += 1;
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Char(c) })
             }
+            // `true` and `false` are the prelude's `Bool` variants.
             Some(TokenKind::Bool(b)) => {
                 self.pos += 1;
-                Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Bool(b) })
+                let variant = if b { "Bool::True" } else { "Bool::False" };
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Ident(variant.into()),
+                })
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
@@ -2355,7 +2363,12 @@ impl Parser {
             }
             Some(TokenKind::Bool(b)) => {
                 self.pos += 1;
-                Ok(Pattern::Bool(b))
+                let variant = if b { "True" } else { "False" };
+                Ok(Pattern::Enum {
+                    name: "Bool".into(),
+                    variant: variant.into(),
+                    fields: Vec::new(),
+                })
             }
             Some(TokenKind::LParen) => {
                 self.pos += 1;

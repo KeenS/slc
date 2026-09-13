@@ -24,6 +24,13 @@ effect IO {
     fn write_line(text: String) -> (,);
 }
 
+// ── Bool ─────────────────────────────────────────────────────────────────
+//
+// An ordinary enum, so a `match` on one is exhaustive the way a match on any
+// enum is. The builtins that answer yes or no answer with it.
+
+enum Bool { False, True }
+
 // ── Display ──────────────────────────────────────────────────────────────
 //
 // User-facing formatting, as in Rust: `fmt` renders a value as the String a

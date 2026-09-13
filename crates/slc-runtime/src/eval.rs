@@ -98,8 +98,6 @@ pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> 
             let c = n[6..].chars().next().ok_or_else(|| EvalError::Unbound(x.to_string()))?;
             return Ok(Value::Char(c));
         }
-        "true" => return Ok(Value::Bool(true)),
-        "false" => return Ok(Value::Bool(false)),
         // Only the `$`-prefixed encodings are reserved: they cannot be
         // written in the surface, so they never shadow a binding.
         "$unit" => return Ok(Value::Unit),
@@ -370,11 +368,11 @@ mod tests {
     }
 
     #[test]
-    fn eval_bool() {
-        let t = Term::Var("true".into());
+    fn eval_unit() {
+        let t = Term::Var("$unit".into());
         let mut env = Env::new();
         let mut fuel = 100;
-        assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Bool(true));
+        assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Unit);
     }
 
     #[test]

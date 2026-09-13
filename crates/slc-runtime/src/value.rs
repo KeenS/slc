@@ -105,7 +105,6 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Str(String),
-    Bool(bool),
     Char(char),
     Unit,
     Closure {
@@ -167,13 +166,26 @@ pub enum Value {
     PartialBuiltin(String, Vec<Value>),
 }
 
+/// A `Bool`, as the prelude's enum holds it: a payloadless variant.
+pub fn bool_value(b: bool) -> Value {
+    Value::Tagged(if b { "Bool::True" } else { "Bool::False" }.into(), Box::new(Value::Unit))
+}
+
+/// The `bool` a `Bool` variant stands for.
+pub fn as_bool(v: &Value) -> Option<bool> {
+    match v {
+        Value::Tagged(label, _) if label == "Bool::True" => Some(true),
+        Value::Tagged(label, _) if label == "Bool::False" => Some(false),
+        _ => None,
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Float(a), Value::Float(b)) => a == b,
             (Value::Str(a), Value::Str(b)) => a == b,
-            (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Char(a), Value::Char(b)) => a == b,
             (Value::Unit, Value::Unit) => true,
             (Value::File(a), Value::File(b)) => a == b,
@@ -197,7 +209,6 @@ impl Value {
             Value::Int(_) => Type::Pos(slc_core::types::Base::I64),
             Value::Float(_) => Type::Pos(slc_core::types::Base::Unit),
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
-            Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
             Value::Operation { .. } => Type::ONE,
@@ -223,7 +234,6 @@ impl Value {
             Value::Int(n) => format!("{n}"),
             Value::Float(n) => format!("{n}"),
             Value::Str(s) => format!("{s:?}"),
-            Value::Bool(b) => format!("{b}"),
             Value::Char(c) => format!("{c:?}"),
             Value::Unit => "(,)".to_string(),
 

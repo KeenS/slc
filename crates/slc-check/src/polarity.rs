@@ -472,6 +472,8 @@ mod tests {
     use slc_syntax::parser::parse;
 
     fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
+        // The prelude's `Bool`, which these checks do not load.
+        let s = &format!("{s}\nenum Bool {{ False, True }}\n");
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         check_program(&prog)

@@ -889,7 +889,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 locals.pop();
             }
         }
-        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => {}
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) => {}
     }
 }
 
@@ -933,7 +933,6 @@ fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>])
         | Pattern::Int(_)
         | Pattern::Str(_)
         | Pattern::Char(_)
-        | Pattern::Bool(_)
         | Pattern::Float(_)
         | Pattern::Rest => {}
     }
@@ -978,7 +977,6 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         | Pattern::Int(_)
         | Pattern::Str(_)
         | Pattern::Char(_)
-        | Pattern::Bool(_)
         | Pattern::Float(_)
         | Pattern::Rest => {}
     }
@@ -1063,7 +1061,7 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut ret.kind, imported);
             }
         }
-        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Bool(_) => {}
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) => {}
     }
 }
 

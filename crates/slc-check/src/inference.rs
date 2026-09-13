@@ -109,7 +109,6 @@ pub fn infer_expr(
             Ok(consumed.dual())
         }
         Expr::Int(_) => Ok(Type::Pos(slc_core::types::Base::I32)),
-        Expr::Bool(_) => Ok(Type::Pos(slc_core::types::Base::Bool)),
         Expr::Str(_) => Ok(Type::Pos(slc_core::types::Base::Str)),
         Expr::Char(_) => Ok(Type::Pos(slc_core::types::Base::Char)),
         Expr::Ident(name) => declarations.get(name).cloned().ok_or_else(|| {
@@ -359,8 +358,8 @@ mod tests {
             }
         };
         assert_eq!(
-            record_representation(&fields("data D { left: i64, right: bool }")).unwrap(),
-            Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::Bool)])
+            record_representation(&fields("data D { left: i64, right: char }")).unwrap(),
+            Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::Char)])
         );
         assert_eq!(
             record_representation(&fields("data One { only: i64 }")).unwrap(),
@@ -410,9 +409,9 @@ mod tests {
         let out = infer("fn k(return: -i32) <- i32 { return(0) }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
-        // The row and the result stay independent: `(-i32 -> -bool)`.
-        let out = infer("fn k(return: -i32) <- bool { return(true) }").unwrap();
-        assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::Bool)));
+        // The row and the result stay independent: `(-i32 -> -char)`.
+        let out = infer("fn k(return: -i32) <- char { return('c') }").unwrap();
+        assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::Char)));
     }
 
     #[test]

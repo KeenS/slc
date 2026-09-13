@@ -1814,3 +1814,27 @@ fn a_trait_method_of_two_parameters_dispatches_on_its_self_component() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["3", "ab"]);
 }
+
+#[test]
+fn a_match_on_true_and_false_is_exhaustive_without_a_wildcard() {
+    // `bool` is the prelude's `enum Bool`, so its two variants cover it the
+    // way any enum's variants do — on a literal and on a builtin's answer.
+    let dir = std::env::temp_dir().join("slc_test_bool_exhaustive.sl");
+    std::fs::write(
+        &dir,
+        r#"fn describe(b: bool) -> String {
+            match b { true => "yes", false => "no" }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            ⟨true | describe | println;
+            ⟨(⟨(2, 1) | lt) | describe | println;
+            ⟨match (⟨(1, 2) | lt) { true => 1, false => 0 } | println;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["yes", "no", "1"]);
+}

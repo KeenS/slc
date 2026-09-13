@@ -95,7 +95,10 @@ pub fn apply_builtin(
                 (Some(Value::Int(a)), Some(Value::Int(b))) => Some(cmp_op(name, *a, *b)),
                 (Some(Value::Char(a)), Some(Value::Char(b))) => Some(cmp_op(name, *a, *b)),
                 (Some(Value::Str(a)), Some(Value::Str(b))) => Some(cmp_op(name, a, b)),
-                (Some(Value::Bool(a)), Some(Value::Bool(b))) => Some(cmp_op(name, *a, *b)),
+                (Some(a), Some(b)) => match (crate::value::as_bool(a), crate::value::as_bool(b)) {
+                    (Some(a), Some(b)) => Some(cmp_op(name, a, b)),
+                    _ => None,
+                },
                 _ => None,
             };
             let r = r.ok_or_else(|| {
@@ -103,7 +106,7 @@ pub fn apply_builtin(
                     "{name} expects two matching integer, char, String, or bool arguments"
                 ))
             })?;
-            Ok(Value::Bool(r))
+            Ok(crate::value::bool_value(r))
         }
         "str_len" => match args.first() {
             Some(Value::Str(s)) => Ok(Value::Int(s.chars().count() as i64)),
@@ -164,11 +167,11 @@ pub fn apply_builtin(
             _ => Err(BuiltinError::TypeMismatch("string_push expects (String, char)".into())),
         },
         "is_digit" => match args.first() {
-            Some(Value::Char(c)) => Ok(Value::Bool(c.is_ascii_digit())),
+            Some(Value::Char(c)) => Ok(crate::value::bool_value(c.is_ascii_digit())),
             _ => Err(BuiltinError::TypeMismatch("is_digit expects a char".into())),
         },
         "is_ws" => match args.first() {
-            Some(Value::Char(c)) => Ok(Value::Bool(c.is_whitespace())),
+            Some(Value::Char(c)) => Ok(crate::value::bool_value(c.is_whitespace())),
             _ => Err(BuiltinError::TypeMismatch("is_ws expects a char".into())),
         },
         "str_concat" => {
@@ -260,7 +263,7 @@ pub fn apply_builtin(
             _ => Err(BuiltinError::TypeMismatch("str_to_int expects a String".into())),
         },
         "str_eq" => match (args.first(), args.get(1)) {
-            (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Bool(a == b)),
+            (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(crate::value::bool_value(a == b)),
             _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
         },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
@@ -307,7 +310,7 @@ mod tests {
     fn eq_works() {
         let mut buf: Vec<u8> = Vec::new();
         let r = apply_builtin("__eq", &[Value::Int(1), Value::Int(1)], &mut buf).unwrap();
-        assert_eq!(r, Value::Bool(true));
+        assert_eq!(r, crate::value::bool_value(true));
     }
 
     #[test]
@@ -441,7 +444,7 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
             let Some(Value::Str(path)) = args.first() else {
                 return Err(BuiltinError::TypeMismatch("file_exists expects a String path".into()));
             };
-            Ok(Value::Bool(std::path::Path::new(path).exists()))
+            Ok(crate::value::bool_value(std::path::Path::new(path).exists()))
         }
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
@@ -467,7 +470,7 @@ mod io_tests {
         let p = path.to_str().unwrap();
         std::fs::write(&path, "x").unwrap();
         let r = apply_io_builtin("__file_exists", &[Value::Str(p.into())]).unwrap();
-        assert_eq!(r, Value::Bool(true));
+        assert_eq!(r, crate::value::bool_value(true));
     }
 
     #[test]
