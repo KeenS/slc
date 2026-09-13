@@ -658,9 +658,9 @@ return type, an annotation, a parameter or a cut to say which sum it is in.
 `(k1 ; k2)` is new: a value of `(T1 ; T2)` that, fed a product `(a, b)`, hands
 `a` to `k1` and then `b` to `k2`. Nothing that compiled before changes.
 
-## A `⅋` value fits the other spelling of its type
+## A joint value fits the other spelling of its type
 
-A slot declared at one spelling of `A ⅋ B` used to refuse a value written at
+A slot declared at one spelling of `(A ; B)` used to refuse a value written at
 the other, even though they are one type, so a declaration had to match its
 implementation's spelling:
 
@@ -698,7 +698,7 @@ already an error, and stays one.
 ## A call is not applied to part of its group
 
 A stage supplies a callee's whole value group. Giving a declared function
-or command fewer values used to type-check — its `⅋`-nested type presented
+or command fewer values used to type-check — its `;`-nested type presented
 the first parameter alone — and then crashed at run time with "a consumer
 of 2 components received …". It is refused at check time now:
 

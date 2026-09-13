@@ -65,13 +65,13 @@ before it consumes, so the chain delivers rather than returns.
 | `f \| g` | function composition — a function |
 | `f \| k⟩` | composition into a consumer — a consumer |
 
-**A stage reads either way round, because `⅋` is commutative.** `A ⅋ B`
-is `dual(A) → B` and equally `dual(B) → A`, so a function and the
+**A stage reads either way round, because `;` is commutative.** `(A ; B)`
+is `dual(A) -> B` and equally `dual(B) -> A`, so a function and the
 consumer transformer that mirrors it are one type:
 
 ```sl
-fn area(s: Shape) -> i64                  // -Shape ⅋ +i64
-fn area_of(out: i64) <- Shape             // +i64 ⅋ -Shape — the same type
+fn area(s: Shape) -> i64                  // (-Shape ; +i64)
+fn area_of(out: i64) <- Shape             // (+i64 ; -Shape) — the same type
 ```
 
 Either stands as a stage, and what flows in picks the reading; where
@@ -90,7 +90,7 @@ The same identity holds wherever a value meets a declared type. A negative
 function stored in a menu item declared `(i64 -> String)`, a positive one
 passed where `(-String -> -i64)` is declared, or either kept in a record
 field, a variant, a `let`, or returned, is accepted at the other spelling.
-A value of `⅋` is a closure facing one way, so the checker records a swap
+A value of a joint type is a closure facing one way, so the checker records a swap
 there and lowering turns the closure around:
 
 ```
@@ -140,7 +140,7 @@ two things to learn, and reading either goes left to right:
 **A stage supplies the whole group.** A declaration binds each parameter
 group as one argument, so what flows into a stage is all of its values or
 it is refused: `⟨1 | add` of a two-parameter `add` is not a function waiting
-for the second, and says so. (A callee's type nests by `⅋`'s associativity
+for the second, and says so. (A callee's type nests by `;`'s associativity
 and presents its first parameter alone; the checker does not read it that
 way.) Builtins are no exception: the runtime happens to accumulate a
 builtin's arguments one at a time, but a stage still supplies the whole
@@ -686,8 +686,9 @@ an explicit tensor is structural.
 
 ### Connective spellings
 
-The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core's terms
-and of this document's prose, never of a program or of its diagnostics. Every connective is written three
+The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core's terms,
+never of a program or of its diagnostics, and this document's prose about a
+surface type spells a joint with `;` too. Every connective is written three
 ways — declared by name, anonymously, and nullary, as a paren holding only
 its separator. Each anonymous type has a name of its own:
 
@@ -746,7 +747,7 @@ halves arrive together, in one command, sharing its context.
 ```sl
 data Reading { value: i64, unit: String }
 
-// dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
+// dual(Reading) is `(-i64 ; -String)`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
         Reading { value, unit } => ⟨((⟨value | int_to_str) + unit) | out⟩,
@@ -775,11 +776,11 @@ Either is consumed by the cut that supplies the whole product:
 
 `form` names that consumer, the way `menu` names the negative additive. Its
 fields say what flows *in*, so `form Report { value: i64, label: String }`
-denotes `-i64 ⅋ -String` — the dual of the record its fields describe.
+denotes `(-i64 ; -String)` — the dual of the record its fields describe.
 
 ```sl
-data Report { value: i64, label: String }   // ⊗ every field, given
-form Report { value: i64, label: String }   // ⅋ every field, wanted
+data Report { value: i64, label: String }   // ,  every field, given
+form Report { value: i64, label: String }   // ;  every field, wanted
 ```
 
 The two negative declarations follow one rule: **the literal syntax builds
@@ -806,11 +807,11 @@ declaration adds is a *name* for the consumer side, so a signature can say
 `-> Report` instead of spelling out `dual(…)`, and the fields of that
 consumer can be named.
 
-A form is always fed whole: there is no `form.field`. From `-A ⅋ -B` no `-A`
-can be extracted, though `A ⊗ B` yields its `A` — reading a field off a
+A form is always fed whole: there is no `form.field`. From `(-A ; -B)` no `-A`
+can be extracted, though `(A, B)` yields its `A` — reading a field off a
 record discards the others, and a form would instead have to *invent* them.
 That is not a gap in the implementation but the shape of the connective, and
-it is why `⅋` is not a record in any usable sense.
+it is why a joint is not a record in any usable sense.
 
 An atom is the degenerate product: one shape, one component. `select` covers
 it too, and the arm's pattern is a plain binder that names the whole value:
@@ -1166,7 +1167,7 @@ the fully signed one. Off the diagonal the sign *is* the information, and is
 written: `note: -String` receives a consumer as data, `-> -T` returns one,
 `Refutes(-i64)` carries one in a variant, and `-(-T)` is double negation. The
 implication reaches into an `&` written out in a row — a menu of exits is
-still a menu of exits — but not into a `⅋`, an arrow, or a `dual`, each of
+still a menu of exits — but not into a joint `(A ; B)`, an arrow, or a `dual`, each of
 which states its own polarity.
 
 Writing the implied sign stays legal: an explicit sign is a constraint, and
@@ -1204,7 +1205,7 @@ There is deliberately **no** way to build such a consumer out of two
 independent consumers, and no way to feed one half at a time. Both are the
 same thing — halves that progress independently — and both need either a send
 that returns or concurrency. A cut does not return, and the language has no
-concurrency, so a `⅋` is supplied whole.
+concurrency, so a joint is supplied whole.
 
 ## 9. Entry point and exit
 
@@ -1396,8 +1397,9 @@ either way.
 The `-> (;)` may be omitted — the body decides the type — but the examples
 write it, because a consumer literal is worth reading as one at a glance.
 
-`A → B` is `-A ⅋ B`, which is why this works: `A → ⊥` is `-A ⅋ ⊥`, and `⊥` is
-the unit of `⅋`. The same identity gives the dual: `dual(A → B)` is `A ⊗ -B`,
+`A -> B` is `(-A ; B)`, which is why this works: `A -> (;)` is `(-A ; (;))`,
+and `(;)` is the unit of `;`. The same identity gives the dual: `dual(A -> B)`
+is `(A, -B)`,
 an argument together with a continuation for the result — a *call stack*. So
 `f(v)` and the cut of `f` against the pair `(v, k)` are the same interaction,
 and a consumer of a function is an ordinary value of that product type.

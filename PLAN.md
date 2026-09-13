@@ -29,12 +29,12 @@ documentation pass, and one defect.
 
 ### Of the design
 
-- **⅋ commutes only where one value meets one declared type.** `A ⅋ B`
-  and `B ⅋ A` are one type, and a value is accepted at either spelling where
+- **`;` commutes only where one value meets one declared type.** `(A ; B)`
+  and `(B ; A)` are one type, and a value is accepted at either spelling where
   it is cut into a consumer, stored in a record field, a variant or a
   `let`, passed as a written argument, or returned — the checker records a
   swap and lowering turns the closure around. Inside a type constructor —
-  a tuple's component, `List<A ⅋ B>` against `List<B ⅋ A>` — there is no
+  a tuple's component, `List<(A ; B)>` against `List<(B ; A)>` — there is no
   one value to turn, so the spelling still has to match; nor is an argument
   turned when it is the result of an earlier stage rather than a written
   value. Both would need the swap mapped through a structure or a chain.
@@ -87,19 +87,10 @@ documentation pass, and one defect.
 
 ### Documentation
 
-- **Connective glyphs in `DESIGN.md` follow one rule.** "Connective
-  spellings" keeps `⊗`, `⅋` and `⊥` for the core's terms and the prose,
-  never for a program. The `sl` blocks break that in comments
-  (`// -Shape ⅋ +i64`, `// ⅋ every field, wanted`,
-  ``// dual(Reading) is `-i64 ⅋ -String` ``), and the prose names surface
-  types by glyph throughout ("`⅋` is commutative", "a `⅋` value", a form
-  denoting `-i64 ⅋ -String`). Decide whether prose about a surface type
-  spells it `;`, a joint, and keeps the glyphs for core terms only; then
-  apply the rule everywhere, this file included.
-
-  The rest of the drift the cleanup found is fixed. What would keep it from
-  returning is checking the `sl` blocks, though only two in `DESIGN.md` are
-  complete programs today; the rest are fragments.
+- **`DESIGN.md`'s programs are checked.** Its `sl` blocks are not, so drift
+  in them goes unnoticed until someone reads them. Only two are complete
+  programs today and the rest are fragments, so checking them means either
+  marking the fragments or writing them whole.
 
 ### Surface simplifications
 
