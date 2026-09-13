@@ -63,9 +63,9 @@ fn keeper() -> Sink {
     }
 }
 
-// A bound discharged at codata types: `label` never knows its argument is
-// a menu or a form.
-fn label<+T: Describe>(x: T) -> String {
+// A bound discharged at codata types: `label` knows only that its argument
+// is negative — a menu or a form, it cannot tell which.
+fn label<-T: Describe>(x: T) -> String {
     ⟨x | describe
 }
 

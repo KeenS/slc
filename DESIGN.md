@@ -350,8 +350,17 @@ ones. A type variable carries no polarity of its own, so the mark is
 required — on type declarations, functions, commands and impls alike — and
 it goes on the declaration because `-T` in a type already means `dual(T)`.
 A row variable, used as `..E`, ranges over effects rather than types and
-takes no mark: `fn map<+A, +B, E>`. (The mark is not yet held against the
-types a use instantiates it with; `PLAN.md` has that step.)
+takes no mark: `fn map<+A, +B, E>`.
+
+The mark is held against every use. A call, a function named as a value, and
+a construction — a variant, a record, a `mu` over a generic menu — give each
+parameter a type once the declaration's unification has finished, and a
+positive parameter given a function, a consumer or a menu is refused, as is
+a negative one given data. Inside a generic body a parameter carries its own
+mark, so `fn f<-U>(x: U) -> U { ⟨x | id }` is refused when `id` declares
+`<+T>`. A type written in a declaration's signature is held to the same rule:
+with `enum List<+T>`, `List<-i64>` and `List<(i64 -> i64)>` are refused, and
+a list of consumers is a declaration of its own.
 
 In a positive function, a bare use of a generic parameter is positive; in a
 negative function or continuation row, it is negative. Thus `T` instantiates

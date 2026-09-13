@@ -3,7 +3,7 @@
 //! resolves against them.
 
 use slc_core::types::Type;
-use slc_syntax::ast::{Decl, Program, TypeExpr};
+use slc_syntax::ast::{Decl, ParamPolarity, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use std::collections::HashMap;
 
@@ -35,6 +35,9 @@ pub struct Declarations {
     pub(crate) forms: std::collections::HashSet<String>,
     /// Declaration name → its type-parameter count.
     arities: HashMap<String, usize>,
+    /// Declaration name → each type parameter and the polarity it declares,
+    /// in order; `None` where it declares none.
+    param_signs: HashMap<String, Vec<(String, Option<ParamPolarity>)>>,
 }
 
 impl Declarations {
@@ -140,6 +143,11 @@ impl Declarations {
         self.arities.get(name).copied().unwrap_or(0)
     }
 
+    /// A declaration's type parameters and the polarity each declares.
+    pub(crate) fn param_signs(&self, name: &str) -> &[(String, Option<ParamPolarity>)] {
+        self.param_signs.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// Whether a bare name is a variant of more than one enum — in which
     /// case it resolves to nothing, and treating it as a binder would
     /// silently catch everything.
@@ -215,12 +223,20 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         if let Decl::Form { name, .. } = &d.kind {
             enums.forms.insert(name.clone());
         }
-        if let Decl::Data { name, type_params, .. }
-        | Decl::Enum { name, type_params, .. }
-        | Decl::Menu { name, type_params, .. }
-        | Decl::Form { name, type_params, .. } = &d.kind
+        if let Decl::Data { name, type_params, type_param_signs, .. }
+        | Decl::Enum { name, type_params, type_param_signs, .. }
+        | Decl::Menu { name, type_params, type_param_signs, .. }
+        | Decl::Form { name, type_params, type_param_signs, .. } = &d.kind
         {
             enums.arities.insert(name.clone(), type_params.len());
+            let signs = type_params
+                .iter()
+                .map(|param| {
+                    let sign = type_param_signs.iter().find(|(n, _)| n == param).map(|(_, s)| *s);
+                    (param.clone(), sign)
+                })
+                .collect();
+            enums.param_signs.insert(name.clone(), signs);
         }
     }
     /// A declaration's parameter scope: each name to its position.

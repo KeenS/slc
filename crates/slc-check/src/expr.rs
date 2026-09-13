@@ -11,7 +11,7 @@ use crate::env::{Env, constant_types};
 use crate::signatures::{FunctionSignature, function_types, instantiate};
 use slc_core::types::{Base, Type};
 use slc_core::typing::contains_var;
-use slc_syntax::ast::{Decl, Expr, Named, Node, Program, TypeExpr};
+use slc_syntax::ast::{Decl, Expr, Named, Node, ParamPolarity, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
 use slc_syntax::traits::TraitInfo;
@@ -703,17 +703,97 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    for pending in std::mem::take(&mut env.pending_signs) {
+        let ty = env.uni.apply(&pending.ty);
+        if let Some(actual) = type_polarity(&ty, env)
+            && actual != pending.sign
+        {
+            let found = match actual {
+                ParamPolarity::Positive => "positive",
+                ParamPolarity::Negative => "negative",
+            };
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{}` declares `<{}{}>`, and this use gives `{}` the {found} type {ty}",
+                    pending.owner,
+                    pending.sign.mark(),
+                    pending.param,
+                    pending.param
+                ),
+                span: pending.span,
+            });
+        }
+    }
+}
+
+/// Record, for each signed type parameter of a called signature, the type
+/// this call gives it.
+fn record_signs(
+    signature: &FunctionSignature,
+    seen: &HashMap<usize, Type>,
+    callee: &str,
+    span: Span,
+    env: &mut Env,
+) {
+    for (index, param, sign) in &signature.signs {
+        if let Some(ty) = seen.get(index) {
+            env.pending_signs.push(crate::env::PendingSign {
+                span,
+                owner: callee.to_string(),
+                param: param.clone(),
+                sign: *sign,
+                ty: ty.clone(),
+            });
+        }
+    }
+}
+
+/// Remember the polarity each rigid variable's parameter declares.
+fn record_rigid_signs(
+    signs: &[(String, ParamPolarity)],
+    rigid_vars: &HashMap<&str, Type>,
+    env: &mut Env,
+) {
+    for (param, sign) in signs {
+        if let Some(Type::Var(var)) = rigid_vars.get(param.as_str()) {
+            env.rigid_signs.insert(*var, *sign);
+        }
+    }
+}
+
+/// The polarity a solved type has, when it has exactly one: a rigid
+/// variable has its parameter's, and an unsolved variable has none yet.
+fn type_polarity(ty: &Type, env: &Env) -> Option<ParamPolarity> {
+    match ty {
+        Type::Dual(inner) => type_polarity(inner, env).map(ParamPolarity::flipped),
+        Type::Var(var) => env.rigid_signs.get(var).copied(),
+        Type::Param(_) => None,
+        ty if ty.is_positive() && !ty.is_negative() => Some(ParamPolarity::Positive),
+        ty if ty.is_negative() && !ty.is_positive() => Some(ParamPolarity::Negative),
+        _ => None,
+    }
 }
 
 fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut Vec<Diagnostic>) {
     match &d.kind {
-        Decl::Fn { name, params, body, polarity, return_type, type_params, bounds, .. } => {
+        Decl::Fn {
+            name,
+            params,
+            body,
+            polarity,
+            return_type,
+            type_params,
+            type_param_signs,
+            bounds,
+            ..
+        } => {
             env.push();
             // A type parameter is rigid inside the body: `T` is some type the
             // caller chose, not a licence to treat the value as any type.
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
+            record_rigid_signs(type_param_signs, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
                 match p.ty.as_ref().and_then(&rigid) {
@@ -767,6 +847,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             body,
             return_type,
             type_params,
+            type_param_signs,
             bounds,
             ..
         } => {
@@ -780,6 +861,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
+            record_rigid_signs(type_param_signs, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
                 match p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums)) {
                     Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
@@ -1010,12 +1092,21 @@ fn dict_for(
 
 /// Fresh unification variables for a declaration's type parameters, ready
 /// to instantiate its stored field and payload types at one use.
-fn fresh_args(
-    enums: &Declarations,
-    name: &str,
-    uni: &mut slc_core::typing::Unification,
-) -> Vec<Type> {
-    (0..enums.arity(name)).map(|_| uni.fresh_var()).collect()
+fn fresh_args(enums: &Declarations, name: &str, env: &mut Env, span: Span) -> Vec<Type> {
+    let args: Vec<Type> = (0..enums.arity(name)).map(|_| env.uni.fresh_var()).collect();
+    // What each is solved to must suit the polarity its parameter declares.
+    for ((param, sign), ty) in enums.param_signs(name).iter().zip(&args) {
+        if let Some(sign) = sign {
+            env.pending_signs.push(crate::env::PendingSign {
+                span,
+                owner: name.to_string(),
+                param: param.clone(),
+                sign: *sign,
+                ty: ty.clone(),
+            });
+        }
+    }
+    args
 }
 
 fn check_pattern(
@@ -2017,7 +2108,8 @@ fn check_expr_unapplied(
             if let Some(signature) = env.functions.get(name)
                 && signature.bounds.is_empty()
             {
-                let (signature, _) = instantiate(signature, &mut env.uni);
+                let (signature, seen) = instantiate(signature, &mut env.uni);
+                record_signs(&signature, &seen, name, e.span, env);
                 if let Some(result) = signature.result {
                     // Its parameters pack into the one product a call
                     // passes; a function with none is its result already,
@@ -2067,7 +2159,7 @@ fn check_expr_unapplied(
             // A payloadless variant of a generic declaration — `List::Nil`
             // — is a value at any instantiation.
             let declaration = declaration.clone();
-            let type_args = fresh_args(enums, &declaration, &mut env.uni);
+            let type_args = fresh_args(enums, &declaration, env, e.span);
             Some(Type::Named(declaration, type_args))
         }
         Expr::Lambda { param, param_type, return_type, body } => {
@@ -2101,7 +2193,7 @@ fn check_expr_unapplied(
                 let payload = payload.clone();
                 // A generic declaration's payload types carry its
                 // parameters; each construction instantiates them fresh.
-                let type_args = fresh_args(enums, &declaration, &mut env.uni);
+                let type_args = fresh_args(enums, &declaration, env, e.span);
                 let payload: Vec<Type> =
                     payload.iter().map(|t| t.instantiate(&type_args)).collect();
                 if args.len() != payload.len() {
@@ -2228,6 +2320,7 @@ fn check_expr_unapplied(
                 // record the dictionary the call must pass for it: the global
                 // dict of a concrete type, or the enclosing function's own
                 // dict parameter when the bound is forwarded.
+                record_signs(&signature, &seen, name, e.span, env);
                 if !signature.bounds.is_empty() {
                     let bounds = signature
                         .bounds
@@ -2489,7 +2582,7 @@ fn check_expr_unapplied(
             if arms.is_empty() { None } else { joined }
         }
         Expr::Data { name, fields } => {
-            let type_args = fresh_args(enums, name, &mut env.uni);
+            let type_args = fresh_args(enums, name, env, e.span);
             let Some(declared) = enums.records.get(name).cloned() else {
                 diags.push(Diagnostic {
                     message: format!("`{name}` is not a declared record"),
@@ -2592,7 +2685,7 @@ fn check_expr_unapplied(
             };
             // A generic menu instantiates fresh at each construction; the
             // arms' answers constrain the arguments.
-            let type_args = written_args.unwrap_or_else(|| fresh_args(enums, &menu, &mut env.uni));
+            let type_args = written_args.unwrap_or_else(|| fresh_args(enums, &menu, env, e.span));
             let rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)> =
                 arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
             check_comatch_arms(&menu, &type_args, rows, enums, env, diags);
@@ -2732,7 +2825,7 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            let type_args = fresh_args(enums, &menu, &mut env.uni);
+            let type_args = fresh_args(enums, &menu, env, e.span);
             let expected = payload.first().cloned().unwrap_or(Type::ONE).instantiate(&type_args);
             if let Some(actual) = check_expr(arg, enums, env, diags)
                 && !fits_turning(env, &expected, &actual, arg)
@@ -3064,6 +3157,7 @@ fn check_expr_unapplied(
                     }
                     // A bounded command takes its dictionaries first, as a
                     // bounded function does.
+                    record_signs(&signature, &seen, name, stages[index].span, env);
                     if !signature.bounds.is_empty() {
                         let bounds = signature
                             .bounds
@@ -3141,6 +3235,7 @@ fn check_expr_unapplied(
                             span: stages[index].span,
                         });
                     }
+                    record_signs(&signature, &seen, name, stages[index].span, env);
                     if !signature.bounds.is_empty() {
                         let bounds = signature
                             .bounds
@@ -3376,7 +3471,7 @@ mod tests {
     fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
         // Printing lives in the prelude, which these checks do not load; a
         // stand-in is appended, so no diagnostic's position moves.
-        let s = &format!("{s}\nfn println<T>(x: T) -> (,) {{ (,) }}\n");
+        let s = &format!("{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\n");
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -4081,7 +4176,7 @@ mod tests {
         // `show(x)` under `<T: Show>` stays dynamic (the map does not name it).
         let resolve = |s: &str| {
             // The prelude's printing, stood in for as `check` does.
-            let s = &format!("{s}\nfn println<T>(x: T) -> (,) {{ (,) }}\n");
+            let s = &format!("{s}\nfn println<+T>(x: T) -> (,) {{ (,) }}\n");
             let toks = lex(s).unwrap();
             let prog = parse(toks).unwrap();
             let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -4162,6 +4257,41 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("not known to satisfy")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_use_gives_a_type_parameter_its_declared_polarity() {
+        const ID: &str = "fn id<+T>(x: T) -> T { x }\n";
+        // A function is negative, and `id` holds positive types only.
+        let diags =
+            check(&format!("{ID}fn f() -> i64 {{ let g = ⟨(fn(y: i64) {{ y }}) | id; ⟨1 | g }}"))
+                .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`id` declares `<+T>`")
+                && d.message.contains("negative type")),
+            "{diags:?}"
+        );
+        // And the other way round.
+        let diags = check("fn k<-T>(x: T) -> T { x }\nfn f() -> i64 { ⟨1 | k }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("`k` declares `<-T>`")
+                && d.message.contains("positive type")),
+            "{diags:?}"
+        );
+        // A generic body passes its own parameter on only where the marks agree.
+        assert!(check(&format!("{ID}fn f<+U>(x: U) -> U {{ ⟨x | id }}")).is_ok());
+        let diags = check(&format!("{ID}fn f<-U>(x: U) -> U {{ ⟨x | id }}")).unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`id` declares `<+T>`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_construction_gives_a_type_parameter_its_declared_polarity() {
+        let diags = check(
+            "enum Held<+T> { Put(T) }
+             fn f() -> i64 { let held = Held::Put(fn(y: i64) { y }); 0 }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`Held` declares `<+T>`")), "{diags:?}");
     }
 
     #[test]

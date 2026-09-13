@@ -1237,11 +1237,21 @@ impl Parser {
                     s = format!("{s}::{segment}");
                 }
                 // `List<i64>` — a declaration applied to type arguments.
-                if self.peek_kind() == Some(&TokenKind::Lt) {
+                // `List<-i64>` lexes its `<-` as one token: the bracket and
+                // the first argument's sign.
+                if matches!(self.peek_kind(), Some(TokenKind::Lt | TokenKind::ReverseArrow)) {
+                    let negated_first = self.peek_kind() == Some(&TokenKind::ReverseArrow);
+                    let sign_start = self.tokens[self.pos].span.start;
                     self.pos += 1;
                     let mut args = Vec::new();
                     loop {
-                        args.push(self.parse_type()?);
+                        if args.is_empty() && negated_first {
+                            let inner = self.parse_type()?;
+                            let span = Span { start: sign_start + 1, end: inner.span.end };
+                            args.push(Node { kind: TypeExpr::Negative(Box::new(inner)), span });
+                        } else {
+                            args.push(self.parse_type()?);
+                        }
                         if self.eat(&TokenKind::Comma) {
                             continue;
                         }

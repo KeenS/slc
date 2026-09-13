@@ -2,7 +2,9 @@
 
 use crate::declarations::{Declarations, enum_types};
 use slc_core::types::Type;
-use slc_syntax::ast::{Decl, EffectRow, Expr, FunctionPolarity, Node, Param, Program, TypeExpr};
+use slc_syntax::ast::{
+    Decl, EffectRow, Expr, FunctionPolarity, Node, Param, ParamPolarity, Program, TypeExpr,
+};
 use slc_syntax::lower::LowerError;
 use slc_syntax::lower::lower_type;
 
@@ -32,7 +34,7 @@ pub fn check_program(polarity_p: &Program) -> Result<(), Vec<Diagnostic>> {
 }
 
 fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnostic>) {
-    check_type_param_signs(d, diags);
+    check_type_param_signs(d, declared, diags);
     match &d.kind {
         Decl::Fn { params, polarity, type_params, .. } => {
             let generics: std::collections::HashSet<&str> =
@@ -129,7 +131,7 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
 /// variable carries none of its own, and what is delayed or run depends on
 /// it. A row variable — a parameter written `..E` in the signature — ranges
 /// over effects, which have no polarity, so it takes no mark.
-fn check_type_param_signs(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
+fn check_type_param_signs(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnostic>) {
     let mut types: Vec<&TypeExpr> = Vec::new();
     let mut rows: Vec<&EffectRow> = Vec::new();
     let (type_params, signs) = match &d.kind {
@@ -171,7 +173,7 @@ fn check_type_param_signs(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
         }
         _ => return,
     };
-    for ty in types {
+    for ty in types.iter().copied() {
         collect_rows(ty, &mut rows);
     }
     let is_row = |name: &str| rows.iter().any(|row| row.tails.iter().any(|tail| tail == name));
@@ -193,6 +195,108 @@ fn check_type_param_signs(d: &Node<Decl>, diags: &mut Vec<Diagnostic>) {
                 ),
                 span: d.span,
             });
+        }
+    }
+    // A type written in the signature gives each declaration it applies a
+    // type of the polarity that declaration's parameter states.
+    for ty in types {
+        check_applications(ty, signs, declared, d.span, diags);
+    }
+}
+
+/// Refuse `List<-i64>` where `List` declares `<+T>`, at any depth.
+fn check_applications(
+    ty: &TypeExpr,
+    own: &[(String, ParamPolarity)],
+    declared: &Declarations,
+    span: slc_syntax::token::Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let recurse = |inner: &TypeExpr, diags: &mut Vec<Diagnostic>| {
+        check_applications(inner, own, declared, span, diags)
+    };
+    match ty {
+        TypeExpr::Base(_) => {}
+        TypeExpr::Apply(name, args) => {
+            for (index, ((param, sign), arg)) in
+                declared.param_signs(name).iter().zip(args).enumerate()
+            {
+                if let Some(sign) = sign
+                    && let Some(actual) = written_polarity(&arg.kind, own, declared)
+                    && actual != *sign
+                {
+                    let found = match actual {
+                        ParamPolarity::Positive => "positive",
+                        ParamPolarity::Negative => "negative",
+                    };
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`{name}` declares `<{}{param}>`, and argument {} of this `{name}<…>` \
+                             is a {found} type",
+                            sign.mark(),
+                            index + 1
+                        ),
+                        span,
+                    });
+                }
+            }
+            for arg in args {
+                recurse(&arg.kind, diags);
+            }
+        }
+        TypeExpr::Tensor(items)
+        | TypeExpr::Par(items)
+        | TypeExpr::With(items)
+        | TypeExpr::Sum(items) => {
+            for item in items {
+                recurse(&item.kind, diags);
+            }
+        }
+        TypeExpr::Positive(inner)
+        | TypeExpr::Negative(inner)
+        | TypeExpr::Dual(inner)
+        | TypeExpr::Effectful(inner, _) => recurse(&inner.kind, diags),
+        TypeExpr::Fun(from, to) => {
+            recurse(&from.kind, diags);
+            recurse(&to.kind, diags);
+        }
+    }
+}
+
+/// The polarity a written type has, when it is known from what is written:
+/// a parameter's is the one it declares.
+fn written_polarity(
+    ty: &TypeExpr,
+    own: &[(String, ParamPolarity)],
+    declared: &Declarations,
+) -> Option<ParamPolarity> {
+    match ty {
+        TypeExpr::Base(name) => match own.iter().find(|(n, _)| n == name) {
+            Some((_, sign)) => Some(*sign),
+            None => {
+                let resolved = declared.resolve(ty)?;
+                if resolved.is_positive() && !resolved.is_negative() {
+                    Some(ParamPolarity::Positive)
+                } else if resolved.is_negative() && !resolved.is_positive() {
+                    Some(ParamPolarity::Negative)
+                } else {
+                    None
+                }
+            }
+        },
+        TypeExpr::Apply(name, _) if declared.is_negative_decl(name) => {
+            Some(ParamPolarity::Negative)
+        }
+        TypeExpr::Apply(..) | TypeExpr::Tensor(_) | TypeExpr::Sum(_) => {
+            Some(ParamPolarity::Positive)
+        }
+        TypeExpr::Positive(inner) => written_polarity(&inner.kind, own, declared),
+        TypeExpr::Negative(inner) if inner.kind.is_bottom() => Some(ParamPolarity::Negative),
+        TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            written_polarity(&inner.kind, own, declared).map(ParamPolarity::flipped)
+        }
+        TypeExpr::Par(_) | TypeExpr::With(_) | TypeExpr::Fun(..) | TypeExpr::Effectful(..) => {
+            Some(ParamPolarity::Negative)
         }
     }
 }
@@ -451,6 +555,25 @@ mod tests {
         let diags =
             check("fn run<+A, +E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`E` is a row variable")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_type_application_gives_each_parameter_its_polarity() {
+        const LIST: &str = "enum L<+T> { N, C(T, L<T>) }\n";
+        assert!(check(&format!("{LIST}fn f<+U>(xs: L<U>) -> i64 {{ 0 }}")).is_ok());
+        assert!(check(&format!("{LIST}fn f(xs: L<(i64, -i64)>) -> i64 {{ 0 }}")).is_ok());
+        for refused in [
+            "fn f(xs: L<(i64 -> i64)>) -> i64 { 0 }",
+            "fn f(xs: L<-i64>) -> i64 { 0 }",
+            "fn f<-U>(xs: L<U>) -> i64 { 0 }",
+            "fn f(xs: L<L<-i64>>) -> i64 { 0 }",
+        ] {
+            let diags = check(&format!("{LIST}{refused}")).unwrap_err();
+            assert!(
+                diags.iter().any(|d| d.message.contains("`L` declares `<+T>`")),
+                "{refused}: {diags:?}"
+            );
+        }
     }
 
     #[test]

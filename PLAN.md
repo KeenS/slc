@@ -133,13 +133,6 @@ delayed.
   - **`let+` and `let-`.** A plain `let` follows the polarity of its type.
     `let+` computes now whatever the type — the way to perform a delayed
     computation's effects under the handler in scope — and `let-` delays.
-  - **Every generic parameter's polarity is held against its uses.** Each
-    parameter declares `<+T>` or `<-T>` and a row variable none (`DESIGN.md`
-    §4, "Generic function parameters"). What remains is enforcement: an
-    instantiation of `<+T>` at a negative type, or of `<-T>` at a positive
-    one, is refused — at a call, where `instantiate` in `signatures.rs`
-    freshens the parameters, and at a type application such as `List<-i64>`.
-    A list of consumers is then a declaration of its own.
   - **An unknown polarity is an error.** A binding or lambda parameter whose
     type inference leaves a variable is refused, asking for an annotation or
     for `let+`/`let-`.

@@ -1294,7 +1294,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         fn ones() -> Stream2<i64> {
             mu Stream2 { head: out <= ⟨1 | out⟩, tail: out <= ⟨ones() | out⟩ }
         }
-        fn label<+T: Describe>(x: T) -> String { describe(x) }
+        fn label<-T: Describe>(x: T) -> String { describe(x) }
 
         command main | (exit: -i32) / {IO} {
             ⟨describe(config()) | println;

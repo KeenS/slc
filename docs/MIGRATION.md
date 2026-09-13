@@ -1043,10 +1043,16 @@ fn map<A, B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}    // old
 fn map<+A, +B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}  // new
 ```
 
-A missing mark is an error naming the parameter. Marking `+` each parameter
-that is not a row variable migrates a program today; the mark is not yet
-checked against what a use instantiates it with, and a parameter that stands
-for consumers, functions or menus will want `-` once it is.
+A missing mark is an error naming the parameter. Mark `+` each parameter
+that is not a row variable, then `-` each one the checker reports being
+given a function, a consumer, a menu or a form:
+
+```sl
+fn label<+T: Describe>(x: T) -> String { ⟨x | describe }   // old, given a menu
+fn label<-T: Describe>(x: T) -> String { ⟨x | describe }   // new
+```
+
+A generic that took both data and codata splits in two.
 
 ## Removed constructs
 

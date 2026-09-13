@@ -18,6 +18,10 @@ pub struct FunctionSignature {
     /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
     /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
     pub bounds: Vec<(usize, String)>,
+    /// The polarity each type parameter declares, as (template variable
+    /// index, parameter name, polarity): a call gives `<+T>` positive types
+    /// only, and `<-T>` negative ones.
+    pub signs: Vec<(usize, String, slc_syntax::ast::ParamPolarity)>,
     /// Whether this signature is the standard library's own. A builtin is
     /// applied by the runtime accumulating arguments, so it may be given
     /// fewer than all of them, and its template parameters take anything;
@@ -155,6 +159,7 @@ pub(crate) fn function_types(
                     continuations: builtin.continuations,
                     result: builtin.result,
                     bounds: Vec::new(),
+                    signs: Vec::new(),
                     builtin: true,
                 },
             )
@@ -168,9 +173,29 @@ pub(crate) fn function_types(
             })
             .collect()
     }
+    fn resolve_signs(
+        type_params: &[String],
+        signs: &[(String, slc_syntax::ast::ParamPolarity)],
+    ) -> Vec<(usize, String, slc_syntax::ast::ParamPolarity)> {
+        signs
+            .iter()
+            .filter_map(|(param, sign)| {
+                type_params.iter().position(|p| p == param).map(|i| (i, param.clone(), *sign))
+            })
+            .collect()
+    }
     for d in &p.decls {
         match &d.kind {
-            Decl::Fn { name, params, return_type, polarity, type_params, bounds, .. } => {
+            Decl::Fn {
+                name,
+                params,
+                return_type,
+                polarity,
+                type_params,
+                type_param_signs,
+                bounds,
+                ..
+            } => {
                 let mut next_template = 0;
                 let resolved: Vec<Type> = params
                     .iter()
@@ -192,12 +217,19 @@ pub(crate) fn function_types(
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
                         bounds: resolve_bounds(type_params, bounds),
+                        signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
                     },
                 );
             }
             Decl::Command {
-                name, value_params, continuation_params, type_params, bounds, ..
+                name,
+                value_params,
+                continuation_params,
+                type_params,
+                type_param_signs,
+                bounds,
+                ..
             } => {
                 let mut next_template = 0;
                 let declared: Vec<_> =
@@ -214,6 +246,7 @@ pub(crate) fn function_types(
                         continuations,
                         result: Some(Type::BOTTOM),
                         bounds: resolve_bounds(type_params, bounds),
+                        signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
                     },
                 );
@@ -235,6 +268,7 @@ pub(crate) fn function_types(
                             continuations: op.params.iter().map(|_| false).collect(),
                             result: Some(result),
                             bounds: Vec::new(),
+                            signs: Vec::new(),
                             builtin: false,
                         },
                     );
@@ -259,6 +293,7 @@ pub(crate) fn instantiate(
         continuations: signature.continuations.clone(),
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
         bounds: signature.bounds.clone(),
+        signs: signature.signs.clone(),
         builtin: signature.builtin,
     };
     (fresh, seen)

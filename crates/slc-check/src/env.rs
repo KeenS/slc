@@ -27,6 +27,19 @@ pub(crate) struct PendingDicts {
     pub(crate) bounds: Vec<(String, Type)>,
 }
 
+/// One use of a declaration's type parameter awaiting the type it is given:
+/// `<+T>` takes only positive types and `<-T>` only negative ones, and which
+/// `T` got is known once the declaration's unification has finished.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingSign {
+    pub(crate) span: slc_syntax::token::Span,
+    /// The function, command or type declaration whose parameter it is.
+    pub(crate) owner: String,
+    pub(crate) param: String,
+    pub(crate) sign: slc_syntax::ast::ParamPolarity,
+    pub(crate) ty: Type,
+}
+
 /// One `::i(v)` awaiting its sum: the position is read against the type the
 /// context gives it, which only the finished declaration knows.
 #[derive(Debug, Clone)]
@@ -87,6 +100,12 @@ pub(crate) struct Env<'a> {
     /// checked, after the call — so solving waits until the declaration's
     /// unification has finished.
     pub(crate) pending_dicts: Vec<PendingDicts>,
+    /// Uses of signed type parameters whose types are not solved yet, for
+    /// the same reason as `pending_dicts`.
+    pub(crate) pending_signs: Vec<PendingSign>,
+    /// The polarity each rigid variable's type parameter declares, so a use
+    /// inside a generic body passes `T` on only where its mark allows.
+    pub(crate) rigid_signs: HashMap<usize, slc_syntax::ast::ParamPolarity>,
     /// Trait-method calls whose dispatch is not resolved yet, for the same
     /// reason as `pending_dicts`.
     pub(crate) pending_methods: Vec<PendingMethod>,
@@ -116,6 +135,8 @@ impl<'a> Env<'a> {
             bounds: Vec::new(),
             rigid_vars: HashMap::new(),
             pending_dicts: Vec::new(),
+            pending_signs: Vec::new(),
+            rigid_signs: HashMap::new(),
             pending_methods: Vec::new(),
             pending_injections: Vec::new(),
             pending_pars: Vec::new(),

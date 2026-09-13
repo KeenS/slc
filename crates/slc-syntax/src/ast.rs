@@ -439,6 +439,24 @@ pub enum ParamPolarity {
     Negative,
 }
 
+impl ParamPolarity {
+    /// The other polarity: what the dual of such a type has.
+    pub fn flipped(self) -> Self {
+        match self {
+            ParamPolarity::Positive => ParamPolarity::Negative,
+            ParamPolarity::Negative => ParamPolarity::Positive,
+        }
+    }
+
+    /// The mark a declaration writes for it.
+    pub fn mark(self) -> char {
+        match self {
+            ParamPolarity::Positive => '+',
+            ParamPolarity::Negative => '-',
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnOp {
     Neg,
