@@ -1286,13 +1286,13 @@ over a runtime primitive — `__read_file` and its siblings — which is what th
 language cannot express; the module is what a program calls.
 
 A handle is a value of its own base type, `File`, produced only by
-`fs::open` — so nothing else closes a file or reads a line. Closing on
-every terminating path is not checked; today an unclosed handle merely leaks
-until the program ends, and a read after `fs::close` is a runtime error.
+`fs::open` — so nothing else closes a file or reads a line. A read after
+`fs::close` is a runtime error.
 
-Until a resource check watches it, the program can make the leak impossible by
-construction: compose the close onto the only door out, by shadowing `exit`
-where the handle comes into scope.
+Closing on every terminating path needs no separate check, because control
+is continuations: a program leaves only through a door it was handed, so
+composing the close onto that door closes the file on every path by
+construction. Shadow `exit` where the handle comes into scope:
 
 ```sl
 let file = mu { k <= path | fs::open | (k & complain)⟩ };

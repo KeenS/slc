@@ -30,9 +30,10 @@ mod fs {
         file | __read_line | (line & end)⟩
     }
 
-    // Spend the handle: a later read through it fails. Closing on every
-    // terminating path is not checked — see `PLAN.md` — so compose the close
-    // onto the only door out, as `examples/file_io.sl` does.
+    // Spend the handle: a later read through it fails. Every path closes
+    // the file by construction when the close is composed onto the only door
+    // out — shadow `exit` where the handle comes into scope, as
+    // `examples/file_io.sl` does.
     pub fn close(file: File) -> Unit / {IO} {
         file | __close_file
     }
