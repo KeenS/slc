@@ -107,6 +107,13 @@ pub(crate) struct Env<'a> {
     /// type it binds: a negative one is delayed, which only the finished
     /// declaration's unification can tell.
     pub(crate) pending_lets: Vec<(slc_syntax::token::Span, Type)>,
+    /// Computations in by-name positions — a tuple component, a bundle
+    /// item, an argument — by span: a negative one is delayed once the
+    /// declaration's unification says it is negative.
+    pub(crate) pending_by_name: Vec<slc_syntax::token::Span>,
+    /// The type each checked expression was found to have, by span, for
+    /// what is settled at the end of the declaration.
+    pub(crate) expr_types: HashMap<slc_syntax::token::Span, Type>,
     /// The polarity each rigid variable's type parameter declares, so a use
     /// inside a generic body passes `T` on only where its mark allows.
     pub(crate) rigid_signs: HashMap<usize, slc_syntax::ast::ParamPolarity>,
@@ -141,6 +148,8 @@ impl<'a> Env<'a> {
             pending_dicts: Vec::new(),
             pending_signs: Vec::new(),
             pending_lets: Vec::new(),
+            pending_by_name: Vec::new(),
+            expr_types: HashMap::new(),
             rigid_signs: HashMap::new(),
             pending_methods: Vec::new(),
             pending_injections: Vec::new(),

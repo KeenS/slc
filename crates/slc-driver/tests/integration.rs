@@ -1708,3 +1708,40 @@ fn a_plain_let_follows_the_polarity_of_its_type() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b", "computed", "42"]);
 }
+
+#[test]
+fn a_tuple_component_of_negative_type_runs_at_each_use() {
+    let dir = std::env::temp_dir().join("slc_test_by_name_component.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) / {IO} {
+            let pair = (1, { ⟨"made" | println; fn(s: String) { ⟨s | println } });
+            ⟨"a" | pair.1;
+            ⟨"b" | pair.1;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b"]);
+}
+
+#[test]
+fn a_bundle_item_that_ends_in_a_cut_runs_only_when_chosen() {
+    let dir = std::env::temp_dir().join("slc_test_by_name_bundle.sl");
+    std::fs::write(
+        &dir,
+        r#"command pick(c: bool) | (then: (;) & otherwise: (;)) {
+            match c { true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            ⟨true | pick | ({ ⟨"then" | println; ⟨0 | exit⟩ } & { ⟨"otherwise" | println; ⟨1 | exit⟩ })⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["then"]);
+}

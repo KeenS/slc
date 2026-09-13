@@ -252,6 +252,17 @@ fn is_delayed(span: Span) -> bool {
     DELAYS.with(|cell| cell.borrow().contains(&span))
 }
 
+/// Lower an expression standing in a by-name position: a computation the
+/// checker found negative is delayed, to run where it is demanded.
+fn lower_by_name(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
+    let term = lower_expr(e, continuations)?;
+    Ok(if is_delayed(e.span) {
+        Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(term))
+    } else {
+        term
+    })
+}
+
 /// Which components of the form value at `span` are positive.
 fn par_polarities(span: Span) -> Option<Vec<bool>> {
     PARS.with(|cell| cell.borrow().get(&span).cloned())
@@ -407,7 +418,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             {
                 let payload = args
                     .iter()
-                    .map(|arg| lower_expr(arg, continuations))
+                    .map(|arg| lower_by_name(arg, continuations))
                     .collect::<Result<Vec<_>, _>>()?;
                 return Ok(Term::Tag(label, Box::new(pack_group(payload))));
             }
@@ -433,7 +444,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 call_dicts(e.span).unwrap_or_default().iter().map(dict_term).collect();
             let mut lowered = Vec::new();
             for arg in args {
-                lowered.push(lower_expr(arg, continuations)?);
+                lowered.push(lower_by_name(arg, continuations)?);
             }
             // The arguments group as the callee's parameters do: the value
             // product, then the menu of exits. Each packs into one argument,
@@ -467,7 +478,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         // `(k1 & k2 & …)` — a bundle of exits: a tuple of them, and taking an
         // exit is projecting a component; only the checker tells `&` from `,`.
         Expr::Bundle(items) => Ok(Term::Tuple(
-            items.iter().map(|item| lower_expr(item, continuations)).collect::<Result<_, _>>()?,
+            items
+                .iter()
+                .map(|item| lower_by_name(item, continuations))
+                .collect::<Result<_, _>>()?,
         )),
         // `(k1 ; k2)` → co(μ̃(x1, x2). ⟨x1 ∥ k1⟩; ⟨x2 ∥ k2⟩): the consumer of the
         // product its continuations want, handing each its part left to right
@@ -513,7 +527,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             Ok(Term::Tag(alternative_label(*index), Box::new(lower_expr(value, continuations)?)))
         }
         Expr::Pair(items) => Ok(pack_group(
-            items.iter().map(|item| lower_expr(item, continuations)).collect::<Result<_, _>>()?,
+            items
+                .iter()
+                .map(|item| lower_by_name(item, continuations))
+                .collect::<Result<_, _>>()?,
         )),
 
         Expr::Let { pattern, value, body, mode, .. } => {

@@ -324,13 +324,18 @@ A row is supplied as one menu — the chain's closing stage — so a caller
 writes exactly one bundle, and a row of the wrong width is a type error
 at that stage rather than a miscount of arguments.
 
-Every item of a bundle is evaluated as the bundle is built, and the
-consumer chooses one afterwards. So an item that ends in a cut — a block
-`{ ⟨0 | exit⟩ }`, or a bare cut — is refused: it would jump before anything
-chose it, whether the slot is declared `(;)` or `-(,)`. The item is written
-as the consumer it means, `fn(_) { ⟨0 | exit⟩ }`. The rule is the bundle's
-alone. Elsewhere a `⊥` value is reached when it is meant to be: a
-`mu (;) { … }` passed as an argument captures the call it stands in.
+A bundle item is a by-name position, as a tuple component and an argument
+are: a computation of negative type there is delayed, and runs only when the
+consumer chooses it. So an item that ends in a cut — a block
+`{ ⟨0 | exit⟩ }`, or a bare cut — is an exit of type `(;)` that jumps when it
+is taken, `⟨(,) | then⟩`, and not while the bundle is built:
+
+```sl
+⟨c | pick | ({ ⟨"then" | println; ⟨0 | exit⟩ } & { ⟨1 | exit⟩ })⟩
+```
+
+A value ran nothing and is passed as it is, and a builtin's arguments are
+computed at once.
 
 What *is* enforced is that control is **total**: a `command` body must be `⊥`
 — it reaches a continuation on every path — so a body that falls off the end

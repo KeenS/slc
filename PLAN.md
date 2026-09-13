@@ -133,8 +133,9 @@ delayed.
   - **Bindings are done.** `let+`, `let-` and a plain `let` that follows its
     type have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed
     value is `λ$delay. t` in the core and runs wherever it is applied, cut
-    into or asked for an item. Arguments, tuple components and bundle items
-    are the positions left.
+    into or asked for an item. Tuple components, bundle items and arguments
+    delay a negative computation too. What is left is running a delayed
+    value where it stands as a command, and the flow head below.
   - **An unknown polarity is an error.** A binding's is refused already; a
     lambda parameter whose type inference leaves a variable is to be refused
     the same way, asking for an annotation.
@@ -144,18 +145,12 @@ delayed.
 
   What it changes, as found so far:
 
-  - The refusal of a bundle item that ends in a cut (`DESIGN.md` §4) lifts:
-    the item is delayed instead. Written by hand as the consumer of unit it
-    is, `select unit { u => … }`, such an item already runs only when the
-    command sends it `⟨(,) | then⟩`.
   - A bare `then` passes the checker today and does nothing at run time —
     `main` ends holding the consumer — so running where demanded is new work
     in the checker, which knows where a name is demanded, and in lowering.
   - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
     prints `(,)` because it runs at once; it becomes a `let+`, rendered
     through `Display`.
-  - Lowering needs each position's polarity from the checker, as `pars`
-    already carries a joint's components.
 
 ### Surface simplifications
 

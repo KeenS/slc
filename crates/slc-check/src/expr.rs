@@ -703,6 +703,13 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    for span in std::mem::take(&mut env.pending_by_name) {
+        if let Some(ty) = env.expr_types.get(&span).map(|ty| env.uni.apply(ty))
+            && type_polarity(&ty, env) == Some(ParamPolarity::Negative)
+        {
+            env.dispatch.delays.insert(span);
+        }
+    }
     for (span, ty) in std::mem::take(&mut env.pending_lets) {
         let ty = env.uni.apply(&ty);
         match type_polarity(&ty, env) {
@@ -2110,7 +2117,22 @@ fn check_expr(
     diags: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let found = check_expr_unapplied(e, enums, env, diags);
-    found.map(|ty| env.uni.apply(&ty))
+    let found = found.map(|ty| env.uni.apply(&ty));
+    if let Some(ty) = &found {
+        env.expr_types.insert(e.span, ty.clone());
+    }
+    found
+}
+
+/// Note the computations among `items`, which stand in by-name positions:
+/// each is delayed if it turns out negative. A value ran nothing, so it is
+/// passed as it is.
+fn note_by_name(items: &[Node<Expr>], enums: &Declarations, env: &mut Env) {
+    for item in items {
+        if !is_value_form(&item.kind, enums) {
+            env.pending_by_name.push(item.span);
+        }
+    }
 }
 
 /// The components a positional projection can reach: a product's, and a
@@ -2245,6 +2267,14 @@ fn check_expr_unapplied(
             Some(Type::arrow(param_ty, result))
         }
         Expr::Call { callee, args } => {
+            // An argument is a by-name position — a builtin's excepted, which
+            // the runtime computes with at once.
+            let builtin = matches!(&callee.kind, Expr::Ident(name)
+                if env.lookup(name).is_none()
+                    && env.functions.get(name).is_some_and(|signature| signature.builtin));
+            if !builtin {
+                note_by_name(args, enums, env);
+            }
             // A variant applied to its payload is a value, not a call.
             if let Expr::Ident(name) = &callee.kind
                 && env.lookup(name).is_none()
@@ -3078,35 +3108,24 @@ fn check_expr_unapplied(
             Some(Type::Par(types))
         }
         // A bundle of exits: every component is supplied, and whoever
-        // holds it takes exactly one — the additive conjunction. Every item
-        // is evaluated as the bundle is built, so an item that ends in a cut
-        // would jump before anything chose it: it is refused, and the item
-        // is written as the consumer it meant to be.
+        // holds it takes exactly one — the additive conjunction. An item is a
+        // by-name position, so one that ends in a cut is delayed and runs
+        // only when it is chosen.
         Expr::Bundle(items) => {
-            let types = items
-                .iter()
-                .map(|item| {
-                    let ty = check_expr(item, enums, env, diags);
-                    if ty.as_ref().is_some_and(|ty| env.uni.apply(ty) == Type::BOTTOM) {
-                        diags.push(Diagnostic {
-                            message: "this item of a bundle ends in a cut, so it would jump \
-                                      while the bundle is built, before anything chooses it; \
-                                      write the consumer instead: `fn(_) { … }`"
-                                .into(),
-                            span: item.span,
-                        });
-                    }
-                    ty
-                })
-                .collect::<Vec<_>>();
+            note_by_name(items, enums, env);
+            let types =
+                items.iter().map(|item| check_expr(item, enums, env, diags)).collect::<Vec<_>>();
             types.into_iter().collect::<Option<Vec<_>>>().map(Type::With)
         }
         Expr::Pair(items) if items.is_empty() => Some(Type::ONE),
-        Expr::Pair(items) => items
-            .iter()
-            .map(|item| check_expr(item, enums, env, diags))
-            .collect::<Option<Vec<_>>>()
-            .map(packed_group),
+        Expr::Pair(items) => {
+            note_by_name(items, enums, env);
+            items
+                .iter()
+                .map(|item| check_expr(item, enums, env, diags))
+                .collect::<Option<Vec<_>>>()
+                .map(packed_group)
+        }
         Expr::Block(exprs) => {
             let mut result = None;
             env.push();
@@ -3969,20 +3988,19 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_item_that_ends_in_a_cut_is_refused() {
-        // Every item is built with the bundle, so a jump in one fires before
-        // anything chooses it — whether the row declares `(;)` or `-(,)`.
-        for (row, arm) in [("(;)", "then"), ("-(,)", "⟨(,) | then⟩")] {
+    fn a_bundle_item_that_ends_in_a_cut_is_delayed() {
+        // An item is a by-name position: a jump in one is delayed, and fires
+        // only when it is chosen — whether the row declares `(;)` or `-(,)`.
+        for row in ["(;)", "-(,)"] {
             let src = format!(
                 "command choose(c: bool) | (then: {row} & otherwise: {row}) {{
-                     match c {{ true => {arm}, _ => {arm} }}
+                     match c {{ true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }}
                  }}
                  command main | (exit: -i32) {{
                      ⟨1 < 0 | choose | ({{ ⟨0 | exit⟩ }} & {{ ⟨1 | exit⟩ }})⟩
                  }}"
             );
-            let diags = check(&src).unwrap_err();
-            assert!(diags.iter().any(|d| d.message.contains("ends in a cut")), "{row}: {diags:?}");
+            assert!(check(&src).is_ok(), "{row}: {:?}", check(&src));
         }
         // The consumers the items meant are accepted.
         assert!(
