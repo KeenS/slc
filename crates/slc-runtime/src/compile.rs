@@ -74,10 +74,8 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             let body = compile_cmd(c, &scope.with(std::slice::from_ref(a)), chunk);
             Node::Mu(body)
         }
-        Term::Pair(a, b) => {
-            let a = compile_ir(a, scope, chunk);
-            let b = compile_ir(b, scope, chunk);
-            Node::Pair(a, b)
+        Term::Tuple(items) => {
+            Node::Tuple(Rc::new(items.iter().map(|item| compile_ir(item, scope, chunk)).collect()))
         }
         Term::Tag(label, payload) => {
             Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))

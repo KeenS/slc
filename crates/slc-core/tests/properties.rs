@@ -17,16 +17,16 @@ fn types() -> Vec<Type> {
     let ni32 = Type::Neg(Base::I32);
     let nbool = Type::Neg(Base::Bool);
     vec![
-        Type::One,
-        Type::Bottom,
+        Type::ONE,
+        Type::BOTTOM,
         i32.clone(),
         bool.clone(),
         ni32.clone(),
         nbool.clone(),
-        Type::Tensor(Box::new(i32.clone()), Box::new(bool.clone())),
-        Type::Par(Box::new(ni32.clone()), Box::new(nbool.clone())),
-        Type::Sum(Box::new(i32.clone()), Box::new(bool.clone())),
-        Type::With(Box::new(ni32.clone()), Box::new(nbool)),
+        Type::Tensor(vec![i32.clone(), bool.clone()]),
+        Type::Par(vec![ni32.clone(), nbool.clone()]),
+        Type::Sum(vec![i32.clone(), bool.clone()]),
+        Type::With(vec![ni32.clone(), nbool]),
         Type::arrow(i32, bool),
     ]
 }
@@ -55,7 +55,7 @@ fn term_corpus() -> Vec<Term> {
         "k".into(),
         Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
     );
-    let pair = Term::Pair(Box::new(x.clone()), Box::new(y.clone()));
+    let pair = Term::Tuple(vec![x.clone(), y.clone()]);
     vec![Term::Var("z".into()), x, y, id, id_y, mu, pair]
 }
 

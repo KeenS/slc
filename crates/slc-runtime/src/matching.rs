@@ -4,7 +4,6 @@
 //! this module parses those descriptors back and matches values against
 //! them, binding as it goes.
 
-use crate::eval::collect_args;
 use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,20 +18,13 @@ pub(crate) enum RuntimePattern {
     Tuple(Vec<RuntimePattern>),
 }
 
-/// Match dispatch payloads use a top-level pair spine:
-/// `(scrutinee, arm1, arm2, ...)`. Each arm is itself a nested pair
-/// `(descriptor, (guard, thunk))`. Flattening all pairs destroys both a
-/// pair-valued scrutinee and the nested arm structure, so split only this
-/// outer spine.
+/// A match dispatch payload is one tuple, `(scrutinee, arm₁, arm₂, …)`, each
+/// arm itself a tagged `(descriptor, guard, thunk)`.
 pub(crate) fn split_match_payload(v: &Value) -> Vec<Value> {
-    let mut out = Vec::new();
-    let mut current = v.clone();
-    while let Value::Pair(head, rest) = current {
-        out.push((*head).clone());
-        current = (*rest).clone();
+    match v {
+        Value::Tuple(items) => items.clone(),
+        other => vec![other.clone()],
     }
-    out.push(current);
-    out
 }
 
 /// Unwrap the `__match_arm` tag lowering wraps each match arm in.
@@ -280,23 +272,14 @@ pub(crate) fn pattern_matches(
             match fields.len() {
                 0 => true,
                 1 => pattern_matches(&fields[0], payload, bindings),
-                _ => {
-                    // Several payload values are packed right-nested, so walk
-                    // the spine one field at a time.
-                    let mut current = payload.as_ref();
-                    for (index, field) in fields.iter().enumerate() {
-                        if index + 1 == fields.len() {
-                            return pattern_matches(field, current, bindings);
-                        }
-                        let Value::Pair(head, rest) = current else {
-                            return false;
-                        };
-                        if !pattern_matches(field, head, bindings) {
-                            return false;
-                        }
-                        current = rest;
-                    }
-                    true
+                n => {
+                    // Several payload values are one tuple, a field each.
+                    let Value::Tuple(items) = payload.as_ref() else { return false };
+                    items.len() == n
+                        && fields
+                            .iter()
+                            .zip(items)
+                            .all(|(field, item)| pattern_matches(field, item, bindings))
                 }
             }
         }
@@ -316,19 +299,15 @@ pub(crate) fn pattern_matches(
         RuntimePattern::Or(alternatives) => {
             alternatives.iter().any(|alternative| pattern_matches(alternative, value, bindings))
         }
-        RuntimePattern::Tuple(items) => {
-            if let Value::Pair(a, b) = value {
-                let mut flat = Vec::new();
-                collect_args(a, &mut flat);
-                collect_args(b, &mut flat);
-                flat.len() == items.len()
+        RuntimePattern::Tuple(items) => match value {
+            Value::Tuple(values) => {
+                values.len() == items.len()
                     && items
                         .iter()
-                        .zip(flat.iter())
+                        .zip(values)
                         .all(|(pattern, value)| pattern_matches(pattern, value, bindings))
-            } else {
-                false
             }
-        }
+            _ => false,
+        },
     }
 }

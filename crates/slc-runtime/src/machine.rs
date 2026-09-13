@@ -46,10 +46,14 @@ pub(crate) enum State {
 /// produced. The whole stack is the continuation.
 #[derive(Debug, Clone)]
 pub enum Frame {
-    /// `(v ⊗ _)` — the first component is done; evaluate the second term.
-    PairRight(NodeId, Env),
-    /// `(v1 ⊗ v2)` — both components done; build the pair.
-    PairDone(Value),
+    /// `(v₀, …, _, …)` — the components before `next` are done; evaluate
+    /// the one at `next`.
+    Tuple {
+        done: Vec<Value>,
+        items: Rc<Vec<NodeId>>,
+        next: usize,
+        env: Env,
+    },
     WrapTag(String),
     /// `⟨ _ ∥ e ⟩` — the term side is done; consume with co-term `e`.
     Consume(NodeId, Env),
@@ -223,10 +227,13 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
             env2.define_local(Value::Kont(kont.clone()));
             State::Command(command, env2)
         }
-        Node::Pair(t1, t2) => {
-            kont.push(Frame::PairRight(t2, env.clone()));
-            State::Term(t1, env)
-        }
+        Node::Tuple(items) => match items.first().copied() {
+            Some(first) => {
+                kont.push(Frame::Tuple { done: Vec::new(), items, next: 1, env: env.clone() });
+                State::Term(first, env)
+            }
+            None => State::Return(Value::Unit),
+        },
         Node::Tag(label, payload) => {
             kont.push(Frame::WrapTag(label.to_string()));
             State::Term(payload, env)
@@ -281,11 +288,16 @@ fn step_command(c: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError
 
 fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match frame {
-        Frame::PairRight(t2, env) => {
-            kont.push(Frame::PairDone(v));
-            State::Term(t2, env)
+        Frame::Tuple { mut done, items, next, env } => {
+            done.push(v);
+            match items.get(next).copied() {
+                Some(item) => {
+                    kont.push(Frame::Tuple { done, items, next: next + 1, env: env.clone() });
+                    State::Term(item, env)
+                }
+                None => State::Return(Value::Tuple(done)),
+            }
         }
-        Frame::PairDone(first) => State::Return(Value::Pair(Box::new(first), Box::new(v))),
         Frame::WrapTag(label) => State::Return(Value::Tagged(label, Box::new(v))),
         Frame::Consume(e, env) => step_consume(v, e, env, kont)?,
         Frame::ApplyCallee(callee) => State::Apply { callee, arg: v },
@@ -309,7 +321,7 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
 /// exit. Anything else a co-variable holds only names where the value goes.
 fn activates(consumer: &Value, v: &Value) -> bool {
     is_applicable(consumer)
-        || matches!((consumer, v), (Value::Pair(..), Value::Tagged(label, _)) if label == "|0" || label == "|1")
+        || matches!((consumer, v), (Value::Tuple(..), Value::Tagged(label, _)) if crate::value::alternative_index(label).is_some())
 }
 
 /// ⟨ v ∥ e ⟩ with the value in hand, `e` the co-term node.
@@ -398,25 +410,19 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
     })
 }
 
-/// The `index`-th spine component of a right-nested product value. A struct
-/// is a tagged product, so its tag is unwrapped first.
+/// The `index`-th component of a tuple value. A struct is a tagged product,
+/// so its tag is unwrapped first.
 fn project_value(value: Value, index: usize) -> Result<Value, EvalError> {
-    let mut current = match value {
+    let product = match value {
         Value::Tagged(_, payload) => *payload,
         other => other,
     };
-    for _ in 0..index {
-        let Value::Pair(_, tail) = current else {
-            return Err(EvalError::TypeMismatch(format!(
-                "projection of component {index} ran off a {}",
-                current.display()
-            )));
-        };
-        current = *tail;
-    }
-    match current {
-        Value::Pair(head, _) => Ok(*head),
-        last => Ok(last),
+    match product {
+        Value::Tuple(mut items) if index < items.len() => Ok(items.swap_remove(index)),
+        other => Err(EvalError::TypeMismatch(format!(
+            "projection of component {index} from {}",
+            other.display()
+        ))),
     }
 }
 
@@ -518,7 +524,7 @@ fn step_apply(
             if name == "__match_dispatch" {
                 args.extend(split_match_payload(&arg));
             } else {
-                collect_args(&arg, &mut args);
+                collect_args(&name, &arg, &mut args);
             }
             builtin_step(&name, args, kont)?
         }
@@ -527,20 +533,22 @@ fn step_apply(
                 split_match_payload(&arg)
             } else {
                 let mut out = Vec::new();
-                collect_args(&arg, &mut out);
+                collect_args(&name, &arg, &mut out);
                 out
             };
             collected.append(&mut single);
             builtin_step(&name, collected, kont)?
         }
         // A bundle of exits consumes a sum, since the consumer of `(A | B)` is
-        // `(-A & -B)`: the left alternative takes the first exit, and the
-        // right one hands its payload to the rest — both nested to the right
-        // alike.
-        Value::Pair(first, rest) => {
+        // `(-A & -B)`: the alternative's position picks the exit.
+        Value::Tuple(mut exits) => {
             let (exit, payload) = match arg {
-                Value::Tagged(label, payload) if label == "|0" => (*first, *payload),
-                Value::Tagged(label, payload) if label == "|1" => (*rest, *payload),
+                Value::Tagged(label, payload)
+                    if crate::value::alternative_index(&label).is_some_and(|i| i < exits.len()) =>
+                {
+                    let index = crate::value::alternative_index(&label).expect("a position");
+                    (exits.swap_remove(index), *payload)
+                }
                 arg => {
                     return Err(EvalError::TypeMismatch(format!(
                         "a bundle of exits consumes an alternative of a sum, got {}",
@@ -611,18 +619,20 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         let body_thunk = it.next().unwrap_or(Value::Unit);
         let mut clauses = std::collections::HashMap::new();
         let mut ret = Value::Unit;
-        let mut rest = clauses_value;
-        while let Value::Pair(head, tail) = rest {
-            if let Value::Pair(op, closure) = *head
-                && let Value::Str(op) = *op
+        let entries = match clauses_value {
+            Value::Tuple(entries) => entries,
+            other => vec![other],
+        };
+        for entry in entries {
+            if let Value::Tuple(parts) = entry
+                && let [Value::Str(op), closure] = parts.as_slice()
             {
                 if op == "return" {
-                    ret = *closure;
+                    ret = closure.clone();
                 } else {
-                    clauses.insert(op, *closure);
+                    clauses.insert(op.clone(), closure.clone());
                 }
             }
-            rest = *tail;
         }
         kont.push(Frame::Prompt { clauses: Rc::new(clauses), ret });
         return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
@@ -670,18 +680,22 @@ fn next_match_arm(
 ) -> Result<State, EvalError> {
     while !arms.is_empty() {
         let arm = unwrap_match_arm(&arms.remove(0));
-        let Value::Pair(a, b) = &arm else {
-            return Err(EvalError::TypeMismatch(format!("malformed match arm: {}", arm.display())));
-        };
-        let (descriptor, guard, thunk) = match (a.as_ref(), b.as_ref()) {
-            (Value::Str(descriptor), Value::Pair(guard, thunk)) => {
-                (descriptor.clone(), guard.as_ref().clone(), thunk.as_ref().clone())
-            }
+        let (descriptor, guard, thunk) = match &arm {
+            Value::Tuple(parts) => match parts.as_slice() {
+                [Value::Str(descriptor), guard, thunk] => {
+                    (descriptor.clone(), guard.clone(), thunk.clone())
+                }
+                _ => {
+                    return Err(EvalError::TypeMismatch(format!(
+                        "malformed match arm payload: {}",
+                        arm.display()
+                    )));
+                }
+            },
             _ => {
                 return Err(EvalError::TypeMismatch(format!(
-                    "malformed match arm payload: {}, {}",
-                    a.display(),
-                    b.display()
+                    "malformed match arm: {}",
+                    arm.display()
                 )));
             }
         };

@@ -192,18 +192,10 @@ impl<'a> Env<'a> {
 fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
     match ty {
         Type::Var(v) => map.get(v).cloned().unwrap_or_else(|| ty.clone()),
-        Type::Tensor(a, b) => {
-            Type::Tensor(Box::new(replace_vars(a, map)), Box::new(replace_vars(b, map)))
-        }
-        Type::Par(a, b) => {
-            Type::Par(Box::new(replace_vars(a, map)), Box::new(replace_vars(b, map)))
-        }
-        Type::With(a, b) => {
-            Type::With(Box::new(replace_vars(a, map)), Box::new(replace_vars(b, map)))
-        }
-        Type::Sum(a, b) => {
-            Type::Sum(Box::new(replace_vars(a, map)), Box::new(replace_vars(b, map)))
-        }
+        Type::Tensor(items) => Type::Tensor(items.iter().map(|x| replace_vars(x, map)).collect()),
+        Type::Par(items) => Type::Par(items.iter().map(|x| replace_vars(x, map)).collect()),
+        Type::With(items) => Type::With(items.iter().map(|x| replace_vars(x, map)).collect()),
+        Type::Sum(items) => Type::Sum(items.iter().map(|x| replace_vars(x, map)).collect()),
         Type::Dual(t) => Type::Dual(Box::new(replace_vars(t, map))),
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| replace_vars(a, map)).collect())
@@ -217,9 +209,10 @@ pub(crate) fn collect_vars(ty: &Type, out: &mut std::collections::HashSet<usize>
         Type::Var(v) => {
             out.insert(*v);
         }
-        Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
-            collect_vars(a, out);
-            collect_vars(b, out);
+        Type::Tensor(items) | Type::Par(items) | Type::With(items) | Type::Sum(items) => {
+            for item in items {
+                collect_vars(item, out);
+            }
         }
         Type::Dual(t) => {
             collect_vars(t, out);

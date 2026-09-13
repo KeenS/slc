@@ -64,14 +64,14 @@ fn builtin_functions() -> Vec<Builtin> {
         continuations.extend(std::iter::repeat_n(true, outcomes.len()));
         let mut params = values;
         params.extend(outcomes);
-        Builtin { name, params, continuations, result: Some(Type::Bottom) }
+        Builtin { name, params, continuations, result: Some(Type::BOTTOM) }
     };
 
     vec![
         // Printing takes anything, but it does take it: a template
         // parameter, so `x | println` has something to flow into.
-        function("println", vec![same.clone()], Some(Type::One)),
-        function("print", vec![same.clone()], Some(Type::One)),
+        function("println", vec![same.clone()], Some(Type::ONE)),
+        function("print", vec![same.clone()], Some(Type::ONE)),
         function("add", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("sub", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
@@ -105,7 +105,7 @@ fn builtin_functions() -> Vec<Builtin> {
         // spent by `__close_file` (`fs::close`).
         offers("__open_file", vec![string.clone()], vec![Type::Neg(File), Type::Neg(Str)]),
         offers("__read_line", vec![Type::Pos(File)], vec![Type::Neg(Str), Type::Neg(Unit)]),
-        function("__close_file", vec![Type::Pos(File)], Some(Type::One)),
+        function("__close_file", vec![Type::Pos(File)], Some(Type::ONE)),
         offers(
             "__write_file",
             vec![string.clone(), string.clone()],
@@ -214,7 +214,7 @@ pub(crate) fn function_types(
                     FunctionSignature {
                         params,
                         continuations,
-                        result: Some(Type::Bottom),
+                        result: Some(Type::BOTTOM),
                         bounds: resolve_bounds(type_params, bounds),
                         builtin: false,
                     },
@@ -269,18 +269,10 @@ pub(crate) fn instantiate(
 fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) -> Type {
     match ty {
         Type::Var(v) => seen.entry(*v).or_insert_with(|| uni.fresh_var()).clone(),
-        Type::Tensor(a, b) => {
-            Type::Tensor(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
-        }
-        Type::Par(a, b) => {
-            Type::Par(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
-        }
-        Type::With(a, b) => {
-            Type::With(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
-        }
-        Type::Sum(a, b) => {
-            Type::Sum(Box::new(freshen(a, seen, uni)), Box::new(freshen(b, seen, uni)))
-        }
+        Type::Tensor(items) => Type::Tensor(items.iter().map(|x| freshen(x, seen, uni)).collect()),
+        Type::Par(items) => Type::Par(items.iter().map(|x| freshen(x, seen, uni)).collect()),
+        Type::With(items) => Type::With(items.iter().map(|x| freshen(x, seen, uni)).collect()),
+        Type::Sum(items) => Type::Sum(items.iter().map(|x| freshen(x, seen, uni)).collect()),
         Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| freshen(a, seen, uni)).collect())

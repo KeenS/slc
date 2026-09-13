@@ -116,7 +116,8 @@ pub enum Value {
     /// be reinstated any number of times, at any time — activating it
     /// replaces the current stack, which is what makes the jump.
     Kont(crate::machine::Kont),
-    Pair(Box<Value>, Box<Value>),
+    /// A tuple: its components, in order.
+    Tuple(Vec<Value>),
     Builtin(String),
 
     /// An open file handle: an id into the runtime's handle registry,
@@ -172,7 +173,7 @@ impl PartialEq for Value {
             (Value::Operation { op: a, .. }, Value::Operation { op: b, .. }) => a == b,
             (Value::Resume(a), Value::Resume(b)) => crate::machine::Kont::ptr_eq(a, b),
             (Value::Kont(a), Value::Kont(b)) => crate::machine::Kont::ptr_eq(a, b),
-            (Value::Pair(a1, a2), Value::Pair(b1, b2)) => a1 == b1 && a2 == b2,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Builtin(a), Value::Builtin(b)) => a == b,
             (Value::PartialBuiltin(a, args1), Value::PartialBuiltin(b, args2)) => {
                 a == b && args1 == args2
@@ -192,18 +193,18 @@ impl Value {
             Value::Bool(_) => Type::Pos(slc_core::types::Base::Bool),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::File(_) => Type::Pos(slc_core::types::Base::File),
-            Value::Operation { .. } => Type::One,
-            Value::Resume(_) => Type::Bottom,
-            Value::Unit => Type::One,
-            Value::Pair(a, b) => Type::Tensor(Box::new(a.type_of()), Box::new(b.type_of())),
-            Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::Bottom,
+            Value::Operation { .. } => Type::ONE,
+            Value::Resume(_) => Type::BOTTOM,
+            Value::Unit => Type::ONE,
+            Value::Tuple(items) => Type::Tensor(items.iter().map(Value::type_of).collect()),
+            Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::BOTTOM,
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
                 Vec::new(),
             ),
-            Value::CoCase { .. } | Value::CoTensor { .. } => Type::Bottom,
-            Value::Menu { .. } => Type::Bottom,
-            Value::Kont(_) => Type::Bottom,
+            Value::CoCase { .. } | Value::CoTensor { .. } => Type::BOTTOM,
+            Value::Menu { .. } => Type::BOTTOM,
+            Value::Kont(_) => Type::BOTTOM,
         }
     }
 
@@ -219,29 +220,18 @@ impl Value {
             Value::File(id) => format!("<file@{id}>"),
             Value::Operation { op, .. } => format!("<operation {op}>"),
             Value::Resume(_) => "<resume>".to_string(),
-            Value::Pair(a, b) => format!("({}, {})", a.display(), b.display()),
+            Value::Tuple(items) => {
+                format!("({})", items.iter().map(Value::display).collect::<Vec<_>>().join(", "))
+            }
             Value::Closure { .. } => "<closure>".to_string(),
             Value::Kont(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
             }
-            // An alternative of an anonymous sum, by its position: the right
-            // alternatives it passes over, then the left one it is.
-            Value::Tagged(label, _) if label == "|0" || label == "|1" => {
-                let mut index = 0;
-                let mut current = self;
-                while let Value::Tagged(label, payload) = current
-                    && label == "|1"
-                {
-                    index += 1;
-                    current = payload;
-                }
-                let payload = match current {
-                    Value::Tagged(label, payload) if label == "|0" => payload.as_ref(),
-                    last => last,
-                };
-                format!("::{index}({})", payload.display())
+            // An alternative of an anonymous sum, by its position.
+            Value::Tagged(label, payload) if alternative_index(label).is_some() => {
+                format!("::{}({})", &label[1..], payload.display())
             }
             Value::Tagged(label, payload) => match payload.as_ref() {
                 Value::Unit => label.clone(),
@@ -252,6 +242,12 @@ impl Value {
             Value::Menu { .. } => "<menu>".to_string(),
         }
     }
+}
+
+/// The position an anonymous sum's label names: `|2` is its third
+/// alternative.
+pub(crate) fn alternative_index(label: &str) -> Option<usize> {
+    label.strip_prefix('|')?.parse().ok()
 }
 
 /// Install the standard library builtins into an environment.

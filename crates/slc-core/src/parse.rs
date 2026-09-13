@@ -226,11 +226,14 @@ impl Parser {
             }
             Some('(') => {
                 self.pos += 1;
-                let left = self.term()?;
+                let mut items = vec![self.term()?];
                 self.expect("⊗")?;
-                let right = self.term()?;
+                items.push(self.term()?);
+                while self.eat("⊗") {
+                    items.push(self.term()?);
+                }
                 self.expect(")")?;
-                Ok(Term::Pair(Box::new(left), Box::new(right)))
+                Ok(Term::Tuple(items))
             }
             Some(_) => {
                 let name = self.name()?;
@@ -362,19 +365,19 @@ impl Parser {
             }
             Some('⊥') => {
                 self.pos += 1;
-                Ok(Type::Bottom)
+                Ok(Type::BOTTOM)
             }
             Some('1') => {
                 self.pos += 1;
-                Ok(Type::One)
+                Ok(Type::ONE)
             }
             Some('0') => {
                 self.pos += 1;
-                Ok(Type::Zero)
+                Ok(Type::ZERO)
             }
             Some('⊤') => {
                 self.pos += 1;
-                Ok(Type::Top)
+                Ok(Type::TOP)
             }
             Some('(') => {
                 self.pos += 1;
@@ -384,15 +387,21 @@ impl Parser {
                     .find(|connective| self.eat(connective))
                     .ok_or_else(|| self.error("expected a type connective"))?;
                 let right = self.ty()?;
-                self.expect(")")?;
-                let (left, right) = (Box::new(left), Box::new(right));
-                Ok(match connective {
-                    "⊗" => Type::Tensor(left, right),
-                    "⅋" => Type::Par(left, right),
-                    "&" => Type::With(left, right),
-                    "+" => Type::Sum(left, right),
+                if connective == "->" {
+                    self.expect(")")?;
                     // `A -> B` is `-A ⅋ B`.
-                    _ => Type::arrow(*left, *right),
+                    return Ok(Type::arrow(left, right));
+                }
+                let mut items = vec![left, right];
+                while self.eat(connective) {
+                    items.push(self.ty()?);
+                }
+                self.expect(")")?;
+                Ok(match connective {
+                    "⊗" => Type::Tensor(items),
+                    "⅋" => Type::Par(items),
+                    "&" => Type::With(items),
+                    _ => Type::Sum(items),
                 })
             }
             // `%i` — a declaration's type parameter, by position.

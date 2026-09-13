@@ -42,9 +42,10 @@ fn go_term(t: &Term, out: &mut HashSet<String>) {
             inner.remove(a);
             out.extend(inner);
         }
-        Term::Pair(t1, t2) => {
-            go_term(t1, out);
-            go_term(t2, out);
+        Term::Tuple(items) => {
+            for item in items {
+                go_term(item, out);
+            }
         }
         Term::Tag(_, t) => go_term(t, out),
         Term::CoMatch { branches, .. } => {
@@ -138,8 +139,8 @@ fn alpha_term(a: &Term, b: &Term, xs: &mut Vec<String>, ys: &mut Vec<String>) ->
             ys.pop();
             r
         }
-        (Term::Pair(a1, a2), Term::Pair(b1, b2)) => {
-            alpha_term(a1, b1, xs, ys) && alpha_term(a2, b2, xs, ys)
+        (Term::Tuple(a), Term::Tuple(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| alpha_term(a, b, xs, ys))
         }
         (Term::Tag(l1, t1), Term::Tag(l2, t2)) => l1 == l2 && alpha_term(t1, t2, xs, ys),
         (
@@ -241,10 +242,9 @@ pub fn subst_term(x: &str, replacement: &Term, term: &Term) -> Term {
                 Term::Mu(a.clone(), Box::new(subst_command(x, replacement, c)))
             }
         }
-        Term::Pair(t1, t2) => Term::Pair(
-            Box::new(subst_term(x, replacement, t1)),
-            Box::new(subst_term(x, replacement, t2)),
-        ),
+        Term::Tuple(items) => {
+            Term::Tuple(items.iter().map(|item| subst_term(x, replacement, item)).collect())
+        }
         Term::Tag(label, t) => Term::Tag(label.clone(), Box::new(subst_term(x, replacement, t))),
         Term::CoMatch { owner, branches } => Term::CoMatch {
             owner: owner.clone(),
@@ -358,10 +358,9 @@ pub fn subst_covar_term(a: &str, replacement: &CoTerm, term: &Term) -> Term {
                 Term::Mu(b.clone(), Box::new(subst_covar_command(a, replacement, c)))
             }
         }
-        Term::Pair(t1, t2) => Term::Pair(
-            Box::new(subst_covar_term(a, replacement, t1)),
-            Box::new(subst_covar_term(a, replacement, t2)),
-        ),
+        Term::Tuple(items) => {
+            Term::Tuple(items.iter().map(|item| subst_covar_term(a, replacement, item)).collect())
+        }
         Term::Tag(label, t) => {
             Term::Tag(label.clone(), Box::new(subst_covar_term(a, replacement, t)))
         }

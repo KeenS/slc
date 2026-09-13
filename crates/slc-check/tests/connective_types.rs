@@ -44,11 +44,11 @@ fn explicit_connectives_parse_and_lower() {
     let cases: Vec<(&str, Type)> = vec![
         (
             "fn f(p: (+i64, +i64)) -> i64 { 0 }",
-            Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
+            Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::I64)]),
         ),
         (
             "command f | (k: (-i64 ; -i64)) { k(0) }",
-            Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64))),
+            Type::Par(vec![Type::Neg(Base::I64), Type::Neg(Base::I64)]),
         ),
         (
             "fn f(g: (+i64 -> +bool)) -> i64 { 0 }",
@@ -56,7 +56,7 @@ fn explicit_connectives_parse_and_lower() {
         ),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
-        ("command f | (k: -(;)) { k(0) }", Type::Bottom),
+        ("command f | (k: -(;)) { k(0) }", Type::BOTTOM),
         // Negation is involutive: a double negation is the type itself.
         ("fn f(b: -i64) -> i64 { 0 }", Type::Neg(Base::I64)),
         ("fn f(r: -(-i64)) -> i64 { 0 }", Type::Pos(Base::I64)),
@@ -75,16 +75,10 @@ fn explicit_connectives_parse_and_lower() {
 fn a_paren_joins_any_number_of_components_with_one_connective() {
     let i64 = || Type::Pos(Base::I64);
     let cases: Vec<(&str, Type)> = vec![
-        (
-            "fn f(p: (+i64, +i64, +i64)) -> i64 { 0 }",
-            Type::Tensor(Box::new(i64()), Box::new(Type::Tensor(Box::new(i64()), Box::new(i64())))),
-        ),
-        (
-            "fn f(p: (+i64 | +i64 | +i64)) -> i64 { 0 }",
-            Type::Sum(Box::new(i64()), Box::new(Type::Sum(Box::new(i64()), Box::new(i64())))),
-        ),
-        ("fn f(p: (;)) -> i64 { 0 }", Type::Bottom),
-        ("fn f(p: (,)) -> i64 { 0 }", Type::One),
+        ("fn f(p: (+i64, +i64, +i64)) -> i64 { 0 }", Type::Tensor(vec![i64(), i64(), i64()])),
+        ("fn f(p: (+i64 | +i64 | +i64)) -> i64 { 0 }", Type::Sum(vec![i64(), i64(), i64()])),
+        ("fn f(p: (;)) -> i64 { 0 }", Type::BOTTOM),
+        ("fn f(p: (,)) -> i64 { 0 }", Type::ONE),
     ];
     for (source, expected) in cases {
         assert_eq!(lower_type(&parameter_type(source)), Ok(expected), "{source}");
@@ -124,7 +118,7 @@ fn explicit_connectives_reach_inference() {
     assert_eq!(
         out[0].ty,
         Type::arrow(
-            Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
+            Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::I64)]),
             Type::Pos(Base::Bool)
         )
     );
@@ -134,7 +128,7 @@ fn explicit_connectives_reach_inference() {
     assert_eq!(
         out[0].ty,
         // `A → ⊥` is `-A`, so a `command`'s type is the dual of its row.
-        Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64))).dual()
+        Type::Par(vec![Type::Neg(Base::I64), Type::Neg(Base::I64)]).dual()
     );
 }
 
@@ -179,10 +173,7 @@ fn duals_of_connectives_are_involutive() {
     assert_eq!(named, Type::Neg(Base::I64));
 
     let par = lower_type(&parameter_type("command f | (k: (-i64 ; -i64)) { k(0) }")).unwrap();
-    assert_eq!(
-        par.dual(),
-        Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64)))
-    );
+    assert_eq!(par.dual(), Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::I64)]));
 }
 
 #[test]
@@ -191,7 +182,8 @@ fn a_connective_type_expression_keeps_its_spans() {
     // can point at the source.
     let program = parse(lex("fn f(p: (+i64, +i64)) -> i64 { 0 }").unwrap()).unwrap();
     let Decl::Fn { params, .. } = &program.decls[0].kind else { panic!("expected fn") };
-    let Some(TypeExpr::Tensor(left, right)) = &params[0].ty else { panic!("expected a tensor") };
+    let Some(TypeExpr::Tensor(items)) = &params[0].ty else { panic!("expected a tensor") };
+    let [left, right] = items.as_slice() else { panic!("expected two components") };
     let left: &Node<TypeExpr> = left;
     assert!(left.span.end >= left.span.start);
     assert!(right.span.end >= right.span.start);

@@ -108,25 +108,24 @@ pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> 
     env.lookup(x).ok_or_else(|| EvalError::Unbound(x.to_string()))
 }
 
-/// Bind the components of a right-nested product onto the positional chain,
-/// `arity` of them. The first component is pushed first (deepest) and the
-/// last takes whatever remains and sits innermost, matching the order the
-/// compiler assigned the consumer's binders.
+/// Bind a product's components onto the positional chain, `arity` of them:
+/// one binder takes the whole value, and several take a tuple's components in
+/// order — the order the compiler assigned the consumer's binders.
 pub(crate) fn bind_components(arity: usize, value: Value, env: &mut Env) -> Result<(), EvalError> {
-    let mut rest = value;
-    for index in 0..arity {
-        if index + 1 == arity {
-            env.define_local(rest);
-            return Ok(());
+    match (arity, value) {
+        (0, _) => {}
+        (1, value) => env.define_local(value),
+        (arity, Value::Tuple(items)) if items.len() == arity => {
+            for item in items {
+                env.define_local(item);
+            }
         }
-        let Value::Pair(head, tail) = rest else {
+        (arity, value) => {
             return Err(EvalError::TypeMismatch(format!(
                 "a consumer of {arity} components received {}",
-                rest.display()
+                value.display()
             )));
-        };
-        env.define_local(*head);
-        rest = *tail;
+        }
     }
     Ok(())
 }
@@ -145,12 +144,12 @@ pub(crate) fn is_applicable(v: &Value) -> bool {
     )
 }
 
-pub(crate) fn collect_args(v: &Value, out: &mut Vec<Value>) {
+/// The arguments a builtin receives from one application. A tuple is spread
+/// into its components only for a builtin that takes several; to one that
+/// takes one, the tuple is the argument.
+pub(crate) fn collect_args(name: &str, v: &Value, out: &mut Vec<Value>) {
     match v {
-        Value::Pair(a, b) => {
-            collect_args(a, out);
-            collect_args(b, out);
-        }
+        Value::Tuple(items) if builtin_arity(name) > 1 => out.extend(items.iter().cloned()),
         other => out.push(other.clone()),
     }
 }
@@ -389,13 +388,12 @@ mod tests {
 
     #[test]
     fn eval_pair() {
-        let t =
-            Term::Pair(Box::new(Term::Var("$int_1".into())), Box::new(Term::Var("$int_2".into())));
+        let t = Term::Tuple(vec![Term::Var("$int_1".into()), Term::Var("$int_2".into())]);
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(
             eval(&t, &mut env, &mut fuel).unwrap(),
-            Value::Pair(Box::new(Value::Int(1)), Box::new(Value::Int(2)))
+            Value::Tuple(vec![Value::Int(1), Value::Int(2)])
         );
     }
 

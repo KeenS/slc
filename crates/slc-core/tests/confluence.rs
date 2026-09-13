@@ -27,7 +27,7 @@ fn beta_order_independent() {
 
 #[test]
 fn tensor_projection_commutes_with_beta() {
-    let pair = Term::Pair(Box::new(Term::Var("a".into())), Box::new(Term::Var("b".into())));
+    let pair = Term::Tuple(vec![Term::Var("a".into()), Term::Var("b".into())]);
     let c = Command::Cut(pair, CoTerm::Prj(0));
     let r = step(&c);
     assert!(matches!(r, Step::Reduced(_)));

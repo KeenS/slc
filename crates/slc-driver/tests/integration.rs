@@ -1510,7 +1510,6 @@ fn an_alternative_outside_its_sum_is_refused() {
         }
         fn beyond() -> (i64 | String) { ::2(1) }
         fn wrong() -> (i64 | String) { ::1(1) }
-        fn unknown() -> i64 { let x = ::1(1); 0 }
         command main | (exit: i32) { 0 | exit⟩ }"#,
     )
     .unwrap();
@@ -1521,10 +1520,57 @@ fn an_alternative_outside_its_sum_is_refused() {
         "answers `::0` in more than one arm",
         "`::2` is out of range",
         "carries +String; this value has type +i64",
-        "which sum `::1` belongs to is not known here",
     ] {
         assert!(stderr.contains(expected), "missing {expected:?} in: {stderr}");
     }
+}
+
+#[test]
+fn nesting_is_significant_and_a_position_needs_no_sum() {
+    // `(A, (B, C))` has two components and `(A, B, C)` three, and so for sums.
+    // An alternative is built by its position alone, so one whose sum nothing
+    // names is no error — and one inside another is still checked against the
+    // sum the outer one reveals.
+    let dir = std::env::temp_dir().join("slc_test_nesting_is_significant.sl");
+    std::fs::write(
+        &dir,
+        r#"fn second(t: (i64, (i64, i64))) -> (i64, i64) { t.1 }
+        fn third(t: (i64, i64, i64)) -> i64 { t.2 }
+        fn nested(x: (i64 | (bool | String))) -> String {
+            match x {
+                ::0(n) => n | int_to_str,
+                ::1(rest) => match rest { ::0(b) => (if b { "yes" } else { "no" }), ::1(s) => s },
+            }
+        }
+        fn flat(x: (i64 | bool | String)) -> String {
+            match x { ::0(n) => n | int_to_str, ::1(b) => "bool", ::2(s) => s }
+        }
+        command main | (exit: i32) / {IO} {
+            let unused = ::1(1);
+            (1, (2, 3)) | second | println;
+            (1, 2, 3) | third | println;
+            ::1(::1("deep")) | nested | println;
+            ::2("flat") | flat | println;
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["(2, 3)", "3", "\"deep\"", "\"flat\""]);
+
+    // The inner alternative's payload is checked once the outer one says
+    // which sum it is in.
+    let dir = std::env::temp_dir().join("slc_test_nested_alternative_checked.sl");
+    std::fs::write(
+        &dir,
+        r#"fn nested(x: (i64 | (bool | String))) -> i64 { 0 }
+        command main | (exit: i32) / {IO} { ::1(::1(5)) | nested | println; 0 | exit⟩ }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "a nested alternative carries the wrong payload");
+    assert!(stderr.contains("carries +String; this value has type +i64"), "stderr: {stderr}");
 }
 
 #[test]

@@ -287,15 +287,18 @@ fn references(d: &Decl, out: &mut Vec<String>) {
             }
             TypeExpr::Positive(i) | TypeExpr::Negative(i) | TypeExpr::Dual(i) => ty(&i.kind, out),
             TypeExpr::Effectful(i, _) => ty(&i.kind, out),
-            TypeExpr::Tensor(a, b)
-            | TypeExpr::Par(a, b)
-            | TypeExpr::With(a, b)
-            | TypeExpr::Sum(a, b)
-            | TypeExpr::Fun(a, b) => {
+            TypeExpr::Tensor(items)
+            | TypeExpr::Par(items)
+            | TypeExpr::With(items)
+            | TypeExpr::Sum(items) => {
+                for item in items {
+                    ty(&item.kind, out);
+                }
+            }
+            TypeExpr::Fun(a, b) => {
                 ty(&a.kind, out);
                 ty(&b.kind, out);
             }
-            TypeExpr::Unit | TypeExpr::Bottom | TypeExpr::Zero | TypeExpr::Top => {}
         }
     }
     fn push(name: &str, out: &mut Vec<String>) {
@@ -735,17 +738,20 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
             resolve_type(&mut inner.kind, stack)
         }
-        TypeExpr::Tensor(a, b)
-        | TypeExpr::Par(a, b)
-        | TypeExpr::With(a, b)
-        | TypeExpr::Sum(a, b)
-        | TypeExpr::Fun(a, b) => {
+        TypeExpr::Tensor(items)
+        | TypeExpr::Par(items)
+        | TypeExpr::With(items)
+        | TypeExpr::Sum(items) => {
+            for item in items {
+                resolve_type(&mut item.kind, stack);
+            }
+        }
+        TypeExpr::Fun(a, b) => {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
         }
         // The row names effects, not types; only the arrow resolves.
         TypeExpr::Effectful(inner, _) => resolve_type(&mut inner.kind, stack),
-        TypeExpr::Unit | TypeExpr::Bottom | TypeExpr::Zero | TypeExpr::Top => {}
     }
 }
 

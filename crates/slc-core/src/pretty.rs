@@ -27,15 +27,11 @@ impl std::fmt::Display for Type {
             Type::Var(v) => write!(f, "?{v}"),
             Type::Pos(b) => write!(f, "+{b}"),
             Type::Neg(b) => write!(f, "-{b}"),
-            Type::Tensor(a, b) => write!(f, "({a} ⊗ {b})"),
-            Type::Par(a, b) => write!(f, "({a} ⅋ {b})"),
-            Type::One => write!(f, "1"),
-            Type::Bottom => write!(f, "⊥"),
-            Type::Zero => write!(f, "0"),
-            Type::Top => write!(f, "⊤"),
+            Type::Tensor(xs) => connective(f, xs, " ⊗ ", "1"),
+            Type::Par(xs) => connective(f, xs, " ⅋ ", "⊥"),
             Type::Dual(t) => write!(f, "dual({t})"),
-            Type::With(a, b) => write!(f, "({a} & {b})"),
-            Type::Sum(a, b) => write!(f, "({a} + {b})"),
+            Type::With(xs) => connective(f, xs, " & ", "⊤"),
+            Type::Sum(xs) => connective(f, xs, " + ", "0"),
             Type::Param(i) => write!(f, "%{i}"),
             Type::Named(name, args) => {
                 write!(f, "{name}")?;
@@ -52,13 +48,43 @@ impl std::fmt::Display for Type {
     }
 }
 
+/// A connective's components joined by its symbol, in parentheses — or its
+/// unit, when there are none.
+fn connective(
+    f: &mut std::fmt::Formatter<'_>,
+    components: &[Type],
+    symbol: &str,
+    unit: &str,
+) -> std::fmt::Result {
+    if components.is_empty() {
+        return write!(f, "{unit}");
+    }
+    write!(f, "(")?;
+    for (i, component) in components.iter().enumerate() {
+        if i > 0 {
+            write!(f, "{symbol}")?;
+        }
+        write!(f, "{component}")?;
+    }
+    write!(f, ")")
+}
+
 impl std::fmt::Display for Term {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Term::Var(x) => write!(f, "{x}"),
             Term::Lam(x, t) => write!(f, "λ{x}. {t}"),
             Term::Mu(a, c) => write!(f, "μ{a}. {c}"),
-            Term::Pair(t1, t2) => write!(f, "({t1} ⊗ {t2})"),
+            Term::Tuple(items) => {
+                write!(f, "(")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ⊗ ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, ")")
+            }
             Term::Tag(label, t) => write!(f, "{label}({t})"),
             Term::CoMatch { owner, branches } => {
                 write!(f, "μ[{owner}")?;

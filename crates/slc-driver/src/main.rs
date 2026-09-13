@@ -339,7 +339,7 @@ fn run_program(
     // dictionary projection (bounded receiver).
     //
     // Build a dictionary per `(trait, type)` with an impl: the trait's method
-    // impls, in declaration order, as one value — a right-nested tuple, or
+    // impls, in declaration order, as one value — a tuple, or
     // the lone impl for a single-method trait. A bounded function receives
     // one and projects its methods; monomorphic calls dispatch directly and
     // never consult these.
@@ -358,11 +358,11 @@ fn run_program(
             if impls.len() != methods.len() {
                 continue; // an incomplete impl — leave the dictionary unbuilt
             }
-            let mut it = impls.into_iter().rev();
-            let Some(mut dict) = it.next() else { continue };
-            for impl_value in it {
-                dict = slc_runtime::value::Value::Pair(Box::new(impl_value), Box::new(dict));
-            }
+            let dict = match <[_; 1]>::try_from(impls) {
+                Ok([lone]) => lone,
+                Err(impls) if impls.is_empty() => continue,
+                Err(impls) => slc_runtime::value::Value::Tuple(impls),
+            };
             env.define_global(slc_syntax::lower::dict_global_name(trait_name, &key), dict);
         }
     }

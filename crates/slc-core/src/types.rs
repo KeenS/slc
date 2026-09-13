@@ -25,24 +25,18 @@ pub enum Type {
     Pos(Base),
     /// Negative atom: `-B`.
     Neg(Base),
-    /// Tensor: `A ⊗ B`.
-    Tensor(Box<Type>, Box<Type>),
-    /// Par: `A ⅋ B`.
-    Par(Box<Type>, Box<Type>),
-    /// Unit for tensor.
-    One,
-    /// Unit for par.
-    Bottom,
-    /// Unit for sum: `0`, which has no values.
-    Zero,
-    /// Unit for with: `⊤`, the menu with no items.
-    Top,
+    /// Tensor: `A ⊗ B ⊗ …`, the positive product of its components — any
+    /// number of them, so `A ⊗ (B ⊗ C)` and `A ⊗ B ⊗ C` are different types.
+    /// With none it is the unit, 1.
+    Tensor(Vec<Type>),
+    /// Par: `A ⅋ B ⅋ …`, the negative product; with no components, ⊥.
+    Par(Vec<Type>),
     /// Explicit dual application.
     Dual(Box<Type>),
-    /// Additive with: `A & B`.
-    With(Box<Type>, Box<Type>),
-    /// Additive sum: `A + B`.
-    Sum(Box<Type>, Box<Type>),
+    /// Additive with: `A & B & …`; with no components, ⊤.
+    With(Vec<Type>),
+    /// Additive sum: `A + B + …`; with no components, 0.
+    Sum(Vec<Type>),
     /// A declaration's type parameter, by position: what `T` becomes inside
     /// the declaration's own field and payload types. It never reaches
     /// unification — a use of the declaration substitutes its arguments for
@@ -55,24 +49,25 @@ pub enum Type {
 }
 
 impl Type {
+    /// 1, the tensor of nothing.
+    pub const ONE: Type = Type::Tensor(Vec::new());
+    /// ⊥, the par of nothing.
+    pub const BOTTOM: Type = Type::Par(Vec::new());
+    /// 0, the sum of nothing.
+    pub const ZERO: Type = Type::Sum(Vec::new());
+    /// ⊤, the with of nothing.
+    pub const TOP: Type = Type::With(Vec::new());
+
     /// Substitute a declaration's arguments for its parameters: `Param(i)`
     /// becomes `args[i]`, recursively. The instantiation of `List<T>`'s
     /// payload types at `List<i64>`.
     pub fn instantiate(&self, args: &[Type]) -> Type {
         match self {
             Type::Param(i) => args.get(*i).cloned().unwrap_or_else(|| self.clone()),
-            Type::Tensor(a, b) => {
-                Type::Tensor(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
-            }
-            Type::Par(a, b) => {
-                Type::Par(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
-            }
-            Type::With(a, b) => {
-                Type::With(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
-            }
-            Type::Sum(a, b) => {
-                Type::Sum(Box::new(a.instantiate(args)), Box::new(b.instantiate(args)))
-            }
+            Type::Tensor(xs) => Type::Tensor(xs.iter().map(|x| x.instantiate(args)).collect()),
+            Type::Par(xs) => Type::Par(xs.iter().map(|x| x.instantiate(args)).collect()),
+            Type::With(xs) => Type::With(xs.iter().map(|x| x.instantiate(args)).collect()),
+            Type::Sum(xs) => Type::Sum(xs.iter().map(|x| x.instantiate(args)).collect()),
             Type::Dual(t) => Type::Dual(Box::new(t.instantiate(args))),
             Type::Named(name, own) => {
                 Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
@@ -85,10 +80,10 @@ impl Type {
     /// argument together with a continuation for the result, which is what a
     /// call stack is. `A → ⊥` is `-A`, since `⊥` is the unit of `⅋`.
     pub fn arrow(argument: Type, result: Type) -> Type {
-        if result == Type::Bottom {
+        if result == Type::BOTTOM {
             return argument.dual();
         }
-        Type::Par(Box::new(argument.dual()), Box::new(result))
+        Type::Par(vec![argument.dual(), result])
     }
 
     /// `arrow` with the arguments in fold order: the accumulated result
@@ -106,15 +101,11 @@ impl Type {
             Type::Var(v) => Type::Dual(Box::new(Type::Var(*v))),
             Type::Pos(b) => Type::Neg(*b),
             Type::Neg(b) => Type::Pos(*b),
-            Type::Tensor(a, b) => Type::Par(Box::new(a.dual()), Box::new(b.dual())),
-            Type::Par(a, b) => Type::Tensor(Box::new(a.dual()), Box::new(b.dual())),
-            Type::One => Type::Bottom,
-            Type::Bottom => Type::One,
-            Type::Zero => Type::Top,
-            Type::Top => Type::Zero,
+            Type::Tensor(xs) => Type::Par(xs.iter().map(Type::dual).collect()),
+            Type::Par(xs) => Type::Tensor(xs.iter().map(Type::dual).collect()),
             Type::Dual(t) => (**t).clone(),
-            Type::With(a, b) => Type::Sum(Box::new(a.dual()), Box::new(b.dual())),
-            Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
+            Type::With(xs) => Type::Sum(xs.iter().map(Type::dual).collect()),
+            Type::Sum(xs) => Type::With(xs.iter().map(Type::dual).collect()),
             Type::Named(name, args) => {
                 Type::Dual(Box::new(Type::Named(name.clone(), args.clone())))
             }
@@ -132,8 +123,6 @@ impl Type {
                 Type::Var(_)
                     | Type::Pos(_)
                     | Type::Tensor(..)
-                    | Type::One
-                    | Type::Zero
                     | Type::Sum(..)
                     | Type::Named(..)
                     | Type::Param(_)
@@ -148,13 +137,7 @@ impl Type {
             Type::Dual(inner) => inner.is_positive(),
             other => matches!(
                 other,
-                Type::Var(_)
-                    | Type::Param(_)
-                    | Type::Neg(_)
-                    | Type::Par(..)
-                    | Type::Bottom
-                    | Type::Top
-                    | Type::With(..)
+                Type::Var(_) | Type::Param(_) | Type::Neg(_) | Type::Par(..) | Type::With(..)
             ),
         }
     }
@@ -172,12 +155,12 @@ mod tests {
             Type::Neg(Base::Bool),
             Type::Pos(Base::Char),
             Type::Neg(Base::Char),
-            Type::One,
-            Type::Bottom,
-            Type::Tensor(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
-            Type::Par(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
-            Type::With(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool))),
-            Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool))),
+            Type::ONE,
+            Type::BOTTOM,
+            Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]),
+            Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]),
+            Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]),
+            Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]),
             Type::Named("Color".into(), Vec::new()),
         ]
     }
@@ -197,21 +180,21 @@ mod tests {
 
     #[test]
     fn dual_swaps_tensor_par() {
-        let t = Type::Tensor(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool)));
-        let expected = Type::Par(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool)));
+        let t = Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]);
+        let expected = Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]);
         assert_eq!(t.dual(), expected);
     }
 
     #[test]
     fn dual_swaps_units() {
-        assert_eq!(Type::One.dual(), Type::Bottom);
-        assert_eq!(Type::Bottom.dual(), Type::One);
+        assert_eq!(Type::ONE.dual(), Type::BOTTOM);
+        assert_eq!(Type::BOTTOM.dual(), Type::ONE);
     }
 
     #[test]
     fn dual_swaps_additives() {
-        let t = Type::Sum(Box::new(Type::Pos(Base::I32)), Box::new(Type::Pos(Base::Bool)));
-        let expected = Type::With(Box::new(Type::Neg(Base::I32)), Box::new(Type::Neg(Base::Bool)));
+        let t = Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]);
+        let expected = Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]);
         assert_eq!(t.dual(), expected);
     }
 

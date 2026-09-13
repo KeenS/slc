@@ -146,7 +146,7 @@ fn check_trait_method_call(
     // A command method returns bottom; a fn method returns its (Self-subst)
     // result type — the consumer of it, for a negative method.
     if sig.is_command {
-        return Some(Type::Bottom);
+        return Some(Type::BOTTOM);
     }
     match &sig.return_type {
         Some(ty) => resolve_with_self(ty, &self_ty, enums).map(|t| {
@@ -156,7 +156,7 @@ fn check_trait_method_call(
             };
             env.uni.apply(&t)
         }),
-        None => Some(Type::One),
+        None => Some(Type::ONE),
     }
 }
 
@@ -165,7 +165,7 @@ fn check_trait_method_call(
 /// callee whose parameters do not take what flows in may still read the
 /// other way round, as `⅋` being commutative allows.
 fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> bool {
-    if actual == &Type::Bottom {
+    if actual == &Type::BOTTOM {
         return true;
     }
     let mut probe = env.uni.clone();
@@ -225,11 +225,11 @@ fn check_method_stage(
     let target = env.uni.apply(receiver);
     resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
     if sig.is_command {
-        return Some(Type::Bottom);
+        return Some(Type::BOTTOM);
     }
     match &sig.return_type {
         Some(ty) => resolve_with_self(ty, &target, enums).map(|t| env.uni.apply(&t)),
-        None => Some(Type::One),
+        None => Some(Type::ONE),
     }
 }
 
@@ -297,7 +297,7 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
     match ty {
         T::Base(name) if name == "Self" => Some(self_ty.clone()),
         T::Positive(inner) => resolve_with_self(&inner.kind, self_ty, enums),
-        T::Negative(inner) if !matches!(inner.kind, T::Bottom) => {
+        T::Negative(inner) if !inner.kind.is_bottom() => {
             Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
@@ -357,6 +357,35 @@ fn infer_param_type(
 
 /// Resolve a declared type, substituting a rigid variable for each type
 /// parameter even under a sign: `+T` and `-T` find `T` too.
+fn rigid_components(
+    items: &[Node<TypeExpr>],
+    rigid_vars: &HashMap<&str, Type>,
+    enums: &Declarations,
+) -> Option<Vec<Type>> {
+    items.iter().map(|item| resolve_rigid(&item.kind, rigid_vars, enums)).collect()
+}
+
+/// A group of types as the one type a call passes: nothing is 1, one is
+/// itself, and several are their tensor.
+fn packed_group(types: impl IntoIterator<Item = Type>) -> Type {
+    let mut types: Vec<Type> = types.into_iter().collect();
+    match types.len() {
+        1 => types.pop().expect("one type"),
+        _ => Type::Tensor(types),
+    }
+}
+
+/// A menu of exits as one type, the way a group of values packs: nothing is
+/// 1, one is itself, and several are their `&`.
+fn exit_row(types: impl IntoIterator<Item = Type>) -> Type {
+    let mut types: Vec<Type> = types.into_iter().collect();
+    match types.len() {
+        0 => Type::ONE,
+        1 => types.pop().expect("one type"),
+        _ => Type::With(types),
+    }
+}
+
 fn resolve_rigid(
     ty: &TypeExpr,
     rigid_vars: &HashMap<&str, Type>,
@@ -366,7 +395,7 @@ fn resolve_rigid(
     match ty {
         T::Base(name) => rigid_vars.get(name.as_str()).cloned().or_else(|| enums.resolve(ty)),
         T::Positive(inner) => resolve_rigid(&inner.kind, rigid_vars, enums),
-        T::Negative(inner) if !matches!(inner.kind, T::Bottom) => {
+        T::Negative(inner) if !inner.kind.is_bottom() => {
             Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_rigid(&inner.kind, rigid_vars, enums)?.dual()),
@@ -380,22 +409,10 @@ fn resolve_rigid(
         // The effect row is the effect checker's concern; the type is the
         // arrow underneath.
         T::Effectful(inner, _) => resolve_rigid(&inner.kind, rigid_vars, enums),
-        T::Tensor(a, b) => Some(Type::Tensor(
-            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
-            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
-        )),
-        T::Par(a, b) => Some(Type::Par(
-            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
-            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
-        )),
-        T::With(a, b) => Some(Type::With(
-            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
-            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
-        )),
-        T::Sum(a, b) => Some(Type::Sum(
-            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
-            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
-        )),
+        T::Tensor(items) => Some(Type::Tensor(rigid_components(items, rigid_vars, enums)?)),
+        T::Par(items) => Some(Type::Par(rigid_components(items, rigid_vars, enums)?)),
+        T::With(items) => Some(Type::With(rigid_components(items, rigid_vars, enums)?)),
+        T::Sum(items) => Some(Type::Sum(rigid_components(items, rigid_vars, enums)?)),
         T::Apply(name, args) => {
             let args = args
                 .iter()
@@ -581,49 +598,55 @@ fn record_bounds(
 /// alternatives, check the position, and give the payload that
 /// alternative's type.
 fn resolve_pending_injections(env: &mut Env, diags: &mut Vec<Diagnostic>) {
-    for pending in std::mem::take(&mut env.pending_injections) {
-        let sum = env.uni.apply(&pending.sum);
-        let index = pending.index;
-        if let Type::Var(_) = sum {
-            diags.push(Diagnostic {
-                message: format!(
-                    "which sum `::{index}` belongs to is not known here, so neither is its \
-                     position; give the sum's type"
-                ),
-                span: pending.span,
-            });
-            continue;
+    let mut waiting = std::mem::take(&mut env.pending_injections);
+    // Resolving one alternative can say which sum another's payload belongs
+    // to — an injection inside an injection — so go round while any resolves.
+    loop {
+        let before = waiting.len();
+        let mut unresolved = Vec::new();
+        for pending in waiting {
+            let sum = env.uni.apply(&pending.sum);
+            if let Type::Var(_) = sum {
+                unresolved.push(pending);
+                continue;
+            }
+            let index = pending.index;
+            let Some(alternatives) = sum_alternatives(&sum) else {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`::{index}` is an alternative of a sum, and it is used as {sum}"
+                    ),
+                    span: pending.span,
+                });
+                continue;
+            };
+            let Some(alternative) = alternatives.get(index) else {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`::{index}` is out of range for {sum}, which has {} alternatives",
+                        alternatives.len()
+                    ),
+                    span: pending.span,
+                });
+                continue;
+            };
+            if env.uni.unify(alternative, &pending.payload).is_err() {
+                let payload = env.uni.apply(&pending.payload);
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`::{index}` of {sum} carries {alternative}; this value has type {payload}"
+                    ),
+                    span: pending.span,
+                });
+            }
         }
-        let alternatives = sum_alternatives(&sum);
-        if alternatives.len() < 2 {
-            diags.push(Diagnostic {
-                message: format!("`::{index}` is an alternative of a sum, and it is used as {sum}"),
-                span: pending.span,
-            });
-            continue;
+        waiting = unresolved;
+        if waiting.len() == before {
+            break;
         }
-        let Some(alternative) = alternatives.get(index) else {
-            diags.push(Diagnostic {
-                message: format!(
-                    "`::{index}` is out of range for {sum}, which has {} alternatives",
-                    alternatives.len()
-                ),
-                span: pending.span,
-            });
-            continue;
-        };
-        if env.uni.unify(alternative, &pending.payload).is_err() {
-            let payload = env.uni.apply(&pending.payload);
-            diags.push(Diagnostic {
-                message: format!(
-                    "`::{index}` of {sum} carries {alternative}; this value has type {payload}"
-                ),
-                span: pending.span,
-            });
-            continue;
-        }
-        env.dispatch.injections.insert(pending.span, alternatives.len());
     }
+    // What is left belongs to no sum anything names: an alternative is built
+    // by its position alone, so there is nothing to refuse.
 }
 
 /// Settle which way each component of a form value faces: a consumer takes
@@ -716,7 +739,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 slc_syntax::ast::FunctionPolarity::Negative => declared.map(|ty| ty.dual()),
             };
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
-                && actual != &Type::Bottom
+                && actual != &Type::BOTTOM
                 && !fits_turning(env, promised, actual, tail_node(body))
             {
                 diags.push(Diagnostic {
@@ -744,7 +767,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             ..
         } => {
             if let Some(return_type) = return_type
-                && enums.resolve(return_type) != Some(Type::Bottom)
+                && enums.resolve(return_type) != Some(Type::BOTTOM)
             {
                 diags
                     .push(Diagnostic { message: "a `command` returns `(;)`".into(), span: d.span });
@@ -768,7 +791,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // checker cannot pin down is left alone.
             if let Some(actual) = body_type {
                 let actual = env.uni.apply(&actual);
-                if actual != Type::Bottom && !matches!(actual, Type::Var(_)) {
+                if actual != Type::BOTTOM && !matches!(actual, Type::Var(_)) {
                     diags.push(Diagnostic {
                         message: format!(
                             "a `command` body must reach a continuation on every path (type `(;)`); \
@@ -887,7 +910,7 @@ fn is_constant_initializer(e: &Expr, env: &Env) -> bool {
 fn literal_type(e: &Expr) -> Option<Type> {
     Some(match e {
         Expr::Int(_) => Type::Pos(Base::I64),
-        Expr::Float(_) => Type::One,
+        Expr::Float(_) => Type::ONE,
         Expr::Str(_) => Type::Pos(Base::Str),
         Expr::Char(_) => Type::Pos(Base::Char),
         Expr::Bool(_) => Type::Pos(Base::Bool),
@@ -902,7 +925,7 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
         Pattern::Str(_) => Type::Pos(Base::Str),
         Pattern::Char(_) => Type::Pos(Base::Char),
         Pattern::Bool(_) => Type::Pos(Base::Bool),
-        Pattern::Float(_) => Type::One,
+        Pattern::Float(_) => Type::ONE,
         Pattern::Range { start, .. } => pattern_type(start)?,
         Pattern::Or(alternatives) => {
             let first = pattern_type(alternatives.first()?)?;
@@ -1137,7 +1160,7 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
 /// other value must match its port exactly.
 fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     // A value that never arrives constrains nothing.
-    if actual == &Type::Bottom {
+    if actual == &Type::BOTTOM {
         return true;
     }
     if env.uni.unify(expected, actual).is_ok() {
@@ -1155,16 +1178,18 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
 /// returns tells lowering how to turn the value. Both halves must be known:
 /// the swap is oriented by their polarities.
 fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<slc_syntax::lower::Swap> {
-    let (Type::Par(want_left, want_right), Type::Par(left, right)) =
-        (env.uni.apply(expected), env.uni.apply(actual))
+    let (Type::Par(wanted), Type::Par(given)) = (env.uni.apply(expected), env.uni.apply(actual))
     else {
         return None;
     };
+    let ([want_left, want_right], [left, right]) = (wanted.as_slice(), given.as_slice()) else {
+        return None;
+    };
     let mut probe = env.uni.clone();
-    if probe.unify(&want_left, &right).is_err() || probe.unify(&want_right, &left).is_err() {
+    if probe.unify(want_left, right).is_err() || probe.unify(want_right, left).is_err() {
         return None;
     }
-    let (left, right) = (probe.apply(&left), probe.apply(&right));
+    let (left, right) = (probe.apply(left), probe.apply(right));
     if contains_var(&left) || contains_var(&right) {
         return None;
     }
@@ -1199,16 +1224,17 @@ fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr
 /// Whether `commute` would succeed, without committing — for the probes that
 /// decide which arm a stage takes.
 fn commutes(uni: &slc_core::typing::Unification, expected: &Type, actual: &Type) -> bool {
-    let (Type::Par(want_left, want_right), Type::Par(left, right)) =
-        (uni.apply(expected), uni.apply(actual))
-    else {
+    let (Type::Par(wanted), Type::Par(given)) = (uni.apply(expected), uni.apply(actual)) else {
+        return false;
+    };
+    let ([want_left, want_right], [left, right]) = (wanted.as_slice(), given.as_slice()) else {
         return false;
     };
     let mut probe = uni.clone();
-    probe.unify(&want_left, &right).is_ok()
-        && probe.unify(&want_right, &left).is_ok()
-        && !contains_var(&probe.apply(&left))
-        && !contains_var(&probe.apply(&right))
+    probe.unify(want_left, right).is_ok()
+        && probe.unify(want_right, left).is_ok()
+        && !contains_var(&probe.apply(left))
+        && !contains_var(&probe.apply(right))
 }
 
 /// `tail_expr`, as the node, so a swap on a body's value can be keyed by the
@@ -1279,11 +1305,8 @@ fn check_call_arguments(
                 }
                 continue;
             }
-            let row = signature.params[values..]
-                .iter()
-                .rev()
-                .cloned()
-                .reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)));
+            let row = (signature.params.len() > values)
+                .then(|| exit_row(signature.params[values..].iter().cloned()));
             if let (Some(row), Some(actual)) = (row, &actual)
                 && !fits(env, &row, actual, &arg.kind)
             {
@@ -1326,7 +1349,7 @@ fn check_call_arguments(
         let Some(actual) = actual else {
             continue;
         };
-        // `Type::One` is this checker's "not determined" placeholder — an
+        // `Type::ONE` is this checker's "not determined" placeholder — an
         // unannotated `let` binding, for instance. A mismatch is only
         // reported for an argument whose type is actually known.
         if !fits(env, expected, &actual, &arg.kind) {
@@ -1464,8 +1487,9 @@ fn bind_match_pattern(
         }
         // An alternative binds its payload, at its position in the sum.
         Pattern::Inject { index, pattern } => {
-            if let Some(payload) = sum_alternatives(scrutinee).get(*index) {
-                bind_match_pattern(pattern, payload, enums, env);
+            if let Some(payload) = sum_alternatives(scrutinee).and_then(|a| a.get(*index).cloned())
+            {
+                bind_match_pattern(pattern, &payload, enums, env);
             }
         }
         // A bundle binds the exits of an anonymous menu, as a tuple binds
@@ -1506,8 +1530,8 @@ fn check_comatch_arms(
     let check_command = |env: &mut Env, command: &Node<Expr>, diags: &mut Vec<Diagnostic>| {
         let ty = check_expr(command, enums, env, diags);
         if let Some(ty) = ty
-            && ty != Type::Bottom
-            && ty != Type::One
+            && ty != Type::BOTTOM
+            && ty != Type::ONE
         {
             diags.push(Diagnostic {
                 message: format!("a `mu` arm is a command; this one has type {ty}"),
@@ -1540,7 +1564,7 @@ fn check_comatch_arms(
             }
             continue;
         };
-        let k_ty = payload.first().cloned().unwrap_or(Type::One).instantiate(type_args);
+        let k_ty = payload.first().cloned().unwrap_or(Type::ONE).instantiate(type_args);
         let mut nested: Vec<(&Pattern, &Node<Expr>)> = Vec::new();
         for (arg, command) in group {
             match arg {
@@ -1653,7 +1677,6 @@ fn bind_select_arm(
             }
         }
         // A struct: its field types.
-        (Type::One, Pattern::Tuple(items)) if items.is_empty() => Vec::new(),
         (Type::Named(name, _), Pattern::Data { name: written, .. }) => {
             if written != name {
                 diags.push(Diagnostic {
@@ -1669,15 +1692,15 @@ fn bind_select_arm(
                 .map(|t| t.instantiate(scrutinee_args(consumed)))
                 .collect()
         }
-        // A tensor: its components, flattened right-nested.
+        // A tensor: its components — none, for the unit.
         (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
         // A menu of exits: its items, likewise.
         (Type::With(..), Pattern::Bundle(_)) => flatten_with(consumed),
         // An alternative of a sum: its payload. `check_alternatives` has
         // already said what is wrong with a position that is not there.
         (_, Pattern::Inject { index, .. }) => {
-            match sum_alternatives(&env.uni.apply(consumed)).get(*index) {
-                Some(payload) => vec![payload.clone()],
+            match sum_alternatives(&env.uni.apply(consumed)).and_then(|a| a.get(*index).cloned()) {
+                Some(payload) => vec![payload],
                 None => return,
             }
         }
@@ -1758,29 +1781,19 @@ fn bind_select_component(
     }
 }
 
-/// The components of a right-nested tensor.
+/// A tensor's components — none, for the unit. Anything else is one.
 fn flatten_tensor(ty: &Type) -> Vec<Type> {
     match ty {
-        Type::Tensor(head, rest) => {
-            let mut out = vec![(**head).clone()];
-            out.extend(flatten_tensor(rest));
-            out
-        }
+        Type::Tensor(items) => items.clone(),
         other => vec![other.clone()],
     }
 }
 
-/// The items of a `&`, flattened right-nested — the exits a bundle holds.
-/// A sum's alternatives, flattened along its right nesting as a tuple's
-/// components are: `(A | B | C)` has three. Anything else is one.
-fn sum_alternatives(ty: &Type) -> Vec<Type> {
+/// A sum's alternatives, when the type is a sum.
+fn sum_alternatives(ty: &Type) -> Option<Vec<Type>> {
     match ty {
-        Type::Sum(a, b) => {
-            let mut alternatives = vec![(**a).clone()];
-            alternatives.extend(sum_alternatives(b));
-            alternatives
-        }
-        other => vec![other.clone()],
+        Type::Sum(items) => Some(items.clone()),
+        _ => None,
     }
 }
 
@@ -1826,16 +1839,11 @@ fn check_alternatives(
     let mut ty = env.uni.apply(consumed);
     if let Type::Var(_) = ty {
         let arity = indices.iter().max().map_or(2, |most| (most + 1).max(2));
-        let mut shape = env.uni.fresh_var();
-        for _ in 1..arity {
-            shape = Type::Sum(Box::new(env.uni.fresh_var()), Box::new(shape));
-        }
+        let shape = Type::Sum((0..arity).map(|_| env.uni.fresh_var()).collect());
         let _ = env.uni.unify(&ty, &shape);
         ty = env.uni.apply(&shape);
     }
-    let alternatives = sum_alternatives(&ty);
-    let arity = alternatives.len();
-    if arity < 2 {
+    let Some(alternatives) = sum_alternatives(&ty) else {
         diags.push(Diagnostic {
             message: format!(
                 "`::{}` is an alternative of a sum, and this `{keyword}` is over {ty}",
@@ -1844,8 +1852,8 @@ fn check_alternatives(
             span,
         });
         return None;
-    }
-    env.dispatch.sum_arities.insert(span, arity);
+    };
+    let arity = alternatives.len();
     let mut covered = vec![false; arity];
     let mut covers_everything = false;
     let mut well_formed = true;
@@ -1920,11 +1928,7 @@ fn check_alternatives(
 
 fn flatten_with(ty: &Type) -> Vec<Type> {
     match ty {
-        Type::With(a, b) => {
-            let mut items = vec![(**a).clone()];
-            items.extend(flatten_with(b));
-            items
-        }
+        Type::With(items) => items.clone(),
         other => vec![other.clone()],
     }
 }
@@ -1951,26 +1955,13 @@ fn check_expr(
     found.map(|ty| env.uni.apply(&ty))
 }
 
-/// The components of a right-nested product, flattened along the spine, so
-/// `A ⊗ (B ⊗ C)` is `[A, B, C]` — matching the runtime projection walk. A
-/// non-product is a single component.
 /// The components a positional projection can reach: a product's, and a
-/// menu-of-exits' — taking an exit is projecting an item of a `&`, which
-/// the runtime holds as the same right-nested pair.
+/// menu of exits' — taking an exit is projecting an item of a `&`, which the
+/// runtime holds as the same tuple. Anything else is a single component.
 fn tensor_spine(ty: &Type) -> Vec<Type> {
-    let mut out = Vec::new();
-    let mut current = ty.clone();
-    loop {
-        match current {
-            Type::Tensor(a, b) | Type::With(a, b) => {
-                out.push(*a);
-                current = *b;
-            }
-            other => {
-                out.push(other);
-                return out;
-            }
-        }
+    match ty {
+        Type::Tensor(items) | Type::With(items) if items.len() >= 2 => items.clone(),
+        other => vec![other.clone()],
     }
 }
 
@@ -2025,14 +2016,10 @@ fn check_expr_unapplied(
                     // Its parameters pack into the one product a call
                     // passes; a function with none is its result already,
                     // since naming it is how it is used.
-                    let ty = match signature
-                        .params
-                        .into_iter()
-                        .rev()
-                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                    {
-                        Some(packed) => Type::arrow(packed, result),
-                        None => result,
+                    let ty = if signature.params.is_empty() {
+                        result
+                    } else {
+                        Type::arrow(packed_group(signature.params), result)
                     };
                     return Some(ty);
                 }
@@ -2155,7 +2142,8 @@ fn check_expr_unapplied(
             }
             if let Expr::Ident(name) = &callee.kind
                 && let Some(ty) = env.lookup(name)
-                && matches!(ty, Type::Neg(_) | Type::Bottom | Type::Dual(_))
+                && (matches!(ty, Type::Neg(_) | Type::Dual(_))
+                    || matches!(ty, Type::Par(ref parts) if parts.is_empty()))
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -2167,7 +2155,7 @@ fn check_expr_unapplied(
                 for arg in args {
                     check_expr(arg, enums, env, diags);
                 }
-                return Some(Type::Bottom);
+                return Some(Type::BOTTOM);
             }
             // A trait method dispatches on its first argument; type it
             // against the method signature and discharge the bound.
@@ -2255,7 +2243,8 @@ fn check_expr_unapplied(
             // an unknown callee becomes one.
             let callee_ty = callee_ty.map(|ty| env.uni.apply(&ty));
             match callee_ty {
-                Some(Type::Par(argument_dual, result)) => {
+                Some(Type::Par(parts)) if parts.len() == 2 => {
+                    let (argument_dual, result) = (parts[0].clone(), parts[1].clone());
                     // The arguments pack into one product, as they do for a
                     // named callee, so the whole group meets the one type
                     // the function takes.
@@ -2264,13 +2253,8 @@ fn check_expr_unapplied(
                     let packed = actuals
                         .into_iter()
                         .collect::<Option<Vec<_>>>()
-                        .and_then(|types| {
-                            types
-                                .into_iter()
-                                .rev()
-                                .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                        })
-                        .unwrap_or(Type::One);
+                        .map(packed_group)
+                        .unwrap_or(Type::ONE);
                     let expected = argument_dual.dual();
                     let shape = args.first().map(|a| a.kind.clone());
                     if !fits(env, &expected, &packed, shape.as_ref().unwrap_or(&e.kind)) {
@@ -2327,13 +2311,14 @@ fn check_expr_unapplied(
                 // No `else`: the then-branch's value is discarded and the
                 // false path yields unit, so the `if` is a unit statement —
                 // never `⊥`, even when the then-branch ends in a cut.
-                return Some(Type::One);
+                return Some(Type::ONE);
             };
             let else_ty = check_expr(otherwise, enums, env, diags);
             // A branch that ends in a cut never returns, so it constrains
             // nothing: the `if` has the type of the branch that does return.
             match (then_ty, else_ty) {
-                (Some(Type::Bottom), other) | (other, Some(Type::Bottom)) => other,
+                (Some(then_ty), else_ty) if then_ty == Type::BOTTOM => else_ty,
+                (then_ty, Some(else_ty)) if else_ty == Type::BOTTOM => then_ty,
                 (Some(then_ty), Some(else_ty)) => {
                     if env.uni.unify(&then_ty, &else_ty).is_err() {
                         let then_ty = env.uni.apply(&then_ty);
@@ -2634,14 +2619,14 @@ fn check_expr_unapplied(
                     Some((n.clone(), args))
                 }
                 // `(&)`: the empty menu, ⊤ itself, which answers no demand.
-                Some(TypeExpr::Top) => {
+                Some(TypeExpr::With(items)) if items.is_empty() => {
                     if !arms.is_empty() {
                         diags.push(Diagnostic {
                             message: "`(&)` is the empty menu, which answers no demand".into(),
                             span: e.span,
                         });
                     }
-                    return Some(Type::Top);
+                    return Some(Type::TOP);
                 }
                 Some(_) => {
                     diags.push(Diagnostic {
@@ -2738,8 +2723,8 @@ fn check_expr_unapplied(
                     bind_select_arm(&demand, &arm.pattern, enums, env, e.span, diags);
                     let command = check_expr(&arm.command, enums, env, diags);
                     if let Some(command) = command
-                        && command != Type::Bottom
-                        && command != Type::One
+                        && command != Type::BOTTOM
+                        && command != Type::ONE
                     {
                         diags.push(Diagnostic {
                             message: format!(
@@ -2779,8 +2764,8 @@ fn check_expr_unapplied(
                 bind_select_arm(&consumed, &arm.pattern, enums, env, e.span, diags);
                 let command = check_expr(&arm.command, enums, env, diags);
                 if let Some(command) = command
-                    && command != Type::Bottom
-                    && command != Type::One
+                    && command != Type::BOTTOM
+                    && command != Type::ONE
                 {
                     diags.push(Diagnostic {
                         message: format!(
@@ -2812,7 +2797,7 @@ fn check_expr_unapplied(
                 return None;
             }
             let type_args = fresh_args(enums, &menu, &mut env.uni);
-            let expected = payload.first().cloned().unwrap_or(Type::One).instantiate(&type_args);
+            let expected = payload.first().cloned().unwrap_or(Type::ONE).instantiate(&type_args);
             if let Some(actual) = check_expr(arg, enums, env, diags)
                 && !fits_turning(env, &expected, &actual, arg)
             {
@@ -2835,7 +2820,14 @@ fn check_expr_unapplied(
                     let components = tensor_spine(&base_ty);
                     match components.get(*i) {
                         Some(ty) => {
-                            env.dispatch.projections.insert(e.span, *i);
+                            env.dispatch.projections.insert(
+                                e.span,
+                                slc_syntax::lower::Projection {
+                                    index: *i,
+                                    arity: components.len(),
+                                    record: None,
+                                },
+                            );
                             Some(ty.clone())
                         }
                         None => {
@@ -2869,7 +2861,7 @@ fn check_expr_unapplied(
                                     payload
                                         .first()
                                         .cloned()
-                                        .unwrap_or(Type::One)
+                                        .unwrap_or(Type::ONE)
                                         .instantiate(&args)
                                         .dual(),
                                 )
@@ -2911,7 +2903,14 @@ fn check_expr_unapplied(
                     match enums.records.get(record_name) {
                         Some(fields) => match fields.iter().position(|(f, _)| f == name) {
                             Some(index) => {
-                                env.dispatch.projections.insert(e.span, index);
+                                env.dispatch.projections.insert(
+                                    e.span,
+                                    slc_syntax::lower::Projection {
+                                        index,
+                                        arity: fields.len(),
+                                        record: Some(record_name.clone()),
+                                    },
+                                );
                                 Some(fields[index].1.instantiate(scrutinee_args(&base_ty)))
                             }
                             None => {
@@ -2963,15 +2962,11 @@ fn check_expr_unapplied(
             }
         }
         // `::i(v)` — one alternative of a sum. Which sum is the context's to
-        // say, so the position is resolved once the declaration's
-        // unification is done; only the left alternative is known already.
+        // say; once the declaration's unification is done, the payload meets
+        // the alternative at its position, if the sum is known by then.
         Expr::Inject { index, value } => {
             let payload = check_expr(value, enums, env, diags)?;
-            let sum = if *index == 0 {
-                Type::Sum(Box::new(payload.clone()), Box::new(env.uni.fresh_var()))
-            } else {
-                env.uni.fresh_var()
-            };
+            let sum = env.uni.fresh_var();
             env.pending_injections.push(crate::env::PendingInjection {
                 span: e.span,
                 index: *index,
@@ -2990,7 +2985,7 @@ fn check_expr_unapplied(
                 .collect::<Option<Vec<_>>>()?;
             env.pending_pars
                 .push(crate::env::PendingPar { span: e.span, components: types.clone() });
-            types.into_iter().rev().reduce(|acc, ty| Type::Par(Box::new(ty), Box::new(acc)))
+            Some(Type::Par(types))
         }
         // A bundle of exits: every component is supplied, and whoever
         // holds it takes exactly one — the additive conjunction.
@@ -2998,17 +2993,13 @@ fn check_expr_unapplied(
             .iter()
             .map(|item| check_expr(item, enums, env, diags))
             .collect::<Option<Vec<_>>>()
-            .map(|types| {
-                types.into_iter().rev().reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)))
-            })?,
-        Expr::Pair(items) if items.is_empty() => Some(Type::One),
+            .map(Type::With),
+        Expr::Pair(items) if items.is_empty() => Some(Type::ONE),
         Expr::Pair(items) => items
             .iter()
             .map(|item| check_expr(item, enums, env, diags))
             .collect::<Option<Vec<_>>>()
-            .map(|types| {
-                types.into_iter().rev().reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-            })?,
+            .map(packed_group),
         Expr::Block(exprs) => {
             let mut result = None;
             env.push();
@@ -3044,7 +3035,7 @@ fn check_expr_unapplied(
                 && types
                     .first()
                     .and_then(|ty| ty.as_ref())
-                    .is_some_and(|ty| matches!(ty, Type::Par(..)));
+                    .is_some_and(|ty| matches!(ty, Type::Par(parts) if !parts.is_empty()));
             let entry = env.uni.fresh_var();
             let mut acc = if opens {
                 entry.clone()
@@ -3078,22 +3069,12 @@ fn check_expr_unapplied(
                     // in it. A negative function also carries a continuation
                     // but answers a consumer, and composes on — that is the
                     // commuted ⅋ reading below.
-                    && signature.result.as_ref() == Some(&Type::Bottom)
+                    && signature.result.as_ref() == Some(&Type::BOTTOM)
                 {
                     let (signature, _) = instantiate(signature, &mut env.uni);
                     let split = signature.continuations.iter().filter(|c| !**c).count();
-                    let values = signature.params[..split]
-                        .iter()
-                        .rev()
-                        .cloned()
-                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                        .unwrap_or(Type::One);
-                    let row = signature.params[split..]
-                        .iter()
-                        .rev()
-                        .cloned()
-                        .reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)))
-                        .unwrap_or(Type::One);
+                    let values = packed_group(signature.params[..split].iter().cloned());
+                    let row = exit_row(signature.params[split..].iter().cloned());
                     if !signature.builtin && !fits(env, &values, &acc, shape) {
                         let values = env.uni.apply(&values);
                         diags.push(Diagnostic {
@@ -3116,7 +3097,7 @@ fn check_expr_unapplied(
                         });
                     }
                     row_stage = Some(index);
-                    acc = Type::Bottom;
+                    acc = Type::BOTTOM;
                     break;
                 }
                 // A declared function is checked through its signature, as
@@ -3136,15 +3117,9 @@ fn check_expr_unapplied(
                         // call, so probe with an instantiated copy.
                         let mut probe = env.uni.clone();
                         let fresh = instantiate(signature, &mut probe).0;
-                        let packed = fresh
-                            .params
-                            .iter()
-                            .rev()
-                            .cloned()
-                            .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                            // No parameters is the empty product: `(,) | f`
-                            // is how a nullary declaration is called.
-                            .unwrap_or(Type::One);
+                        // No parameters is the empty product: `(,) | f` is
+                        // how a nullary declaration is called.
+                        let packed = packed_group(fresh.params.iter().cloned());
                         let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
                         let probe = Env { uni: probe, ..env.clone() };
                         signature.builtin
@@ -3154,13 +3129,7 @@ fn check_expr_unapplied(
                     }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
-                    let packed = signature
-                        .params
-                        .iter()
-                        .rev()
-                        .cloned()
-                        .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                        .unwrap_or(Type::One);
+                    let packed = packed_group(signature.params.iter().cloned());
                     // A tuple written in place is checked component by
                     // component, so an integer literal still takes the
                     // width its slot requires.
@@ -3206,7 +3175,7 @@ fn check_expr_unapplied(
                             bounds,
                         });
                     }
-                    acc = signature.result.map(|ty| env.uni.apply(&ty)).unwrap_or(Type::One);
+                    acc = signature.result.map(|ty| env.uni.apply(&ty)).unwrap_or(Type::ONE);
                     flowing = None;
                     continue;
                 }
@@ -3229,7 +3198,7 @@ fn check_expr_unapplied(
                     // mistake. A function and codata are negative *values*
                     // and flow in like any other.
                     if acc.is_negative()
-                        && !matches!(acc, Type::Par(..))
+                        && !matches!(acc, Type::Par(ref parts) if !parts.is_empty())
                         && !contains_var(&acc)
                         && !enums.is_negative_value(&acc)
                     {
@@ -3240,12 +3209,12 @@ fn check_expr_unapplied(
                             ),
                             span: stages[index].span,
                         });
-                        return Some(Type::Bottom);
+                        return Some(Type::BOTTOM);
                     }
                     let expects = ty.dual();
                     // The ⊥/1 corner: `-⊥` resolves to `1`, so the
                     // idiomatic `⟨(,) | k⟩` is unit meeting unit.
-                    let units = acc == Type::One && ty == &Type::One;
+                    let units = acc == Type::ONE && ty == &Type::ONE;
                     let before = env.uni.clone();
                     if !units && !fits(env, &expects, &acc, shape) {
                         // The forward reading failed; whatever it bound is
@@ -3265,7 +3234,7 @@ fn check_expr_unapplied(
                             }
                         }
                     }
-                    acc = Type::Bottom;
+                    acc = Type::BOTTOM;
                     continue;
                 }
                 // A function: what flows in is its argument, its result
@@ -3308,15 +3277,14 @@ fn check_expr_unapplied(
                     let values_fit = {
                         let mut probe = env.uni.clone();
                         let (fresh, _) = instantiate(signature, &mut probe);
-                        let packed = fresh
-                            .params
-                            .iter()
-                            .zip(&fresh.continuations)
-                            .filter(|(_, is_row)| !**is_row)
-                            .map(|(ty, _)| ty.clone())
-                            .rev()
-                            .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
-                            .unwrap_or(Type::One);
+                        let packed = packed_group(
+                            fresh
+                                .params
+                                .iter()
+                                .zip(&fresh.continuations)
+                                .filter(|(_, is_row)| !**is_row)
+                                .map(|(ty, _)| ty.clone()),
+                        );
                         let probe = Env { uni: probe, ..env.clone() };
                         would_fit(&probe, &packed, &acc, Some(shape))
                     };
@@ -3341,7 +3309,7 @@ fn check_expr_unapplied(
                 }
                 let left = env.uni.fresh_var();
                 let right = env.uni.fresh_var();
-                let par = Type::Par(Box::new(left.clone()), Box::new(right.clone()));
+                let par = Type::Par(vec![left.clone(), right.clone()]);
                 if env.uni.unify(ty, &par).is_err() {
                     diags.push(Diagnostic {
                         message: format!(
@@ -3461,7 +3429,8 @@ mod tests {
             check(
                 "data P { x: +i64, y: +i64 }
                  fn f(p: +P) -> i64 { p.x + p.y }
-                 fn g(t: (+i64, (+i64, +i64))) -> i64 { t.0 + t.2 }"
+                 fn g(t: (+i64, +i64, +i64)) -> i64 { t.0 + t.2 }
+                 fn h(t: (+i64, (+i64, +i64))) -> (+i64, +i64) { t.1 }"
             )
             .is_ok()
         );

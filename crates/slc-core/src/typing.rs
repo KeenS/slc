@@ -126,14 +126,14 @@ impl Unification {
                 Some(t) => self.apply(t),
                 None => ty.clone(),
             },
-            Type::Tensor(a, b) => Type::Tensor(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            Type::Par(a, b) => Type::Par(Box::new(self.apply(a)), Box::new(self.apply(b))),
+            Type::Tensor(xs) => Type::Tensor(xs.iter().map(|x| self.apply(x)).collect()),
+            Type::Par(xs) => Type::Par(xs.iter().map(|x| self.apply(x)).collect()),
             // Dual is an involution, so the substitution reduces it: once
             // `?a` is known to be `-i64`, `dual(?a)` *is* `+i64`, and only a
             // still-unknown inner keeps the wrapper.
             Type::Dual(t) => self.apply(t).dual(),
-            Type::With(a, b) => Type::With(Box::new(self.apply(a)), Box::new(self.apply(b))),
-            Type::Sum(a, b) => Type::Sum(Box::new(self.apply(a)), Box::new(self.apply(b))),
+            Type::With(xs) => Type::With(xs.iter().map(|x| self.apply(x)).collect()),
+            Type::Sum(xs) => Type::Sum(xs.iter().map(|x| self.apply(x)).collect()),
             Type::Named(name, args) => {
                 Type::Named(name.clone(), args.iter().map(|a| self.apply(a)).collect())
             }
@@ -146,8 +146,8 @@ impl Unification {
             Type::Var(v) => {
                 *v == var || self.substitutions.get(v).is_some_and(|t| self.occurs(var, t))
             }
-            Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
-                self.occurs(var, a) || self.occurs(var, b)
+            Type::Tensor(xs) | Type::Par(xs) | Type::With(xs) | Type::Sum(xs) => {
+                xs.iter().any(|x| self.occurs(var, x))
             }
             Type::Dual(t) => self.occurs(var, t),
             Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
@@ -184,10 +184,18 @@ impl Unification {
             }
             // `1` and `+unit` are one type written twice: `()` is the only
             // value of either.
-            (Type::One, Type::Pos(crate::types::Base::Unit))
-            | (Type::Pos(crate::types::Base::Unit), Type::One) => Ok(Type::One),
-            (Type::Bottom, Type::Neg(crate::types::Base::Unit))
-            | (Type::Neg(crate::types::Base::Unit), Type::Bottom) => Ok(Type::Bottom),
+            (Type::Tensor(xs), Type::Pos(crate::types::Base::Unit))
+            | (Type::Pos(crate::types::Base::Unit), Type::Tensor(xs))
+                if xs.is_empty() =>
+            {
+                Ok(Type::ONE)
+            }
+            (Type::Par(xs), Type::Neg(crate::types::Base::Unit))
+            | (Type::Neg(crate::types::Base::Unit), Type::Par(xs))
+                if xs.is_empty() =>
+            {
+                Ok(Type::BOTTOM)
+            }
             (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
             // `X` meets `dual(B)`.
@@ -203,18 +211,25 @@ impl Unification {
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Named(a.clone(), args))
             }
-            (Type::Tensor(a1, a2), Type::Tensor(b1, b2))
-            | (Type::Par(a1, a2), Type::Par(b1, b2))
-            | (Type::Sum(a1, a2), Type::Sum(b1, b2))
-            | (Type::With(a1, a2), Type::With(b1, b2)) => {
-                let left = self.unify(a1, b1)?;
-                let right = self.unify(a2, b2)?;
-                match (&expected, &actual) {
-                    (Type::Tensor(..), _) => Ok(Type::Tensor(Box::new(left), Box::new(right))),
-                    (Type::Par(..), _) => Ok(Type::Par(Box::new(left), Box::new(right))),
-                    (Type::Sum(..), _) => Ok(Type::Sum(Box::new(left), Box::new(right))),
-                    _ => Ok(Type::With(Box::new(left), Box::new(right))),
-                }
+            // The same connective over as many components: componentwise.
+            // Nesting is significant, so a count that differs is a mismatch.
+            (Type::Tensor(xs), Type::Tensor(ys))
+            | (Type::Par(xs), Type::Par(ys))
+            | (Type::Sum(xs), Type::Sum(ys))
+            | (Type::With(xs), Type::With(ys))
+                if xs.len() == ys.len() =>
+            {
+                let components = xs
+                    .iter()
+                    .zip(ys)
+                    .map(|(x, y)| self.unify(x, y))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(match &expected {
+                    Type::Tensor(_) => Type::Tensor(components),
+                    Type::Par(_) => Type::Par(components),
+                    Type::Sum(_) => Type::Sum(components),
+                    _ => Type::With(components),
+                })
             }
             (a, b) if a == b => Ok(a.clone()),
             (a, b) => Err(TypeError::Mismatch { expected: a.clone(), actual: b.clone() }),
@@ -252,8 +267,8 @@ impl Unification {
 pub fn contains_var(ty: &Type) -> bool {
     match ty {
         Type::Var(_) => true,
-        Type::Tensor(a, b) | Type::Par(a, b) | Type::With(a, b) | Type::Sum(a, b) => {
-            contains_var(a) || contains_var(b)
+        Type::Tensor(xs) | Type::Par(xs) | Type::With(xs) | Type::Sum(xs) => {
+            xs.iter().any(contains_var)
         }
 
         Type::Dual(t) => contains_var(t),
@@ -288,11 +303,12 @@ pub fn infer_term(
             Ok(at.dual())
         }
 
-        Term::Pair(t1, t2) => {
-            let a = infer_term(t1, gamma, delta)?;
-            let b = infer_term(t2, gamma, delta)?;
-            Ok(Type::Tensor(Box::new(a), Box::new(b)))
-        }
+        Term::Tuple(items) => Ok(Type::Tensor(
+            items
+                .iter()
+                .map(|item| infer_term(item, gamma, delta))
+                .collect::<Result<Vec<_>, _>>()?,
+        )),
 
         Term::Tag(label, payload) => {
             // A labelled injection belongs to the declaration that owns the
@@ -304,7 +320,7 @@ pub fn infer_term(
         Term::CoMatch { owner, branches } => {
             // `(&)`: the empty menu is ⊤ itself, not a declaration.
             if owner == "(&)" && branches.is_empty() {
-                return Ok(Type::Top);
+                return Ok(Type::TOP);
             }
             // A menu value inhabits the named negative type its destructors
             // belong to. Every branch must belong to the same declaration.
@@ -317,7 +333,7 @@ pub fn infer_term(
                 }
                 // The request's continuation scopes over the branch body only.
                 let shadowed = delta.lookup(&branch.binder).cloned();
-                delta.insert(branch.binder.clone(), Type::Bottom);
+                delta.insert(branch.binder.clone(), Type::BOTTOM);
                 let result = infer_command(&branch.body, gamma, delta);
                 match shadowed {
                     Some(ty) => delta.insert(branch.binder.clone(), ty),
@@ -369,7 +385,7 @@ pub fn infer_coterm(
         CoTerm::CoCase { owner, branches } => {
             // `(|)`: the consumer with no arms refutes 0 itself.
             if owner == "(|)" && branches.is_empty() {
-                return Ok(Type::Zero);
+                return Ok(Type::ZERO);
             }
             // A negative additive consumer refutes the named type its labels
             // belong to. Every branch must belong to the same declaration.
@@ -387,7 +403,7 @@ pub fn infer_coterm(
                     .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
                     .collect();
                 for binder in &branch.binders {
-                    gamma.insert(binder.clone(), Type::One);
+                    gamma.insert(binder.clone(), Type::ONE);
                 }
                 let result = infer_command(&branch.body, gamma, delta);
                 for (binder, previous) in shadowed {
@@ -415,7 +431,7 @@ pub fn infer_coterm(
                 .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
                 .collect();
             for binder in binders {
-                gamma.insert(binder.clone(), Type::One);
+                gamma.insert(binder.clone(), Type::ONE);
             }
             let result = infer_command(body, gamma, delta);
             for (binder, previous) in shadowed {
@@ -425,14 +441,13 @@ pub fn infer_coterm(
                 }
             }
             result?;
-            Ok(binders
-                .iter()
-                .map(|_| Type::One)
-                .reduce(|acc, ty| Type::Tensor(Box::new(acc), Box::new(ty)))
-                .unwrap_or(Type::One))
+            Ok(match binders.len() {
+                1 => Type::ONE,
+                n => Type::Tensor(vec![Type::ONE; n]),
+            })
         }
 
-        CoTerm::Prj(_) => Ok(Type::arrow(Type::One, Type::One)),
+        CoTerm::Prj(_) => Ok(Type::arrow(Type::ONE, Type::ONE)),
     }
 }
 
@@ -465,7 +480,7 @@ mod tests {
     fn labelled_injection_has_its_declaration_type() {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
-        g.insert("v".into(), Type::One);
+        g.insert("v".into(), Type::ONE);
         let value = Term::Tag("Color::Red".into(), Box::new(Term::Var("v".into())));
         assert_eq!(infer_term(&value, &mut g, &mut d), Ok(Type::Named("Color".into(), Vec::new())));
     }
@@ -523,7 +538,7 @@ mod tests {
     fn negative_additive_consumer_rejects_mixed_declarations() {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
-        g.insert("x".into(), Type::One);
+        g.insert("x".into(), Type::ONE);
         let mixed = CoTerm::CoCase {
             owner: "Color".into(),
             branches: vec![
@@ -539,7 +554,7 @@ mod tests {
                 },
             ],
         };
-        d.insert("k".into(), Type::Bottom);
+        d.insert("k".into(), Type::BOTTOM);
         assert!(matches!(infer_coterm(&mixed, &mut g, &mut d), Err(TypeError::Arity(_))));
     }
 
@@ -569,7 +584,7 @@ mod tests {
             Err(TypeError::Mismatch { .. })
         ));
         assert!(matches!(
-            u.unify(&Type::Named("Point".into(), Vec::new()), &Type::One),
+            u.unify(&Type::Named("Point".into(), Vec::new()), &Type::ONE),
             Err(TypeError::Mismatch { .. })
         ));
     }
@@ -588,9 +603,9 @@ mod tests {
         let mut d = CoTermContext::new();
         g.insert("x".into(), pos_i32());
         g.insert("y".into(), Type::Pos(Base::Bool));
-        let t = Term::Pair(Box::new(Term::Var("x".into())), Box::new(Term::Var("y".into())));
+        let t = Term::Tuple(vec![Term::Var("x".into()), Term::Var("y".into())]);
         let ty = infer_term(&t, &mut g, &mut d).unwrap();
-        assert_eq!(ty, Type::Tensor(Box::new(pos_i32()), Box::new(Type::Pos(Base::Bool))));
+        assert_eq!(ty, Type::Tensor(vec![pos_i32(), Type::Pos(Base::Bool)]));
     }
 
     #[test]
@@ -631,8 +646,8 @@ mod tests {
         // `()` is `1`, and the written type `unit` is `+unit`; a value of
         // one is a value of the other.
         let mut u = Unification::new();
-        assert!(u.unify(&Type::One, &Type::Pos(Base::Unit)).is_ok());
-        assert!(u.unify(&Type::Neg(Base::Unit), &Type::Bottom).is_ok());
+        assert!(u.unify(&Type::ONE, &Type::Pos(Base::Unit)).is_ok());
+        assert!(u.unify(&Type::Neg(Base::Unit), &Type::BOTTOM).is_ok());
     }
 
     #[test]

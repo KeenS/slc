@@ -137,27 +137,27 @@ pub fn variant_type(
     })
 }
 
-/// The tensor representation of a struct declaration: the right-nested
-/// product of its field types. A struct with no fields is the tensor unit.
+/// The tensor representation of a struct declaration: the product of its
+/// field types. A struct with no fields is the tensor unit.
 pub fn record_representation(
     fields: &[(String, slc_syntax::ast::TypeExpr)],
 ) -> Result<Type, InferenceError> {
     let types: Vec<slc_syntax::ast::TypeExpr> = fields.iter().map(|(_, ty)| ty.clone()).collect();
-    Ok(pack(&types)?.unwrap_or(Type::One))
+    Ok(pack(&types)?.unwrap_or(Type::ONE))
 }
 
 /// Pack a list of declared types into one type: nothing, the single type, or
-/// a right-nested tensor.
+/// their tensor.
 fn pack(types: &[slc_syntax::ast::TypeExpr]) -> Result<Option<Type>, InferenceError> {
-    let mut packed: Option<Type> = None;
-    for ty in types.iter().rev() {
-        let ty = lower_type(ty)?;
-        packed = Some(match packed {
-            None => ty,
-            Some(rest) => Type::Tensor(Box::new(ty), Box::new(rest)),
-        });
+    let mut lowered = Vec::new();
+    for ty in types {
+        lowered.push(lower_type(ty)?);
     }
-    Ok(packed)
+    Ok(match lowered.len() {
+        0 => None,
+        1 => lowered.pop(),
+        _ => Some(Type::Tensor(lowered)),
+    })
 }
 
 /// A declaration is an interface, so every parameter of one carries a type.
@@ -232,7 +232,7 @@ fn infer_decl(
                     lower_type(p.ty.as_ref().ok_or_else(|| missing_parameter_type(p, d.span))?)?;
                 inputs.push(u.unify_with_polarity(&ty, &ty, false)?);
             }
-            let output = Type::Bottom;
+            let output = Type::BOTTOM;
             let ty = inputs.into_iter().rev().fold(output, Type::arrow_from);
             let ty = u.resolve_or_cannot_infer(&ty, &format!("command {name}"))?;
             Ok(DeclarationType { name: name.clone(), ty })
@@ -253,10 +253,10 @@ fn infer_decl(
         }
         // Resolved away before inference runs.
         Decl::Mod { name, .. } | Decl::Trait { name, .. } | Decl::Effect { name, .. } => {
-            Ok(DeclarationType { name: name.clone(), ty: Type::One })
+            Ok(DeclarationType { name: name.clone(), ty: Type::ONE })
         }
         Decl::Use { .. } | Decl::Impl { .. } => {
-            Ok(DeclarationType { name: String::new(), ty: Type::One })
+            Ok(DeclarationType { name: String::new(), ty: Type::ONE })
         }
     }
 }
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(
             ty("Shape::Rect"),
             Type::arrow(
-                Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
+                Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::I64)]),
                 Type::Named("Shape".into(), Vec::new())
             )
         );
@@ -360,14 +360,14 @@ mod tests {
         };
         assert_eq!(
             record_representation(&fields("data D { left: i64, right: bool }")).unwrap(),
-            Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::Bool)))
+            Type::Tensor(vec![Type::Pos(Base::I64), Type::Pos(Base::Bool)])
         );
         assert_eq!(
             record_representation(&fields("data One { only: i64 }")).unwrap(),
             Type::Pos(Base::I64)
         );
         // The empty product is the tensor unit.
-        assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::One);
+        assert_eq!(record_representation(&fields("data Empty { }")).unwrap(), Type::ONE);
         // The declaration itself keeps its opaque named type.
         let out = infer("data D { left: i64, right: bool }").unwrap();
         assert_eq!(out[0].ty, Type::Named("D".into(), Vec::new()));
@@ -427,7 +427,7 @@ mod tests {
         let out = infer("command step(x: +i32) | (k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
-            Type::arrow(Type::Pos(Base::I32), Type::arrow(Type::Neg(Base::I32), Type::Bottom))
+            Type::arrow(Type::Pos(Base::I32), Type::arrow(Type::Neg(Base::I32), Type::BOTTOM))
         );
     }
 

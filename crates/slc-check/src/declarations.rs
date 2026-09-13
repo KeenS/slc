@@ -79,20 +79,18 @@ impl Declarations {
                 }
             }
             TypeExpr::Positive(inner) => resolve(&inner.kind)?,
-            TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
-                resolve(&inner.kind)?.dual()
+            TypeExpr::Negative(inner) if !inner.kind.is_bottom() => resolve(&inner.kind)?.dual(),
+            TypeExpr::Tensor(items) => {
+                Type::Tensor(items.iter().map(|item| resolve(&item.kind)).collect::<Option<_>>()?)
             }
-            TypeExpr::Tensor(a, b) => {
-                Type::Tensor(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
+            TypeExpr::Par(items) => {
+                Type::Par(items.iter().map(|item| resolve(&item.kind)).collect::<Option<_>>()?)
             }
-            TypeExpr::Par(a, b) => {
-                Type::Par(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
+            TypeExpr::With(items) => {
+                Type::With(items.iter().map(|item| resolve(&item.kind)).collect::<Option<_>>()?)
             }
-            TypeExpr::With(a, b) => {
-                Type::With(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
-            }
-            TypeExpr::Sum(a, b) => {
-                Type::Sum(Box::new(resolve(&a.kind)?), Box::new(resolve(&b.kind)?))
+            TypeExpr::Sum(items) => {
+                Type::Sum(items.iter().map(|item| resolve(&item.kind)).collect::<Option<_>>()?)
             }
             // `A → B` is `-A ⅋ B`.
             TypeExpr::Fun(a, b) => Type::arrow(resolve(&a.kind)?, resolve(&b.kind)?),
@@ -243,7 +241,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
                 fields
                     .iter()
                     .map(|(field, ty)| {
-                        (field.clone(), enums.resolve_in(ty, &params).unwrap_or(Type::One))
+                        (field.clone(), enums.resolve_in(ty, &params).unwrap_or(Type::ONE))
                     })
                     .collect(),
             );
@@ -256,7 +254,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             enums.variants.insert(name.clone(), items.iter().map(|(i, _)| i.clone()).collect());
             for (item, answer) in items {
                 let label = format!("{name}::{item}");
-                let answer = enums.resolve_in(answer, &params).unwrap_or(Type::One);
+                let answer = enums.resolve_in(answer, &params).unwrap_or(Type::ONE);
                 enums.signatures.insert(label.clone(), (name.clone(), vec![answer.dual()]));
                 enums
                     .destructors
@@ -273,7 +271,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             let label = format!("{name}::{variant}");
             let payload = payload
                 .iter()
-                .map(|ty| enums.resolve_in(ty, &params).unwrap_or(Type::One))
+                .map(|ty| enums.resolve_in(ty, &params).unwrap_or(Type::ONE))
                 .collect::<Vec<_>>();
             enums.signatures.insert(label.clone(), (name.clone(), payload));
             enums

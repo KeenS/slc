@@ -5,18 +5,10 @@ use crate::coterm::CoTerm;
 use crate::substitution::{subst_command, subst_covar_command};
 use crate::term::Term;
 
-/// The `index`-th component of a right-nested product: walk `index` tails,
-/// then take the head, or the whole remainder when it is the bare last.
+/// The `index`-th component of a tuple.
 fn project_term(product: &Term, index: usize) -> Option<Term> {
-    let mut current = product;
-    for _ in 0..index {
-        let Term::Pair(_, tail) = current else { return None };
-        current = tail;
-    }
-    match current {
-        Term::Pair(head, _) => Some((**head).clone()),
-        last => Some(last.clone()),
-    }
+    let Term::Tuple(items) = product else { return None };
+    items.get(index).cloned()
 }
 
 /// A single reduction step result.
@@ -108,10 +100,8 @@ pub fn step(c: &Command) -> Step {
             Step::Reduced(Command::Cut(v.clone(), (**consumer).clone()))
         }
 
-        // Projection: ⟨ (t₀ ⊗ … ) ∥ prj:i ⟩ → tᵢ. Walk `i` tails along the
-        // right-nested spine, then take the head — or the whole remainder
-        // when it is the bare last component.
-        Command::Cut(product @ Term::Pair(..), CoTerm::Prj(index)) => {
+        // Projection: ⟨ (t₀ ⊗ … ⊗ tₙ) ∥ prj:i ⟩ → tᵢ.
+        Command::Cut(product @ Term::Tuple(..), CoTerm::Prj(index)) => {
             match project_term(product, *index) {
                 Some(t) => Step::Reduced(Command::Cut(t, CoTerm::Covar("□".into()))),
                 None => Step::Normal,
@@ -122,21 +112,21 @@ pub fn step(c: &Command) -> Step {
     }
 }
 
-/// Substitute the components of a right-nested tensor for a list of binders.
-/// The last binder takes whatever remains, so `n` binders split `v₁ ⊗ (v₂ ⊗ v₃)`
-/// into exactly `n` parts.
+/// Substitute a product's components for a list of binders: one binder takes
+/// the whole value, none take the unit, and several take a tuple's components
+/// by position — as many binders as components.
 fn bind_components(binders: &[String], value: &Term, body: &Command) -> Option<Command> {
+    if let [binder] = binders {
+        return Some(subst_command(binder, value, body));
+    }
+    let components: &[Term] = match value {
+        Term::Tuple(items) if items.len() == binders.len() => items,
+        _ if binders.is_empty() => &[],
+        _ => return None,
+    };
     let mut command = body.clone();
-    let mut rest = value.clone();
-    for (index, binder) in binders.iter().enumerate() {
-        if index + 1 == binders.len() {
-            return Some(subst_command(binder, &rest, &command));
-        }
-        let Term::Pair(head, tail) = rest else {
-            return None;
-        };
-        command = subst_command(binder, &head, &command);
-        rest = *tail;
+    for (binder, component) in binders.iter().zip(components) {
+        command = subst_command(binder, component, &command);
     }
     Some(command)
 }
@@ -213,7 +203,7 @@ mod tests {
 
     #[test]
     fn tensor_projection() {
-        let pair = Term::Pair(Box::new(Term::Var("a".into())), Box::new(Term::Var("b".into())));
+        let pair = Term::Tuple(vec![Term::Var("a".into()), Term::Var("b".into())]);
         match step(&Command::Cut(pair.clone(), CoTerm::Prj(0))) {
             Step::Reduced(Command::Cut(Term::Var(v), _)) => assert_eq!(v, "a"),
             _ => panic!("expected projection to `a`"),

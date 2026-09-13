@@ -26,8 +26,8 @@ pub enum CoTerm {
     App(Term, Box<CoTerm>),
     /// Value abstraction: `μ̃x.c`.
     MuTilde(String, Box<Command>),
-    /// Projection of the `index`-th component of a right-nested product,
-    /// counted along the spine (the last component is stored bare).
+    /// Projection of the `index`-th component of a tuple — of a record's
+    /// payload, once its label is set aside.
     Prj(usize),
     /// Labelled consumer: `μ̃[M; L₁(x…). c₁ | … | Lₙ(x…). cₙ]`.
     ///

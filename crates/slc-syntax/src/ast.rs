@@ -252,24 +252,27 @@ pub enum TypeExpr {
     Apply(String, Vec<Node<TypeExpr>>),
     Positive(Box<Node<TypeExpr>>),
     Negative(Box<Node<TypeExpr>>),
-    Tensor(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
-    Par(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
-    /// The additive conjunction, `(A & B)`: a menu of two items, written
-    /// anonymously. A continuation row is one of these.
-    With(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
-    /// The additive disjunction, `(A | B)`: an enum of two alternatives,
-    /// written anonymously.
-    Sum(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
+    /// `(A, B, …)`: a product of any number of components; `(,)` is the
+    /// product of none. Nesting is significant: `(A, (B, C))` has two.
+    Tensor(Vec<Node<TypeExpr>>),
+    /// `(A ; B ; …)`: the negative product; `(;)`, of none, is ⊥.
+    Par(Vec<Node<TypeExpr>>),
+    /// `(A & B & …)`: a menu of anonymous items; `(&)` is ⊤. A continuation
+    /// row is one of these.
+    With(Vec<Node<TypeExpr>>),
+    /// `(A | B | …)`: an enum of anonymous alternatives; `(|)` is 0.
+    Sum(Vec<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
     Effectful(Box<Node<TypeExpr>>, EffectRow),
     Dual(Box<Node<TypeExpr>>),
-    Unit,
-    Bottom,
-    /// `(|)`: the empty sum, 0.
-    Zero,
-    /// `(&)`: the empty menu, ⊤.
-    Top,
+}
+
+impl TypeExpr {
+    /// Is this `(;)` — ⊥, what a command is?
+    pub fn is_bottom(&self) -> bool {
+        matches!(self, TypeExpr::Par(items) if items.is_empty())
+    }
 }
 
 /// An effect row: the concrete effects, and the declared row variables —

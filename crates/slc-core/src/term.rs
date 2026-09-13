@@ -27,8 +27,9 @@ pub enum Term {
     Lam(String, Box<Term>),
     /// μ abstraction: `μα.c`.
     Mu(String, Box<Command>),
-    /// Tensor pair: `t1 ⊗ t2`.
-    Pair(Box<Term>, Box<Term>),
+    /// Tuple: `t₁ ⊗ … ⊗ tₙ`, the value of a product of at least two components —
+    /// a product of one is its component, and of none the unit.
+    Tuple(Vec<Term>),
     /// Labelled additive injection: `L(t)`. An `enum` value is a labelled
     /// injection; the label is the fully qualified
     /// variant name and the argument is the variant payload.

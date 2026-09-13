@@ -112,7 +112,8 @@ fn check_expr(
                 return;
             }
             // `(|)` has no values, so its consumer has no arms.
-            if matches!(ty.as_deref().map(|ty| &ty.kind), Some(slc_syntax::ast::TypeExpr::Zero)) {
+            if matches!(ty.as_deref().map(|ty| &ty.kind), Some(slc_syntax::ast::TypeExpr::Sum(items)) if items.is_empty())
+            {
                 if !arms.is_empty() {
                     diags.push(Diagnostic {
                         message: "`(|)` has no values, so `select (|)` has no arms".into(),
@@ -343,7 +344,7 @@ fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
     match ty {
         slc_syntax::ast::TypeExpr::Base(name) => Some(name.clone()),
         slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
-        slc_syntax::ast::TypeExpr::Zero => Some("(|)".into()),
+        slc_syntax::ast::TypeExpr::Sum(items) if items.is_empty() => Some("(|)".into()),
         _ => None,
     }
 }

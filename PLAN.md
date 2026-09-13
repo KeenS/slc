@@ -61,16 +61,15 @@ feature is mid-flight; what remains open is below.
   outcome shape). Doing it needs a resumption point that dispatches on the
   outcome, which is a frame the machine does not have yet.
 
-- **An alternative's position needs its sum by the end of its declaration.**
-  `::i(v)` is resolved against the sum its context gives — a return type, an
-  annotation, a parameter, a cut — once the declaration is checked; where
-  nothing has said which sum it is, `::1(v)` and later are refused, and only
-  `::0(v)` stands. An injection pattern is taken apart at the top of an arm
-  only: `::0(::1(x))` is refused, and the payload is matched inside the arm.
-
 ## Next
 
-Nothing is queued.
+**Multiarity connectives.** `Tensor`, `Par`, `With` and `Sum` hold any
+number of components, and 1, ⊥, 0 and ⊤ are their empty forms. Nesting is
+significant: `(A, (B, C))` is not `(A, B, C)`, nor `(A | (B | C))`
+`(A | B | C)`. In order:
+
+1. **Docs.** DESIGN (projection, §8, the core grammar), MIGRATION (nesting
+   is significant), and the examples.
 
 ## Deferred, for discussion
 

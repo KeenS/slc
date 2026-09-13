@@ -551,7 +551,7 @@ impl Parser {
         let return_type =
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
-            && !matches!(ty, TypeExpr::Bottom)
+            && !ty.is_bottom()
         {
             return Err(ParseError {
                 message: "a `command` returns `(;)`; remove the arrow or write `(;)`".into(),
@@ -922,14 +922,12 @@ impl Parser {
             Box::new(Node { span: node.span, kind: Parser::imply_negative(node.kind) })
         }
         match ty {
-            TypeExpr::Base(_)
-            | TypeExpr::Apply(..)
-            | TypeExpr::Tensor(..)
-            | TypeExpr::Sum(..)
-            | TypeExpr::Unit => {
+            TypeExpr::Base(_) | TypeExpr::Apply(..) | TypeExpr::Tensor(..) | TypeExpr::Sum(..) => {
                 TypeExpr::Negative(Box::new(Node { span: Span { start: 0, end: 0 }, kind: ty }))
             }
-            TypeExpr::With(a, b) => TypeExpr::With(bare(*a), bare(*b)),
+            TypeExpr::With(items) => {
+                TypeExpr::With(items.into_iter().map(|item| *bare(item)).collect())
+            }
             signed => signed,
         }
     }
@@ -1029,28 +1027,28 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Top,
+                        kind: TypeExpr::With(Vec::new()),
                     });
                 }
                 if self.eat(&TokenKind::Comma) {
                     self.expect(TokenKind::RParen, "`)` after `(,`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Unit,
+                        kind: TypeExpr::Tensor(Vec::new()),
                     });
                 }
                 if self.eat(&TokenKind::Pipe) {
                     self.expect(TokenKind::RParen, "`)` after `(|`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Zero,
+                        kind: TypeExpr::Sum(Vec::new()),
                     });
                 }
                 if self.eat(&TokenKind::Semicolon) {
                     self.expect(TokenKind::RParen, "`)` after `(;`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Bottom,
+                        kind: TypeExpr::Par(Vec::new()),
                     });
                 }
                 let left = self.parse_type()?;
@@ -1077,8 +1075,8 @@ impl Parser {
                         )
                     }
                 } else if let Some(connective) = self.peek_kind().and_then(type_connective) {
-                    // One connective, any number of components, nested to
-                    // the right as the value is: `(A, B, C)` is `(A, (B, C))`.
+                    // One connective, any number of components, as one flat
+                    // connective: `(A, B, C)` has three, and `(A, (B, C))` two.
                     let mut items = vec![left];
                     while let Some(next) = self.peek_kind().and_then(type_connective) {
                         if next != connective {
@@ -1096,19 +1094,12 @@ impl Parser {
                         items.push(self.parse_type()?);
                     }
                     self.expect(TokenKind::RParen, "`)`")?;
-                    let mut acc = items.pop().expect("a connective joins at least two components");
-                    while let Some(item) = items.pop() {
-                        let span = Span { start: item.span.start, end: acc.span.end };
-                        let (item, rest) = (Box::new(item), Box::new(acc));
-                        let kind = match connective {
-                            TokenKind::Comma => TypeExpr::Tensor(item, rest),
-                            TokenKind::Pipe => TypeExpr::Sum(item, rest),
-                            TokenKind::Amp => TypeExpr::With(item, rest),
-                            _ => TypeExpr::Par(item, rest),
-                        };
-                        acc = Node { span, kind };
+                    match connective {
+                        TokenKind::Comma => TypeExpr::Tensor(items),
+                        TokenKind::Pipe => TypeExpr::Sum(items),
+                        TokenKind::Amp => TypeExpr::With(items),
+                        _ => TypeExpr::Par(items),
                     }
-                    acc.kind
                 } else if self.peek_kind() == Some(&TokenKind::Slash) {
                     // `(-A / {Exn})` — a latent row on the type itself: what
                     // consuming (or otherwise running) the value may perform.
@@ -1895,7 +1886,7 @@ impl Parser {
                         kind: Expr::CoMatch {
                             ty: Some(Box::new(Node {
                                 span: Span { start, end: self.span_end() },
-                                kind: TypeExpr::Top,
+                                kind: TypeExpr::With(Vec::new()),
                             })),
                             arms: Vec::new(),
                         },
@@ -2415,7 +2406,7 @@ mod tests {
         let p = parse_str("command step(x: +i32) | (k: -i32) -> (;) { k(x) }");
         assert!(matches!(
             &p.decls[0].kind,
-            Decl::Command { return_type: Some(TypeExpr::Bottom), .. }
+            Decl::Command { return_type: Some(ty), .. } if ty.is_bottom()
         ));
     }
 

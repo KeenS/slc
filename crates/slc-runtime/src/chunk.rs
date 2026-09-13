@@ -33,7 +33,8 @@ pub enum Node {
     Lam(NodeId),
     /// `μ. c` — binds one positional slot; child is the command.
     Mu(NodeId),
-    Pair(NodeId, NodeId),
+    /// A tuple: its component terms, evaluated left to right.
+    Tuple(Rc<Vec<NodeId>>),
     Tag(Rc<str>, NodeId),
     /// `μ[…]` — a menu value: its branches, each binding one positional
     /// slot (the request's continuation) before its body.
@@ -51,7 +52,7 @@ pub enum Node {
     App(NodeId, NodeId),
     /// `μ̃. c` — binds one positional slot; child is the command.
     MuTilde(NodeId),
-    /// Projection of the `index`-th spine component of a right-nested product.
+    /// Projection of a tuple's `index`-th component.
     Prj(usize),
     /// A labelled consumer: its branches.
     CoCase(Rc<Vec<Branch>>),
