@@ -63,11 +63,25 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-Nothing is queued.
+**Connective spellings** (DESIGN §8, *Connective spellings*), in order:
+
+1. **Types.** Parse `(T1, T2)`, `(T1 | T2)` and `(T1 ; T2)`, and the nullary
+   `(|)` and `(;)`; `A -> B` lowers to `(dual(A) ; B)`. Remove `⊗`, `⅋` and
+   `⊥` from the lexer, including `⊗` as multiplication.
+2. **Structural units.** Add the core's additive units `0` and `⊤`; make
+   `(|)`, `(&)` and `(;)` denote the units directly; remove the prelude's
+   `Unit`, `Bottom`, `Empty` and `Top` and their recognition by name.
+3. **Enum values.** `::i(v)` and the pattern `::i(x)`, counted from 0 and
+   resolved against the type past the second alternative; `select` and
+   `match` cover a sum by its positions; lowering to labelled injections.
+4. **Form values.** `(k1 ; k2)` and its pattern, delivering left to right.
+5. **Migration.** Rewrite the examples, the stdlib, tests and DESIGN to the
+   new spellings, and record old → new in docs/MIGRATION.md.
 
 ## Deferred, for discussion
 
-- **A surface spelling for `0`.** ⊤'s value is settled as `(&)` (above).
-  `0` has no values, and its consumer stays `select Empty {}`; whether the
-  empty sum deserves an anonymous type spelling is still open.
-
+- **Replacing `⟨` and `⟩`.** The cut brackets are the last non-ASCII
+  surface syntax; their replacement is to be designed.
+- **How diagnostics print types.** They print the core's notation — `⊗`,
+  `⅋`, `⊥`, `+` for a sum — which the ASCII surface no longer writes.
+  Whether they should print the surface spelling instead is open.

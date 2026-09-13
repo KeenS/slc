@@ -556,8 +556,9 @@ The exact nullary `Unit` and `Bottom` declarations are recognized structurally:
 `Unit {}`, and `Bottom` is the surface name of core `⊥`; its nullary demand
 `Bottom {}` is likewise `()`. A differently shaped declaration that shadows
 either name stays nominal. `select Empty {}` is the empty consumer of the
-uninhabited `Empty`, and `mu Top {}` is the unique `Top` value. Concise surface
-aliases for `Empty` and `Top` are deliberately deferred.
+uninhabited `Empty`, and `mu Top {}` is the unique `Top` value. These four
+declarations are to be replaced by the nullary spellings settled in
+*Connective spellings* (§8).
 
 The two declarations above are each other's dual: `dual(i64 & String)` is
 `-i64 ⊕ -String`, a sum of requests each carrying the continuation that wants
@@ -686,6 +687,43 @@ command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 product and its fields, while `(A ⊗ B)` writes one anonymously. Neither is
 sugar for the other — a named declaration is opaque to core unification, while
 an explicit tensor is structural.
+
+### Connective spellings
+
+*Decided; not yet implemented — PLAN.md tracks the work. Where this section
+and the rest of this document disagree, this section is the intended
+language.*
+
+The surface is ASCII. `⊗`, `⅋` and `⊥` leave it (they remain the notation of
+the core and of this document's prose), and no other glyph enters. Every
+connective is written three ways — declared by name, anonymously, and
+nullary, as a paren holding only its separator:
+
+| named | anonymous type | value | unit type | unit value |
+|---|---|---|---|---|
+| `data` | `(T1, T2)` | `(v1, v2)` | `(,)` | `(,)` |
+| `enum` | `(T1 \| T2)` | `::0(v)`, `::1(v)` | `(\|)` | — |
+| `menu` | `(T1 & T2)` | `(v1 & v2)` | `(&)` | `(&)` |
+| `form` | `(T1 ; T2)` | `(k1 ; k2)` | `(;)` | — |
+
+The multiplicatives are `,` and `;`, the additives `&` and `|`: each dual
+pair is a pair of punctuation marks.
+
+- **Enum values** name their alternative by position, as `Enum::Variant(v)`
+  does with the name left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`.
+  Positions count from 0, as tuple projection `t.0` does. `(T1 | T2 | T3)`
+  nests to the right, as a tuple does, and an index past the second is
+  resolved against the type, as projection's is.
+- **Form values** are built from one continuation per component: `(k1 ; k2)`
+  is a value of `(T1 ; T2)`, and `(k1 ; k2)` is its pattern. Fed a product
+  `(a, b)`, it delivers left to right — `a` to `k1`, then `b` to `k2` — so if
+  `k1` is an exit that jumps, `k2` never receives.
+- **`A -> B`** stays, as the spelling of `(dual(A) ; B)`.
+- **The units are structural.** `(;)` is the type of a command, replacing
+  `⊥` and `Bottom`; `(|)` has no value and is consumed by `select (|) {}`;
+  `(&)` is `⊤`'s unique value. The prelude's `Unit`, `Bottom`, `Empty` and
+  `Top` go, and no unit has a second name — so the core gains the additive
+  units `0` and `⊤`, which today exist only as the nominal `Empty` and `Top`.
 
 ### Negative multiplicative construction
 
