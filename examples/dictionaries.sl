@@ -17,6 +17,6 @@ fn relay<+T: Show>(x: T) -> String { (⟨("[", (⟨x | twice)) | add | y => (y, 
 command main | (exit: i32) / {IO} {
     ⟨42 | show | println;      // 42  — concrete receiver, a direct impl call
     ⟨7 | relay | println;      // [77] — i64 dictionary threaded through relay→twice
-    ⟨True | relay | println;   // [TT] — bool dictionary, same code
+    ⟨True | relay | println;   // [TT] — Bool dictionary, same code
     ⟨0 | exit⟩
 }

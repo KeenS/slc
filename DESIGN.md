@@ -225,7 +225,7 @@ negative function applied to its row:
 ```
 
 Because a cut has type `⊥`, an arm that ends in one constrains nothing: in
-`match c { true => pos + 1, _ => ⟨message | err⟩ }` the `match` has the type of
+`match c { True => pos + 1, False => ⟨message | err⟩ }` the `match` has the type of
 the arm that returns, and arms that both return must agree.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and
@@ -698,7 +698,7 @@ arrives at them:
   request's own continuation, and the arms are ordinary expressions —
   typically other requests. An arm has no guard: a test on what a pattern
   bound is a `match` inside the arm. And there is no `if`: a choice on a
-  `bool` is a `match` on it, `match c { true => …, _ => … }`.
+  `Bool` is a `match` on it, `match c { True => …, False => … }`.
 
 ```sl
 fn config() -> Config {
@@ -1186,7 +1186,7 @@ A positive method takes `self: Self` and dispatches on what it receives.
 A negative method takes no `self` — a negative function's parameters are
 all continuations — so its `Self` is the type it *consumes*, and dispatch
 reads the value the cut sends: `⟨42 | deliver(s)` finds the `i64` impl,
-`⟨true | deliver(s)` the `bool` one. Both shapes resolve statically, and a
+`⟨True | deliver(s)` the `Bool` one. Both shapes resolve statically, and a
 bound forwards through either.
 
 ### Polymorphism
@@ -1387,9 +1387,13 @@ through the same pipeline as user code.
 **The prelude** (`crates/slc-driver/src/prelude.sl`) is what every program
 sees unasked: the `effect IO` the runtime handles, and the
 **`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
-as in Rust) with impls for `i64`, `String`, `bool`, and the unit, tuples and
+as in Rust) with impls for `i64`, `String`, `Bool`, and the unit, tuples and
 choices up to eight components, rendered as they are written — and
-`to_string<T: Display>` — and `not`, which negates a `bool`, since there is no `!`. A
+`to_string<T: Display>`; `enum Bool { False, True }`, the type every yes-or-no
+answer has; arithmetic and comparison as the traits `Add`, `Sub`, `Mul`,
+`Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `index`,
+a `String`'s character at a position; and `not`, which negates a `Bool`,
+since there is no `!`. A
 program's own declaration of a prelude name shadows it.
 
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
@@ -1488,7 +1492,7 @@ comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
 **Files are the `fs` module's**, not builtins a program has unasked:
 `fs::read`, `fs::write`, `fs::open`, `fs::read_line` offer
 their outcomes as above, and `fs::close` spends a handle so a later read
-through it fails, `fs::exists` answers a `bool`. Each is a thin wrapper
+through it fails, `fs::exists` answers a `Bool`. Each is a thin wrapper
 over a runtime primitive — `__read_file` and its siblings — which is what the
 language cannot express; the module is what a program calls.
 
@@ -1548,7 +1552,8 @@ must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
 
 A floating-point literal is untyped for now, a string literal is `+String`, a
-character literal is `+char`, and `true` and `false` are `+bool`. `(,)` is the
+character literal is `+char`. `True` and `False` are not literals but the
+variants of the prelude's `enum Bool`. `(,)` is the
 unit value, of type `(,)`; an empty block is the same.
 
 ## Diagnostics
@@ -1799,7 +1804,7 @@ nested left to right for several arguments.
 
 | Construct | Surface | Core |
 |---|---|---|
-| `expr.literal` | `42`, `"s"`, `'c'`, `true` | a constant variable (`$int_42`, `$str_"s"`, …) |
+| `expr.literal` | `42`, `"s"`, `'c'` | a constant variable (`$int_42`, `$str_"s"`, …) |
 | `expr.ident` | `x` | `x` |
 | `expr.enum` | `Color::Red`, `Shape::Circle(r)` | `Color::Red(unit)`, `Shape::Circle(⟦r⟧)` — several payload values pack into one tensor |
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |

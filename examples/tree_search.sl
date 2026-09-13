@@ -2,7 +2,7 @@
 //
 // The walk is written in continuation style: `done` is the rest of the
 // traversal, threaded through every frame. When the target is found, the
-// walker does not return `true` up through each level — it cuts the value
+// walker does not return `True` up through each level — it cuts the value
 // straight to `jump`, and every pending `done` on the way up is simply
 // abandoned. The jump lands at the `mu` that captured the continuation
 // of the `let`, however deep the recursion was when it fired.

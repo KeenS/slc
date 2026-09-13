@@ -22,8 +22,7 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The open work is settling evaluation by
-polarity, a set of surface simplifications that remove syntax in favour of
-ordinary declarations, and one defect.
+polarity: delayed computations still need to carry their effects.
 
 ## Known limits
 
@@ -79,19 +78,9 @@ ordinary declarations, and one defect.
   prelude command: a value-returning one needs a `mu` around a condition
   that may perform, so `if` became a `match` instead.
 
-### Defects
-
-- **Exhaustiveness does not know `bool`.** A `match` with `true` and `false`
-  arms is reported non-exhaustive unless it adds a `_`. The fix is
-  "`bool` becomes the prelude's `Bool`".
-
 ## Next
 
 ### Evaluation
-
-Independent of the surface simplifications below: `&&` and `||` are gone
-rather than made functions, so no operator waits on how an operand is
-delayed.
 
 - **Delayed computations carry their effects.** Negative positions are by
   name (`DESIGN.md` §4, "When a `let` computes"), but the effect checker
@@ -106,33 +95,6 @@ delayed.
   on a type today, so until the rows-in-types upgrade that "Effect tracking
   follows names" names, a computation in a by-name position whose row is a
   variable is refused.
-
-### Surface simplifications
-
-Each entry removes a piece of syntax in favour of an ordinary declaration.
-`if`, `!`, `&&`, `||`, the infix operators and indexing have gone; `bool`
-becoming the prelude's `Bool` is the last, now that nothing left in the
-language is built on the built-in one.
-
-- **`bool` becomes the prelude's `Bool`.** The last of these. It becomes an
-  ordinary enum, `enum Bool { False, True }`,
-  so a `match` on it is exhaustive the way a match on any enum is, and the
-  `bool` exhaustiveness defect goes with it: coverage is counted only over
-  enum variants (`exhaustive.rs`), and a match over literals always asks for
-  `_`. A declared `enum Boolean { False, True }` matched on both variants is
-  accepted and runs today. What the change touches:
-
-  - **The names.** `true` and `false` stop being keywords, and every `bool`,
-    `true` and `false` a program writes becomes `Bool`, `True` and `False`.
-  - **The built-in `bool` everywhere else:** `Expr::Bool` and
-    `Pattern::Bool` in the front end, the core's `Base::Bool` (types,
-    typing, printing and the core tests), and the runtime's `Value::Bool`.
-    The builtins that produce one — the comparisons, `is_digit`, `is_ws` and
-    `__file_exists` — have to produce the variant instead, and diagnostics
-    that say "expected +bool" name the declared type.
-  - **The `_` arms added meanwhile.** Every `match` on a `bool` — the
-    prelude's `not`, and those the stdlib and examples use where `if` used to
-    be — has a `_` arm until this lands; it can then name `False`.
 
 ## Deferred, for discussion
 

@@ -1131,6 +1131,20 @@ s[i..j]                  // old
 An integer literal takes its width from the other operand, as before:
 `⟨(x, 1) | add` for `x: i32` is `i32`'s `add`.
 
+## `bool`, `true` and `false` are the prelude's `Bool`
+
+The built-in boolean is gone. The prelude declares `enum Bool { False, True }`,
+and a program names the type and its variants; the old spellings are refused
+with the names that replace them. A `match` on both variants is exhaustive,
+so the `_` arm a `bool` match needed can name `False`.
+
+```sl
+fn positive(n: i64) -> bool { match (⟨(n, 0) | gt) { true => true, _ => false } }   // old
+fn positive(n: i64) -> Bool { match (⟨(n, 0) | gt) { True => True, False => False } } // new
+```
+
+A `Bool` still prints as `true` or `false`.
+
 ## Removed constructs
 
 ### `spawn`

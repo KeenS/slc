@@ -22,7 +22,7 @@ impl Show for i64 {
 
 impl Show for Bool {
     fn show(self: Bool) -> String {
-        match self { True => { "true" }, _ => { "false" } }
+        match self { True => { "true" }, False => { "false" } }
     }
 }
 
@@ -52,7 +52,7 @@ command main | (exit: i32) / {IO} {
 
     // the generic, at two types
     ⟨("int", 7) | labelled | println;
-    ⟨("bool", False) | labelled | println;
+    ⟨("Bool", False) | labelled | println;
 
     // recursive dispatch: the list impl calls show on each element
     ⟨IntList::Cons(1, IntList::Cons(2, IntList::Nil)) | show | println;
