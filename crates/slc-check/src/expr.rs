@@ -36,6 +36,7 @@ pub fn check_program_resolving(
     let functions = function_types(p, &enums);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions, traits);
+    check_declared_types(p, &enums, &mut diags);
     check_trait_signatures(traits, &enums, &mut env, &mut diags);
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
@@ -429,17 +430,67 @@ fn unresolved_parameter_type(p: &slc_syntax::ast::Param, span: Span, diags: &mut
     }
 }
 
-/// A written return type that names nothing declared — refused for the same
-/// reason a parameter's is, rather than left to stand for any type at all.
-fn unresolved_return_type(owner: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+/// A written type that names nothing declared — refused, rather than left to
+/// stand for any type at all. `what` says where it is written: "the return
+/// type of `f`", "the type of field `x` of `D`".
+fn unresolved_type(what: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
     diags.push(Diagnostic {
         message: format!(
-            "the return type of {owner} names `{}`, which is not a declared type here; a \
-             library type is `list::List`, or brought in with `use`",
+            "{what} names `{}`, which is not a declared type here; a library type is \
+             `list::List`, or brought in with `use`",
             type_display(ty)
         ),
         span,
     });
+}
+
+fn unresolved_return_type(owner: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    unresolved_type(&format!("the return type of {owner}"), ty, span, diags);
+}
+
+/// What a type declaration's fields, payloads and items name must exist.
+/// Declarations are collected before anything is checked, and a type that
+/// does not resolve there is only a placeholder, so it is refused here, each
+/// against its declaration's own type parameters.
+fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
+    fn scope(type_params: &[String]) -> HashMap<String, usize> {
+        type_params.iter().enumerate().map(|(i, param)| (param.clone(), i)).collect()
+    }
+    for d in &p.decls {
+        match &d.kind {
+            Decl::Data { name, type_params, fields, .. }
+            | Decl::Form { name, type_params, fields, .. } => {
+                let params = scope(type_params);
+                for (field, ty) in fields {
+                    if enums.resolve_in(ty, &params).is_none() {
+                        let what = format!("the type of field `{field}` of `{name}`");
+                        unresolved_type(&what, ty, d.span, diags);
+                    }
+                }
+            }
+            Decl::Menu { name, type_params, items, .. } => {
+                let params = scope(type_params);
+                for (item, ty) in items {
+                    if enums.resolve_in(ty, &params).is_none() {
+                        let what = format!("the type of item `{item}` of `{name}`");
+                        unresolved_type(&what, ty, d.span, diags);
+                    }
+                }
+            }
+            Decl::Enum { name, type_params, variants, .. } => {
+                let params = scope(type_params);
+                for (variant, payload) in variants {
+                    for (index, ty) in payload.iter().enumerate() {
+                        if enums.resolve_in(ty, &params).is_none() {
+                            let what = format!("payload {index} of `{name}::{variant}`");
+                            unresolved_type(&what, ty, d.span, diags);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// A trait's method signatures outlive its declaration — elaboration keeps
@@ -1329,6 +1380,15 @@ fn check_let_binding(
 ) -> Type {
     let actual = check_expr(value, enums, env, diags);
     let annotation = ty.as_ref().and_then(|ty| resolve_in_body(ty, env, enums));
+    if let Some(written) = ty
+        && annotation.is_none()
+    {
+        let what = match pattern.binder_name() {
+            Some(name) => format!("the annotation of `let {name}`"),
+            None => "the annotation of this `let`".into(),
+        };
+        unresolved_type(&what, written, value.span, diags);
+    }
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
         && !fits_turning(env, annotation, &actual, value)
     {
@@ -3913,6 +3973,35 @@ mod tests {
             check(
                 "trait T { fn m(self: Self) -> Self; }
                  fn g<A>(x: A) -> (A | i64) { ::0(x) }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_written_type_in_a_declaration_or_annotation_must_name_a_declared_type() {
+        for (source, expected) in [
+            ("data D { x: Foo }", "the type of field `x` of `D`"),
+            ("form F { x: Foo }", "the type of field `x` of `F`"),
+            ("menu M { item: Foo }", "the type of item `item` of `M`"),
+            ("enum E { A(i64, Foo) }", "payload 1 of `E::A`"),
+            ("fn f() -> i64 { let x: Foo = 1; 0 }", "the annotation of `let x`"),
+        ] {
+            let diags = check(source).unwrap_err();
+            assert!(
+                diags.iter().any(|d| d.message.contains(expected)
+                    && d.message.contains("names `Foo`, which is not a declared type")),
+                "{source}: {diags:?}"
+            );
+        }
+        // A declaration's own type parameters, and itself, are names it may use.
+        assert!(
+            check(
+                "data Box<T> { value: T }
+                 form Put<T> { put: T }
+                 menu Get<T> { get: T }
+                 enum Chain<T> { Link(T, Chain<T>), End }
+                 fn f() -> i64 { let x: Box<i64> = Box { value: 1 }; 0 }"
             )
             .is_ok()
         );
