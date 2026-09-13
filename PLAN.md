@@ -69,8 +69,8 @@ polarity: delayed computations still need to carry their effects.
   operation, a clause that resumes more than once loses every resumption
   after the first: the first jump to the `mu`'s continuation leaves the
   clause instead of returning into it. Under
-  `flip(): resume => (⟨true | resume) + " " + (⟨false | resume)`,
-  `let a = mu String { r <= ⟨(match flip() { true => "H", _ => "T" }) | r⟩ }`
+  `flip(): resume => (<true | resume) + " " + (<false | resume)`,
+  `let a = mu String { r <= <(match flip() { true => "H", _ => "T" }) | r> }`
   answers `"H"`; the same program without the `mu`, or with `flip()`
   performed before it, answers `"H T"`. Stopping a `mu`'s capture at the
   nearest prompt would change what `mu` means under a handler, so this is a
@@ -112,8 +112,8 @@ polarity: delayed computations still need to carry their effects.
   ```sl
   effect Fs { fn read_file(path: String, ok: -String, failed: -String) -> (;); }
 
-  handle mu String { k <= ⟨("input.txt", k, select String { … }) | read_file } {
-      read_file(path, ok, failed) => ⟨path | __read_file | (ok & failed)⟩,
+  handle mu String { k <= <("input.txt", k, select String { … }) | read_file } {
+      read_file(path, ok, failed) => <path | __read_file | (ok & failed)>,
       return(s) => s,
   }
   ```
@@ -139,5 +139,5 @@ polarity: delayed computations still need to carry their effects.
     a second special effect, or the driver wraps `main` in the prelude's
     handler, or every program installs it.
 
-- **Replacing `⟨` and `⟩`.** The cut brackets are the last non-ASCII
+- **Replacing `<` and `>`.** The cut brackets are the last non-ASCII
   surface syntax; their replacement is to be designed.

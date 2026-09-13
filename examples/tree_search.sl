@@ -17,17 +17,17 @@ enum Tree {
 
 command walk(t: Tree, target: i64) | (jump: i64 & done: unit) / {IO} {
     match t {
-        Leaf => ⟨(,) | done⟩,
+        Leaf => <(,) | done>,
         Node(left, value, right) => {
-            ⟨("visiting ", (⟨value | int_to_str)) | add | println;
-            match (⟨(value, target) | eq) { True => {
+            <("visiting ", (<value | int_to_str)) | add | println;
+            match (<(value, target) | eq) { True => {
                 // The non-local jump: past this walk's own frames, past
                 // every enclosing walk, straight to the captured `k`.
-                ⟨value | jump⟩
+                <value | jump>
             }, _ => {
-                ⟨(left, target) | walk | (jump & select unit {
-                    finished_left => ⟨(right, target) | walk | (jump & done)⟩,
-                })⟩
+                <(left, target) | walk | (jump & select unit {
+                    finished_left => <(right, target) | walk | (jump & done)>,
+                })>
             } }
         },
     }
@@ -41,12 +41,12 @@ command main | (exit: i32) / {IO} {
     );
 
     // Found: the walk stops the moment it hits, and `done` never fires.
-    let hit = mu { k <= ⟨(tree, 2) | walk | (k & select unit { exhausted => ⟨-1 | k⟩ })⟩ };
-    ⟨("found: ", (⟨hit | int_to_str)) | add | println;
+    let hit = mu { k <= <(tree, 2) | walk | (k & select unit { exhausted => <-1 | k> })> };
+    <("found: ", (<hit | int_to_str)) | add | println;
 
     // Absent: the walk exhausts the tree, and the `done` chain delivers -1.
-    let missing = mu { k <= ⟨(tree, 99) | walk | (k & select unit { exhausted => ⟨-1 | k⟩ })⟩ };
-    ⟨("missing: ", (⟨missing | int_to_str)) | add | println;
+    let missing = mu { k <= <(tree, 99) | walk | (k & select unit { exhausted => <-1 | k> })> };
+    <("missing: ", (<missing | int_to_str)) | add | println;
 
-    ⟨0 | exit⟩
+    <0 | exit>
 }

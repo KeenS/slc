@@ -8,14 +8,14 @@
 // return position, and the caller had to build the consumer before cutting
 // into it. A command is written and read the way every other call is:
 //
-//     ("answer", 42) | trace::tap | out⟩
+//     ("answer", 42) | trace::tap | out>
 
 mod trace {
     // A tap: log a label and the value passing through, then forward it. What
     // passes through is printed, so it has `Display`.
     pub command tap<+T: Display>(label: String, x: T) | (k: T) / {IO} {
-        ⟨label | println;
-        ⟨x | println;
-        ⟨x | k⟩
+        <label | println;
+        <x | println;
+        <x | k>
     }
 }

@@ -2,10 +2,10 @@
 // parameter, and the `mu` expression that captures one to pass it.
 
 command echo(x: i32) | (k: i32) {
-    ⟨x | k⟩
+    <x | k>
 }
 
 command main | (exit: i32) / {IO} {
-    ⟨mu i32 { answer <= ⟨42 | echo | answer⟩ } | println;
-    ⟨0 | exit⟩
+    <mu i32 { answer <= <42 | echo | answer> } | println;
+    <0 | exit>
 }

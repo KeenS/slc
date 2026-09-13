@@ -19,21 +19,21 @@ use stream::take;
 
 fn count_from(n: i64) -> Stream<i64> {
     mu Stream {
-        head: out <= ⟨n | out⟩,
-        tail: head: out <= ⟨(n, 1) | add | out⟩,
-        tail: tail: rest <= ⟨(n, 2) | add | count_from | rest⟩,
+        head: out <= <n | out>,
+        tail: head: out <= <(n, 1) | add | out>,
+        tail: tail: rest <= <(n, 2) | add | count_from | rest>,
     }
 }
 
-fn double(n: i64) -> i64 { (⟨(n, 2) | mul) }
+fn double(n: i64) -> i64 { (<(n, 2) | mul) }
 
 command main | (exit: i32) / {IO} {
-    let s = ⟨10 | count_from;
-    ⟨s.head | println;                            // 10
-    ⟨s.tail.head | println;                       // 11
-    ⟨s.tail.tail.tail.head | println;             // 13
-    ⟨(⟨(double, s) | stream::map).tail.head | println;   // 22
-    ⟨(s, 3) | take | fmt | println;                   // "[10, 11, 12]"
-    ⟨(⟨7 | repeat, 2) | take | fmt | println;           // "[7, 7]"
-    ⟨0 | exit⟩
+    let s = <10 | count_from;
+    <s.head | println;                            // 10
+    <s.tail.head | println;                       // 11
+    <s.tail.tail.tail.head | println;             // 13
+    <(<(double, s) | stream::map).tail.head | println;   // 22
+    <(s, 3) | take | fmt | println;                   // "[10, 11, 12]"
+    <(<7 | repeat, 2) | take | fmt | println;           // "[7, 7]"
+    <0 | exit>
 }

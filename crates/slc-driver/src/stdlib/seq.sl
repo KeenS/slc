@@ -31,8 +31,8 @@ mod seq {
     pub fn of_list<+T>(xs: list::List<T>) -> Seq<T> {
         mu Seq {
             next <= match xs {
-                Nil => ⟨Step::Done | next⟩,
-                Cons(h, rest) => ⟨Step::Yield(h, ⟨rest | of_list) | next⟩,
+                Nil => <Step::Done | next>,
+                Cons(h, rest) => <Step::Yield(h, <rest | of_list) | next>,
             },
         }
     }
@@ -42,22 +42,22 @@ mod seq {
     pub fn to_list<+T>(s: Seq<T>) -> list::List<T> {
         match s.next {
             Step::Done => Nil,
-            Step::Yield(h, rest) => Cons(h, ⟨rest | to_list),
+            Step::Yield(h, rest) => Cons(h, <rest | to_list),
         }
     }
 
     // Every stream is a sequence that never ends.
     pub fn of_stream<+T>(s: Stream<T>) -> Seq<T> {
         mu Seq {
-            next <= ⟨Step::Yield(s.head, ⟨s.tail | of_stream) | next⟩,
+            next <= <Step::Yield(s.head, <s.tail | of_stream) | next>,
         }
     }
 
     pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E} {
         mu Seq {
             next <= match s.next {
-                Step::Done => ⟨Step::Done | next⟩,
-                Step::Yield(h, rest) => ⟨Step::Yield(⟨h | f, ⟨(f, rest) | map) | next⟩,
+                Step::Done => <Step::Done | next>,
+                Step::Yield(h, rest) => <Step::Yield(<h | f, <(f, rest) | map) | next>,
             },
         }
     }
@@ -67,11 +67,11 @@ mod seq {
     pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
         mu Seq {
             next <= match s.next {
-                Step::Done => ⟨Step::Done | next⟩,
-                Step::Yield(h, rest) => match ⟨h | keep { True => {
-                    ⟨Step::Yield(h, ⟨(keep, rest) | filter) | next⟩
+                Step::Done => <Step::Done | next>,
+                Step::Yield(h, rest) => match <h | keep { True => {
+                    <Step::Yield(h, <(keep, rest) | filter) | next>
                 }, _ => {
-                    ⟨(⟨(keep, rest) | filter).next | next⟩
+                    <(<(keep, rest) | filter).next | next>
                 } },
             },
         }
@@ -79,12 +79,12 @@ mod seq {
 
     pub fn take<+T>(s: Seq<T>, n: i64) -> Seq<T> {
         mu Seq {
-            next <= match (⟨(n, 0) | le) { True => {
-                ⟨Step::Done | next⟩
+            next <= match (<(n, 0) | le) { True => {
+                <Step::Done | next>
             }, _ => {
                 match s.next {
-                    Step::Done => ⟨Step::Done | next⟩,
-                    Step::Yield(h, rest) => ⟨Step::Yield(h, ⟨(rest, (⟨(n, 1) | sub)) | take) | next⟩,
+                    Step::Done => <Step::Done | next>,
+                    Step::Yield(h, rest) => <Step::Yield(h, <(rest, (<(n, 1) | sub)) | take) | next>,
                 }
             } },
         }
@@ -95,10 +95,10 @@ mod seq {
     // does.
     pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
         mu Seq {
-            next <= match ⟨s.head | keep { True => {
-                ⟨Step::Yield(s.head, ⟨(keep, s.tail) | take_while) | next⟩
+            next <= match <s.head | keep { True => {
+                <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>
             }, _ => {
-                ⟨Step::Done | next⟩
+                <Step::Done | next>
             } },
         }
     }

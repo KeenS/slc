@@ -10,7 +10,7 @@
 // trait method can consume `Self` rather than receive it. Such a method
 // takes no `self` parameter — a negative function's parameters are all
 // continuations — so its `Self` is the type it consumes, and the cut it
-// stands in is what fixes it: in `⟨42 | deliver(s)`, `Self` is `+i64`.
+// stands in is what fixes it: in `<42 | deliver(s)`, `Self` is `+i64`.
 
 use list::List::*;
 use stream::Stream;
@@ -32,7 +32,7 @@ trait Describe {
 
 impl Describe for Config {
     fn describe(self: Config) -> String {
-        (⟨(self.name, " with ") | add | x => (x, (⟨self.retries | fmt)) | add | x => (x, " retries") | add)
+        (<(self.name, " with ") | add | x => (x, (<self.retries | fmt)) | add | x => (x, " retries") | add)
     }
 }
 
@@ -46,66 +46,66 @@ impl Describe for Sink {
 // displayable, and the dictionary composes at the use.
 impl<+T: Display> Describe for Stream<T> {
     fn describe(self: Stream<T>) -> String {
-        (⟨("stream starting ", (⟨self.head | fmt)) | add)
+        (<("stream starting ", (<self.head | fmt)) | add)
     }
 }
 
 fn config() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= <3 | retries>,
+        name <= <"slant" | name>,
     }
 }
 
 fn keeper() -> Sink {
     select Sink {
-        Sink { value, out } => ⟨value | out⟩,
+        Sink { value, out } => <value | out>,
     }
 }
 
 // A bound discharged at codata types: `label` knows only that its argument
 // is negative — a menu or a form, it cannot tell which.
 fn label<-T: Describe>(x: T) -> String {
-    ⟨x | describe
+    <x | describe
 }
 
 // A bounded negative function: `T` is fixed by the cut, and `fmt`'s
 // dictionary travels in from the caller's side.
 fn emit<+T: Display>(out: String) <- T {
-    fn(x: T) { ⟨x | fmt | out⟩ }
+    fn(x: T) { <x | fmt | out> }
 }
 
 // A trait method that consumes `Self`. Dispatch reads the type the cut
-// sends, so `⟨42 | deliver(s)` finds the `i64` impl.
+// sends, so `<42 | deliver(s)` finds the `i64` impl.
 trait Deliver {
     fn deliver(out: String) <- Self;
 }
 
 impl Deliver for i64 {
     fn deliver(out: String) <- i64 {
-        fn(n: i64) { ⟨("the number ", (⟨n | fmt)) | add | out⟩ }
+        fn(n: i64) { <("the number ", (<n | fmt)) | add | out> }
     }
 }
 
 impl Deliver for Bool {
     fn deliver(out: String) <- Bool {
-        fn(b: Bool) { ⟨match b { True => { "affirmative" }, _ => { "negative" } } | out⟩ }
+        fn(b: Bool) { <match b { True => { "affirmative" }, _ => { "negative" } } | out> }
     }
 }
 
 command main | (exit: i32) / {IO} {
-    ⟨config() | describe | println;
-    ⟨keeper() | describe | println;
-    ⟨7 | count_from | describe | println;
-    ⟨config() | label | println;
-    ⟨keeper() | label | println;
+    <config() | describe | println;
+    <keeper() | describe | println;
+    <7 | count_from | describe | println;
+    <config() | label | println;
+    <keeper() | label | println;
 
     // the bounded negative function, at three different types
-    (⟨mu String { s <= ⟨42 | (⟨s | emit)⟩ } | println);
-    (⟨mu String { s <= ⟨Cons(1, Cons(2, Nil)) | (⟨s | emit)⟩ } | println);
+    (<mu String { s <= <42 | (<s | emit)> } | println);
+    (<mu String { s <= <Cons(1, Cons(2, Nil)) | (<s | emit)> } | println);
 
     // the Self-consuming method, dispatched by what the cut sends
-    (⟨mu String { s <= ⟨42 | deliver(s)⟩ } | println);
-    (⟨mu String { s <= ⟨True | deliver(s)⟩ } | println);
-    ⟨0 | exit⟩
+    (<mu String { s <= <42 | deliver(s)> } | println);
+    (<mu String { s <= <True | deliver(s)> } | println);
+    <0 | exit>
 }

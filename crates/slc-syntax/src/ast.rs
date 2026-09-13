@@ -96,15 +96,15 @@ pub enum Expr {
         arg: Box<Node<Expr>>,
     },
     /// A flow: `a | b | c` — everything moves left to right, and every
-    /// step composes unless a bracket says otherwise. `⟨` marks the left
-    /// end closed, so the stage beside it is a value; `⟩` marks the right
+    /// step composes unless a bracket says otherwise. `<` marks the left
+    /// end closed, so the stage beside it is a value; `>` marks the right
     /// end closed, so the stage beside it is a consumer. Closed at both
-    /// ends, the chain is a cut: `⟨v | f | k⟩`.
+    /// ends, the chain is a cut: `<v | f | k>`.
     Flow {
         stages: Vec<Node<Expr>>,
-        /// `⟨`: the first stage is a value, not a function.
+        /// `<`: the first stage is a value, not a function.
         from_value: bool,
-        /// `⟩`: the last stage consumes, so the chain delivers.
+        /// `>`: the last stage consumes, so the chain delivers.
         into_consumer: bool,
     },
     /// `mu T { item: k <= c, … }` — the copattern form of `mu`: a menu

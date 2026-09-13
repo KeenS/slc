@@ -485,9 +485,9 @@ mod tests {
         // `-(-i64)` is `+i64` by involution.
         assert!(check("fn f(x: -i64) -> i64 { 0 }").is_ok());
         assert!(check("fn f(x: -(-i64)) -> i64 { x }").is_ok());
-        assert!(check("command f(x: -i32) | (k: -i32) { ⟨0 | k⟩ }").is_ok());
+        assert!(check("command f(x: -i32) | (k: -i32) { <0 | k> }").is_ok());
         // Control still cannot leave through data.
-        let diags = check("command f | (j: +i32 & k: -i32) { ⟨0 | k⟩ }").unwrap_err();
+        let diags = check("command f | (j: +i32 & k: -i32) { <0 | k> }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected negative")), "{diags:?}");
     }
 

@@ -22,12 +22,12 @@ enum Choice {
 // expression have answered `Holds` instead. The refutation is this call's
 // own continuation, dressed as a consumer of `i64`.
 fn lem() -> Choice {
-    mu { k <= ⟨Choice::Refutes(select i64 { a => ⟨Choice::Holds(a) | k⟩ }) | k⟩ }
+    mu { k <= <Choice::Refutes(select i64 { a => <Choice::Holds(a) | k> }) | k> }
 }
 
 command main | (exit: i32) / {IO} {
     // `-(-A)` is `A` definitionally now: `-(-i64)` and `+i64` are one type.
-    ⟨42 | dne | println;
+    <42 | dne | println;
 
     // `(A | -A)`. `lem()` answers `Refutes` — and taking the offer sends 42
     // back through the continuation `lem` captured, re-entering this same
@@ -39,12 +39,12 @@ command main | (exit: i32) / {IO} {
     // classical reading of `|` promises.
     match lem() {
         Holds(n) => {
-            ⟨("holds: ", (⟨n | int_to_str)) | add | println;
-            ⟨0 | exit⟩
+            <("holds: ", (<n | int_to_str)) | add | println;
+            <0 | exit>
         },
         Refutes(r) => {
-            ⟨"refuted — taking the offer" | println;
-            ⟨42 | r⟩
+            <"refuted — taking the offer" | println;
+            <42 | r>
         },
     }
 }

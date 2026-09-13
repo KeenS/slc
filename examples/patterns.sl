@@ -23,41 +23,41 @@ enum Wrapped {
 // product. `fn f((a, b): (…), c: …)` needs nothing new — the argument was
 // always one packed value, and this destructures it a level deeper.
 fn skew((a, b): (i64, i64), c: i64) -> i64 {
-    (⟨(a, c) | mul | x => (x, b) | sub)
+    (<(a, c) | mul | x => (x, b) | sub)
 }
 
 // A record leaf, taken apart in the header rather than the body.
 fn norm(Point { x, y }: Point) -> i64 {
-    (⟨(x, x) | mul | z => (z, (⟨(y, y) | mul)) | add)
+    (<(x, x) | mul | z => (z, (<(y, y) | mul)) | add)
 }
 
 // A `command` does the same, and its exits stay names: control leaves
 // through a name, and a pattern has nowhere to leave through.
 command nearer((here, there): (Point, Point)) | (closer: Point) {
-    match (⟨((⟨here | norm), (⟨there | norm)) | lt) { True => { ⟨here | closer⟩ }, _ => { ⟨there | closer⟩ } }
+    match (<((<here | norm), (<there | norm)) | lt) { True => { <here | closer> }, _ => { <there | closer> } }
 }
 
 command main | (exit: i32) / {IO} {
     // A tuple binder, and a nested one.
     let (a, b) = (3, 4);
     let ((p, q), r) = ((1, 2), 3);
-    ⟨(a, b) | add | x => (x, p) | add | x => (x, q) | add | x => (x, r) | add | println;                       // 13
+    <(a, b) | add | x => (x, p) | add | x => (x, q) | add | x => (x, r) | add | println;                       // 13
 
     // A record binder, and a single-variant enum.
     let Point { x, y } = Point { x: 6, y: 7 };
     let Only(n) = Only(29);
-    ⟨(x, y) | mul | x => (x, n) | add | println;                               // 71
+    <(x, y) | mul | x => (x, n) | add | println;                               // 71
 
     // `_` binds nothing, as it does in a `match` arm.
     let _ = "evaluated, then dropped";
 
-    ⟨((3, 4), 5) | skew | println;                      // 11
-    ⟨Point { x: 3, y: 4 } | norm | println;             // 25
+    <((3, 4), 5) | skew | println;                      // 11
+    <Point { x: 3, y: 4 } | norm | println;             // 25
 
     let winner = mu Point {
-        closer <= ⟨(Point { x: 1, y: 1 }, Point { x: 9, y: 9 }) | nearer | closer⟩
+        closer <= <(Point { x: 1, y: 1 }, Point { x: 9, y: 9 }) | nearer | closer>
     };
-    ⟨(winner.x, winner.y) | add | println;                     // 2
+    <(winner.x, winner.y) | add | println;                     // 2
 
-    ⟨0 | exit⟩
+    <0 | exit>
 }

@@ -28,7 +28,7 @@ data Pair {
 
 fn sum(p: Pair) -> i64 {
     match p {
-        Pair { left, right } => (⟨(left, right) | add),
+        Pair { left, right } => (<(left, right) | add),
     }
 }
 
@@ -37,7 +37,7 @@ fn sum(p: Pair) -> i64 {
 
 fn report_sum(out: i64) <- Pair {
     select Pair {
-        Pair { left, right } => ⟨(left, right) | add | out⟩,
+        Pair { left, right } => <(left, right) | add | out>,
     }
 }
 
@@ -51,7 +51,7 @@ form Total {
 
 fn total(out: -i64) -> Total {
     select Total {
-        Total { left, right } => ⟨(left, right) | add | out⟩,
+        Total { left, right } => <(left, right) | add | out>,
     }
 }
 
@@ -59,7 +59,7 @@ fn total(out: -i64) -> Total {
 
 fn report_first(out: i64) <- (i64, String) {
     select (i64, String) {
-        (count, label) => ⟨count | out⟩,
+        (count, label) => <count | out>,
     }
 }
 
@@ -84,9 +84,9 @@ fn name(c: Colour) -> String {
 
 fn code(out: i64) <- Colour {
     select Colour {
-        Red => ⟨0 | out⟩,
-        Green => ⟨1 | out⟩,
-        Blue => ⟨2 | out⟩,
+        Red => <0 | out>,
+        Green => <1 | out>,
+        Blue => <2 | out>,
     }
 }
 
@@ -103,8 +103,8 @@ menu Config {
 
 fn config() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= <3 | retries>,
+        name <= <"slant" | name>,
     }
 }
 
@@ -113,31 +113,31 @@ fn config() -> Config {
 // units are `(|)` and `(&)` (examples/logical_units.sl).
 
 fn done(k: -(;)) <- unit {
-    ⟨(,) | k⟩
+    <(,) | k>
 }
 
 command main | (exit: i32) / {IO} {
     // , : build every part, then take them apart.
-    ⟨Pair { left: 2, right: 40 } | sum | println;
+    <Pair { left: 2, right: 40 } | sum | println;
 
     // ; : hand the consumer the whole product — as the dual of a declared
     // positive, and as a form declared directly. Both are the same cut.
-    (⟨mu i64 { answer <= ⟨Pair { left: 2, right: 40 } | (⟨answer | report_sum)⟩ } | println);
-    (⟨mu i64 { answer <= ⟨Total { left: 2, right: 40 } | (⟨answer | total)⟩ } | println);
-    (⟨mu i64 { answer <= ⟨(7, "ignored") | (⟨answer | report_first)⟩ } | println);
+    (<mu i64 { answer <= <Pair { left: 2, right: 40 } | (<answer | report_sum)> } | println);
+    (<mu i64 { answer <= <Total { left: 2, right: 40 } | (<answer | total)> } | println);
+    (<mu i64 { answer <= <(7, "ignored") | (<answer | report_first)> } | println);
 
     // | : build one variant, then branch on it.
-    ⟨Colour::Green | name | println;
+    <Colour::Green | name | println;
 
     // & : hand the consumer one variant; only its branch runs.
-    (⟨mu i64 { answer <= ⟨Colour::Green | (⟨answer | code)⟩ } | println);
+    (<mu i64 { answer <= <Colour::Green | (<answer | code)> } | println);
 
     // codata: demand one item of the menu. The other is never computed.
-    ⟨config().retries | println;
-    ⟨config().name | println;
+    <config().retries | println;
+    <config().name | println;
 
     // (,) and (;).
-    ⟨mu (;) { k <= (⟨k | done) } | println;
+    <mu (;) { k <= (<k | done) } | println;
 
-    ⟨0 | exit⟩
+    <0 | exit>
 }

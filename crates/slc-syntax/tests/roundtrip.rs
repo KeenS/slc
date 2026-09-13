@@ -55,10 +55,10 @@ fn roundtrip_printing_stable() {
 #[test]
 fn roundtrip_operators_and_indexing() {
     let a = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match (⟨(1, (⟨(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (⟨((⟨(s, 0) | __index), 'a') | __eq) { True => (⟨(s, 1, (⟨s | str_len)) | substring), _ => "" }, _ => "" } }"#,
+        r#"fn main() -> i32 { let s = "abc"; match (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
     );
     let b = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match (⟨(1, (⟨(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (⟨((⟨(s, 0) | __index), 'a') | __eq) { True => (⟨(s, 1, (⟨s | str_len)) | substring), _ => "" }, _ => "" } }"#,
+        r#"fn main() -> i32 { let s = "abc"; match (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
     );
     assert_eq!(a, b);
 }
@@ -83,12 +83,12 @@ fn lowered_declarations_round_trip_through_the_printed_core() {
          fn positive(x: +i32) -> i32 { x }
          fn negative(return: -i32) <- Color {
              select Color {
-                 Red => ⟨0 | return⟩,
-                 Green => ⟨1 | return⟩,
-                 Blue => ⟨2 | return⟩,
+                 Red => <0 | return>,
+                 Green => <1 | return>,
+                 Blue => <2 | return>,
              }
          }
-         command route(x: +i32) | (k: -i32) { ⟨x | k⟩ }
+         command route(x: +i32) | (k: -i32) { <x | k> }
          fn main() -> i32 { let y = 1; y }",
     );
     assert!(defs.len() > 5, "expected every declaration: {defs:?}");

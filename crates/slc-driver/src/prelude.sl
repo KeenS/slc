@@ -42,7 +42,7 @@ trait Display {
 }
 
 impl Display for i64 {
-    fn fmt(self: i64) -> String { ⟨self | int_to_str }
+    fn fmt(self: i64) -> String { <self | int_to_str }
 }
 
 impl Display for String {
@@ -53,91 +53,91 @@ impl Display for Bool {
     fn fmt(self: Bool) -> String { match self { True => { "true" }, False => { "false" } } }
 }
 
-fn to_string<+T: Display>(x: T) -> String { ⟨x | fmt }
+fn to_string<+T: Display>(x: T) -> String { <x | fmt }
 
-impl Display for i32 { fn fmt(self: i32) -> String { ⟨self | __display } }
-impl Display for u32 { fn fmt(self: u32) -> String { ⟨self | __display } }
-impl Display for u64 { fn fmt(self: u64) -> String { ⟨self | __display } }
-impl Display for char { fn fmt(self: char) -> String { ⟨self | __display } }
+impl Display for i32 { fn fmt(self: i32) -> String { <self | __display } }
+impl Display for u32 { fn fmt(self: u32) -> String { <self | __display } }
+impl Display for u64 { fn fmt(self: u64) -> String { <self | __display } }
+impl Display for char { fn fmt(self: char) -> String { <self | __display } }
 impl Display for unit { fn fmt(self: unit) -> String { "(,)" } }
-impl Display for File { fn fmt(self: File) -> String { ⟨self | __display } }
+impl Display for File { fn fmt(self: File) -> String { <self | __display } }
 
 // Printing renders through `Display`, then performs `IO`'s operation.
-fn println<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write_line }
-fn print<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write }
+fn println<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write_line }
+fn print<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write }
 
 // ── Arithmetic and comparison ────────────────────────────────────────────
 //
-// Each operator is a trait method over a builtin beneath it: `⟨(a, b) | add`
+// Each operator is a trait method over a builtin beneath it: `<(a, b) | add`
 // dispatches on the type the two agree on, and an integer literal takes its
 // width from the other operand.
 
 trait Add { fn add(self: Self, other: Self) -> Self; }
-impl Add for i64 { fn add(self: i64, other: i64) -> i64 { ⟨(self, other) | __add } }
-impl Add for i32 { fn add(self: i32, other: i32) -> i32 { ⟨(self, other) | __add } }
-impl Add for u64 { fn add(self: u64, other: u64) -> u64 { ⟨(self, other) | __add } }
-impl Add for u32 { fn add(self: u32, other: u32) -> u32 { ⟨(self, other) | __add } }
-impl Add for String { fn add(self: String, other: String) -> String { ⟨(self, other) | __add } }
+impl Add for i64 { fn add(self: i64, other: i64) -> i64 { <(self, other) | __add } }
+impl Add for i32 { fn add(self: i32, other: i32) -> i32 { <(self, other) | __add } }
+impl Add for u64 { fn add(self: u64, other: u64) -> u64 { <(self, other) | __add } }
+impl Add for u32 { fn add(self: u32, other: u32) -> u32 { <(self, other) | __add } }
+impl Add for String { fn add(self: String, other: String) -> String { <(self, other) | __add } }
 
 trait Sub { fn sub(self: Self, other: Self) -> Self; }
-impl Sub for i64 { fn sub(self: i64, other: i64) -> i64 { ⟨(self, other) | __sub } }
-impl Sub for i32 { fn sub(self: i32, other: i32) -> i32 { ⟨(self, other) | __sub } }
-impl Sub for u64 { fn sub(self: u64, other: u64) -> u64 { ⟨(self, other) | __sub } }
-impl Sub for u32 { fn sub(self: u32, other: u32) -> u32 { ⟨(self, other) | __sub } }
+impl Sub for i64 { fn sub(self: i64, other: i64) -> i64 { <(self, other) | __sub } }
+impl Sub for i32 { fn sub(self: i32, other: i32) -> i32 { <(self, other) | __sub } }
+impl Sub for u64 { fn sub(self: u64, other: u64) -> u64 { <(self, other) | __sub } }
+impl Sub for u32 { fn sub(self: u32, other: u32) -> u32 { <(self, other) | __sub } }
 
 trait Mul { fn mul(self: Self, other: Self) -> Self; }
-impl Mul for i64 { fn mul(self: i64, other: i64) -> i64 { ⟨(self, other) | __mul } }
-impl Mul for i32 { fn mul(self: i32, other: i32) -> i32 { ⟨(self, other) | __mul } }
-impl Mul for u64 { fn mul(self: u64, other: u64) -> u64 { ⟨(self, other) | __mul } }
-impl Mul for u32 { fn mul(self: u32, other: u32) -> u32 { ⟨(self, other) | __mul } }
+impl Mul for i64 { fn mul(self: i64, other: i64) -> i64 { <(self, other) | __mul } }
+impl Mul for i32 { fn mul(self: i32, other: i32) -> i32 { <(self, other) | __mul } }
+impl Mul for u64 { fn mul(self: u64, other: u64) -> u64 { <(self, other) | __mul } }
+impl Mul for u32 { fn mul(self: u32, other: u32) -> u32 { <(self, other) | __mul } }
 
 trait Div { fn div(self: Self, other: Self) -> Self; }
-impl Div for i64 { fn div(self: i64, other: i64) -> i64 { ⟨(self, other) | __div } }
-impl Div for i32 { fn div(self: i32, other: i32) -> i32 { ⟨(self, other) | __div } }
-impl Div for u64 { fn div(self: u64, other: u64) -> u64 { ⟨(self, other) | __div } }
-impl Div for u32 { fn div(self: u32, other: u32) -> u32 { ⟨(self, other) | __div } }
+impl Div for i64 { fn div(self: i64, other: i64) -> i64 { <(self, other) | __div } }
+impl Div for i32 { fn div(self: i32, other: i32) -> i32 { <(self, other) | __div } }
+impl Div for u64 { fn div(self: u64, other: u64) -> u64 { <(self, other) | __div } }
+impl Div for u32 { fn div(self: u32, other: u32) -> u32 { <(self, other) | __div } }
 
 trait Rem { fn rem(self: Self, other: Self) -> Self; }
-impl Rem for i64 { fn rem(self: i64, other: i64) -> i64 { ⟨(self, other) | __rem } }
-impl Rem for i32 { fn rem(self: i32, other: i32) -> i32 { ⟨(self, other) | __rem } }
-impl Rem for u64 { fn rem(self: u64, other: u64) -> u64 { ⟨(self, other) | __rem } }
-impl Rem for u32 { fn rem(self: u32, other: u32) -> u32 { ⟨(self, other) | __rem } }
+impl Rem for i64 { fn rem(self: i64, other: i64) -> i64 { <(self, other) | __rem } }
+impl Rem for i32 { fn rem(self: i32, other: i32) -> i32 { <(self, other) | __rem } }
+impl Rem for u64 { fn rem(self: u64, other: u64) -> u64 { <(self, other) | __rem } }
+impl Rem for u32 { fn rem(self: u32, other: u32) -> u32 { <(self, other) | __rem } }
 
 trait Neg { fn neg(self: Self) -> Self; }
-impl Neg for i64 { fn neg(self: i64) -> i64 { ⟨self | __neg } }
-impl Neg for i32 { fn neg(self: i32) -> i32 { ⟨self | __neg } }
+impl Neg for i64 { fn neg(self: i64) -> i64 { <self | __neg } }
+impl Neg for i32 { fn neg(self: i32) -> i32 { <self | __neg } }
 
 trait Eq {
     fn eq(self: Self, other: Self) -> Bool;
     fn ne(self: Self, other: Self) -> Bool;
 }
 impl Eq for i64 {
-    fn eq(self: i64, other: i64) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: i64, other: i64) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: i64, other: i64) -> Bool { <(self, other) | __eq }
+    fn ne(self: i64, other: i64) -> Bool { <(self, other) | __ne }
 }
 impl Eq for i32 {
-    fn eq(self: i32, other: i32) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: i32, other: i32) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: i32, other: i32) -> Bool { <(self, other) | __eq }
+    fn ne(self: i32, other: i32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u64 {
-    fn eq(self: u64, other: u64) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: u64, other: u64) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: u64, other: u64) -> Bool { <(self, other) | __eq }
+    fn ne(self: u64, other: u64) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u32 {
-    fn eq(self: u32, other: u32) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: u32, other: u32) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: u32, other: u32) -> Bool { <(self, other) | __eq }
+    fn ne(self: u32, other: u32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for char {
-    fn eq(self: char, other: char) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: char, other: char) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: char, other: char) -> Bool { <(self, other) | __eq }
+    fn ne(self: char, other: char) -> Bool { <(self, other) | __ne }
 }
 impl Eq for String {
-    fn eq(self: String, other: String) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: String, other: String) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: String, other: String) -> Bool { <(self, other) | __eq }
+    fn ne(self: String, other: String) -> Bool { <(self, other) | __ne }
 }
 impl Eq for Bool {
-    fn eq(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __eq }
-    fn ne(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __ne }
+    fn eq(self: Bool, other: Bool) -> Bool { <(self, other) | __eq }
+    fn ne(self: Bool, other: Bool) -> Bool { <(self, other) | __ne }
 }
 
 trait Ord {
@@ -147,51 +147,51 @@ trait Ord {
     fn ge(self: Self, other: Self) -> Bool;
 }
 impl Ord for i64 {
-    fn lt(self: i64, other: i64) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: i64, other: i64) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: i64, other: i64) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: i64, other: i64) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: i64, other: i64) -> Bool { <(self, other) | __lt }
+    fn gt(self: i64, other: i64) -> Bool { <(self, other) | __gt }
+    fn le(self: i64, other: i64) -> Bool { <(self, other) | __le }
+    fn ge(self: i64, other: i64) -> Bool { <(self, other) | __ge }
 }
 impl Ord for i32 {
-    fn lt(self: i32, other: i32) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: i32, other: i32) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: i32, other: i32) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: i32, other: i32) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: i32, other: i32) -> Bool { <(self, other) | __lt }
+    fn gt(self: i32, other: i32) -> Bool { <(self, other) | __gt }
+    fn le(self: i32, other: i32) -> Bool { <(self, other) | __le }
+    fn ge(self: i32, other: i32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u64 {
-    fn lt(self: u64, other: u64) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: u64, other: u64) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: u64, other: u64) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: u64, other: u64) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: u64, other: u64) -> Bool { <(self, other) | __lt }
+    fn gt(self: u64, other: u64) -> Bool { <(self, other) | __gt }
+    fn le(self: u64, other: u64) -> Bool { <(self, other) | __le }
+    fn ge(self: u64, other: u64) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u32 {
-    fn lt(self: u32, other: u32) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: u32, other: u32) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: u32, other: u32) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: u32, other: u32) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: u32, other: u32) -> Bool { <(self, other) | __lt }
+    fn gt(self: u32, other: u32) -> Bool { <(self, other) | __gt }
+    fn le(self: u32, other: u32) -> Bool { <(self, other) | __le }
+    fn ge(self: u32, other: u32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for char {
-    fn lt(self: char, other: char) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: char, other: char) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: char, other: char) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: char, other: char) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: char, other: char) -> Bool { <(self, other) | __lt }
+    fn gt(self: char, other: char) -> Bool { <(self, other) | __gt }
+    fn le(self: char, other: char) -> Bool { <(self, other) | __le }
+    fn ge(self: char, other: char) -> Bool { <(self, other) | __ge }
 }
 impl Ord for String {
-    fn lt(self: String, other: String) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: String, other: String) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: String, other: String) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: String, other: String) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: String, other: String) -> Bool { <(self, other) | __lt }
+    fn gt(self: String, other: String) -> Bool { <(self, other) | __gt }
+    fn le(self: String, other: String) -> Bool { <(self, other) | __le }
+    fn ge(self: String, other: String) -> Bool { <(self, other) | __ge }
 }
 impl Ord for Bool {
-    fn lt(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __lt }
-    fn gt(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __gt }
-    fn le(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __le }
-    fn ge(self: Bool, other: Bool) -> Bool { ⟨(self, other) | __ge }
+    fn lt(self: Bool, other: Bool) -> Bool { <(self, other) | __lt }
+    fn gt(self: Bool, other: Bool) -> Bool { <(self, other) | __gt }
+    fn le(self: Bool, other: Bool) -> Bool { <(self, other) | __le }
+    fn ge(self: Bool, other: Bool) -> Bool { <(self, other) | __ge }
 }
 
 // The character of a `String` at a position, failing at run time when the
 // position is out of range; `char_at` offers that outcome to a continuation.
-fn index(s: String, i: i64) -> char { ⟨(s, i) | __index }
+fn index(s: String, i: i64) -> char { <(s, i) | __index }
 
 // ── Display for anonymous data ───────────────────────────────────────────
 //
@@ -203,65 +203,65 @@ impl Display for (,) {
 }
 
 impl<+A: Display, +B: Display> Display for (A, B) {
-    fn fmt(self: (A, B)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display> Display for (A, B, C) {
-    fn fmt(self: (A, B, C)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A, B, C, D) {
-    fn fmt(self: (A, B, C, D)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.3 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C, D)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.3 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display> Display for (A, B, C, D, E) {
-    fn fmt(self: (A, B, C, D, E)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.4 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C, D, E)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.4 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display> Display for (A, B, C, D, E, F) {
-    fn fmt(self: (A, B, C, D, E, F)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.5 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C, D, E, F)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.5 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display> Display for (A, B, C, D, E, F, G) {
-    fn fmt(self: (A, B, C, D, E, F, G)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.5 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.6 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C, D, E, F, G)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.5 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.6 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display, +H: Display> Display for (A, B, C, D, E, F, G, H) {
-    fn fmt(self: (A, B, C, D, E, F, G, H)) -> String { (⟨("(", (⟨self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.5 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.6 | fmt)) | add | x => (x, ", ") | add | x => (x, (⟨self.7 | fmt)) | add | x => (x, ")") | add) }
+    fn fmt(self: (A, B, C, D, E, F, G, H)) -> String { (<("(", (<self.0 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.1 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.2 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.3 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.4 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.5 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.6 | fmt)) | add | x => (x, ", ") | add | x => (x, (<self.7 | fmt)) | add | x => (x, ")") | add) }
 }
 
 impl<+A: Display, +B: Display> Display for (A | B) {
-    fn fmt(self: (A | B)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display> Display for (A | B | C) {
-    fn fmt(self: (A | B | C)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A | B | C | D) {
-    fn fmt(self: (A | B | C | D)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add), ::3(x) => (⟨("::3(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C | D)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add), ::3(x) => (<("::3(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display> Display for (A | B | C | D | E) {
-    fn fmt(self: (A | B | C | D | E)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add), ::3(x) => (⟨("::3(", (⟨x | fmt)) | add | y => (y, ")") | add), ::4(x) => (⟨("::4(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C | D | E)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add), ::3(x) => (<("::3(", (<x | fmt)) | add | y => (y, ")") | add), ::4(x) => (<("::4(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display> Display for (A | B | C | D | E | F) {
-    fn fmt(self: (A | B | C | D | E | F)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add), ::3(x) => (⟨("::3(", (⟨x | fmt)) | add | y => (y, ")") | add), ::4(x) => (⟨("::4(", (⟨x | fmt)) | add | y => (y, ")") | add), ::5(x) => (⟨("::5(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C | D | E | F)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add), ::3(x) => (<("::3(", (<x | fmt)) | add | y => (y, ")") | add), ::4(x) => (<("::4(", (<x | fmt)) | add | y => (y, ")") | add), ::5(x) => (<("::5(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display> Display for (A | B | C | D | E | F | G) {
-    fn fmt(self: (A | B | C | D | E | F | G)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add), ::3(x) => (⟨("::3(", (⟨x | fmt)) | add | y => (y, ")") | add), ::4(x) => (⟨("::4(", (⟨x | fmt)) | add | y => (y, ")") | add), ::5(x) => (⟨("::5(", (⟨x | fmt)) | add | y => (y, ")") | add), ::6(x) => (⟨("::6(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C | D | E | F | G)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add), ::3(x) => (<("::3(", (<x | fmt)) | add | y => (y, ")") | add), ::4(x) => (<("::4(", (<x | fmt)) | add | y => (y, ")") | add), ::5(x) => (<("::5(", (<x | fmt)) | add | y => (y, ")") | add), ::6(x) => (<("::6(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Display, +G: Display, +H: Display> Display for (A | B | C | D | E | F | G | H) {
-    fn fmt(self: (A | B | C | D | E | F | G | H)) -> String { match self { ::0(x) => (⟨("::0(", (⟨x | fmt)) | add | y => (y, ")") | add), ::1(x) => (⟨("::1(", (⟨x | fmt)) | add | y => (y, ")") | add), ::2(x) => (⟨("::2(", (⟨x | fmt)) | add | y => (y, ")") | add), ::3(x) => (⟨("::3(", (⟨x | fmt)) | add | y => (y, ")") | add), ::4(x) => (⟨("::4(", (⟨x | fmt)) | add | y => (y, ")") | add), ::5(x) => (⟨("::5(", (⟨x | fmt)) | add | y => (y, ")") | add), ::6(x) => (⟨("::6(", (⟨x | fmt)) | add | y => (y, ")") | add), ::7(x) => (⟨("::7(", (⟨x | fmt)) | add | y => (y, ")") | add) } }
+    fn fmt(self: (A | B | C | D | E | F | G | H)) -> String { match self { ::0(x) => (<("::0(", (<x | fmt)) | add | y => (y, ")") | add), ::1(x) => (<("::1(", (<x | fmt)) | add | y => (y, ")") | add), ::2(x) => (<("::2(", (<x | fmt)) | add | y => (y, ")") | add), ::3(x) => (<("::3(", (<x | fmt)) | add | y => (y, ")") | add), ::4(x) => (<("::4(", (<x | fmt)) | add | y => (y, ")") | add), ::5(x) => (<("::5(", (<x | fmt)) | add | y => (y, ")") | add), ::6(x) => (<("::6(", (<x | fmt)) | add | y => (y, ")") | add), ::7(x) => (<("::7(", (<x | fmt)) | add | y => (y, ")") | add) } }
 }
 
 // ── Logic ────────────────────────────────────────────────────────────────
 //
 // There is no `!`: negation is an ordinary function a `Bool` flows into,
-// `⟨b | not`.
+// `<b | not`.
 
 fn not(b: Bool) -> Bool {
     match b { True => False, False => True }

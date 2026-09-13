@@ -23,8 +23,8 @@ menu Config {
 // carries; the arm answers by cutting into it.
 fn config() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= <3 | retries>,
+        name <= <"slant" | name>,
     }
 }
 
@@ -32,8 +32,8 @@ fn config() -> Config {
 // rest. Only the demanded item is ever computed.
 fn loud(base: Config) -> Config {
     mu Config {
-        retries <= ⟨base.retries | retries⟩,
-        name <= ⟨(base.name, "!") | add | name⟩,
+        retries <= <base.retries | retries>,
+        name <= <(base.name, "!") | add | name>,
     }
 }
 
@@ -51,14 +51,14 @@ command main | (exit: i32) / {IO} {
     let cfg = config();
 
     // Demand one item off the menu: the mirror of record projection.
-    ⟨cfg.retries | println;            // 3
-    ⟨cfg.name | println;               // "slant"
-    ⟨(⟨cfg | loud).name | println;         // "slant!"
+    <cfg.retries | println;            // 3
+    <cfg.name | println;               // "slant"
+    <(<cfg | loud).name | println;         // "slant!"
 
     // A cut delivers a request directly: `mu` names where the answer goes.
-    (⟨mu i32 { a <= {
-        ⟨cfg | (⟨.retries(a) | reroute)⟩   // 3
+    (<mu i32 { a <= {
+        <cfg | (<.retries(a) | reroute)>   // 3
     } } | println);
 
-    ⟨0 | exit⟩
+    <0 | exit>
 }

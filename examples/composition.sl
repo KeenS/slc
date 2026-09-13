@@ -21,8 +21,8 @@ menu Config {
 
 fn defaults() -> Config {
     mu Config {
-        retries <= ⟨3 | retries⟩,
-        name <= ⟨"slant" | name⟩,
+        retries <= <3 | retries>,
+        name <= <"slant" | name>,
     }
 }
 
@@ -40,8 +40,8 @@ menu Session {
 
 fn session(n: i64) -> Session {
     mu Session {
-        next <= ⟨(match (⟨(n, 0) | gt) { True => { Step(n) }, _ => { Quit } }) | next⟩,
-        config <= ⟨(mu Config { retries <= ⟨n | retries⟩, name <= ⟨"session" | name⟩ }) | config⟩,
+        next <= <(match (<(n, 0) | gt) { True => { Step(n) }, _ => { Quit } }) | next>,
+        config <= <(mu Config { retries <= <n | retries>, name <= <"session" | name> }) | config>,
     }
 }
 
@@ -54,8 +54,8 @@ form Handler {
 fn handler() -> Handler {
     select Handler {
         Handler { cmd, out } => match cmd {
-            Quit => ⟨"quit" | out⟩,
-            Step(k) => ⟨k | to_string | out⟩,
+            Quit => <"quit" | out>,
+            Step(k) => <k | to_string | out>,
         },
     }
 }
@@ -70,24 +70,24 @@ command main | (exit: i32) / {IO} {
     let app = App { title: "demo", config: defaults() };
     match app {
         App { title, config } => {
-            ⟨title | println;
-            ⟨config.name | println;
+            <title | println;
+            <config.name | println;
         },
     };
 
-    let s = ⟨2 | session;
-    ⟨s.config.retries | println;
+    let s = <2 | session;
+    <s.config.retries | println;
     match s.next {
-        Quit => ⟨"quit" | println,
-        Step(k) => ⟨k | println,
+        Quit => <"quit" | println,
+        Step(k) => <k | println,
     };
 
-    (⟨mu String { ans <= ⟨Handler { cmd: Step(7), out: ans } | handler()⟩ } | println);
+    (<mu String { ans <= <Handler { cmd: Step(7), out: ans } | handler()> } | println);
 
     match Holds(handler()) {
-        Vacant => ⟨"idle" | println,
-        Holds(h) => (⟨mu String { ans <= ⟨Handler { cmd: Quit, out: ans } | h⟩ } | println),
+        Vacant => <"idle" | println,
+        Holds(h) => (<mu String { ans <= <Handler { cmd: Quit, out: ans } | h> } | println),
     };
 
-    ⟨0 | exit⟩
+    <0 | exit>
 }
