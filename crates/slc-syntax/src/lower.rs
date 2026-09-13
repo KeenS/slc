@@ -42,6 +42,10 @@ thread_local! {
     /// not values, so each runs where its result is demanded.
     static DELAYS: RefCell<std::collections::HashSet<Span>> =
         RefCell::new(std::collections::HashSet::new());
+    /// The spans of the names of type `(;)`: standing as a command, each
+    /// runs what it holds.
+    static RUNS: RefCell<std::collections::HashSet<Span>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -103,6 +107,9 @@ pub struct DispatchInfo {
     /// The spans of the computations a plain `let` binds unrun: its type is
     /// negative and the computation is not a value.
     pub delays: std::collections::HashSet<Span>,
+    /// The spans of the names whose type is `(;)`: where one stands as a
+    /// command it is run, since a delayed exit does nothing held.
+    pub runs: std::collections::HashSet<Span>,
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -252,6 +259,17 @@ fn is_delayed(span: Span) -> bool {
     DELAYS.with(|cell| cell.borrow().contains(&span))
 }
 
+/// Lower an expression standing as a command — a `match` or `select` arm, a
+/// block's statement or its last expression. A name of type `(;)` there is
+/// demanded: it is run, by applying what it holds to the unit, so a delayed
+/// exit jumps where it is taken. Anywhere else it is passed on unrun.
+fn lower_in_command_position(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
+    let term = lower_expr(e, continuations)?;
+    let runs =
+        matches!(e.kind, Expr::Ident(_)) && RUNS.with(|cell| cell.borrow().contains(&e.span));
+    Ok(if runs { call_curried(term, vec![Term::Var("$unit".into())]) } else { term })
+}
+
 /// Lower an expression standing in a by-name position: a computation the
 /// checker found negative is delayed, to run where it is demanded.
 fn lower_by_name(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
@@ -296,6 +314,7 @@ pub fn lower_program_resolving(
     SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
     PARS.with(|cell| *cell.borrow_mut() = dispatch.pars.clone());
     DELAYS.with(|cell| *cell.borrow_mut() = dispatch.delays.clone());
+    RUNS.with(|cell| *cell.borrow_mut() = dispatch.runs.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
@@ -306,6 +325,7 @@ pub fn lower_program_resolving(
     SWAPS.with(|cell| cell.borrow_mut().clear());
     PARS.with(|cell| cell.borrow_mut().clear());
     DELAYS.with(|cell| cell.borrow_mut().clear());
+    RUNS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -834,7 +854,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             let mut arm_terms = Vec::new();
             for arm in arms {
                 let descriptor = Term::Var(format!("$str_{}", pattern_descriptor(&arm.pattern)));
-                let b = lower_expr(&arm.body, continuations)?;
+                let b = lower_in_command_position(&arm.body, continuations)?;
                 arm_terms.push(Term::Tag(
                     "__match_arm".into(),
                     Box::new(Term::Tuple(vec![
@@ -982,9 +1002,9 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
 
                 let rest = lower_block(exprs, index + 1, seq_counter, continuations)?;
                 if index + 1 == exprs.len() {
-                    return lower_expr(e, continuations);
+                    return lower_in_command_position(e, continuations);
                 }
-                let t = lower_expr(e, continuations)?;
+                let t = lower_in_command_position(e, continuations)?;
                 let seq_name = format!("__seq{}", *seq_counter);
                 *seq_counter += 1;
                 Ok(Term::Mu(
@@ -1543,7 +1563,10 @@ fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Comma
     if let Some(command) = lower_closed_flow(body, continuations)? {
         return Ok(command);
     }
-    Ok(Command::Cut(lower_expr(body, continuations)?, CoTerm::Covar(MATCH_COVAR.into())))
+    Ok(Command::Cut(
+        lower_in_command_position(body, continuations)?,
+        CoTerm::Covar(MATCH_COVAR.into()),
+    ))
 }
 
 /// Build a labelled consumer while retaining the declaration it refutes.
@@ -1670,7 +1693,10 @@ fn lower_select_command(
     if let Some(command) = lower_closed_flow(command, continuations)? {
         return Ok(command);
     }
-    Ok(Command::Cut(lower_expr(command, continuations)?, CoTerm::Covar(ARM_COVAR.into())))
+    Ok(Command::Cut(
+        lower_in_command_position(command, continuations)?,
+        CoTerm::Covar(ARM_COVAR.into()),
+    ))
 }
 
 /// One stage of a chain. A bare name the checker resolved as a trait method

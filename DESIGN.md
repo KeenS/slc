@@ -337,6 +337,19 @@ is taken, `⟨(,) | then⟩`, and not while the bundle is built:
 A value ran nothing and is passed as it is, and a builtin's arguments are
 computed at once.
 
+An exit is taken by naming it where a command stands — an arm, a block's
+statement or its end — and passed on by naming it anywhere else:
+
+```sl
+command pick(c: bool) | (then: (;) & otherwise: (;)) {
+    match c { true => then, _ => otherwise }       // runs the exit
+}
+
+command forward(c: bool) | (then: (;) & otherwise: (;)) {
+    ⟨c | pick | (then & otherwise)⟩               // passes them on
+}
+```
+
 What *is* enforced is that control is **total**: a `command` body must be `⊥`
 — it reaches a continuation on every path — so a body that falls off the end
 (a bare value) or dangles (a `match` with an arm that yields a value) is

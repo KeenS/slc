@@ -111,6 +111,9 @@ pub(crate) struct Env<'a> {
     /// item, an argument — by span: a negative one is delayed once the
     /// declaration's unification says it is negative.
     pub(crate) pending_by_name: Vec<slc_syntax::token::Span>,
+    /// Every name used, by span: one of type `(;)` that stands as a command
+    /// is run there, which lowering does where the position is a command's.
+    pub(crate) pending_names: Vec<slc_syntax::token::Span>,
     /// The type each checked expression was found to have, by span, for
     /// what is settled at the end of the declaration.
     pub(crate) expr_types: HashMap<slc_syntax::token::Span, Type>,
@@ -149,6 +152,7 @@ impl<'a> Env<'a> {
             pending_signs: Vec::new(),
             pending_lets: Vec::new(),
             pending_by_name: Vec::new(),
+            pending_names: Vec::new(),
             expr_types: HashMap::new(),
             rigid_signs: HashMap::new(),
             pending_methods: Vec::new(),

@@ -1745,3 +1745,28 @@ fn a_bundle_item_that_ends_in_a_cut_runs_only_when_chosen() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["then"]);
 }
+
+#[test]
+fn an_exit_named_as_a_command_runs_and_passed_on_it_does_not() {
+    // `pick` names the exit it takes, which runs the delayed item; `forward`
+    // passes both exits on unrun, so `pick` still runs only the one chosen.
+    let dir = std::env::temp_dir().join("slc_test_exit_as_command.sl");
+    std::fs::write(
+        &dir,
+        r#"command pick(c: bool) | (then: (;) & otherwise: (;)) {
+            match c { true => then, _ => otherwise }
+        }
+
+        command forward(c: bool) | (then: (;) & otherwise: (;)) {
+            ⟨c | pick | (then & otherwise)⟩
+        }
+
+        command main | (exit: -i32) / {IO} {
+            ⟨false | forward | ({ ⟨"then" | println; ⟨1 | exit⟩ } & { ⟨"otherwise" | println; ⟨0 | exit⟩ })⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["otherwise"]);
+}

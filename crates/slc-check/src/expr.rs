@@ -703,6 +703,11 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    for span in std::mem::take(&mut env.pending_names) {
+        if env.expr_types.get(&span).is_some_and(|ty| env.uni.apply(ty) == Type::BOTTOM) {
+            env.dispatch.runs.insert(span);
+        }
+    }
     for span in std::mem::take(&mut env.pending_by_name) {
         if let Some(ty) = env.expr_types.get(&span).map(|ty| env.uni.apply(ty))
             && type_polarity(&ty, env) == Some(ParamPolarity::Negative)
@@ -2156,6 +2161,7 @@ fn check_expr_unapplied(
     }
     match &e.kind {
         Expr::Ident(name) => {
+            env.pending_names.push(e.span);
             if let Some(ty) = env.lookup_instantiated(name) {
                 return Some(ty);
             }

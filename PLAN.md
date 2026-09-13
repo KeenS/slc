@@ -134,8 +134,8 @@ delayed.
     type have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed
     value is `λ$delay. t` in the core and runs wherever it is applied, cut
     into or asked for an item. Tuple components, bundle items and arguments
-    delay a negative computation too. What is left is running a delayed
-    value where it stands as a command, and the flow head below.
+    delay a negative computation too, and a name of type `(;)` standing as a
+    command runs the exit it holds. What is left is the flow head below.
   - **An unknown polarity is an error.** A binding's is refused already; a
     lambda parameter whose type inference leaves a variable is to be refused
     the same way, asking for an annotation.
@@ -145,9 +145,6 @@ delayed.
 
   What it changes, as found so far:
 
-  - A bare `then` passes the checker today and does nothing at run time —
-    `main` ends holding the consumer — so running where demanded is new work
-    in the checker, which knows where a name is demanded, and in lowering.
   - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
     prints `(,)` because it runs at once; it becomes a `let+`, rendered
     through `Display`.
