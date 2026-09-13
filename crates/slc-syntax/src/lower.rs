@@ -38,6 +38,10 @@ thread_local! {
     /// mirrored `;` spelling of its type.
     static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
     static PARS: RefCell<HashMap<Span, Vec<bool>>> = RefCell::new(HashMap::new());
+    /// The spans of the computations a plain `let` delays: negative, and
+    /// not values, so each runs where its result is demanded.
+    static DELAYS: RefCell<std::collections::HashSet<Span>> =
+        RefCell::new(std::collections::HashSet::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -96,6 +100,9 @@ pub struct DispatchInfo {
     /// Form value span → whether each component is positive: a consumer takes
     /// its part, and a value is taken by it.
     pub pars: HashMap<Span, Vec<bool>>,
+    /// The spans of the computations a plain `let` binds unrun: its type is
+    /// negative and the computation is not a value.
+    pub delays: std::collections::HashSet<Span>,
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -240,6 +247,11 @@ fn projection(span: Span) -> Option<Projection> {
     PROJECTIONS.with(|cell| cell.borrow().get(&span).cloned())
 }
 
+/// Whether the checker found the computation at `span` to be delayed.
+fn is_delayed(span: Span) -> bool {
+    DELAYS.with(|cell| cell.borrow().contains(&span))
+}
+
 /// Which components of the form value at `span` are positive.
 fn par_polarities(span: Span) -> Option<Vec<bool>> {
     PARS.with(|cell| cell.borrow().get(&span).cloned())
@@ -272,6 +284,7 @@ pub fn lower_program_resolving(
     FLOWS.with(|cell| *cell.borrow_mut() = dispatch.flows.clone());
     SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
     PARS.with(|cell| *cell.borrow_mut() = dispatch.pars.clone());
+    DELAYS.with(|cell| *cell.borrow_mut() = dispatch.delays.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
@@ -281,6 +294,7 @@ pub fn lower_program_resolving(
     FLOWS.with(|cell| cell.borrow_mut().clear());
     SWAPS.with(|cell| cell.borrow_mut().clear());
     PARS.with(|cell| cell.borrow_mut().clear());
+    DELAYS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -1140,13 +1154,19 @@ fn lower_binding(
     continuations: &[String],
 ) -> Result<Term, LowerError> {
     if let Some(name) = pattern.binder_name() {
+        let value_span = value.span;
         let value = lower_expr(value, continuations)?;
-        // `let-` binds the computation itself, run where it is demanded.
-        let value = match mode {
-            crate::ast::LetMode::Delay => {
-                Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(value))
-            }
-            crate::ast::LetMode::Follow | crate::ast::LetMode::Now => value,
+        // `let-` binds the computation itself, run where it is demanded, and
+        // so does a plain `let` of a negative computation.
+        let delay = match mode {
+            crate::ast::LetMode::Delay => true,
+            crate::ast::LetMode::Follow => is_delayed(value_span),
+            crate::ast::LetMode::Now => false,
+        };
+        let value = if delay {
+            Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(value))
+        } else {
+            value
         };
         return Ok(lower_let(name, value, body));
     }

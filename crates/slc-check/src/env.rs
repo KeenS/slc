@@ -103,6 +103,10 @@ pub(crate) struct Env<'a> {
     /// Uses of signed type parameters whose types are not solved yet, for
     /// the same reason as `pending_dicts`.
     pub(crate) pending_signs: Vec<PendingSign>,
+    /// Plain `let`s of computations, by the span of the computation and the
+    /// type it binds: a negative one is delayed, which only the finished
+    /// declaration's unification can tell.
+    pub(crate) pending_lets: Vec<(slc_syntax::token::Span, Type)>,
     /// The polarity each rigid variable's type parameter declares, so a use
     /// inside a generic body passes `T` on only where its mark allows.
     pub(crate) rigid_signs: HashMap<usize, slc_syntax::ast::ParamPolarity>,
@@ -136,6 +140,7 @@ impl<'a> Env<'a> {
             rigid_vars: HashMap::new(),
             pending_dicts: Vec::new(),
             pending_signs: Vec::new(),
+            pending_lets: Vec::new(),
             rigid_signs: HashMap::new(),
             pending_methods: Vec::new(),
             pending_injections: Vec::new(),

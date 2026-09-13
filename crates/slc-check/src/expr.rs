@@ -703,6 +703,23 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    for (span, ty) in std::mem::take(&mut env.pending_lets) {
+        let ty = env.uni.apply(&ty);
+        match type_polarity(&ty, env) {
+            Some(ParamPolarity::Negative) => {
+                env.dispatch.delays.insert(span);
+            }
+            Some(ParamPolarity::Positive) => {}
+            None => diags.push(Diagnostic {
+                message: format!(
+                    "this `let` binds a computation of type {ty}, whose polarity is not known, \
+                     so whether it runs here or where it is used is not known: annotate it, or \
+                     write `let+` to run it here or `let-` to delay it"
+                ),
+                span,
+            }),
+        }
+    }
     for pending in std::mem::take(&mut env.pending_signs) {
         let ty = env.uni.apply(&pending.ty);
         if let Some(actual) = type_polarity(&ty, env)
@@ -1530,7 +1547,13 @@ fn check_let_binding(
     }
     // A binder the checker cannot type is a variable its uses will solve,
     // never a wildcard.
-    annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var())
+    let bound = annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var());
+    // A plain `let` of a computation follows its type: a negative one is
+    // delayed, a positive one computed here. A value ran nothing either way.
+    if mode == slc_syntax::ast::LetMode::Follow && !is_value_form(&value.kind, enums) {
+        env.pending_lets.push((value.span, bound.clone()));
+    }
+    bound
 }
 
 /// `let-` holds a computation to run where it is demanded, so what it binds

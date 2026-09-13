@@ -484,6 +484,13 @@ fn step_apply(
             let Value::Menu { node: menu, env } = arg else { unreachable!("matched above") };
             menu_dispatch(menu, env, &label, *payload)?
         }
+        // A request demands the menu a delayed computation produces: run it,
+        // then send the request to the result.
+        Value::Tagged(label, payload) if matches!(arg, Value::Delayed { .. }) => {
+            let Value::Delayed { body, env } = arg else { unreachable!("matched above") };
+            kont.push(Frame::ApplyCallee(Value::Tagged(label, payload)));
+            run_delayed(body, env)
+        }
         // Activating a product consumer binds every component.
         Value::CoTensor { co, env } => {
             let (arity, body) = match node(co) {

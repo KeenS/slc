@@ -1686,3 +1686,25 @@ fn a_delayed_let_runs_at_each_demand_and_a_now_let_once() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b", "once", "c", "d"]);
 }
+
+#[test]
+fn a_plain_let_follows_the_polarity_of_its_type() {
+    // A function-producing block is negative, so a plain `let` delays it and
+    // it runs at each use; a block producing a number runs where it is written.
+    let dir = std::env::temp_dir().join("slc_test_plain_let_polarity.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) / {IO} {
+            let shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };
+            ⟨"a" | shout;
+            ⟨"b" | shout;
+            let n = { ⟨"computed" | println; 21 };
+            ⟨n + n | println;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b", "computed", "42"]);
+}

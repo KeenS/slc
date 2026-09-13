@@ -1054,6 +1054,25 @@ fn label<-T: Describe>(x: T) -> String { ⟨x | describe }   // new
 
 A generic that took both data and codata splits in two.
 
+## A `let` says when it computes
+
+`let+` computes its value where it is written, and `let-` binds the
+computation to run wherever its result is demanded. A plain `let` follows
+the polarity of its type: a computation of negative type — a block or call
+producing a function, a consumer or a menu — is no longer run where it is
+written but at each use, effects included.
+
+```sl
+let shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };
+⟨"a" | shout;       // old: made, a       new: made, a
+⟨"b" | shout;       // old: b             new: made, b
+
+let+ shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };   // runs once
+```
+
+A `let` of a computation whose type inference cannot tell its polarity is
+an error; annotate it, or write `let+` or `let-`.
+
 ## Removed constructs
 
 ### `spawn`

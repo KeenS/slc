@@ -426,8 +426,15 @@ positive type is refused: a value delayed would bring back the `↑` that §8
 removed, so `Lazy<T>` stays the spelling of a delayed value. It binds a name,
 since a pattern takes apart a value and a delayed computation is not one
 until it runs. In the core a delayed computation is `λ$delay. t`, a thunk of
-the unit, and the runtime runs it where it is demanded. A plain `let`
-computes where it is written today.
+the unit, and the runtime runs it where it is demanded.
+
+A plain `let` follows the polarity of its type. A negative computation is
+delayed, as `let-` would; a positive one is computed where it is written, as
+`let+` would; and a value — a literal, a name, a `fn`, a `select`, a
+constructor of values — ran nothing, so it is bound as it is. Which one a
+binding is may be known only once the declaration's unification has
+finished, so it is settled then, and a computation whose polarity is still
+unknown is refused, asking for an annotation, `let+` or `let-`.
 
 ## 5. `command`: consumer abstraction
 

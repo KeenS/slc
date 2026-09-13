@@ -130,15 +130,14 @@ delayed.
     Only a concrete row can ride on a type today, so until the rows-in-types
     upgrade that "Effect tracking follows names" names, a computation in a
     by-name position whose row is a variable is refused.
-  - **A plain `let` follows the polarity of its type.** `let+` and `let-`
-    have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed value
-    is `λ$delay. t` in the core and runs wherever it is applied, cut into or
-    asked for an item. A plain `let` still computes where it is written; it
-    is to delay a negative computation as `let-` does, with the other
-    by-name positions below.
-  - **An unknown polarity is an error.** A binding or lambda parameter whose
-    type inference leaves a variable is refused, asking for an annotation or
-    for `let+`/`let-`.
+  - **Bindings are done.** `let+`, `let-` and a plain `let` that follows its
+    type have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed
+    value is `λ$delay. t` in the core and runs wherever it is applied, cut
+    into or asked for an item. Arguments, tuple components and bundle items
+    are the positions left.
+  - **An unknown polarity is an error.** A binding's is refused already; a
+    lambda parameter whose type inference leaves a variable is to be refused
+    the same way, asking for an annotation.
   - **Printing is already generic over `Display`.** `println` and `print`
     are prelude functions over `<T: Display>`, so no builtin is polymorphic
     over polarity; their parameter takes its `+` with every other.
