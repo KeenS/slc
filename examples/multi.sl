@@ -17,12 +17,12 @@ impl Width for i64 { fn width(self: i64) -> i64 { ⟨self | int_to_str | str_len
 
 // Two type parameters, two bounds: `show` resolves on each argument's type.
 fn pair<+A: Show, +B: Show>(a: A, b: B) -> String {
-    (⟨a | show) + ", " + (⟨b | show)
+    (⟨((⟨a | show), ", ") | add | x => (x, (⟨b | show)) | add)
 }
 
 // Bounds from two different traits at once.
 fn show_with_width<+T: Show, +N: Width>(label: T, n: N) -> String {
-    (⟨label | show) + " (" + (⟨n | width | int_to_str) + " digits)"
+    (⟨((⟨label | show), " (") | add | x => (x, (⟨n | width | int_to_str)) | add | x => (x, " digits)") | add)
 }
 
 // ── Several effects ─────────────────────────────────────────────────────
@@ -32,10 +32,10 @@ effect Reader { fn config() -> i64; }
 
 // The row lists every effect the body may perform.
 fn scale(x: i64) -> i64 / {Exn, Reader} {
-    match x == 0 { true => {
+    match (⟨(x, 0) | eq) { true => {
         ⟨"cannot scale zero" | fail
     }, _ => {
-        x * config()
+        (⟨(x, config()) | mul)
     } }
 }
 
@@ -48,7 +48,7 @@ command main | (exit: i32) / {IO} {
     // Exn, the outer Reader. Either order works; each handler answers its
     // own operations.
     let ok = handle (handle (⟨5 | scale) {
-        fail(m) => 0 - 1,
+        fail(m) => (⟨(0, 1) | sub),
         return(n) => n,
     }) {
         config(): resume => ⟨10 | resume,
@@ -57,7 +57,7 @@ command main | (exit: i32) / {IO} {
     ⟨ok | println;                        // 5 * 10 = 50
 
     let bad = handle (handle (⟨0 | scale) {
-        fail(m) => 0 - 1,
+        fail(m) => (⟨(0, 1) | sub),
         return(n) => n,
     }) {
         config(): resume => ⟨10 | resume,

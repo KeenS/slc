@@ -29,7 +29,7 @@ fn printer(out: -i64) -> Report / {IO} {
 // A form composes like any consumer: this one relabels, then forwards.
 fn shouting(next: Report) -> Report {
     select Report {
-        Report { value, label } => ⟨Report { value: value, label: label + "!" } | next⟩,
+        Report { value, label } => ⟨Report { value: value, label: (⟨(label, "!") | add) } | next⟩,
     }
 }
 

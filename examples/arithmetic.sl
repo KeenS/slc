@@ -6,10 +6,10 @@
 //   9223372036854775807 + 1 → arithmetic overflow
 
 command main | (exit: i32) / {IO} {
-    ⟨2 + 3 | println;
-    ⟨10 - 4 | println;
-    ⟨6 * 7 | println;
-    ⟨100 / 10 | println;
-    ⟨-7 + 2 | println;
+    ⟨(2, 3) | add | println;
+    ⟨(10, 4) | sub | println;
+    ⟨(6, 7) | mul | println;
+    ⟨(100, 10) | div | println;
+    ⟨(-7, 2) | add | println;
     ⟨0 | exit⟩
 }

@@ -79,12 +79,12 @@ mod seq {
 
     pub fn take<+T>(s: Seq<T>, n: i64) -> Seq<T> {
         mu Seq {
-            next <= match n <= 0 { true => {
+            next <= match (⟨(n, 0) | le) { true => {
                 ⟨Step::Done | next⟩
             }, _ => {
                 match s.next {
                     Step::Done => ⟨Step::Done | next⟩,
-                    Step::Yield(h, rest) => ⟨Step::Yield(h, ⟨(rest, n - 1) | take) | next⟩,
+                    Step::Yield(h, rest) => ⟨Step::Yield(h, ⟨(rest, (⟨(n, 1) | sub)) | take) | next⟩,
                 }
             } },
         }

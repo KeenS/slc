@@ -25,12 +25,12 @@ mod geometry {
     // Inside the module, its own names are bare — `Shape`, `Circle`.
     // Private: `squared` is the module's own business, and reaching it
     // from outside `geometry` is an error.
-    fn squared(n: i64) -> i64 { n * n }
+    fn squared(n: i64) -> i64 { (⟨(n, n) | mul) }
 
     pub fn area(s: Shape) -> i64 {
         match s {
-            Circle(r) => 3 * (⟨r | squared),
-            Rect(w, h) => w * h,
+            Circle(r) => (⟨(3, (⟨r | squared)) | mul),
+            Rect(w, h) => (⟨(w, h) | mul),
         }
     }
 
@@ -42,7 +42,7 @@ mod geometry {
 mod physics {
     // A sibling module reaches another through its path.
     pub fn weight(s: geometry::Shape) -> i64 {
-        (⟨s | geometry::area) * 10
+        (⟨((⟨s | geometry::area), 10) | mul)
     }
 }
 
@@ -53,7 +53,7 @@ command main | (exit: i32) / {IO} {
     ⟨geometry::Shape::Circle(5) | area | println;
     ⟨geometry::Shape::Rect(6, 7) | physics::weight | println;
     match geometry::origin() {
-        geometry::Point { x, y } => ⟨x + y | println,
+        geometry::Point { x, y } => ⟨(x, y) | add | println,
     };
     ⟨0 | exit⟩
 }

@@ -23,14 +23,14 @@ fn or_else<+T>(m: Maybe<T>, fallback: T) -> T {
 
 command main | (exit: i32) / {IO} {
     // A generic declaration: every call chooses its own `T`.
-    ⟨(⟨7 | id) + 1 | println;
+    ⟨((⟨7 | id), 1) | add | println;
     ⟨"seven" | id | str_len | println;
 
     // A generalized `let`: one binding, three instantiations — one through
     // an alias, since a plain name is a value form too.
     let nothing = Maybe::Nothing;
-    ⟨(⟨(nothing, 2) | or_else) * 10 | println;
-    ⟨(⟨(nothing, "both") | or_else) + "!" | println;
+    ⟨((⟨(nothing, 2) | or_else), 10) | mul | println;
+    ⟨((⟨(nothing, "both") | or_else), "!") | add | println;
     let also = nothing;
     ⟨(also, true) | or_else | println;
 
@@ -42,8 +42,8 @@ command main | (exit: i32) / {IO} {
             ⟨fn(x: i64) { x } | k⟩
         } }
     };
-    ⟨(⟨(,) | fresh)(1) + 1 | println;
-    ⟨(⟨(,) | fresh)(4) + 1 | println;
+    ⟨((⟨(,) | fresh)(1), 1) | add | println;
+    ⟨((⟨(,) | fresh)(4), 1) | add | println;
 
     ⟨0 | exit⟩
 }

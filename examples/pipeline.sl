@@ -13,8 +13,8 @@
 // function: `f | k⟩` composes, and the cut that sends `f` itself to `k` is
 // `⟨f | k⟩`.
 
-fn double(n: i64) -> i64 { n * 2 }
-fn incr(n: i64) -> i64 { n + 1 }
+fn double(n: i64) -> i64 { (⟨(n, 2) | mul) }
+fn incr(n: i64) -> i64 { (⟨(n, 1) | add) }
 
 // Closed at the right only: a consumer, awaiting a value.
 fn doubling(k: -i64) -> -i64 {
@@ -24,7 +24,7 @@ fn doubling(k: -i64) -> -i64 {
 // A two-exit command, written unary: one value, one menu of exits, each
 // component naming what reaches it.
 command classify(n: i64) | (found: i64 & missing: String) {
-    match n > 0 { true => { ⟨n | found⟩ }, _ => { ⟨"nothing there" | missing⟩ } }
+    match (⟨(n, 0) | gt) { true => { ⟨n | found⟩ }, _ => { ⟨"nothing there" | missing⟩ } }
 }
 
 // A row is a value: this one takes the whole menu and hands it on.
@@ -51,8 +51,8 @@ command main | (exit: i32) / {IO} {
 
     // a two-exit command: its exits spread, then bundled, then forwarded
     (⟨mu i64 { ok <= ⟨7 | classify | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
-    (⟨mu i64 { ok <= ⟨0 - 1 | classify | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
-    (⟨mu i64 { ok <= ⟨0 - 1 | forward | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
+    (⟨mu i64 { ok <= ⟨(0, 1) | sub | classify | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
+    (⟨mu i64 { ok <= ⟨(0, 1) | sub | forward | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
 
     ⟨0 | exit⟩
 }

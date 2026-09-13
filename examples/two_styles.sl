@@ -35,13 +35,13 @@ enum Shape {
 
 fn area(s: Shape) -> i64 {
     match s {
-        Circle(r) => 3 * r * r,
-        Rect(w, h) => w * h,
+        Circle(r) => (⟨(3, r) | mul | x => (x, r) | mul),
+        Rect(w, h) => (⟨(w, h) | mul),
     }
 }
 
 fn label(a: i64) -> String {
-    match a > 50 { true => {
+    match (⟨(a, 50) | gt) { true => {
         "big"
     }, _ => {
         "small"
@@ -58,14 +58,14 @@ fn label(a: i64) -> String {
 
 fn area_of(out: i64) <- Shape {
     select Shape {
-        Circle(r) => ⟨(3 * r * r) | out⟩,
-        Rect(w, h) => ⟨(w * h) | out⟩,
+        Circle(r) => ⟨(3, r) | mul | x => (x, r) | mul | out⟩,
+        Rect(w, h) => ⟨(w, h) | mul | out⟩,
     }
 }
 
 fn label_of(out: String) <- i64 {
     select i64 {
-        a => match a > 50 { true => {
+        a => match (⟨(a, 50) | gt) { true => {
             ⟨"big" | out⟩
         }, _ => {
             ⟨"small" | out⟩
@@ -90,7 +90,7 @@ command main | (exit: i32) / {IO} {
     // the rest of the program is written inside the last consumer.
     ⟨Shape::Circle(5) | area_of | label_of | select String {
         answer => {
-            ⟨"and directly: " + answer | println;
+            ⟨("and directly: ", answer) | add | println;
             ⟨0 | exit⟩
         },
     }⟩

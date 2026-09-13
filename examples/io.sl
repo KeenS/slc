@@ -19,13 +19,13 @@
 // the one handler it did not have to write.
 
 fn greet(name: String) -> (,) / {IO} {
-    ⟨"hello, " + name | println
+    ⟨("hello, ", name) | add | println
 }
 
 // A pure function stays pure, and the checker holds it to that: printing
 // inside this one would be an error rather than a surprise.
 fn shout(name: String) -> String {
-    name + "!"
+    (⟨(name, "!") | add)
 }
 
 command main | (exit: i32) / {IO} {
@@ -42,7 +42,7 @@ command main | (exit: i32) / {IO} {
 
     // The clause above never resumed, so `greet` stopped where it performed
     // and the handler's value is the text it would have written.
-    ⟨"captured instead: " + captured | println;
+    ⟨("captured instead: ", captured) | add | println;
 
     // Resuming makes the handler a tap rather than a trap. The clause runs
     // *below* its own prompt, so what it performs escapes outward to the
@@ -50,7 +50,7 @@ command main | (exit: i32) / {IO} {
     // and forwards it.
     handle ⟨"again" | greet {
         write_line(text): resume => {
-            ⟨"about to write " + (⟨text | str_len | to_string) + " characters" | println;
+            ⟨("about to write ", (⟨text | str_len | to_string)) | add | x => (x, " characters") | add | println;
             ⟨text | write_line;
             ⟨(,) | resume
         },

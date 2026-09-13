@@ -10,9 +10,9 @@ impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
 impl Show for bool { fn show(self: bool) -> String { match self { true => { "T" }, _ => { "F" } } } }
 
 // Polymorphic: `show` here projects from `twice`'s dictionary parameter.
-fn twice<+T: Show>(x: T) -> String { (⟨x | show) + (⟨x | show) }
+fn twice<+T: Show>(x: T) -> String { (⟨((⟨x | show), (⟨x | show)) | add) }
 // Forwards its dictionary one level deeper, into `twice`.
-fn relay<+T: Show>(x: T) -> String { "[" + (⟨x | twice) + "]" }
+fn relay<+T: Show>(x: T) -> String { (⟨("[", (⟨x | twice)) | add | y => (y, "]") | add) }
 
 command main | (exit: i32) / {IO} {
     ⟨42 | show | println;      // 42  — concrete receiver, a direct impl call

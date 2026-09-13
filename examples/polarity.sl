@@ -27,7 +27,7 @@ enum Request {
 //     a value: the parameter is `-String`, the caller passes `note`,
 //     and the body cuts into it directly.
 fn describe(label: +i64, note: -String) -> (;) {
-    match label > 0 { true => {
+    match (⟨(label, 0) | gt) { true => {
         ⟨"positive" | note⟩
     }, _ => {
         ⟨"not positive" | note⟩

@@ -44,7 +44,7 @@ fn report(value: i64 & absent: i64) <- Reading {
 // written directly.
 fn twice(out: i64) <- i64 {
     select i64 {
-        n => ⟨(n * 2) | out⟩,
+        n => ⟨(n, 2) | mul | out⟩,
     }
 }
 

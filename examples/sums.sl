@@ -4,8 +4,8 @@
 
 fn describe(out: String) <- (i64 | String) {
     select (i64 | String) {
-        ::0(n) => ⟨"number " + (⟨n | int_to_str) | out⟩,
-        ::1(s) => ⟨"text " + s | out⟩,
+        ::0(n) => ⟨("number ", (⟨n | int_to_str)) | add | out⟩,
+        ::1(s) => ⟨("text ", s) | add | out⟩,
     }
 }
 
@@ -13,9 +13,9 @@ fn describe(out: String) <- (i64 | String) {
 // position counts along them.
 fn rank(out: String) <- (i64 | bool | String) {
     select (i64 | bool | String) {
-        ::0(n) => ⟨"first " + (⟨n | int_to_str) | out⟩,
+        ::0(n) => ⟨("first ", (⟨n | int_to_str)) | add | out⟩,
         ::1(b) => ⟨(match b { true => { "second, yes" }, _ => { "second, no" } }) | out⟩,
-        ::2(s) => ⟨"third " + s | out⟩,
+        ::2(s) => ⟨("third ", s) | add | out⟩,
     }
 }
 
@@ -29,7 +29,7 @@ fn show(x: (i64 | String)) -> String {
 // A command offers its outcome as one value, for a bundle of exits to take:
 // the consumer of `(A | B)` is `(-A & -B)`, and the position picks the exit.
 command classify(n: i64) | (outcome: (i64 | String)) {
-    match n < 10 { true => { ⟨::0(n) | outcome⟩ }, _ => { ⟨::1("big") | outcome⟩ } }
+    match (⟨(n, 10) | lt) { true => { ⟨::0(n) | outcome⟩ }, _ => { ⟨::1("big") | outcome⟩ } }
 }
 
 command main | (exit: i32) / {IO} {

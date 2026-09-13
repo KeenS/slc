@@ -18,7 +18,7 @@
 command main | (exit: i32) / {IO} {
     let complain = select String {
         message => {
-            ⟨"cannot read: " + message | println;
+            ⟨("cannot read: ", message) | add | println;
             ⟨1 | exit⟩
         },
     };
@@ -44,7 +44,7 @@ command main | (exit: i32) / {IO} {
     let first = mu { k <= {
         ⟨file | fs::read_line | (k & select unit { end => { ⟨"empty file" | println; ⟨1 | exit⟩ } })⟩
     } };
-    ⟨"first line: " + first | println;
+    ⟨("first line: ", first) | add | println;
 
     // The failure path: exactly one of the two consumers runs, and this
     // file does not exist. Both consumers leave through the composed exit,
@@ -56,7 +56,7 @@ command main | (exit: i32) / {IO} {
             },
         } & select String {
             message => {
-                ⟨"cannot open: " + message | println;
+                ⟨("cannot open: ", message) | add | println;
                 ⟨0 | exit⟩
             },
         })⟩

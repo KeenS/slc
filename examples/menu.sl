@@ -33,7 +33,7 @@ fn config() -> Config {
 fn loud(base: Config) -> Config {
     mu Config {
         retries <= ⟨base.retries | retries⟩,
-        name <= ⟨base.name + "!" | name⟩,
+        name <= ⟨(base.name, "!") | add | name⟩,
     }
 }
 

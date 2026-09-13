@@ -13,14 +13,14 @@
 // A `mu` that hands its result to whatever consumer it is given — including
 // one built below.
 command twice(x: i64) | (k: i64) {
-    ⟨(x * 2) | k⟩
+    ⟨(x, 2) | mul | k⟩
 }
 
 command main | (exit: i32) / {IO} {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet.  v ∥ μ̃x.  rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.
-    let doubled = 21 * 2;
+    let doubled = (⟨(21, 2) | mul);
     ⟨doubled | println;
 
     // 2. The same co-term, written directly. `select` builds the consumer of
@@ -42,7 +42,7 @@ command main | (exit: i32) / {IO} {
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `;` means.
-    let report = select (i64, i64) { (left, right) => ⟨left + right | println };
+    let report = select (i64, i64) { (left, right) => ⟨(left, right) | add | println };
     ⟨(10, 7) | report⟩;
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this

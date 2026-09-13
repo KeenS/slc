@@ -28,7 +28,7 @@ data Pair {
 
 fn sum(p: Pair) -> i64 {
     match p {
-        Pair { left, right } => left + right,
+        Pair { left, right } => (⟨(left, right) | add),
     }
 }
 
@@ -37,7 +37,7 @@ fn sum(p: Pair) -> i64 {
 
 fn report_sum(out: i64) <- Pair {
     select Pair {
-        Pair { left, right } => ⟨(left + right) | out⟩,
+        Pair { left, right } => ⟨(left, right) | add | out⟩,
     }
 }
 
@@ -51,7 +51,7 @@ form Total {
 
 fn total(out: -i64) -> Total {
     select Total {
-        Total { left, right } => ⟨(left + right) | out⟩,
+        Total { left, right } => ⟨(left, right) | add | out⟩,
     }
 }
 

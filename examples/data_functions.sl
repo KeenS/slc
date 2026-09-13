@@ -24,14 +24,14 @@ enum Size {
 
 // Takes a record and returns one: build a new value from the old.
 fn translate(p: Point, dx: i64, dy: i64) -> Point {
-    Point { x: p.x + dx, y: p.y + dy }
+    Point { x: (⟨(p.x, dx) | add), y: (⟨(p.y, dy) | add) }
 }
 
 // Takes a record and returns an enum: the result is one tagged variant.
 fn classify(p: Point) -> Size {
-    let area = p.x * p.y;
-    match area > 100 { true => {
-        Size::Big(area - 100)
+    let area = (⟨(p.x, p.y) | mul);
+    match (⟨(area, 100) | gt) { true => {
+        Size::Big((⟨(area, 100) | sub))
     }, _ => {
         Size::Small
     } }
@@ -51,7 +51,7 @@ fn overshoot(s: Size) -> i64 {
 // binds every field at once.
 fn area_of(out: i64) <- Point {
     select Point {
-        Point { x, y } => ⟨(x * y) | out⟩,
+        Point { x, y } => ⟨(x, y) | mul | out⟩,
     }
 }
 
@@ -66,8 +66,8 @@ fn reflect(out: Point) <- Point {
 // "Returns" an enum: consume a bare number, send one variant onward.
 fn classify_to(out: Size) <- i64 {
     select i64 {
-        area => match area > 100 { true => {
-            ⟨Size::Big(area - 100) | out⟩
+        area => match (⟨(area, 100) | gt) { true => {
+            ⟨Size::Big((⟨(area, 100) | sub)) | out⟩
         }, _ => {
             ⟨Size::Small | out⟩
         } },

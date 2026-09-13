@@ -20,12 +20,12 @@ use stream::take;
 fn count_from(n: i64) -> Stream<i64> {
     mu Stream {
         head: out <= ⟨n | out⟩,
-        tail: head: out <= ⟨n + 1 | out⟩,
-        tail: tail: rest <= ⟨n + 2 | count_from | rest⟩,
+        tail: head: out <= ⟨(n, 1) | add | out⟩,
+        tail: tail: rest <= ⟨(n, 2) | add | count_from | rest⟩,
     }
 }
 
-fn double(n: i64) -> i64 { n * 2 }
+fn double(n: i64) -> i64 { (⟨(n, 2) | mul) }
 
 command main | (exit: i32) / {IO} {
     let s = ⟨10 | count_from;
