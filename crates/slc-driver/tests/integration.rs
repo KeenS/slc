@@ -1770,3 +1770,26 @@ fn an_exit_named_as_a_command_runs_and_passed_on_it_does_not() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["otherwise"]);
 }
+
+#[test]
+fn what_flows_into_a_function_is_by_name() {
+    // The block produces a function, so it is delayed as it flows into
+    // `twice`, and runs at each of the two uses there.
+    let dir = std::env::temp_dir().join("slc_test_by_name_flow_head.sl");
+    std::fs::write(
+        &dir,
+        r#"fn twice(g: (String -> (,) / {IO})) -> (,) / {IO} {
+            ⟨"a" | g;
+            ⟨"b" | g
+        }
+
+        command main | (exit: -i32) / {IO} {
+            ⟨{ ⟨"made" | println; fn(s: String) { ⟨s | println } } | twice;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b"]);
+}

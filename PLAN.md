@@ -93,61 +93,22 @@ Independent of the surface simplifications below: `&&` and `||` are gone
 rather than made functions, so no operator waits on how an operand is
 delayed.
 
-- **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
-  the choice between by-value and by-name, and it is settled for the
-  producer at every type today (`reduce.rs`). It is to be settled by
-  polarity instead: a computation of negative type is not run where it is
-  written, but each time it is demanded. Decided:
-
-  - **Every negative position.** An argument, a tuple component, a bundle
-    item and a binding all delay a negative computation — a block that ends
-    in a cut, or a call that returns a consumer, a function or a menu. A
-    positive value is still computed where it is written: delaying one
-    would bring back the `↑` that §8 removed, so `Lazy<T>` stays the
-    spelling of a delayed value.
-  - **Run where demanded.** A delayed value runs where its result is needed
-    — as a command, cut into, applied or demanded — and is passed on unrun
-    into another by-name position: an argument, a component, a bundle item
-    or a `let-`. So a command that picks an exit needs no `fn(_)` wrappers:
-
-    ```sl
-    command choose(c: bool) | (then: (;) & otherwise: (;)) {
-        match c { true => then, _ => otherwise }       // runs the exit
-    }
-
-    command forward(c: bool) | (then: (;) & otherwise: (;)) {
-        ⟨c | choose | (then & otherwise)⟩               // passes them on
-    }
-    ```
-
-  - **Re-run at each use.** Nothing is cached: a delayed value demanded
-    twice runs twice, effects included, as continuations are already
-    multi-shot. `naturals` in `examples/seq.sl` is rebuilt at each use.
-  - **Effects are latent.** Nothing is performed where a delayed computation
-    is written: its row moves onto its type, and each use performs it, so
-    the handler that must discharge it is the one around the use — the rule
-    rowed menus and returned consumers (`-> (-A / {..E})`) already follow.
-    Only a concrete row can ride on a type today, so until the rows-in-types
-    upgrade that "Effect tracking follows names" names, a computation in a
-    by-name position whose row is a variable is refused.
-  - **Bindings are done.** `let+`, `let-` and a plain `let` that follows its
-    type have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed
-    value is `λ$delay. t` in the core and runs wherever it is applied, cut
-    into or asked for an item. Tuple components, bundle items and arguments
-    delay a negative computation too, and a name of type `(;)` standing as a
-    command runs the exit it holds. What is left is the flow head below.
-  - **An unknown polarity is an error.** A binding's is refused already; a
-    lambda parameter whose type inference leaves a variable is to be refused
-    the same way, asking for an annotation.
-  - **Printing is already generic over `Display`.** `println` and `print`
-    are prelude functions over `<T: Display>`, so no builtin is polymorphic
-    over polarity; their parameter takes its `+` with every other.
-
-  What it changes, as found so far:
-
-  - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
-    prints `(,)` because it runs at once; it becomes a `let+`, rendered
-    through `Display`.
+- **Delayed computations carry their effects.** Negative positions are by
+  name (`DESIGN.md` §4, "When a `let` computes"), but the effect checker
+  still charges a delayed computation's row where it is written, which is
+  right only while the computation is used inside the declaration that
+  writes it. Decided: nothing is performed where a delayed computation is
+  written — its row moves onto its type, and each use performs it, so the
+  handler that must discharge it is the one around the use, the rule rowed
+  menus and returned consumers (`-> (-A / {..E})`) already follow. Only a
+  concrete row can ride on a type today, so until the rows-in-types upgrade
+  that "Effect tracking follows names" names, a computation in a by-name
+  position whose row is a variable is refused.
+- **An unknown polarity is an error for a lambda parameter too.** A `let`
+  of a computation whose polarity inference cannot tell is refused, asking
+  for an annotation, `let+` or `let-`; a lambda parameter whose type
+  inference leaves a variable is to be refused the same way, asking for an
+  annotation.
 
 ### Surface simplifications
 

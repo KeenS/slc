@@ -446,6 +446,14 @@ since a pattern takes apart a value and a delayed computation is not one
 until it runs. In the core a delayed computation is `λ$delay. t`, a thunk of
 the unit, and the runtime runs it where it is demanded.
 
+A binding is one of the **by-name positions**. The others are what flows
+into a chain — the argument it applies, `⟨e | f` — an argument written in
+parentheses, a tuple component and a bundle item. In each, a computation of
+negative type is delayed and a positive one computed where it is written.
+Nothing is cached: a delayed value demanded twice runs twice, effects
+included, as a continuation resumed twice does. A name of type `(;)`
+standing as a command runs the exit it holds (see "Continuation rows").
+
 A plain `let` follows the polarity of its type. A negative computation is
 delayed, as `let-` would; a positive one is computed where it is written, as
 `let+` would; and a value — a literal, a name, a `fn`, a `select`, a

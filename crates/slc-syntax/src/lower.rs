@@ -274,11 +274,16 @@ fn lower_in_command_position(e: &Node<Expr>, continuations: &[String]) -> Result
 /// checker found negative is delayed, to run where it is demanded.
 fn lower_by_name(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
     let term = lower_expr(e, continuations)?;
-    Ok(if is_delayed(e.span) {
+    Ok(delay_if_delayed(e.span, term))
+}
+
+/// `term`, delayed when the checker found the computation at `span` to be.
+fn delay_if_delayed(span: Span, term: Term) -> Term {
+    if is_delayed(span) {
         Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(term))
     } else {
         term
-    })
+    }
 }
 
 /// Which components of the form value at `span` are positive.
@@ -629,8 +634,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             if shape.eta {
                 lowered.push(Term::Var(FLOW_ARGUMENT.into()));
             }
-            for stage in stages {
-                lowered.push(lower_flow_stage(stage, continuations)?);
+            for (index, stage) in stages.iter().enumerate() {
+                let term = lower_flow_stage(stage, continuations)?;
+                // What flows in stands by name.
+                lowered.push(if index == 0 { delay_if_delayed(stage.span, term) } else { term });
             }
             // A command takes both its groups from the chain: what flowed
             // in that far is its values, and the closing stage its menu of
@@ -1744,7 +1751,7 @@ fn lower_closed_flow(
     let Some((closing, flowing)) = stages.split_last() else { return Ok(None) };
     let Some(name) = named_consumer(&closing.kind) else { return Ok(None) };
     let Some((first, rest)) = flowing.split_first() else { return Ok(None) };
-    let mut value = lower_flow_stage(first, continuations)?;
+    let mut value = delay_if_delayed(first.span, lower_flow_stage(first, continuations)?);
     for stage in rest {
         value = call_curried(lower_flow_stage(stage, continuations)?, vec![value]);
     }

@@ -3156,6 +3156,11 @@ fn check_expr_unapplied(
         // `λx. x | …`, which gives composition its type for free —
         // `arrow(x, (;))` is a consumer, `arrow(x, B)` a function.
         Expr::Flow { stages, from_value, into_consumer } => {
+            // What flows in is the argument the chain applies, or the value
+            // it cuts: a by-name position.
+            if *from_value && stages.len() >= 2 {
+                note_by_name(&stages[..1], enums, env);
+            }
             let types: Vec<Option<Type>> = stages
                 .iter()
                 .map(|stage| check_expr(stage, enums, env, diags).map(|ty| env.uni.apply(&ty)))
