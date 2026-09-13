@@ -8,7 +8,7 @@
 
 use crate::declarations::{Declarations, enum_types};
 use crate::env::{Env, constant_types};
-use crate::signatures::{FunctionSignature, function_types, instantiate, is_builtin};
+use crate::signatures::{FunctionSignature, function_types, instantiate};
 use slc_core::types::{Base, Type};
 use slc_core::typing::contains_var;
 use slc_syntax::ast::{Decl, Expr, Named, Node, Program, TypeExpr};
@@ -1005,7 +1005,7 @@ fn check_call_arguments(
         for (index, arg) in args.iter().enumerate() {
             let actual = check_expr(arg, enums, env, diags);
             if index < values {
-                if is_builtin(name) {
+                if signature.builtin {
                     continue;
                 }
                 if let (Some(expected), Some(actual)) = (signature.params.get(index), &actual)
@@ -1060,7 +1060,7 @@ fn check_call_arguments(
         // a call.
         let actual = check_expr(arg, enums, env, diags);
         let in_row = signature.continuations.get(index) == Some(&true);
-        if !in_row && is_builtin(name) {
+        if !in_row && signature.builtin {
             continue;
         }
         let Some(expected) = signature.params.get(index) else {
@@ -1752,7 +1752,7 @@ fn check_expr_unapplied(
                 && let Some(signature) = env.functions.get(name)
             {
                 let (signature, seen) = instantiate(signature, &mut env.uni);
-                if is_builtin(name) {
+                if signature.builtin {
                     for ((arg, param), is_continuation) in
                         args.iter().zip(signature.params.iter()).zip(&signature.continuations)
                     {
@@ -1776,7 +1776,7 @@ fn check_expr_unapplied(
                 // `f(x)`. A command takes both its groups from the chain —
                 // `(xs, i) | nth | (found & missing)⟩` — and a constructor
                 // builds rather than applies, so only those keep parens.
-                if !args.is_empty() && !is_builtin(name) {
+                if !args.is_empty() && !signature.builtin {
                     let piped = if args.len() == 1 {
                         format!("{} | {name}", "argument")
                     } else {
@@ -2610,7 +2610,7 @@ fn check_expr_unapplied(
                         .cloned()
                         .reduce(|acc, ty| Type::With(Box::new(ty), Box::new(acc)))
                         .unwrap_or(Type::One);
-                    if !is_builtin(name) && !fits(env, &values, &acc, shape) {
+                    if !signature.builtin && !fits(env, &values, &acc, shape) {
                         let values = env.uni.apply(&values);
                         diags.push(Diagnostic {
                             message: format!(
@@ -2620,7 +2620,7 @@ fn check_expr_unapplied(
                         });
                     }
                     if let Some(exits) = types[index + 1].as_ref()
-                        && !is_builtin(name)
+                        && !signature.builtin
                         && !fits(env, &row, exits, &stages[index + 1].kind)
                     {
                         let row = env.uni.apply(&row);
@@ -2663,7 +2663,7 @@ fn check_expr_unapplied(
                             .unwrap_or(Type::One);
                         let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
                         let probe = Env { uni: probe, ..env.clone() };
-                        is_builtin(name)
+                        signature.builtin
                             || piecewise
                             || would_fit(&probe, &packed, &acc, Some(shape))
                     }
@@ -2692,7 +2692,7 @@ fn check_expr_unapplied(
                                 .zip(signature.params.iter())
                                 .all(|((item, actual), param)| fits(env, param, actual, &item.kind))
                     });
-                    if !piecewise && !is_builtin(name) && !fits(env, &packed, &acc, shape) {
+                    if !piecewise && !signature.builtin && !fits(env, &packed, &acc, shape) {
                         let packed = env.uni.apply(&packed);
                         diags.push(Diagnostic {
                             message: format!(
@@ -2774,6 +2774,70 @@ fn check_expr_unapplied(
                 // `area_of(out: -i64) <- Shape` are one type, so either
                 // stands in a pipeline. What flows in picks the reading,
                 // and where both fit they agree.
+                // A declared callee with a value group has had its chance in
+                // the signature arm, which supplies the whole group or
+                // nothing. Reaching here means what flows in is only part of
+                // it: `⅋` is associative, so the callee's type presents its
+                // first parameter alone, and reading it that way would apply
+                // `route` to `"high"` and leave the rest for later — a
+                // partial application the calling convention does not have,
+                // since a group is bound as one argument. A negative `fn`,
+                // whose only group is its row, still reads the mirrored way
+                // below.
+                if let Expr::Ident(name) = &stages[index].kind
+                    && env.lookup(name).is_none()
+                    && let Some(signature) = env.functions.get(name)
+                    && signature.continuations.iter().any(|c| !*c)
+                    && !signature.builtin
+                {
+                    let values: Vec<String> = signature
+                        .params
+                        .iter()
+                        .zip(&signature.continuations)
+                        .filter(|(_, is_row)| !**is_row)
+                        .map(|(ty, _)| ty.to_string())
+                        .collect();
+                    let group = match values.as_slice() {
+                        [one] => one.clone(),
+                        many => format!("({})", many.join(" ⊗ ")),
+                    };
+                    let is_command = signature.continuations.iter().any(|c| *c);
+                    // The values may all be there, with only the exits
+                    // missing: then the chain is what is short, not the group.
+                    let values_fit = {
+                        let mut probe = env.uni.clone();
+                        let (fresh, _) = instantiate(signature, &mut probe);
+                        let packed = fresh
+                            .params
+                            .iter()
+                            .zip(&fresh.continuations)
+                            .filter(|(_, is_row)| !**is_row)
+                            .map(|(ty, _)| ty.clone())
+                            .rev()
+                            .reduce(|acc, ty| Type::Tensor(Box::new(ty), Box::new(acc)))
+                            .unwrap_or(Type::One);
+                        let probe = Env { uni: probe, ..env.clone() };
+                        would_fit(&probe, &packed, &acc, Some(shape))
+                    };
+                    let message = if is_command && values_fit {
+                        format!(
+                            "`{name}` is a command: after its values it takes its menu of \
+                             exits, so the chain closes on them — `… | {name} | (…)⟩`"
+                        )
+                    } else {
+                        let exits = if is_command {
+                            " and then its menu of exits, closing the chain"
+                        } else {
+                            ""
+                        };
+                        format!(
+                            "`{name}` takes its whole value group, {group}{exits}; what flows \
+                             in has type {acc}, and a call is not applied to part of a group"
+                        )
+                    };
+                    diags.push(Diagnostic { message, span: stages[index].span });
+                    return None;
+                }
                 let left = env.uni.fresh_var();
                 let right = env.uni.fresh_var();
                 let par = Type::Par(Box::new(left.clone()), Box::new(right.clone()));
@@ -3694,6 +3758,59 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("the declaration says")), "{diags:?}");
 
         assert!(check("fn id<T>(x: T) -> T { x }").is_ok());
+    }
+
+    #[test]
+    fn a_call_is_not_applied_to_part_of_its_group() {
+        // A command given only some of its values was accepted — its
+        // `⅋`-nested type presented the first parameter alone — and then
+        // crashed at run time, where the group is bound as one argument.
+        let route = "command route(tag: String, x: i64) | (k: i64) { x | k⟩ }\n";
+        for body in [r#"let h = "high" | route; 0 | exit⟩"#, r#""high" | route; 0 | exit⟩"#] {
+            let diags = check(&format!("{route}command main | (exit: -i32) / {{IO}} {{ {body} }}"))
+                .unwrap_err();
+            assert!(
+                diags.iter().any(|d| d.message.contains("not applied to part of a group")),
+                "{body}: {diags:?}"
+            );
+        }
+        // A positive function likewise — and one named like a builtin, which
+        // used to inherit every builtin exemption by name and slip past.
+        let diags = check(
+            "fn add(a: i64, b: i64) -> i64 { a + b }
+             command main | (exit: -i32) / {IO} { let inc = 1 | add; 0 | exit⟩ }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("not applied to part of a group")),
+            "{diags:?}"
+        );
+        // All the values and no exits is a command short of its chain, and
+        // says so.
+        let diags = check(
+            "command one(x: i64) | (k: i64) { x | k⟩ }
+             command main | (exit: -i32) / {IO} { let h = 1 | one; 0 | exit⟩ }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`one` is a command")), "{diags:?}");
+        // The whole group still calls, and a negative function still reads
+        // the mirrored way round.
+        assert!(
+            check(&format!(
+                "{route}command main | (exit: -i32) / {{IO}} {{
+                     mu i64 {{ k <= (\"high\", 7) | route | k⟩ }} | println; 0 | exit⟩ }}"
+            ))
+            .is_ok()
+        );
+        assert!(
+            check(
+                "fn plus_one(out: i64) <- i64 { select i64 { n => n + 1 | out⟩ } }
+                 fn double(n: i64) -> i64 { n * 2 }
+                 command main | (exit: -i32) / {IO} {
+                     mu i64 { out <= 20 | plus_one | double | out⟩ } | println; 0 | exit⟩ }"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

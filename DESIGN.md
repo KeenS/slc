@@ -118,6 +118,15 @@ two things to learn, and reading either goes left to right:
 (xs, 2) | index_or_zero                // several arguments, one product
 ```
 
+**A stage supplies the whole group.** A declaration binds each parameter
+group as one argument, so what flows into a stage is all of its values or
+it is refused: `1 | add` of a two-parameter `add` is not a function waiting
+for the second, and says so. (A callee's type nests by `⅋`'s associativity
+and presents its first parameter alone; the checker does not read it that
+way.) Builtins are the exception — the runtime accumulates their arguments
+— and a callee is a builtin by where its signature came from, never by its
+name, so a program's own `fn add` is checked as a declaration.
+
 The call form survives only where a callee is not a function of values:
 a variant constructor `Cons(h, t)` *builds*, and keeps its parentheses.
 

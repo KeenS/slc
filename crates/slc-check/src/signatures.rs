@@ -18,10 +18,13 @@ pub struct FunctionSignature {
     /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
     /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
     pub bounds: Vec<(usize, String)>,
-}
-
-pub(crate) fn is_builtin(name: &str) -> bool {
-    builtin_functions().iter().any(|builtin| builtin.name == name)
+    /// Whether this signature is the standard library's own. A builtin is
+    /// applied by the runtime accumulating arguments, so it may be given
+    /// fewer than all of them, and its template parameters take anything;
+    /// the checker exempts it from what it holds a declaration to. Decided
+    /// by where the signature came from, never by name — a program's own
+    /// `fn add` is a declaration, and is checked as one.
+    pub builtin: bool,
 }
 
 /// The standard library.
@@ -154,6 +157,7 @@ pub(crate) fn function_types(
                     continuations: builtin.continuations,
                     result: builtin.result,
                     bounds: Vec::new(),
+                    builtin: true,
                 },
             )
         })
@@ -190,6 +194,7 @@ pub(crate) fn function_types(
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
                         bounds: resolve_bounds(type_params, bounds),
+                        builtin: false,
                     },
                 );
             }
@@ -211,6 +216,7 @@ pub(crate) fn function_types(
                         continuations,
                         result: Some(Type::Bottom),
                         bounds: resolve_bounds(type_params, bounds),
+                        builtin: false,
                     },
                 );
             }
@@ -231,6 +237,7 @@ pub(crate) fn function_types(
                             continuations: op.params.iter().map(|_| false).collect(),
                             result: Some(result),
                             bounds: Vec::new(),
+                            builtin: false,
                         },
                     );
                 }
@@ -254,6 +261,7 @@ pub(crate) fn instantiate(
         continuations: signature.continuations.clone(),
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
         bounds: signature.bounds.clone(),
+        builtin: signature.builtin,
     };
     (fresh, seen)
 }

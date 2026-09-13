@@ -548,6 +548,25 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## A call is not applied to part of its group
+
+A stage supplies a callee's whole value group. Giving a declared function
+or command fewer values used to type-check — its `⅋`-nested type presented
+the first parameter alone — and then crashed at run time with "a consumer
+of 2 components received …". It is refused at check time now:
+
+```sl
+let inc = 1 | add;                    // was accepted, then crashed
+(1, 2) | add                          // the call
+
+"high" | route                        // refused: `route` takes (String ⊗ i64)
+("high", 7) | route | k⟩              // the call, closing on its exits
+```
+
+A program's own function named like a builtin — `fn add` — is now checked
+as the declaration it is. It used to inherit the builtin's exemptions by
+name.
+
 ## `result::Result` is `either::Either`
 
 The two-way sum is named for what it is rather than for one use of it:
