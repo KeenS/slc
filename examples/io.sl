@@ -4,8 +4,8 @@
 // declares it —
 //
 //     effect IO {
-//         fn write(text: String) -> Unit;
-//         fn write_line(text: String) -> Unit;
+//         fn write(text: String) -> (,);
+//         fn write_line(text: String) -> (,);
 //     }
 //
 // — and `println` and `print` are the friendly front: they render any value

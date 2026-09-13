@@ -29,6 +29,7 @@ const ROWS: &[Row] = &[
     Row { id: "expr.call", source: "fn f() -> i32 { g(1) }", core: "⟨g ∥ $int_1 · __call⟩" },
     Row { id: "expr.lambda", source: "fn f() -> i32 { fn(x: +i32) -> i32 { x } }", core: "λx. x" },
     Row { id: "expr.pair", source: "fn f() -> i32 { (1, 2) }", core: "($int_1 ⊗ $int_2)" },
+    Row { id: "expr.inject", source: "fn f() -> i64 { ::0(1) }", core: "|0($int_1)" },
     Row {
         id: "expr.flow",
         source: "fn f(k: -i32) <- i32 { 1 | k⟩ }",

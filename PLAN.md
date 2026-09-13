@@ -70,15 +70,12 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-**Connective spellings** (DESIGN §8, *Connective spellings*), in order:
-
-1. **Migration.** Rewrite the examples, the stdlib, tests and DESIGN to the
-   new spellings, and record old → new in docs/MIGRATION.md.
+Nothing is queued.
 
 ## Deferred, for discussion
 
-- **`(k1 ; k2)` as a pattern.** DESIGN §8 lists it, but a value of `;` is
-  one consumer of both halves — it cannot be taken apart into the
+- **`(k1 ; k2)` as a pattern.** It was settled with the table, but a value
+  of `;` is one consumer of both halves — it cannot be taken apart into the
   continuations it was built from, the way a bundle `(a & b)`, which holds
   both, can. Where such a pattern would bind anything, and what, is open.
 - **Replacing `⟨` and `⟩`.** The cut brackets are the last non-ASCII

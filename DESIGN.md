@@ -330,7 +330,7 @@ is refused with a pointer at `match`.
 ```sl
 let (a, b) = pair;
 let Point { x, y } = origin;
-fn skew((a, b): (i64 ⊗ i64), c: i64) -> i64 { a * c - b }
+fn skew((a, b): (i64, i64), c: i64) -> i64 { a * c - b }
 ```
 
 This is what the unary calling convention already stood on. A declaration
@@ -363,7 +363,7 @@ command route(x: i32) | (k: i32) {
 ```
 
 The declaration denotes a command. Its return type is bottom; an optional
-`-> ⊥` annotation may be used as documentation and does not change lowering.
+`-> (;)` annotation may be used as documentation and does not change lowering.
 
 A group with nothing in it is left out rather than written empty: `command
 main | (exit: i32)` takes no values, and `command log(message: String)` takes
@@ -537,28 +537,11 @@ enum Config { Retries(-i64), Name(-String) }   // ⊕ — the value picks
 menu Config { retries: i64,  name: String }    // &  — the demand picks
 ```
 
-The nullary case is the additive unit `⊤`: `menu Top {}` has no possible
-requests, and its unique menu value is `mu Top {}`. Its core form is
-`μ[Top]`; the name is retained explicitly because an empty branch table has
-no destructor label from which its nominal type could be recovered.
-
-All four nullary connective shapes are introduced by prelude declarations:
-
-```sl
-data Unit {}
-form Bottom {}
-enum Empty {}
-menu Top {}
-```
-
-The exact nullary `Unit` and `Bottom` declarations are recognized structurally:
-`Unit` is the surface name of core `1`, constructed interchangeably as `()` or
-`Unit {}`, and `Bottom` is the surface name of core `⊥`; its nullary demand
-`Bottom {}` is likewise `()`. A differently shaped declaration that shadows
-either name stays nominal. `select Empty {}` is the empty consumer of the
-uninhabited `Empty`, and `mu Top {}` is the unique `Top` value. These four
-declarations are to be replaced by the nullary spellings settled in
-*Connective spellings* (§8).
+The nullary case is the additive unit ⊤, written `(&)`: the menu with no
+items, which answers no demand, and whose one value is `(&)` itself. Its core
+form is `μ[(&)]`, an empty branch table retaining that owner. The four units
+are the nullary forms of their connectives — `(,)`, `(|)`, `(&)` and `(;)` —
+and structural: no declaration names them (*Connective spellings*, §8).
 
 The two declarations above are each other's dual: `dual(i64 & String)` is
 `-i64 ⊕ -String`, a sum of requests each carrying the continuation that wants
@@ -667,37 +650,36 @@ spine. `examples/projection.sl` uses both forms.
 
 ### Explicit connective types
 
-Both multiplicative connectives are available as explicit *type* syntax, and
-are always parenthesized:
+Every connective is available as explicit *type* syntax, always
+parenthesized; a paren joins any number of components with one connective,
+nested to the right as the value is:
 
 ```sl
-fn sum_pair(p: (i64 ⊗ i64)) -> i64 { … }
-command consume_pair | (k: (-i64 ⅋ -i64)) { … }
+fn sum_pair(p: (i64, i64)) -> i64 { … }
+command consume_pair | (k: (-i64 ; -i64)) { … }
 ```
 
 | Type syntax | Meaning |
 |---|---|
-| `(A ⊗ B)` | positive product; the anonymous form of a two-field `data` |
-| `(A ⅋ B)` | negative product; the dual of `⊗`, a joint consumer of both sides |
-| `(A -> B)` | function: `-A ⅋ B`. So a function is negative, `(A -> ⊥)` *is* `-A`, and `dual(A -> B)` is `A ⊗ -B` — an argument together with a continuation for the result, which is what a call stack is |
+| `(A, B)` | positive product; the anonymous form of a two-field `data` |
+| `(A \| B)` | positive sum; the anonymous form of a two-variant `enum` |
+| `(A & B)` | negative sum; the anonymous form of a two-item `menu` |
+| `(A ; B)` | negative product; the dual of `,`, a joint consumer of both sides |
+| `(A -> B)` | function: `(dual(A) ; B)`. So a function is negative, `(A -> (;))` *is* `-A`, and `dual(A -> B)` is `(A, dual(B))` — an argument together with a continuation for the result, which is what a call stack is |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
-| `⊥` | bottom |
+| `(,)`, `(\|)`, `(&)`, `(;)` | the units of `,`, `\|`, `&` and `;` |
 
-`⊗` and `data` are the same connective: a `data` declaration names a
-product and its fields, while `(A ⊗ B)` writes one anonymously. Neither is
+`,` and `data` are the same connective: a `data` declaration names a
+product and its fields, while `(A, B)` writes one anonymously. Neither is
 sugar for the other — a named declaration is opaque to core unification, while
 an explicit tensor is structural.
 
 ### Connective spellings
 
-*Decided; not yet implemented — PLAN.md tracks the work. Where this section
-and the rest of this document disagree, this section is the intended
-language.*
-
-The surface is ASCII. `⊗`, `⅋` and `⊥` leave it (they remain the notation of
-the core and of this document's prose), and no other glyph enters. Every
-connective is written three ways — declared by name, anonymously, and
-nullary, as a paren holding only its separator:
+The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core and of
+this document's prose, never of a program. Every connective is written three
+ways — declared by name, anonymously, and nullary, as a paren holding only
+its separator:
 
 | named | anonymous type | value | unit type | unit value |
 |---|---|---|---|---|
@@ -712,18 +694,26 @@ pair is a pair of punctuation marks.
 - **Enum values** name their alternative by position, as `Enum::Variant(v)`
   does with the name left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`.
   Positions count from 0, as tuple projection `t.0` does. `(T1 | T2 | T3)`
-  nests to the right, as a tuple does, and an index past the second is
-  resolved against the type, as projection's is.
+  nests to the right, as a tuple does, and a position is read along that
+  nesting — against the sum its context gives, a return type, an annotation,
+  a parameter or a cut, once the declaration is checked. Where nothing has
+  said which sum it is, `::1(v)` and later are refused. A `select` over a sum
+  answers each position exactly once; a `match` covers every one, or has an
+  arm that matches anything. The consumer of `(A | B)` is `(-A & -B)`, so a
+  bundle of exits consumes an alternative as it is: the position picks the
+  exit.
 - **Form values** are built from one continuation per component: `(k1 ; k2)`
-  is a value of `(T1 ; T2)`, and `(k1 ; k2)` is its pattern. Fed a product
-  `(a, b)`, it delivers left to right — `a` to `k1`, then `b` to `k2` — so if
-  `k1` is an exit that jumps, `k2` never receives.
+  is a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
+  right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,
+  `k2` never receives. It is the consumer `select (A, B) { (a, b) => … }`
+  builds, so a form keeps one runtime shape. It has no pattern form: a value
+  of `;` cannot be taken apart into the continuations it was built from
+  (PLAN.md, *Deferred*).
 - **`A -> B`** stays, as the spelling of `(dual(A) ; B)`.
-- **The units are structural.** `(;)` is the type of a command, replacing
-  `⊥` and `Bottom`; `(|)` has no value and is consumed by `select (|) {}`;
-  `(&)` is `⊤`'s unique value. The prelude's `Unit`, `Bottom`, `Empty` and
-  `Top` go, and no unit has a second name — so the core gains the additive
-  units `0` and `⊤`, which today exist only as the nominal `Empty` and `Top`.
+- **The units are structural.** `(;)` is the type of a command; `(|)` has no
+  value, is consumed by `select (|) {}`, and a `match` on one needs no arm;
+  `(&)` is ⊤'s unique value. No unit has a name besides its spelling, and
+  the core has all four: 1, 0, ⊤ and ⊥.
 
 ### Negative multiplicative construction
 
@@ -746,8 +736,8 @@ fn show(out: -String) <- Reading {
 A bare product needs no declaration; its shape is written as the type:
 
 ```sl
-fn total(out: -i64) <- (+i64 ⊗ +i64) {
-    select (+i64 ⊗ +i64) {
+fn total(out: -i64) <- (+i64, +i64) {
+    select (+i64, +i64) {
         (left, right) => (left + right) | out⟩,
     }
 }
@@ -999,13 +989,13 @@ An operation may take several parameters; since calls are curried, the
 performing value collects them all before suspending. **Operations are
 positive, and need no negative form.** An operation that consumes rather
 than answers is already writable: `A → ⊥` *is* `-A`, so
-`fn drop(x: +i64) -> ⊥;` declares a consumer, and both `drop(42)` and the
+`fn drop(x: +i64) -> (;);` declares a consumer, and both `drop(42)` and the
 cut `42 | drop` perform it. Routing to a chosen outcome needs nothing new
 either, now that consumers are values — an operation takes them as
 ordinary parameters, and the clause cuts into whichever it picks:
 
 ```sl
-effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> ⊥; }
+effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
 …
 judge(n, ok, bad) => if n > 3 { "big" | ok⟩ } else { "small" | bad⟩ },
 ```
@@ -1235,9 +1225,7 @@ The library has two layers, and both are ordinary Slant source that goes
 through the same pipeline as user code.
 
 **The prelude** (`crates/slc-driver/src/prelude.sl`) is what every program
-sees unasked: the logical units `Unit`, `Bottom`, `Empty`, `Top` — kept
-top-level because the checker recognises the first two as the multiplicative
-units by exact name — the `effect IO` the runtime handles, and the
+sees unasked: the `effect IO` the runtime handles, and the
 **`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
 as in Rust) with impls for `i64`, `String`, `bool` and `to_string<T:
 Display>`. A program's own declaration of a prelude name shadows it.
@@ -1366,18 +1354,18 @@ has nowhere to put a continuation, and — as in Rust, where `v[i]` panics while
 `v.get(i)` does not — they report a bug in the program rather than a case it
 was meant to handle. The checked forms are the `command`-shaped builtins above.
 
-A helper of your own that always ends in a cut is annotated `-> ⊥`: it never
+A helper of your own that always ends in a cut is annotated `-> (;)`: it never
 returns, so it may stand where a consumer is expected.
 
 ## Literals
 
 A lambda whose body ends in a cut produces nothing, so it *is* a consumer:
-`fn(message: +String) -> ⊥ { … }` has type `-String`, and may be written
+`fn(message: +String) -> (;) { … }` has type `-String`, and may be written
 wherever a consumer of a `String` is expected. `A → ⊥` and `-A` are the same
 type, not two that convert, so a continuation parameter may be annotated
 either way.
 
-The `-> ⊥` may be omitted — the body decides the type — but the examples
+The `-> (;)` may be omitted — the body decides the type — but the examples
 write it, because a consumer literal is worth reading as one at a glance.
 
 `A → B` is `-A ⅋ B`, which is why this works: `A → ⊥` is `-A ⅋ ⊥`, and `⊥` is
@@ -1396,8 +1384,8 @@ must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
 
 A floating-point literal is untyped for now, a string literal is `+String`, a
-character literal is `+char`, and `true` and `false` are `+bool`. `()` is the
-unit value, of type `1`; an empty block is the same.
+character literal is `+char`, and `true` and `false` are `+bool`. `(,)` is the
+unit value, of type `(,)`; an empty block is the same.
 
 ## Diagnostics
 
@@ -1645,7 +1633,8 @@ nested left to right for several arguments.
 | `expr.enum` | `Color::Red`, `Shape::Circle(r)` | `Color::Red(unit)`, `Shape::Circle(⟦r⟧)` — several payload values pack into one tensor |
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧` |
-| `expr.pair` | `(a, b)`, `()` | `⟦a⟧ ⊗ ⟦b⟧`, right-nested; `()` is `unit` |
+| `expr.pair` | `(a, b)`, `(,)` | `⟦a⟧ ⊗ ⟦b⟧`, right-nested; `(,)` is `unit` |
+| `expr.inject` | `::i(v)` | `i` right injections `\|1(…)` around a left one `\|0(⟦v⟧)`, or around `⟦v⟧` bare at the last position of the sum the checker resolved |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
 | `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
@@ -1680,15 +1669,15 @@ become λ binders.
 |---|---|
 | `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
 | `μα. c` | local `mu` expression, a flow that closes against a named consumer, and the lowering of `let`, blocks, and applications |
-| `t ⊗ t` | tuple literals, `data` literals, `(A ⊗ B)` values |
-| `L(t)` | `enum` values and `data` values — a labelled product |
+| `t ⊗ t` | tuple literals, `data` literals, `(A, B)` values |
+| `L(t)` | `enum` values and `data` values — a labelled product — and a sum's alternatives `::i(v)`, labelled `\|0` and `\|1` |
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
-| `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value |
+| `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
 | `α` | the consumer named on the right of a cut, `v | k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v | f(a)`), which is the same act: applying the consumer the expression evaluates to |
 | `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
-| `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum` or a `data`, including an empty enum |
+| `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum`, a `data` or a sum `(A \| B)`, including `select (\|) {}` |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |
 
@@ -1768,3 +1757,9 @@ program *reaches* are a row.
 - bare `fn` → rejected; write either `->` or `<-`
 - old variant-style `choose T { Variant }` → removed
 - `choose Struct` → removed while its design is deferred
+- `(A ⊗ B)` → `(A, B)`, `(A ⅋ B)` → `(A ; B)`, `⊥` → `(;)`; `⊗` no longer
+  multiplies
+- `Unit` → `(,)`, `Bottom` → `(;)`, `Empty` → `(|)`, `Top` and `mu Top {}` →
+  `(&)`, `select Empty {}` → `select (|) {}`
+- a declared `enum` for a one-off sum → `(A | B)`, with values `::0(v)`,
+  `::1(v)`

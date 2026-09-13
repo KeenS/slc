@@ -108,9 +108,9 @@ fn config() -> Config {
     }
 }
 
-// ─── 1 and ⊥ ─── the units of the multiplicatives: the empty product, and
-// its dual, the consumer that accepts it. (`0` and `⊤`, the additive units,
-// have no variants to write and so no surface form.)
+// ─── 1 and ⊥ ─── the units of the multiplicatives, written `(,)` and `(;)`:
+// the empty product, and its dual, the consumer that accepts it. The additive
+// units, 0 and ⊤, are `(|)` and `(&)` (examples/logical_units.sl).
 
 fn done(k: -(;)) <- unit {
     (,) | k⟩

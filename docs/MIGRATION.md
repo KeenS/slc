@@ -548,6 +548,72 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## Types are joined by ASCII connectives
+
+The glyphs are gone from the surface: `⊗` is `,`, `⅋` is `;`, and `⊥` is
+`(;)`. A parenthesised type joins any number of components with one
+connective, and `⊗` no longer multiplies.
+
+```sl
+fn sum_pair(p: (i64 ⊗ i64)) -> i64                 // old
+fn sum_pair(p: (i64, i64)) -> i64                  // new
+
+command consume | (k: (-i64 ⅋ -i64)) { … }         // old
+command consume | (k: (-i64 ; -i64)) { … }         // new
+
+fn stop(k: -i32) -> ⊥ { 0 | k⟩ }                   // old
+fn stop(k: -i32) -> (;) { 0 | k⟩ }                 // new
+
+2 ⊗ 3                                              // old
+2 * 3                                              // new
+```
+
+## The logical units are the nullary connectives
+
+The prelude's `Unit`, `Bottom`, `Empty` and `Top` are gone. Each unit is its
+connective's nullary spelling, a paren holding only the separator:
+
+```sl
+fn f() -> Unit { (,) }                                // old
+fn f() -> (,) { (,) }                                 // new
+
+command main | (exit: i32) -> Bottom / {IO} { … }     // old
+command main | (exit: i32) -> (;) / {IO} { … }        // new
+
+fn absurd(out: i64) <- Empty { select Empty {} }      // old
+fn absurd(out: i64) <- (|) { select (|) {} }          // new
+
+fn top() -> Top { mu Top {} }                         // old
+fn top() -> (&) { (&) }                               // new
+```
+
+`Unit {}` and the `Bottom {}` demand are `(,)`. A declaration named `Unit` or
+`Bottom` is now an ordinary one, with nothing recognised by its name.
+
+## A sum can be written without declaring an enum
+
+`(T1 | T2)` is an enum written anonymously, and its values name their
+alternative by position, counted from 0:
+
+```sl
+enum Outcome { Number(i64), Text(String) }                // old: a declaration
+fn show(x: Outcome) -> String {
+    match x { Outcome::Number(n) => n | int_to_str, Outcome::Text(s) => s }
+}
+
+fn show(x: (i64 | String)) -> String {                    // new
+    match x { ::0(n) => n | int_to_str, ::1(s) => s }
+}
+```
+
+A position is read against the sum its context gives, so `::1(v)` needs a
+return type, an annotation, a parameter or a cut to say which sum it is in.
+
+## A form value is written from its continuations
+
+`(k1 ; k2)` is new: a value of `(T1 ; T2)` that, fed a product `(a, b)`, hands
+`a` to `k1` and then `b` to `k2`. Nothing that compiled before changes.
+
 ## A `⅋` value fits the other spelling of its type
 
 A slot declared at one spelling of `A ⅋ B` used to refuse a value written at

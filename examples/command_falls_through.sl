@@ -2,7 +2,7 @@
 // continuation. Its body is just the value `x`, so control falls off the
 // end instead of ending in a cut.
 //
-// A `command` body must be ⊥ — every terminating path leaves through a
+// A `command` body is `(;)` — every terminating path leaves through a
 // continuation. (The core is classical, so *which* continuation, and how
 // many, is up to the program; only reaching one is required.) Run it to see
 // the diagnostic:
