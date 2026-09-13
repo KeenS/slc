@@ -113,7 +113,7 @@ fn check_trait_method_call(
             continue;
         };
         if let Some(actual) = check_expr(arg, enums, env, diags)
-            && !fits(env, &expected, &actual, &arg.kind)
+            && !fits_turning(env, &expected, &actual, arg)
         {
             let expected = env.uni.apply(&expected);
             diags.push(Diagnostic {
@@ -191,6 +191,9 @@ fn fits_piecewise(
     let mut probe = uni.clone();
     for ((item, actual), param) in items.iter().zip(&components).zip(params) {
         if probe.unify(param, actual).is_ok() {
+            continue;
+        }
+        if commutes(&probe, param, actual) {
             continue;
         }
         if is_integer_literal(&item.kind) && is_numeric(&probe.apply(param)) && is_numeric(actual) {
@@ -542,7 +545,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             };
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
                 && actual != &Type::Bottom
-                && !fits(env, promised, actual, tail_expr(&body.kind))
+                && !fits_turning(env, promised, actual, tail_node(body))
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -942,16 +945,6 @@ fn index_result_type(value_ty: &Type) -> Option<Type> {
 /// An integer literal takes the integer type its port requires — `0 | exit`
 /// sends an `i32` — and is `+i64` only when nothing constrains it. Every
 /// other value must match its port exactly.
-/// The expression a body's value comes from: the tail of a block, through a
-/// trailing `let` — where an integer literal earns its adaptation.
-fn tail_expr(e: &Expr) -> &Expr {
-    match e {
-        Expr::Block(items) => items.last().map(|n| tail_expr(&n.kind)).unwrap_or(e),
-        Expr::Let { body: Some(body), .. } => tail_expr(&body.kind),
-        _ => e,
-    }
-}
-
 fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     // A value that never arrives constrains nothing.
     if actual == &Type::Bottom {
@@ -962,6 +955,80 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     }
     // An integer literal takes the width its port requires.
     is_integer_literal(expr) && is_numeric(&env.uni.apply(expected)) && is_numeric(actual)
+}
+
+/// `A ⅋ B` and `B ⅋ A` are one type, so a value of one may be cut into a
+/// consumer of the other. The unifier stays structural — a value of `⅋` is a
+/// closure facing one way, and a commutation buried inside a constructor has
+/// no single value to turn around — so this is tried only where one value
+/// meets one consumer, after the forward reading has failed, and what it
+/// returns tells lowering how to turn the value. Both halves must be known:
+/// the swap is oriented by their polarities.
+fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<slc_syntax::lower::Swap> {
+    let (Type::Par(want_left, want_right), Type::Par(left, right)) =
+        (env.uni.apply(expected), env.uni.apply(actual))
+    else {
+        return None;
+    };
+    let mut probe = env.uni.clone();
+    if probe.unify(&want_left, &right).is_err() || probe.unify(&want_right, &left).is_err() {
+        return None;
+    }
+    let (left, right) = (probe.apply(&left), probe.apply(&right));
+    if contains_var(&left) || contains_var(&right) {
+        return None;
+    }
+    env.uni = probe;
+    Some(slc_syntax::lower::Swap {
+        left_positive: left.is_positive(),
+        right_positive: right.is_positive(),
+    })
+}
+
+/// Forward, or else the mirrored `⅋` reading, recorded as a swap on `value`
+/// so lowering turns it around. If neither fits, the unifier is left as the
+/// forward attempt left it, so a refusal reads exactly as it did before.
+fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr>) -> bool {
+    let before = env.uni.clone();
+    if fits(env, expected, actual, &value.kind) {
+        return true;
+    }
+    let failed = std::mem::replace(&mut env.uni, before);
+    match commute(env, expected, actual) {
+        Some(swap) => {
+            env.dispatch.swaps.insert(value.span, swap);
+            true
+        }
+        None => {
+            env.uni = failed;
+            false
+        }
+    }
+}
+
+/// Whether `commute` would succeed, without committing — for the probes that
+/// decide which arm a stage takes.
+fn commutes(uni: &slc_core::typing::Unification, expected: &Type, actual: &Type) -> bool {
+    let (Type::Par(want_left, want_right), Type::Par(left, right)) =
+        (uni.apply(expected), uni.apply(actual))
+    else {
+        return false;
+    };
+    let mut probe = uni.clone();
+    probe.unify(&want_left, &right).is_ok()
+        && probe.unify(&want_right, &left).is_ok()
+        && !contains_var(&probe.apply(&left))
+        && !contains_var(&probe.apply(&right))
+}
+
+/// `tail_expr`, as the node, so a swap on a body's value can be keyed by the
+/// span of the expression that produces it.
+fn tail_node(e: &Node<Expr>) -> &Node<Expr> {
+    match &e.kind {
+        Expr::Block(items) => items.last().map(tail_node).unwrap_or(e),
+        Expr::Let { body: Some(body), .. } => tail_node(body),
+        _ => e,
+    }
 }
 
 fn is_integer_literal(expr: &Expr) -> bool {
@@ -1124,7 +1191,7 @@ fn check_let_binding(
     let actual = check_expr(value, enums, env, diags);
     let annotation = ty.as_ref().and_then(|ty| resolve_in_body(ty, env, enums));
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
-        && !fits(env, annotation, &actual, &value.kind)
+        && !fits_turning(env, annotation, &actual, value)
     {
         diags.push(Diagnostic {
             message: match pattern.binder_name() {
@@ -1692,7 +1759,7 @@ fn check_expr_unapplied(
                 }
                 for (arg, expected) in args.iter().zip(payload.iter()) {
                     if let Some(actual) = check_expr(arg, enums, env, diags)
-                        && !fits(env, expected, &actual, &arg.kind)
+                        && !fits_turning(env, expected, &actual, arg)
                     {
                         diags.push(Diagnostic {
                             message: format!(
@@ -2159,7 +2226,7 @@ fn check_expr_unapplied(
                 let actual = check_expr(value, enums, env, diags);
                 if let (Some(actual), Some((_, expected))) =
                     (actual, declared.iter().find(|(declared, _)| declared == field))
-                    && !fits(env, expected, &actual, &value.kind)
+                    && !fits_turning(env, expected, &actual, value)
                 {
                     diags.push(Diagnostic {
                         message: format!(
@@ -2361,7 +2428,7 @@ fn check_expr_unapplied(
             let type_args = fresh_args(enums, &menu, &mut env.uni);
             let expected = payload.first().cloned().unwrap_or(Type::One).instantiate(&type_args);
             if let Some(actual) = check_expr(arg, enums, env, diags)
-                && !fits(env, &expected, &actual, &arg.kind)
+                && !fits_turning(env, &expected, &actual, arg)
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -2574,6 +2641,7 @@ fn check_expr_unapplied(
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
             let mut commuted_from: Option<usize> = None;
             let mut row_stage: Option<usize> = None;
+            let mut swap: Option<slc_syntax::lower::Swap> = None;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
                 let last = index + 1 == types.len();
                 let unknown = env.uni.fresh_var();
@@ -2666,6 +2734,7 @@ fn check_expr_unapplied(
                         signature.builtin
                             || piecewise
                             || would_fit(&probe, &packed, &acc, Some(shape))
+                            || (flowing.is_some() && commutes(&probe.uni, &packed, &acc))
                     }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
@@ -2686,13 +2755,19 @@ fn check_expr_unapplied(
                     let components = tensor_spine(&env.uni.apply(&acc));
                     let piecewise = written.is_some_and(|items| {
                         items.len() == components.len()
-                            && items
-                                .iter()
-                                .zip(components.iter())
-                                .zip(signature.params.iter())
-                                .all(|((item, actual), param)| fits(env, param, actual, &item.kind))
+                            && items.iter().zip(components.iter()).zip(signature.params.iter()).all(
+                                |((item, actual), param)| fits_turning(env, param, actual, item),
+                            )
                     });
-                    if !piecewise && !signature.builtin && !fits(env, &packed, &acc, shape) {
+                    let fitted = piecewise
+                        || signature.builtin
+                        || match flowing {
+                            // What flows in is a written value, so it can be
+                            // turned around where it stands.
+                            Some(_) if index == 1 => fits_turning(env, &packed, &acc, &stages[0]),
+                            _ => fits(env, &packed, &acc, shape),
+                        };
+                    if !fitted {
                         let packed = env.uni.apply(&packed);
                         diags.push(Diagnostic {
                             message: format!(
@@ -2755,14 +2830,24 @@ fn check_expr_unapplied(
                     // The ⊥/1 corner: `-⊥` resolves to `1`, so the
                     // idiomatic `⟨(,) | k⟩` is unit meeting unit.
                     let units = acc == Type::One && ty == &Type::One;
+                    let before = env.uni.clone();
                     if !units && !fits(env, &expects, &acc, shape) {
-                        let expects = env.uni.apply(&expects);
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "this consumer takes {expects}, and what flows in has type {acc}"
-                            ),
-                            span: stages[index].span,
-                        });
+                        // The forward reading failed; whatever it bound is
+                        // undone before the mirrored one is tried.
+                        env.uni = before;
+                        match commute(env, &expects, &acc) {
+                            Some(turned) => swap = Some(turned),
+                            None => {
+                                let expects = env.uni.apply(&expects);
+                                diags.push(Diagnostic {
+                                    message: format!(
+                                        "this consumer takes {expects}, and what flows in has \
+                                         type {acc}"
+                                    ),
+                                    span: stages[index].span,
+                                });
+                            }
+                        }
                     }
                     acc = Type::Bottom;
                     continue;
@@ -2880,6 +2965,7 @@ fn check_expr_unapplied(
                     cut: *into_consumer,
                     commuted_from,
                     row_stage,
+                    swap,
                 },
             );
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
@@ -3810,6 +3896,28 @@ mod tests {
                      mu i64 { out <= 20 | plus_one | double | out⟩ } | println; 0 | exit⟩ }"
             )
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_value_is_cut_into_a_consumer_at_the_mirrored_spelling_of_its_type() {
+        // `+String ⅋ -i64` into a slot of `-i64 ⅋ +String`: one type.
+        assert!(
+            check(
+                "menu Deliver { deliver: (i64 -> String) }
+                 fn deliver_i64(out: String) <- i64 { select i64 { n => n | int_to_str | out⟩ } }
+                 fn delivers() -> Deliver { mu Deliver { deliver <= ⟨deliver_i64 | deliver⟩ } }"
+            )
+            .is_ok()
+        );
+        // Inside a constructor there is no one value to turn around, so a
+        // component's spelling still has to match.
+        assert!(
+            check(
+                "fn deliver_i64(out: String) <- i64 { select i64 { n => n | int_to_str | out⟩ } }
+                 fn f() -> i64 { let p: ((i64 -> String) ⊗ i64) = (deliver_i64, 1); 0 }"
+            )
+            .is_err()
         );
     }
 

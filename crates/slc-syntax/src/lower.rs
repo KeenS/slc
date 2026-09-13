@@ -34,6 +34,9 @@ thread_local! {
     /// its menu of exits.
     static CALL_GROUPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     static FLOWS: RefCell<HashMap<Span, FlowShape>> = RefCell::new(HashMap::new());
+    /// Expression span → the swap its value needs: it is used at the
+    /// mirrored `⅋` spelling of its type.
+    static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
     /// The exact nullary records that are aliases for the tensor unit:
     /// `data Unit {}` and `form Bottom {}`.
     static UNIT_RECORDS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
@@ -78,6 +81,9 @@ pub struct DispatchInfo {
     /// Flow span → what the chain turned out to be. Two bits settle it,
     /// since every middle step is an application.
     pub flows: HashMap<Span, FlowShape>,
+    /// Expression span → the swap its value needs, where a value of `A ⅋ B`
+    /// is stored at, passed as, or returned for `B ⅋ A`.
+    pub swaps: HashMap<Span, Swap>,
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -98,6 +104,46 @@ pub struct FlowShape {
     /// continuation — and from here on the stages fold right, building the
     /// consumer that what flows in is cut against.
     pub commuted_from: Option<usize>,
+    /// The value cut into the closing consumer has the consumer's type at
+    /// its other spelling: `A ⅋ B` where `B ⅋ A` is wanted. The two are one
+    /// type, but a value of it is a closure facing one way, so it is lowered
+    /// through the swap that faces it the other.
+    pub swap: Option<Swap>,
+}
+
+/// The polarities of a `⅋` value's two halves, `left ⅋ right`, which is what
+/// the swap needs to orient itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Swap {
+    pub left_positive: bool,
+    pub right_positive: bool,
+}
+
+/// `left ⅋ right → right ⅋ left` for a value `f`: a closure taking
+/// `dual(left)` becomes one taking `dual(right)` and giving back a `left`.
+///
+/// How it gives one back follows `left`'s polarity, because the runtime only
+/// has a real continuation where a type is negative. A positive `left` is
+/// captured with `μ`, whose binder — `dual(left)`, negative — is then a
+/// genuine continuation to hand `f`. A negative `left` is built as the
+/// consumer it is, with `μ̃`, whose binder is then a genuine value. The inner
+/// cut sends `f`'s result to `k`, or `k` to it, by `right`'s polarity.
+fn swap_adapter(f: Term, swap: Swap) -> Term {
+    const K: &str = "__swap_k";
+    const X: &str = "__swap_x";
+    let result = call_curried(f, vec![Term::Var(X.into())]);
+    let tail = || Box::new(CoTerm::Covar("__tail".into()));
+    let cut = if swap.right_positive {
+        Command::Cut(Term::Var(K.into()), CoTerm::App(result, tail()))
+    } else {
+        Command::Cut(result, CoTerm::App(Term::Var(K.into()), tail()))
+    };
+    let body = if swap.left_positive {
+        Term::Mu(X.into(), Box::new(cut))
+    } else {
+        Term::Co(Box::new(CoTerm::MuTilde(X.into(), Box::new(cut))))
+    };
+    Term::Lam(K.into(), Box::new(body))
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -211,6 +257,7 @@ pub fn lower_program_resolving(
     DEMANDS.with(|cell| *cell.borrow_mut() = dispatch.demands.clone());
     CALL_GROUPS.with(|cell| *cell.borrow_mut() = dispatch.call_groups.clone());
     FLOWS.with(|cell| *cell.borrow_mut() = dispatch.flows.clone());
+    SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
@@ -218,6 +265,7 @@ pub fn lower_program_resolving(
     DEMANDS.with(|cell| cell.borrow_mut().clear());
     CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
     FLOWS.with(|cell| cell.borrow_mut().clear());
+    SWAPS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -287,7 +335,17 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
 /// Lower an expression to a core term.
 /// Lower an expression in an explicit lexical continuation scope. New
 /// continuation binders extend `continuations` for their body only.
+/// Lower an expression, turned around first if the checker found its value
+/// used at the mirrored `⅋` spelling of its type.
 fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
+    let term = lower_expr_facing(e, continuations)?;
+    Ok(match SWAPS.with(|cell| cell.borrow().get(&e.span).copied()) {
+        Some(swap) => swap_adapter(term, swap),
+        None => term,
+    })
+}
+
+fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
     match &e.kind {
         Expr::Int(n) => Ok(Term::Var(format!("$int_{n}"))),
         Expr::Float(n) => Ok(Term::Var(format!("$float_{n}"))),
@@ -545,6 +603,7 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     cut: *into_consumer,
                     commuted_from: None,
                     row_stage: None,
+                    swap: None,
                 });
             let mut lowered = Vec::new();
             if shape.eta {
@@ -602,6 +661,12 @@ fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerErr
                     // The closed chain is a cut, and lowers to exactly the
                     // term a cut has always lowered to.
                     let closing = &stages.last().expect("a flow has stages").kind;
+                    // A value used at the mirrored spelling of its type is
+                    // turned to face the consumer before it meets it.
+                    let acc = match shape.swap {
+                        Some(swap) => swap_adapter(acc, swap),
+                        None => acc,
+                    };
                     let command = match named_consumer(closing) {
                         Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
                         None => Command::Cut(
@@ -1609,7 +1674,10 @@ fn lower_closed_flow(
         return Ok(None);
     };
     let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).copied()).is_none_or(|shape| {
-        !shape.eta && shape.commuted_from.is_none() && shape.row_stage.is_none()
+        !shape.eta
+            && shape.commuted_from.is_none()
+            && shape.row_stage.is_none()
+            && shape.swap.is_none()
     });
     if !plain {
         return Ok(None);

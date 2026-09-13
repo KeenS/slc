@@ -24,12 +24,15 @@ feature is mid-flight; what remains open is below.
 
 ## Known limits
 
-- **⅋ does not commute in unification.** A stage reads either way round,
-  but the checker's unifier is structural, so `fn f(out: String) <- i64`
-  (type `+String ⅋ -i64`) will not fit a slot declared `(i64 -> String)`
-  (`-i64 ⅋ +String`) — the same type. A place that stores a function, a
-  menu item or a record field, must be declared at the spelling its value
-  happens to have.
+- **⅋ commutes only where one value meets one declared type.** `A ⅋ B`
+  and `B ⅋ A` are one type, and a value is accepted at either spelling where
+  it is cut into a consumer, stored in a record field, a variant or a
+  `let`, passed as a written argument, or returned — the checker records a
+  swap and lowering turns the closure around. Inside a type constructor —
+  a tuple's component, `List<A ⅋ B>` against `List<B ⅋ A>` — there is no
+  one value to turn, so the spelling still has to match; nor is an argument
+  turned when it is the result of an earlier stage rather than a written
+  value. Both would need the swap mapped through a structure or a chain.
 
 - **Soundness is enforced by inference, argued informally.** What remains
   short of a proof: no mechanized subject-reduction argument ties the checker

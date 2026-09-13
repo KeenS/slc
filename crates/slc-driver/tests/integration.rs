@@ -1395,3 +1395,76 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.trim(), "42");
 }
+
+#[test]
+fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
+    // `A ⅋ B` and `B ⅋ A` are one type. A negative function stored where the
+    // positive spelling is declared, and a positive function where the
+    // negative one is, must both *run* — which is what proves the value was
+    // turned around at the cut rather than merely accepted.
+    let dir = std::env::temp_dir().join("slc_test_par_commutes.sl");
+    std::fs::write(
+        &dir,
+        r#"menu Deliver { deliver: (i64 -> String) }
+        fn deliver_i64(out: String) <- i64 {
+            select i64 { n => "the number " + (n | int_to_str) | out⟩ }
+        }
+        fn delivers() -> Deliver { mu Deliver { deliver <= ⟨deliver_i64 | deliver⟩ } }
+
+        menu Render { render: (-String -> -i64) }
+        fn render_i64(n: i64) -> String { "n=" + (n | int_to_str) }
+        fn renders() -> Render { mu Render { render <= ⟨render_i64 | render⟩ } }
+
+        command main | (exit: i32) / {IO} {
+            42 | ((,) | delivers).deliver | println;
+            mu String { s <= 7 | (s | ((,) | renders).render)⟩ } | println;
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"the number 42\"", "\"n=7\""]);
+}
+
+#[test]
+fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
+    // The same turn, wherever a value meets a declared type rather than a
+    // consumer: a record field, a `let` annotation, a variant's payload, a
+    // function's argument, and its return value. Each is run.
+    let dir = std::env::temp_dir().join("slc_test_par_stores.sl");
+    std::fs::write(
+        &dir,
+        r#"fn deliver_i64(out: String) <- i64 {
+            select i64 { n => "the number " + (n | int_to_str) | out⟩ }
+        }
+        data Holder { f: (i64 -> String) }
+        enum Box1 { B((i64 -> String)) }
+        fn use_it(g: (i64 -> String)) -> String { 42 | g }
+        fn get() -> (i64 -> String) { deliver_i64 }
+
+        command main | (exit: i32) / {IO} {
+            let h = Holder { f: deliver_i64 };
+            1 | h.f | println;
+            let g: (i64 -> String) = deliver_i64;
+            2 | g | println;
+            ⟨deliver_i64 | use_it | println;
+            3 | ((,) | get) | println;
+            match Box1::B(deliver_i64) { B(k) => 4 | k | println };
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        [
+            "\"the number 1\"",
+            "\"the number 2\"",
+            "\"the number 42\"",
+            "\"the number 3\"",
+            "\"the number 4\""
+        ]
+    );
+}

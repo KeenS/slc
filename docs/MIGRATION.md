@@ -548,6 +548,22 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## A `⅋` value fits the other spelling of its type
+
+A slot declared at one spelling of `A ⅋ B` used to refuse a value written at
+the other, even though they are one type, so a declaration had to match its
+implementation's spelling:
+
+```sl
+menu Deliver { deliver: (-String -> -i64) }     // old: forced to match the negative fn
+fn deliver_i64(out: String) <- i64 { … }
+
+menu Deliver { deliver: (i64 -> String) }       // new: either spelling
+```
+
+Nothing that type-checked changes meaning — the written spelling is tried
+first. Inside a tuple or a type argument the spelling still has to match.
+
 ## `use m::*` brings a module's `pub` members
 
 A glob used to mean an enum's variants only. Over a module it now brings

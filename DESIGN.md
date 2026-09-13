@@ -86,6 +86,25 @@ shape | area_of | label_of | out⟩
 
 `examples/two_styles.sl` is that program, twice.
 
+The same identity holds wherever a value meets a declared type. A negative
+function stored in a menu item declared `(i64 -> String)`, a positive one
+passed where `(-String -> -i64)` is declared, or either kept in a record
+field, a variant, a `let`, or returned, is accepted at the other spelling.
+A value of `⅋` is a closure facing one way, so the checker records a swap
+there and lowering turns the closure around:
+
+```
+f : left ⅋ right   ↦   λk. μx. ⟨ f x ∥ k ⟩        a positive left
+                   ↦   λk. co(μ̃x. ⟨ f x ∥ k ⟩)    a negative left
+```
+
+— capturing with `μ` where the binder is a genuine continuation, building
+the consumer with `μ̃` where it is a genuine value, and cutting toward `k`
+or from it by the polarity of `right`. The forward reading is always tried
+first, so nothing that fits as written changes meaning. Inside a type
+constructor there is no one value to turn, so a tuple's component or a
+`List`'s argument still has to be written at its value's spelling.
+
 The head decides whether a chain applies or composes, and it needs no
 mark when it is not a function: `"hi" | println` can only be an
 application. Where the head *is* a function, the chain composes — and
