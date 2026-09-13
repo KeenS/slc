@@ -23,7 +23,7 @@ reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The open work is a set of surface
 simplifications that remove syntax in favour of ordinary declarations, and
-one defect.
+two defects.
 
 ## Known limits
 
@@ -84,6 +84,13 @@ one defect.
 - **Exhaustiveness does not know `bool`.** A `match` with `true` and `false`
   arms is reported non-exhaustive unless it adds a `_`. The fix is
   "`bool` is defined in the prelude".
+
+- **A `⟨` with no stage crashes the compiler.** `let x = ⟨1;` and
+  `let x = ⟨(1) == 0;` parse and pass every check, then panic in lowering
+  (`lower.rs`, "removal index (is 0) should be < len (is 0)"): lowering a
+  chain assumes it has at least two stages, and this one has only its head.
+  A `⟨` opens a chain for a stage to apply to, so one with none should be
+  refused before lowering, with a diagnostic pointing at the missing `|`.
 
 ## Next
 
