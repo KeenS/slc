@@ -958,6 +958,15 @@ select T { V => ⟨v | k⟩ }           // new
 `t | k` used to lower to a μ binder that shadowed `k`, so the value was sent
 nowhere. The cut `⟨t | k⟩` now delivers `t` to `k`, as it always claimed to.
 
+## `!` is the prelude's `not`
+
+Logical not is an ordinary function a `bool` flows into.
+
+```sl
+!done                  // old
+⟨done | not            // new
+```
+
 ## Removed constructs
 
 ### `spawn`

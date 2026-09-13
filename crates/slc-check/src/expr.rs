@@ -2428,35 +2428,15 @@ fn check_expr_unapplied(
                 }
             }
         }
-        Expr::UnOp { op, body } => {
+        Expr::UnOp { op: slc_syntax::ast::UnOp::Neg, body } => {
             let body_ty = check_expr(body, enums, env, diags);
-            match op {
-                slc_syntax::ast::UnOp::Not => {
-                    if body_ty != Some(Type::Pos(Base::Bool)) {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "`!` operand has type {}; expected +bool",
-                                body_ty
-                                    .map(|ty| ty.to_string())
-                                    .unwrap_or_else(|| "unknown".into())
-                            ),
-                            span: body.span,
-                        });
-                    }
-                    Some(Type::Pos(Base::Bool))
-                }
-                slc_syntax::ast::UnOp::Neg => {
-                    if body_ty.as_ref().is_some_and(|ty| !is_numeric(ty)) {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "unary `-` operand has type {body_ty:?}; expected numeric"
-                            ),
-                            span: body.span,
-                        });
-                    }
-                    body_ty
-                }
+            if body_ty.as_ref().is_some_and(|ty| !is_numeric(ty)) {
+                diags.push(Diagnostic {
+                    message: format!("unary `-` operand has type {body_ty:?}; expected numeric"),
+                    span: body.span,
+                });
             }
+            body_ty
         }
         Expr::Index { value, index } => {
             let value_ty = check_expr(value, enums, env, diags);
@@ -3820,7 +3800,7 @@ mod tests {
 
     #[test]
     fn boolean_operators_ok() {
-        assert!(check("fn f(a: +bool, b: +bool) -> bool { a && b || !a }").is_ok());
+        assert!(check("fn f(a: +bool, b: +bool) -> bool { a && b || a }").is_ok());
     }
 
     #[test]

@@ -47,3 +47,12 @@ impl Display for bool {
 }
 
 fn to_string<T: Display>(x: T) -> String { ⟨x | fmt }
+
+// ── Logic ────────────────────────────────────────────────────────────────
+//
+// There is no `!`: negation is an ordinary function a `bool` flows into,
+// `⟨b | not`. (The `_` arm stands for `false` until `bool` is declared.)
+
+fn not(b: bool) -> bool {
+    match b { true => false, _ => true }
+}

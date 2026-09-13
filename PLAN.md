@@ -65,6 +65,18 @@ documentation pass, and one defect.
   `IO` section still gives the old reason, that an outcome needs a type the
   operation can name.
 
+- **A `mu` that performs escapes a resuming clause.** A `mu` captures the
+  whole continuation, past any handler's prompt. When its body performs an
+  operation, a clause that resumes more than once loses every resumption
+  after the first: the first jump to the `mu`'s continuation leaves the
+  clause instead of returning into it. Under
+  `flip(): resume => (⟨true | resume) + " " + (⟨false | resume)`,
+  `let a = mu String { r <= ⟨(if flip() { "H" } else { "T" }) | r⟩ }`
+  answers `"H"`; the same program without the `mu`, or with `flip()`
+  performed before it, answers `"H T"`. Stopping a `mu`'s capture at the
+  nearest prompt would change what `mu` means under a handler, so this is a
+  design question, and "`if` becomes a prelude command" waits on it.
+
 ### Defects
 
 - **Exhaustiveness does not know `bool`.** A `match` with `true` and `false`
@@ -120,6 +132,15 @@ the built-in one.
 
   What stands between it and the name `if`:
 
+  - **Multi-shot handlers.** A value-returning `if` is a `mu` around the
+    command, so a condition or branch that performs an operation runs into
+    "A `mu` that performs escapes a resuming clause". `examples/effects.sl`'s
+    `pick`, rewritten this way, answers `"HH"` instead of `"HH HT TH TT"`.
+    The migration waits for that to be settled. Every other shape it needs
+    was tried under another name and works: a `let`, a function body with an
+    untyped `mu`, a command body with no `mu` at all, a generic function, an
+    arm of a rowed `mu` or `select`, and a branch that throws, written
+    `⟨(⟨"…" | throw) | r⟩` since `⟨⟨` does not parse.
   - `if` is a keyword. Match guards are gone, so nothing else spells it,
     and it simply stops being one.
   - The prelude body needs a `_` arm until "`bool` is defined in the
@@ -188,32 +209,16 @@ the built-in one.
   - **Precedence.** §3's rule that `|` binds more loosely than every
     operator, and operator precedence itself, have nothing left to order.
 
-  Prefix `!` goes too, in "`!` becomes a function". Prefix `-` and postfix
-  `a[i]` and `a[i..j]` are not infix either, and whether they go is open. Migration touches every arithmetic and
+  Prefix `!` is already gone: `not` is a prelude function. Prefix `-` and
+  postfix `a[i]` and `a[i..j]` are not infix either, and whether they go is
+  open. Migration touches every arithmetic and
   comparison in the stdlib, the examples, the docs and the Rust tests.
 
-- **`!` becomes a function.** Logical not leaves the surface as the infix
-  operators do, and `not`, a free name, takes its place in the prelude:
-
-  ```sl
-  fn not(b: bool) -> bool {
-      match b { true => false, _ => true }
-  }
-  ```
-
-  This runs today: `⟨false | not` is `true`. It needs no delayed operand,
-  having only one, and it needs the `_` arm until "`bool` is defined in the
-  prelude" lands. What goes: the `Bang` token (`!=` is lexed apart and goes
-  with the infix operators), `UnOp::Not` in the parser and the checker, its
-  lowering to `eq(a)(false)`, and `!a` in `DESIGN.md`'s `expr.unop` row. The
-  one use in Slant is `examples/comparison.sl`'s `true && !false`.
-
 - **`bool` is defined in the prelude.** The last of these, and possible
-  only once "`if` becomes a prelude command", "Infix operators become
-  functions" and "`!` becomes a function" have removed the `if` expression,
-  `&&`, `||` and `!`. All of them are built on the built-in `bool`:
-  `__if_dispatch` tests a `Value::Bool`, the logical operators expand to
-  `if`, and `!a` lowers to `eq(a)(false)`. `bool` then becomes an ordinary
+  only once "`if` becomes a prelude command" and "Infix operators become
+  functions" have removed the `if` expression, `&&` and `||`, which are
+  built on the built-in `bool`: `__if_dispatch` tests a `Value::Bool`, and
+  the logical operators expand to `if`. `bool` then becomes an ordinary
   `enum`, so a `match` on it is exhaustive the way a match on any enum is,
   and the `bool` exhaustiveness defect goes with it: coverage is counted
   only over enum variants (`exhaustive.rs`), and a match over literals

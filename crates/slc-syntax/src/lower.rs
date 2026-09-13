@@ -574,14 +574,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             ))
         }
 
-        Expr::UnOp { op, body } => {
-            if matches!(op, UnOp::Not) {
-                let arg = lower_expr(body, continuations)?;
-                return Ok(call_curried(
-                    Term::Var("eq".into()),
-                    vec![arg, Term::Var("false".into())],
-                ));
-            }
+        Expr::UnOp { body, .. } => {
             Ok(call_curried(Term::Var("neg".into()), vec![lower_expr(body, continuations)?]))
         }
 

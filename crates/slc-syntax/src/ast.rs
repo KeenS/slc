@@ -443,7 +443,6 @@ pub enum BinOp {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnOp {
-    Not,
     Neg,
 }
 

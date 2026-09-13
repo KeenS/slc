@@ -1229,14 +1229,13 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Node<Expr>, ParseError> {
+        // Negation is the prelude's `not`, an ordinary function; `!` is kept
+        // as a token only to say so.
         if self.peek_kind() == Some(&TokenKind::Bang) {
-            let start = self.span_start();
-            self.pos += 1;
-            let body = self.parse_unary()?;
-            let end = self.span_end();
-            return Ok(Node {
-                span: Span { start, end },
-                kind: Expr::UnOp { op: UnOp::Not, body: Box::new(body) },
+            return Err(ParseError {
+                message: "there is no `!`: negate a `bool` with the prelude's `not`, `⟨b | not`"
+                    .into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
             });
         }
         if self.peek_kind() == Some(&TokenKind::Minus) {
@@ -2801,11 +2800,17 @@ mod tests {
 
     #[test]
     fn parse_boolean_and_unary_operators() {
-        let p = parse_str("!a && b || c");
+        let p = parse_str("-a && b || c");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
         };
         assert!(matches!(&body.kind, Expr::BinOp { op: BinOp::Or, .. }));
+    }
+
+    #[test]
+    fn there_is_no_bang() {
+        let errors = parse(lex("fn f(b: bool) -> bool { !b }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("there is no `!`"), "got: {errors:?}");
     }
 
     #[test]

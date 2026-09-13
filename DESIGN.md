@@ -1255,7 +1255,8 @@ through the same pipeline as user code.
 sees unasked: the `effect IO` the runtime handles, and the
 **`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
 as in Rust) with impls for `i64`, `String`, `bool` and `to_string<T:
-Display>`. A program's own declaration of a prelude name shadows it.
+Display>` — and `not`, which negates a `bool`, since there is no `!`. A
+program's own declaration of a prelude name shadows it.
 
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
 appended after the prelude, and nothing in it is in scope until named: a
@@ -1673,7 +1674,7 @@ nested left to right for several arguments.
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
 | `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
 | `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to `expr.if` first, keeping them short-circuiting |
-| `expr.unop` | `-a`, `!a` | `neg(⟦a⟧)`, `eq(⟦a⟧)(false)` |
+| `expr.unop` | `-a` | `neg(⟦a⟧)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.flow` | `v | k`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut`. A chain that does not close is a fold of applications, and one that does not begin with a value is that fold under a λ. A chain whose stage is a `command` is neither: the stages before it fold into its value group, the closing stage is its row, and the two are applied together — `⟦callee⟧ ⟦values⟧ ⟦row⟧` |
