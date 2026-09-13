@@ -26,11 +26,11 @@ feature is mid-flight; what remains open is below.
 
 - **A file handle's close is not enforced.** `+File` is the first resource
   with a lifetime, and nothing checks it: an unclosed handle leaks until the
-  program ends, and only a read after `close_file` fails. Enforcing it would
+  program ends, and only a read after `fs::close` fails. Enforcing it would
   take a dedicated resource/ownership check (the value side of the language is
   otherwise unrestricted — see `DESIGN.md` §4). Until then the idiom is
   composition at the door: shadow `exit` with
-  `select +i32 { status => { file | fs::close_file; status | exit⟩ } }` where the
+  `select +i32 { status => { file | fs::close; status | exit⟩ } }` where the
   handle comes into scope, and no later path can leave the file open —
   `examples/file_io.sl` does exactly this.
 
@@ -51,8 +51,8 @@ feature is mid-flight; what remains open is below.
   only one whose argument is syntax.
 
 - **The file operations perform `IO` without an operation.** The `fs`
-  module's `read_file`, `write_file`, `open_file`, `read_line`,
-  `close_file`, and `file_exists`, and the `__` primitives beneath them,
+  module's `read`, `write`, `open`, `read_line`, `close`, and `exists`, and
+  the `__` primitives beneath them,
   charge `{IO}`, so their rows are honest, but they reach the outside
   world directly rather than by performing an operation the way `println`
   does — so they cannot be mocked by a handler. Each offers its outcome to

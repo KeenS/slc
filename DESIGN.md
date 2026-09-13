@@ -377,12 +377,12 @@ without nesting the rest of the program inside it:
 
 ```sl
 let source = mu String { k <=
-    path | fs::read_file | (k & complain)⟩
+    path | fs::read | (k & complain)⟩
 };
 source | print;
 ```
 
-`k` is the continuation of the `let`: what `fs::read_file` sends it becomes
+`k` is the continuation of the `let`: what `fs::read` sends it becomes
 `source`, and the block continues. On the other outcome `k` is never
 activated, so nothing after the `let` runs.
 
@@ -889,8 +889,8 @@ a clause runs *below* its own prompt, so what the clause itself performs
 escapes outward to the next handler — the runtime's — and a tap can both
 report the write and forward it. `examples/io.sl` writes all three.
 
-The file operations — the `fs` module's `read_file`, `write_file`,
-`open_file`, `read_line`, `close_file`, `file_exists`, each a thin wrapper
+The file operations — the `fs` module's `read`, `write`, `open`,
+`read_line`, `close`, `exists`, each a thin wrapper
 over a runtime primitive — charge `{IO}` too, so their rows are honest,
 but they still reach the outside world directly rather than through an
 operation: each offers its outcome to continuations, and an operation that
@@ -1091,10 +1091,10 @@ on the diagonal it is one the position already meets. `examples/polarity.sl`
 writes all four cells out, because the four cells are its subject.
 
 ```sl
-// `k` goes to a slot `fs::read_file` declares, so it is `-String`, and this
+// `k` goes to a slot `fs::read` declares, so it is `-String`, and this
 // `let` binds a `+String`.
 let source = mu { k <=
-    "input.json" | fs::read_file | (k & complain)⟩
+    "input.json" | fs::read | (k & complain)⟩
 };
 
 // `Red` is a variant of exactly one enum, so the type is `Color`.
@@ -1147,7 +1147,7 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 command main | (exit: i32) {
     let complain = select { message => { message | println; 1 | exit⟩ } };
-    "input.txt" | fs::read_file | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
+    "input.txt" | fs::read | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
 }
 ```
 
@@ -1186,11 +1186,11 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `option`, `result` | `Option<T>` with `unwrap_or`; `Result<T, E>`. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs` |
-| `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map_stream`, `zip_stream`, `drop_stream`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
+| `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
-| `fs` | files: `read_file`, `write_file`, `open_file`, `read_line`, `close_file`, `file_exists` — commands offering each outcome to its own continuation, over the runtime's `__read_file` and siblings |
-| `trace` | one **tap**, `command traced(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::traced \| out⟩` |
+| `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, over the runtime's `__read_file` and siblings |
+| `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::tap \| out⟩` |
 
 The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,
@@ -1204,24 +1204,24 @@ item answers *whether* there is more, so the recursion lives in the codata
 and the branching in the data:
 
 ```sl
-enum SeqStep<T> { Done, Yield(T, Seq<T>) }
-menu Seq<T> { next: SeqStep<T> }
+enum Step<T> { Done, Yield(T, Seq<T>) }
+menu Seq<T> { next: Step<T> }
 ```
 
 It is produced a step at a time and only as far as it is demanded, which is
-what neither neighbour can do — so `filter_seq` over an infinite source is a
+what neither neighbour can do — so `seq::filter` over an infinite source is a
 terminating program as long as something downstream stops asking:
 
 ```sl
-((odd, 1 | count_from | seq_of_stream) | filter_seq, 4) | take_seq   // [1, 3, 5, 7]
+((odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take   // [1, 3, 5, 7]
 ```
 
-Beside it: `seq_of_list`/`list_of_seq` and `seq_of_stream` for the bridges,
-`map_seq`, `filter_seq`, `take_seq`, and `take_while`, which cuts a stream
+Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
+`seq::map`, `seq::filter`, `seq::take`, and `seq::take_while`, which cuts a stream
 where a value stops passing and therefore answers a `Seq` — the type saying
 what the function does. `examples/seq.sl` runs all of it. There is no
 `impl Display for Seq`, for the reason `Stream` has none: showing one is
-`list_of_seq`, or `take_seq` first if it may not end.
+`seq::to_list`, or `seq::take` first if it may not end.
 
 **A stdlib helper that takes both values and continuations is a
 `command`.** That is what the declaration square calls the shape, and the
@@ -1256,7 +1256,7 @@ Every failure continuation receives a `+String` describing what happened, so
 it composes with an error consumer a program already has.
 
 ```sl
-"input.json" | fs::read_file | (
+"input.json" | fs::read | (
     select String { source => source | parse_json | report⟩ }
     & complain
 )⟩
@@ -1270,24 +1270,24 @@ comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
 `is_digit`, `is_ws`, `skip_ws`, `skip_digits`.
 
 **Files are the `fs` module's**, not builtins a program has unasked:
-`fs::read_file`, `fs::write_file`, `fs::open_file`, `fs::read_line` offer
-their outcomes as above, and `fs::close_file` spends a handle so a later read
-through it fails, `fs::file_exists` answers a `bool`. Each is a thin wrapper
+`fs::read`, `fs::write`, `fs::open`, `fs::read_line` offer
+their outcomes as above, and `fs::close` spends a handle so a later read
+through it fails, `fs::exists` answers a `bool`. Each is a thin wrapper
 over a runtime primitive — `__read_file` and its siblings — which is what the
 language cannot express; the module is what a program calls.
 
 A handle is a value of its own base type, `File`, produced only by
-`fs::open_file` — so nothing else closes a file or reads a line. Closing on
+`fs::open` — so nothing else closes a file or reads a line. Closing on
 every terminating path is not checked; today an unclosed handle merely leaks
-until the program ends, and a read after `fs::close_file` is a runtime error.
+until the program ends, and a read after `fs::close` is a runtime error.
 
 Until a resource check watches it, the program can make the leak impossible by
 construction: compose the close onto the only door out, by shadowing `exit`
 where the handle comes into scope.
 
 ```sl
-let file = mu { k <= path | fs::open_file | (k & complain)⟩ };
-let exit = select i32 { status => { file | fs::close_file; status | exit⟩ } };
+let file = mu { k <= path | fs::open | (k & complain)⟩ };
+let exit = select i32 { status => { file | fs::close; status | exit⟩ } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the

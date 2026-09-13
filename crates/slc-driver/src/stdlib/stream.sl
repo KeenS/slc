@@ -1,4 +1,5 @@
-// `stream`: the negative side of `list`.
+// `stream`: the negative side of `list`. The module carries the context,
+// so nothing here repeats it: `stream::map`, not `map`.
 //
 // A menu is codata: only the demanded branch ever runs, so an infinite
 // structure is just a menu that offers itself again. `Stream` is the
@@ -28,10 +29,10 @@ mod stream {
         }
     }
 
-    pub fn map_stream<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
+    pub fn map<A, B, E>(f: (A -> B / {..E}), s: Stream<A>) -> Stream<B> / {..E} {
         mu Stream {
             head <= s.head | f | head⟩,
-            tail <= (f, s.tail) | map_stream | tail⟩,
+            tail <= (f, s.tail) | map | tail⟩,
         }
     }
 
@@ -60,16 +61,16 @@ mod stream {
         }
     }
 
-    pub fn zip_stream<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A ⊗ B)> {
+    pub fn zip<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A ⊗ B)> {
         mu Stream {
             head <= (a.head, b.head) | head⟩,
-            tail <= (a.tail, b.tail) | zip_stream | tail⟩,
+            tail <= (a.tail, b.tail) | zip | tail⟩,
         }
     }
 
     // Unlike the others this forces as it goes: `n` demands happen here
     // rather than at the first demand of the result.
-    pub fn drop_stream<T>(s: Stream<T>, n: i64) -> Stream<T> {
-        if n <= 0 { s } else { (s.tail, n - 1) | drop_stream }
+    pub fn drop<T>(s: Stream<T>, n: i64) -> Stream<T> {
+        if n <= 0 { s } else { (s.tail, n - 1) | drop }
     }
 }

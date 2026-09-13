@@ -4,87 +4,87 @@
 // in between: a menu whose single item answers *whether* there is more. The
 // recursion lives in the codata and the branching in the data, so a `Seq` is
 // produced a step at a time and only as far as it is demanded — which is
-// what neither neighbour can do. `filter_seq` over an infinite source
+// what neither neighbour can do. `seq::filter` over an infinite source
 // terminates as long as something downstream stops asking:
 //
-//     ((odd, 1 | count_from | seq_of_stream) | filter_seq, 4) | take_seq
+//     ((odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take
 //
-// There is no `impl Display for Seq`: showing one is `list_of_seq`, or
-// `take_seq` first if it may not end.
+// There is no `impl Display for Seq`: showing one is `seq::to_list`, or
+// `seq::take` first if it may not end.
+//
+// The module carries the context, so nothing here repeats it: `seq::map`,
+// not `map_seq`.
 
 mod seq {
     use list::List::*;
     use stream::Stream;
 
-    // The step is named for its menu rather than for itself: a library
-    // type shadowed by a program strands the library functions that mention
-    // it, and `Step` is a name a program is likely to want.
-    pub enum SeqStep<T> {
+    pub enum Step<T> {
         Done,
         Yield(T, Seq<T>),
     }
 
     pub menu Seq<T> {
-        next: SeqStep<T>,
+        next: Step<T>,
     }
 
-    pub fn seq_of_list<T>(xs: list::List<T>) -> Seq<T> {
+    pub fn of_list<T>(xs: list::List<T>) -> Seq<T> {
         mu Seq {
             next <= match xs {
-                Nil => SeqStep::Done | next⟩,
-                Cons(h, rest) => SeqStep::Yield(h, rest | seq_of_list) | next⟩,
+                Nil => Step::Done | next⟩,
+                Cons(h, rest) => Step::Yield(h, rest | of_list) | next⟩,
             },
         }
     }
 
-    // The bridge back to data, as `take` is for `Stream`. A `Seq` that
-    // never answers `Done` does not come back; `take_seq` it first.
-    pub fn list_of_seq<T>(s: Seq<T>) -> list::List<T> {
+    // The bridge back to data, as `stream::take` is for `Stream`. A `Seq`
+    // that never answers `Done` does not come back; `take` it first.
+    pub fn to_list<T>(s: Seq<T>) -> list::List<T> {
         match s.next {
-            SeqStep::Done => Nil,
-            SeqStep::Yield(h, rest) => Cons(h, rest | list_of_seq),
+            Step::Done => Nil,
+            Step::Yield(h, rest) => Cons(h, rest | to_list),
         }
     }
 
     // Every stream is a sequence that never ends.
-    pub fn seq_of_stream<T>(s: Stream<T>) -> Seq<T> {
+    pub fn of_stream<T>(s: Stream<T>) -> Seq<T> {
         mu Seq {
-            next <= SeqStep::Yield(s.head, s.tail | seq_of_stream) | next⟩,
+            next <= Step::Yield(s.head, s.tail | of_stream) | next⟩,
         }
     }
 
-    pub fn map_seq<A, B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E} {
+    pub fn map<A, B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E} {
         mu Seq {
             next <= match s.next {
-                SeqStep::Done => SeqStep::Done | next⟩,
-                SeqStep::Yield(h, rest) => SeqStep::Yield(h | f, (f, rest) | map_seq) | next⟩,
+                Step::Done => Step::Done | next⟩,
+                Step::Yield(h, rest) => Step::Yield(h | f, (f, rest) | map) | next⟩,
             },
         }
     }
 
     // A dropped element is not a step of the result, so the arm demands
     // the rest itself rather than answering — the loop lives in the demand.
-    pub fn filter_seq<T, E>(keep: (T -> bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
+    pub fn filter<T, E>(keep: (T -> bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
         mu Seq {
             next <= match s.next {
-                SeqStep::Done => SeqStep::Done | next⟩,
-                SeqStep::Yield(h, rest) => if h | keep {
-                    SeqStep::Yield(h, (keep, rest) | filter_seq) | next⟩
+                Step::Done => Step::Done | next⟩,
+                Step::Yield(h, rest) => if h | keep {
+                    Step::Yield(h, (keep, rest) | filter) | next⟩
                 } else {
-                    ((keep, rest) | filter_seq).next | next⟩
+                    ((keep, rest) | filter).next | next⟩
                 },
             },
         }
     }
 
-    pub fn take_seq<T>(s: Seq<T>, n: i64) -> Seq<T> {
+    pub fn take<T>(s: Seq<T>, n: i64) -> Seq<T> {
         mu Seq {
             next <= if n <= 0 {
-                SeqStep::Done | next⟩
+                Step::Done | next⟩
             } else {
                 match s.next {
-                    SeqStep::Done => SeqStep::Done | next⟩,
-                    SeqStep::Yield(h, rest) => SeqStep::Yield(h, (rest, n - 1) | take_seq) | next⟩,
+                    Step::Done => Step::Done | next⟩,
+                    Step::Yield(h, rest) => Step::Yield(h, (rest, n - 1) | take) | next⟩,
                 }
             },
         }
@@ -96,9 +96,9 @@ mod seq {
     pub fn take_while<T, E>(keep: (T -> bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
         mu Seq {
             next <= if s.head | keep {
-                SeqStep::Yield(s.head, (keep, s.tail) | take_while) | next⟩
+                Step::Yield(s.head, (keep, s.tail) | take_while) | next⟩
             } else {
-                SeqStep::Done | next⟩
+                Step::Done | next⟩
             },
         }
     }

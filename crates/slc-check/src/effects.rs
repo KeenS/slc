@@ -403,7 +403,7 @@ fn charge_call(name: &str, args: &[Node<Expr>], ctx: &mut Ctx, out: &mut Row) {
 }
 
 /// The builtins that reach outside the program. Each performs an operation
-/// of `IO` — `println` performs `write_line`, `read_file` performs `read` —
+/// of `IO` — `println` performs `write_line`; the file primitives beneath `fs` reach out directly —
 /// so calling one charges `{IO}` exactly as a written operation would.
 pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
     matches!(

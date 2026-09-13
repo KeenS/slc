@@ -11,8 +11,8 @@ pub enum Base {
     Str,
     Char,
     Unit,
-    /// An open file handle, produced by `open_file` and consumed by
-    /// `close_file`.
+    /// An open file handle, produced by `fs::open` and consumed by
+    /// `fs::close`.
     File,
 }
 

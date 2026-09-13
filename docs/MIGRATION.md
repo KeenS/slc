@@ -394,7 +394,7 @@ continuation each outcome belongs to.
 ```sl
 let content = read_file(path);          // old: a runtime error if it fails
 
-path | read_file | (                          // new
+path | fs::read | (                            // new
     select String { content => ... }
     & select String { message => ... }
 )⟩
@@ -506,7 +506,7 @@ and then cut into it. It takes values *and* continuations, which is what a
 
 ```sl
 42 | (("answer", out) | traced)⟩          // old
-("answer", 42) | traced | out⟩            // new
+("answer", 42) | trace::tap | out⟩        // new
 ```
 
 `defaulting(fallback, k)` is gone rather than converted. Its job was to
@@ -548,6 +548,31 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## Library names are carried by their module
+
+A stdlib name no longer repeats the module it lives in. Call through the
+path — the module is the context — rather than importing a name that only
+made sense with its suffix:
+
+| old | new |
+|---|---|
+| `seq_of_list`, `list_of_seq`, `seq_of_stream` | `seq::of_list`, `seq::to_list`, `seq::of_stream` |
+| `map_seq`, `filter_seq`, `take_seq` | `seq::map`, `seq::filter`, `seq::take` |
+| `SeqStep` | `seq::Step` |
+| `map_stream`, `zip_stream`, `drop_stream` | `stream::map`, `stream::zip`, `stream::drop` |
+| `read_file`, `write_file`, `open_file`, `close_file`, `file_exists` | `fs::read`, `fs::write`, `fs::open`, `fs::close`, `fs::exists` |
+| `traced` | `trace::tap` |
+
+`take_while`, `read_line`, `count_from`, `length`, `unwrap_or` and the rest
+were already names that do not restate their module, and are unchanged.
+
+```sl
+use seq::map_seq;                                        // old
+(double, s) | map_seq
+
+(double, s) | seq::map                                   // new
+```
+
 ## File operations are the `fs` module's
 
 The six file builtins are no longer names a program has unasked. They are
@@ -557,19 +582,17 @@ the stdlib's `fs` module — commands over runtime primitives renamed
 ```sl
 path | read_file | (ok & failed)⟩              // old
 
-path | fs::read_file | (ok & failed)⟩          // new: by path
-use fs::read_file;                             // or imported
-path | read_file | (ok & failed)⟩
+path | fs::read | (ok & failed)⟩               // new
 ```
 
-`read_file`, `write_file`, `open_file`, `read_line`, `close_file`,
-`file_exists` keep their names and their outcome rows.
+Their outcome rows are unchanged; their names lost the `_file` the module
+now carries — see the next entry.
 
 ## The prelude shrank; the rest is a stdlib you `use`
 
 Only `IO` and `Display` (with `fmt`/`to_string`) stay in scope unasked.
 `List`, `Option`, `Result`, `min`/`max`/`abs`, `Stream`, `Seq`, `Lazy` and
-`traced` moved to stdlib modules, reached by path or brought in with `use`:
+`traced` (now `trace::tap`) moved to stdlib modules, reached by path or brought in with `use`:
 
 ```sl
 let xs = Cons(1, Cons(2, Nil));                      // old: in scope unasked
@@ -580,7 +603,7 @@ use list::length;
 let xs = Cons(1, Cons(2, Nil));
 xs | length | println;
 (3, 7) | num::min | println;                         // or by path, no import
-("answer", 42) | trace::traced | out⟩
+("answer", 42) | trace::tap | out⟩
 ```
 
 A name that is neither local, declared, nor imported is now a checker

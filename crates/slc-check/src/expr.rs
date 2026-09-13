@@ -3904,7 +3904,7 @@ mod tests {
 
     #[test]
     fn a_local_mu_takes_its_parameter_type_from_the_body() {
-        // `k` is handed to a slot `read_file` declares, so it is `-String`,
+        // `k` is handed to a slot `__read_file` declares, so it is `-String`,
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) / {IO} {

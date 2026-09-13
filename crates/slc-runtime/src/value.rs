@@ -120,7 +120,7 @@ pub enum Value {
     Builtin(String),
 
     /// An open file handle: an id into the runtime's handle registry,
-    /// produced by `open_file` and spent by `close_file`.
+    /// produced by `fs::open` and spent by `fs::close`.
     File(u64),
     /// An effect operation: applying it performs the effect, capturing the
     /// continuation up to the nearest handler for `effect`. Its arguments

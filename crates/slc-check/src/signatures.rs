@@ -99,7 +99,7 @@ fn builtin_functions() -> Vec<Builtin> {
         ),
         offers("__read_file", vec![string.clone()], vec![Type::Neg(Str), Type::Neg(Str)]),
         // A file handle: opened to one continuation, read line by line, and
-        // spent by `close_file`.
+        // spent by `__close_file` (`fs::close`).
         offers("__open_file", vec![string.clone()], vec![Type::Neg(File), Type::Neg(Str)]),
         offers("__read_line", vec![Type::Pos(File)], vec![Type::Neg(Str), Type::Neg(Unit)]),
         function("__close_file", vec![Type::Pos(File)], Some(Type::One)),

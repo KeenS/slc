@@ -575,12 +575,12 @@ fn constructing_select_does_not_activate_any_arm() {
 }
 
 #[test]
-fn read_file_offers_a_missing_file_to_its_failure_continuation() {
+fn fs_read_offers_a_missing_file_to_its_failure_continuation() {
     let dir = std::env::temp_dir().join("slc_test_read_missing.sl");
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-            "does-not-exist.sl" | fs::read_file | (select String {
+            "does-not-exist.sl" | fs::read | (select String {
                 source => { println("unexpectedly read " + source); 1 | exit⟩ },
             } & select String {
                 message => { println("failed: " + message); 0 | exit⟩ },
@@ -594,19 +594,17 @@ fn read_file_offers_a_missing_file_to_its_failure_continuation() {
 }
 
 #[test]
-fn write_file_and_read_file_round_trip_through_their_continuations() {
+fn fs_write_and_read_round_trip_through_their_continuations() {
     let target = std::env::temp_dir().join("slc_test_written.txt");
     let _ = std::fs::remove_file(&target);
     let dir = std::env::temp_dir().join("slc_test_write_read.sl");
     std::fs::write(
         &dir,
         format!(
-            r#"use fs::read_file;
-        use fs::write_file;
-        command main | (exit: -i32) / {{IO}} {{
+            r#"command main | (exit: -i32) / {{IO}} {{
             let failed = select String {{ message => {{ println(message); 1 | exit⟩ }} }};
-            ({path:?}, "written") | write_file | (select unit {{
-                done => {path:?} | read_file | (select String {{
+            ({path:?}, "written") | fs::write | (select unit {{
+                done => {path:?} | fs::read | (select String {{
                     source => {{ println(source); 0 | exit⟩ }},
                 }} & failed)⟩,
             }} & failed)⟩
@@ -892,7 +890,7 @@ fn json_parser_rejects_malformed_input() {
 fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
     // An integer cannot close a file.
     let dir = std::env::temp_dir().join("slc_test_close_not_a_handle.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { 42 | fs::close_file; 0 | exit⟩ }")
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { 42 | fs::close; 0 | exit⟩ }")
         .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
@@ -905,15 +903,12 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
     std::fs::write(
         &dir,
         format!(
-            r#"use fs::open_file;
-            use fs::read_line;
-            use fs::close_file;
-            command main | (exit: -i32) / {{IO}} {{
+            r#"command main | (exit: -i32) / {{IO}} {{
                 let fail = select String {{ m => {{ println(m); 1 | exit⟩ }} }};
-                let fh = mu {{ k <= "{}" | open_file | (k & fail)⟩ }};
-                fh | close_file;
+                let fh = mu {{ k <= "{}" | fs::open | (k & fail)⟩ }};
+                fh | fs::close;
                 let line = mu {{ k <=
-                    fh | read_line | (k & select unit {{ e => {{ println("eof"); 1 | exit⟩ }} }})⟩
+                    fh | fs::read_line | (k & select unit {{ e => {{ println("eof"); 1 | exit⟩ }} }})⟩
                 }};
                 println(line);
                 0 | exit⟩
@@ -1157,7 +1152,7 @@ fn the_prelude_tap_is_a_command_and_composes_with_builtins() {
     std::fs::write(
         &dir,
         r#"command main | (exit: i32) / {IO} {
-            mu i64 { out <= ("answer", 42) | trace::traced | out⟩ } | println;
+            mu i64 { out <= ("answer", 42) | trace::tap | out⟩ } | println;
             // A row slot wants a consumer, and `select` is what builds one.
             mu i64 { out <=
                 "nope" | parse_int | (out

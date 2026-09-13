@@ -2,7 +2,7 @@
 // copatterns.
 //
 // `menu Stream<T> { head: T, tail: Stream<T> }` lives in the prelude with
-// `repeat`, `count_from`, `map_stream`, and `take` beside it. Only the
+// `repeat`, `count_from`, `map`, and `take` beside it. Only the
 // demanded branch of a menu ever runs, so an infinite stream is just a
 // menu that offers itself again — and `take` is the bridge back to data:
 // an infinite structure cannot print whole, so `fmt(take(s, n))` is the
@@ -15,7 +15,6 @@
 // `count_from` is not imported: this program declares its own below.
 use stream::Stream;
 use stream::repeat;
-use stream::map_stream;
 use stream::take;
 
 fn count_from(n: i64) -> Stream<i64> {
@@ -33,7 +32,7 @@ command main | (exit: i32) / {IO} {
     s.head | println;                            // 10
     s.tail.head | println;                       // 11
     s.tail.tail.tail.head | println;             // 13
-    ((double, s) | map_stream).tail.head | println;   // 22
+    ((double, s) | stream::map).tail.head | println;   // 22
     (s, 3) | take | fmt | println;                   // "[10, 11, 12]"
     (7 | repeat, 2) | take | fmt | println;           // "[7, 7]"
     0 | exit⟩
