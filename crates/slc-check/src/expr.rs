@@ -36,6 +36,7 @@ pub fn check_program_resolving(
     let functions = function_types(p, &enums);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions, traits);
+    check_trait_signatures(traits, &enums, &mut env, &mut diags);
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
@@ -390,6 +391,10 @@ fn resolve_rigid(
             Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
             Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
         )),
+        T::Sum(a, b) => Some(Type::Sum(
+            Box::new(resolve_rigid(&a.kind, rigid_vars, enums)?),
+            Box::new(resolve_rigid(&b.kind, rigid_vars, enums)?),
+        )),
         T::Apply(name, args) => {
             let args = args
                 .iter()
@@ -421,6 +426,43 @@ fn unresolved_parameter_type(p: &slc_syntax::ast::Param, span: Span, diags: &mut
             ),
             span,
         });
+    }
+}
+
+/// A written return type that names nothing declared — refused for the same
+/// reason a parameter's is, rather than left to stand for any type at all.
+fn unresolved_return_type(owner: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    diags.push(Diagnostic {
+        message: format!(
+            "the return type of {owner} names `{}`, which is not a declared type here; a \
+             library type is `list::List`, or brought in with `use`",
+            type_display(ty)
+        ),
+        span,
+    });
+}
+
+/// A trait's method signatures outlive its declaration — elaboration keeps
+/// them and drops the rest — so what their return types name is checked
+/// here, with `Self` in scope.
+fn check_trait_signatures(
+    traits: &TraitInfo,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut names: Vec<&String> = traits.traits.keys().collect();
+    names.sort();
+    for name in names {
+        let span = traits.spans.get(name).copied().unwrap_or(Span { start: 0, end: 0 });
+        let rigid_self = HashMap::from([("Self", env.uni.fresh_rigid())]);
+        for method in &traits.traits[name] {
+            if let Some(written) = &method.return_type
+                && resolve_rigid(written, &rigid_self, enums).is_none()
+            {
+                unresolved_return_type(&format!("method `{}`", method.name), written, span, diags);
+            }
+        }
     }
 }
 
@@ -605,6 +647,11 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // `<-`, so that is what a `select` in its body consumes.
             let outer = env.consumed.take();
             let declared = return_type.as_ref().and_then(&rigid);
+            if let Some(written) = return_type
+                && declared.is_none()
+            {
+                unresolved_return_type(&format!("`{name}`"), written, d.span, diags);
+            }
             env.consumed = (*polarity == slc_syntax::ast::FunctionPolarity::Negative)
                 .then(|| declared.clone())
                 .flatten();
@@ -705,6 +752,21 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     ),
                     span: value.span,
                 });
+            }
+        }
+        // A signature has no body to check, but what it names must exist.
+        Decl::Effect { operations, .. } => {
+            for op in operations {
+                if let Some(written) = &op.return_type
+                    && resolve_rigid(written, &HashMap::new(), enums).is_none()
+                {
+                    unresolved_return_type(
+                        &format!("operation `{}`", op.name),
+                        written,
+                        d.span,
+                        diags,
+                    );
+                }
             }
         }
         _ => {}
@@ -1955,7 +2017,12 @@ fn check_expr_unapplied(
             let type_args = fresh_args(enums, &declaration, &mut env.uni);
             Some(Type::Named(declaration, type_args))
         }
-        Expr::Lambda { param, param_type, body, .. } => {
+        Expr::Lambda { param, param_type, return_type, body } => {
+            if let Some(written) = return_type
+                && resolve_in_body(written, env, enums).is_none()
+            {
+                unresolved_return_type("this lambda", written, e.span, diags);
+            }
             env.push();
             let param_ty = param_type
                 .as_ref()
@@ -3820,6 +3887,34 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("has type 1")),
             "unit fit everything once: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_return_type_must_name_a_declared_type() {
+        for source in [
+            "fn f() -> Foo { (,) }",
+            "fn f(out: i64) <- Foo { select Foo {} }",
+            "fn f() -> i64 { let g = fn(x: i64) -> Foo { x }; 0 }",
+            "effect E { fn op(x: i64) -> Foo; }",
+            "trait T { fn m(self: Self) -> Foo; }",
+        ] {
+            let diags = check(source).unwrap_err();
+            assert!(
+                diags
+                    .iter()
+                    .any(|d| d.message.contains("names `Foo`, which is not a declared type")),
+                "{source}: {diags:?}"
+            );
+        }
+        // A type parameter, `Self`, and a sum over a type parameter all name
+        // something.
+        assert!(
+            check(
+                "trait T { fn m(self: Self) -> Self; }
+                 fn g<A>(x: A) -> (A | i64) { ::0(x) }"
+            )
+            .is_ok()
         );
     }
 

@@ -26,6 +26,9 @@ pub struct TraitError {
 pub struct TraitInfo {
     /// Trait name → its method signatures.
     pub traits: HashMap<String, Vec<TraitMethod>>,
+    /// Trait name → where it is declared, for diagnostics about its
+    /// signatures once the declaration itself is gone.
+    pub spans: HashMap<String, Span>,
     /// Method name → the trait that declares it (unique across traits in v1).
     pub method_owner: HashMap<String, String>,
     /// Method name → (type key → the mangled function implementing it).
@@ -97,6 +100,7 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                 }
             }
             info.traits.insert(name.clone(), methods.clone());
+            info.spans.insert(name.clone(), d.span);
         }
     }
 
