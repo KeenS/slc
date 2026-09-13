@@ -5,9 +5,68 @@ enum RunOutcome {
     Exit(i32),
 }
 
-/// The prelude: ordinary declarations every program sees. See
-/// `prelude.sl` for what belongs there.
-const PRELUDE: &str = include_str!("prelude.sl");
+/// The library, as source units appended after the program: the prelude
+/// first — ordinary declarations every program sees unasked — then each
+/// stdlib module, which a program reaches only through `use`. Every unit
+/// goes through the same pipeline as user code. See `prelude.sl` and
+/// `stdlib/` for what belongs where.
+const LIBRARY: &[(&str, &str)] = &[("prelude", include_str!("prelude.sl"))];
+
+/// The combined source and where each unit starts in it, so a span — a char
+/// offset into the whole — can be named by its unit, line, and column.
+struct SourceMap {
+    text: String,
+    /// `(name, char offset of the unit's first char)`, in order.
+    units: Vec<(String, usize)>,
+}
+
+impl SourceMap {
+    /// The program's text under `program`, then every library unit, each
+    /// on a line of its own. The program comes first so its spans — and its
+    /// diagnostics' line numbers — are untouched.
+    fn new(program: &str, source: String) -> Self {
+        let mut text = source;
+        let mut units = vec![(program.to_string(), 0)];
+        for (name, unit) in LIBRARY {
+            text.push('\n');
+            units.push((name.to_string(), text.chars().count()));
+            text.push_str(unit);
+        }
+        SourceMap { text, units }
+    }
+
+    /// The char offsets at which each library unit starts — the boundaries
+    /// resolution scopes imports by.
+    fn boundaries(&self) -> Vec<usize> {
+        self.units.iter().skip(1).map(|(_, from)| *from).collect()
+    }
+
+    /// `unit:line:column \`snippet\`` for a span. The line and column are
+    /// within the unit, not the combined text, and the unit is named only
+    /// when it is not the program's own file.
+    fn locate(&self, span: slc_syntax::token::Span) -> String {
+        let (unit, from) =
+            self.units.iter().rev().find(|(_, from)| span.start >= *from).cloned().unwrap();
+        // Spans count chars — the surface has multi-byte glyphs — so the
+        // text is walked by char to find the byte range to show.
+        let byte_at = |chars: usize| {
+            self.text.char_indices().nth(chars).map(|(b, _)| b).unwrap_or(self.text.len())
+        };
+        let (start, end) = (byte_at(span.start), byte_at(span.end.max(span.start)));
+        let before = &self.text[byte_at(from)..start];
+        let line = before.matches('\n').count() + 1;
+        let column = before
+            .rfind('\n')
+            .map(|i| before[i..].chars().count())
+            .unwrap_or(before.chars().count() + 1);
+        let snippet = &self.text[start..end];
+        if unit == self.units[0].0 {
+            format!("{line}:{column} `{snippet}`")
+        } else {
+            format!("{unit}.sl:{line}:{column} `{snippet}`")
+        }
+    }
+}
 
 const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) / {IO} { ... }`: a command with no value \
      parameters and one continuation, the exit status";
@@ -52,10 +111,14 @@ fn main() -> ExitCode {
 /// Keep only the first declaration for each top-level name, per namespace:
 /// values (`fn`, `command`, `const`) in one, type declarations in the other.
 /// The program's declarations precede the prelude's, so its definitions win.
+/// The program's own declarations shadow the library's: the library is
+/// appended, so of two declarations of one name the first — the program's
+/// — is kept. That holds for a module too, whole.
 fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Program {
     use slc_syntax::ast::Decl;
     let mut values = std::collections::HashSet::new();
     let mut types = std::collections::HashSet::new();
+    let mut modules = std::collections::HashSet::new();
     program.decls.retain(|d| match &d.kind {
         Decl::Fn { name, .. } | Decl::Command { name, .. } | Decl::Const { name, .. } => {
             values.insert(name.clone())
@@ -64,6 +127,9 @@ fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Pro
         | Decl::Enum { name, .. }
         | Decl::Menu { name, .. }
         | Decl::Form { name, .. } => types.insert(name.clone()),
+        // A program's `mod list` shadows the stdlib's whole, as its `fn
+        // length` would shadow the prelude's: the first declaration wins.
+        Decl::Mod { name, .. } => modules.insert(name.clone()),
         _ => true,
     });
     program
@@ -74,18 +140,11 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let _compile_guard = compile_span.enter();
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    // The prelude is ordinary Slant source, appended after the program so
-    // the program's spans — and so its diagnostics' line numbers — are
-    // untouched. Everything in it goes through the same pipeline as user
-    // code, and diagnostics that do point into the prelude still render,
-    // since `source` is the combined text. The boundary scopes variant
-    // imports to their own unit.
-    // Spans count characters, not bytes — the surface has multi-byte
-    // glyphs — so the boundary does too.
-    let prelude_from = source.chars().count() + 1;
-    let source = format!("{source}\n{PRELUDE}");
+    let map = SourceMap::new(&path.display().to_string(), source);
+    let source = &map.text;
+    let format_span = |span| map.locate(span);
 
-    let tokens = slc_syntax::lexer::lex(&source).map_err(|e| e.message)?;
+    let tokens = slc_syntax::lexer::lex(source).map_err(|e| e.message)?;
     let program = slc_syntax::parser::parse(tokens).map_err(|errors| {
         errors.iter().map(|e| format!("parse error: {}", e.message)).collect::<Vec<_>>().join("\n")
     })?;
@@ -97,21 +156,22 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let program = shadow_prelude(program);
 
     // Modules flatten into qualified names before anything else looks.
-    let program =
-        slc_syntax::resolve::resolve_program_split(&program, prelude_from).map_err(|errors| {
+    let program = slc_syntax::resolve::resolve_program_split(&program, &map.boundaries()).map_err(
+        |errors| {
             errors
                 .iter()
-                .map(|e| format!("resolve: {} (at {})", e.message, format_span(&source, e.span)))
+                .map(|e| format!("resolve: {} (at {})", e.message, format_span(e.span)))
                 .collect::<Vec<_>>()
                 .join("\n")
-        })?;
+        },
+    )?;
 
     // Traits elaborate away: impls become mangled functions, and a registry
     // records method signatures and per-type impls.
     let (program, traits) = slc_syntax::traits::elaborate(&program).map_err(|errors| {
         errors
             .iter()
-            .map(|e| format!("trait: {} (at {})", e.message, format_span(&source, e.span)))
+            .map(|e| format!("trait: {} (at {})", e.message, format_span(e.span)))
             .collect::<Vec<_>>()
             .join("\n")
     })?;
@@ -123,21 +183,21 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
         slc_check::expr::check_program_resolving(&program, &traits).map_err(|diags| {
             diags
                 .iter()
-                .map(|d| format!("type: {} (at {})", d.message, format_span(&source, d.span)))
+                .map(|d| format!("type: {} (at {})", d.message, format_span(d.span)))
                 .collect::<Vec<_>>()
                 .join("\n")
         })?;
     slc_check::polarity::check_program(&program).map_err(|diags| {
         diags
             .iter()
-            .map(|d| format!("polarity: {} (at {})", d.message, format_span(&source, d.span)))
+            .map(|d| format!("polarity: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
             .join("\n")
     })?;
     slc_check::exhaustive::check_exhaustiveness(&program).map_err(|diags| {
         diags
             .iter()
-            .map(|d| format!("exhaustiveness: {} (at {})", d.message, format_span(&source, d.span)))
+            .map(|d| format!("exhaustiveness: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
             .join("\n")
     })?;
@@ -145,7 +205,7 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     slc_check::effects::check_effects(&program).map_err(|diags| {
         diags
             .iter()
-            .map(|d| format!("effect: {} (at {})", d.message, format_span(&source, d.span)))
+            .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
             .join("\n")
     })?;
@@ -300,33 +360,4 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
         return Err(MAIN_ENTRY_POINT_ERROR.into());
     }
     Ok(())
-}
-
-fn format_span(source: &str, span: slc_syntax::token::Span) -> String {
-    // Spans are byte offsets, and the surface has multi-byte glyphs — `⊗`,
-    // `⊗`, `⊥` — so an offset may land inside one. Slicing there panics, so
-    // move to the boundary rather than trusting the offset.
-    let start = char_boundary(source, span.start, false);
-    let end = char_boundary(source, span.end.max(span.start), true);
-    let before = &source[..start];
-    let line = before.matches('\n').count() + 1;
-    let column = before
-        .rfind('\n')
-        .map(|i| before[i..].chars().count())
-        .unwrap_or(before.chars().count() + 1);
-    format!("{line}:{column} `{}`", &source[start..end])
-}
-
-/// The nearest char boundary at or before `offset` (or after it, when
-/// `forward`), clamped to the source.
-fn char_boundary(source: &str, offset: usize, forward: bool) -> usize {
-    let mut offset = offset.min(source.len());
-    while !source.is_char_boundary(offset) {
-        if forward {
-            offset += 1;
-        } else {
-            offset -= 1;
-        }
-    }
-    offset
 }

@@ -46,23 +46,49 @@ impl Scope {
 
 /// Flatten every module, qualifying declarations and references.
 pub fn resolve_program(program: &Program) -> Result<Program, Vec<ResolveError>> {
-    resolve_program_split(program, usize::MAX)
+    resolve_program_split(program, &[])
 }
 
-/// Resolve a program whose source is two units — the program's own text,
-/// then the prelude appended from `prelude_from` — with variant imports
-/// scoped to their unit: the prelude's `use List::*;` pins names in the
-/// prelude only, and a program's imports never reach into the prelude.
+/// Which source unit a span falls in: the program is unit 0, and each
+/// boundary in `units` starts the next. Boundaries are char offsets, as
+/// spans are.
+fn unit_of(span_start: usize, units: &[usize]) -> usize {
+    units.iter().filter(|&&from| span_start >= from).count()
+}
+
+/// Resolve a program whose source is several units — the program's own
+/// text, then each library unit appended from the offset `units` lists for
+/// it — with imports scoped to their unit: a library file's `use Enum::*;`
+/// pins names in that file only, and a program's imports never reach into
+/// the library.
+///
+/// The root scope is one scope over every unit, so a top-level `use a::b;`
+/// in a library unit would make `b` mean `a::b` in the program too. A
+/// library unit therefore imports names only inside its `mod`; at its top
+/// level it may import variants — which are scoped per unit — and nothing
+/// else.
 pub fn resolve_program_split(
     program: &Program,
-    prelude_from: usize,
+    units: &[usize],
 ) -> Result<Program, Vec<ResolveError>> {
     let mut errors = Vec::new();
+    for d in &program.decls {
+        if let Decl::Use { imports: crate::ast::UseImports::Member, .. } = &d.kind
+            && unit_of(d.span.start, units) > 0
+        {
+            errors.push(ResolveError {
+                message: "a library unit imports names inside its `mod`, not at the top: \
+                          the root scope is shared with the program"
+                    .into(),
+                span: d.span,
+            });
+        }
+    }
     let mut out = Vec::new();
     let root = collect_scope(&program.decls, Vec::new(), &mut errors);
     let mut stack = vec![root];
     flatten(&program.decls, &mut stack, &mut out, &mut errors);
-    let out = apply_variant_imports(out, prelude_from, &mut errors);
+    let out = apply_variant_imports(out, units, &mut errors);
     check_visibility(&out, &mut errors);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
 }
@@ -294,7 +320,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
 /// names a variant its enum does not have, is an error at the `use`.
 fn apply_variant_imports(
     decls: Vec<Node<Decl>>,
-    prelude_from: usize,
+    units: &[usize],
     errors: &mut Vec<ResolveError>,
 ) -> Vec<Node<Decl>> {
     use crate::ast::UseImports;
@@ -309,8 +335,8 @@ fn apply_variant_imports(
     // Bare name → qualified label, one table per source unit: an import is
     // scoped to the unit that wrote it. A second import of the same name in
     // the same unit is an error.
-    let mut tables: [HashMap<String, String>; 2] = [HashMap::new(), HashMap::new()];
-    let unit = |span_start: usize| usize::from(span_start >= prelude_from);
+    let mut tables: Vec<HashMap<String, String>> = vec![HashMap::new(); units.len() + 1];
+    let unit = |span_start: usize| unit_of(span_start, units);
     let mut keep = Vec::new();
     for d in decls {
         let Decl::Use { path, imports } = &d.kind else {
