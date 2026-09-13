@@ -24,22 +24,6 @@ feature is mid-flight; what remains open is below.
 
 ## Known limits
 
-- **No partial application.** A stage supplies a callee's whole value
-  group: `"high" | route` of `command route(tag: String, x: i64) | (k: i64)`
-  does not produce a function awaiting `x`, and is refused at check time —
-  as is `1 | add` of a two-parameter `fn`. A multi-parameter callee's type
-  nests by `⅋`'s associativity, so it presents its first parameter alone,
-  and the generic flow arm used to peel that one off and accept a partial
-  application; the calling convention binds each group as one argument, so
-  the program then crashed at run time. The refusal closes that. Builtins
-  are the exception: the runtime accumulates their arguments, so a builtin
-  may be given fewer — and whether a callee is a builtin is decided by
-  where its signature came from, not its name, so a program's own `fn add`
-  is checked as a declaration. Supporting partial application for
-  declarations would mean giving an under-applied call the type of the
-  rest of its group and lowering it to a closure that packs the group when
-  complete.
-
 - **⅋ does not commute in unification.** A stage reads either way round,
   but the checker's unifier is structural, so `fn f(out: String) <- i64`
   (type `+String ⅋ -i64`) will not fit a slot declared `(i64 -> String)`
