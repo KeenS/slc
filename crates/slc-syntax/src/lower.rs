@@ -39,6 +39,7 @@ thread_local! {
     static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
     static INJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     static SUM_ARITIES: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
+    static PARS: RefCell<HashMap<Span, Vec<bool>>> = RefCell::new(HashMap::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -89,6 +90,9 @@ pub struct DispatchInfo {
     /// `select`/`match` span → how many alternatives the sum its injection
     /// arms cover has.
     pub sum_arities: HashMap<Span, usize>,
+    /// Form value span → whether each component is positive: a consumer takes
+    /// its part, and a value is taken by it.
+    pub pars: HashMap<Span, Vec<bool>>,
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -238,6 +242,11 @@ fn injection_arity(span: Span) -> Option<usize> {
     INJECTIONS.with(|cell| cell.borrow().get(&span).copied())
 }
 
+/// Which components of the form value at `span` are positive.
+fn par_polarities(span: Span) -> Option<Vec<bool>> {
+    PARS.with(|cell| cell.borrow().get(&span).cloned())
+}
+
 /// How many alternatives the sum a `select` or `match` at `span` covers.
 fn sum_arity(span: Span) -> Option<usize> {
     SUM_ARITIES.with(|cell| cell.borrow().get(&span).copied())
@@ -271,6 +280,7 @@ pub fn lower_program_resolving(
     SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
     INJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.injections.clone());
     SUM_ARITIES.with(|cell| *cell.borrow_mut() = dispatch.sum_arities.clone());
+    PARS.with(|cell| *cell.borrow_mut() = dispatch.pars.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
@@ -281,6 +291,7 @@ pub fn lower_program_resolving(
     SWAPS.with(|cell| cell.borrow_mut().clear());
     INJECTIONS.with(|cell| cell.borrow_mut().clear());
     SUM_ARITIES.with(|cell| cell.borrow_mut().clear());
+    PARS.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -477,6 +488,45 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 acc = Term::Pair(Box::new(t), Box::new(acc));
             }
             Ok(acc)
+        }
+        // `(k1 ; k2)` → co(μ̃(x1, x2). ⟨x1 ∥ k1⟩; ⟨x2 ∥ k2⟩): the consumer of the
+        // product its continuations want, handing each its part left to right
+        // as a block runs its statements — so a part sent to an exit that
+        // jumps is the last part sent.
+        Expr::Par(items) => {
+            let positives = par_polarities(e.span).ok_or_else(|| {
+                LowerError::Unsupported("a form value was not resolved by the checker".into())
+            })?;
+            let parts: Vec<String> = (0..items.len()).map(|i| format!("__part{i}")).collect();
+            let mut commands = Vec::new();
+            for ((item, positive), part) in items.iter().zip(positives).zip(&parts) {
+                let wanting = lower_expr(item, continuations)?;
+                commands.push(if positive {
+                    // A value: the part is its consumer.
+                    Command::Cut(wanting, CoTerm::Covar(part.clone()))
+                } else {
+                    // A consumer: it takes the part.
+                    let consumer = format!("{part}_consumer");
+                    Command::Cut(
+                        wanting,
+                        CoTerm::MuTilde(
+                            consumer.clone(),
+                            Box::new(Command::Cut(
+                                Term::Var(part.clone()),
+                                CoTerm::Covar(consumer),
+                            )),
+                        ),
+                    )
+                });
+            }
+            let mut command = commands.pop().expect("a form value has at least two components");
+            while let Some(first) = commands.pop() {
+                command = Command::Cut(
+                    Term::Mu("__part_seq".into(), Box::new(first)),
+                    CoTerm::MuTilde("__discarded".into(), Box::new(command)),
+                );
+            }
+            Ok(Term::Co(Box::new(CoTerm::MuTildeTensor(parts, Box::new(command)))))
         }
         // `::i(v)`: the checker counted the sum's alternatives. `::0` is the
         // left injection whatever the count.

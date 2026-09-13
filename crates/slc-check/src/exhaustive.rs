@@ -213,7 +213,7 @@ fn check_expr(
             }
         }
         Expr::Inject { value, .. } => check_expr(value, enums, bindings, diags),
-        Expr::Pair(items) | Expr::Bundle(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) | Expr::Par(items) => {
             for i in items {
                 check_expr(i, enums, bindings, diags);
             }

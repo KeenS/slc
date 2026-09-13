@@ -1909,7 +1909,30 @@ impl Parser {
                         span: Span { start, end: self.span_end() },
                     });
                 }
+                // `(;)` is ⊥, what a command is: it has no value.
+                if self.peek_kind() == Some(&TokenKind::Semicolon)
+                    && self.tokens.get(self.pos + 1).map(|token| &token.kind)
+                        == Some(&TokenKind::RParen)
+                {
+                    return Err(ParseError {
+                        message: "`(;)` is the unit of `;`, what a command is, and has no value"
+                            .into(),
+                        span: Span { start, end: self.span_end() },
+                    });
+                }
                 let first = self.parse_expr()?;
+                // `(k1 ; k2 ; …)` — a form value, one continuation per component.
+                if self.peek_kind() == Some(&TokenKind::Semicolon) {
+                    let mut items = vec![first];
+                    while self.eat(&TokenKind::Semicolon) {
+                        items.push(self.parse_expr()?);
+                    }
+                    self.expect(TokenKind::RParen, "`)` after a form value")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Par(items),
+                    });
+                }
                 // `(k1 & k2 & …)` — a bundle of exits.
                 if self.peek_kind() == Some(&TokenKind::Amp) {
                     let mut items = vec![first];

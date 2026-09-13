@@ -40,6 +40,7 @@ pub fn check_program_resolving(
         check_decl(d, &enums, &mut env, &mut diags);
     }
     resolve_pending_injections(&mut env, &mut diags);
+    resolve_pending_pars(&mut env, &mut diags);
     if diags.is_empty() { Ok(std::mem::take(&mut env.dispatch)) } else { Err(diags) }
 }
 
@@ -532,8 +533,34 @@ fn resolve_pending_injections(env: &mut Env, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// Settle which way each component of a form value faces: a consumer takes
+/// its part, and a value is taken by it.
+fn resolve_pending_pars(env: &mut Env, diags: &mut Vec<Diagnostic>) {
+    for pending in std::mem::take(&mut env.pending_pars) {
+        let mut positives = Vec::new();
+        for (index, component) in pending.components.iter().enumerate() {
+            let ty = env.uni.apply(component);
+            if let Type::Var(_) = ty {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "component {index} of this form value has no known type, so which way \
+                         it faces is not known; give its type"
+                    ),
+                    span: pending.span,
+                });
+                break;
+            }
+            positives.push(ty.is_positive());
+        }
+        if positives.len() == pending.components.len() {
+            env.dispatch.pars.insert(pending.span, positives);
+        }
+    }
+}
+
 fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
     resolve_pending_injections(env, diags);
+    resolve_pending_pars(env, diags);
     for pending in std::mem::take(&mut env.pending_methods) {
         let target = env.uni.apply(&pending.self_ty);
         resolve_method_dispatch(
@@ -721,7 +748,7 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
         Expr::Inject { value, .. } => is_value_form(&value.kind, enums),
-        Expr::Pair(items) | Expr::Bundle(items) => {
+        Expr::Pair(items) | Expr::Bundle(items) | Expr::Par(items) => {
             items.iter().all(|item| is_value_form(&item.kind, enums))
         }
         Expr::Data { fields, .. } => {
@@ -2825,6 +2852,18 @@ fn check_expr_unapplied(
                 sum: sum.clone(),
             });
             Some(sum)
+        }
+        // `(k1 ; k2)` — a form value, one continuation per component. Which
+        // way each of its cuts faces is its component's polarity, settled once
+        // the declaration's unification is done.
+        Expr::Par(items) => {
+            let types = items
+                .iter()
+                .map(|item| check_expr(item, enums, env, diags))
+                .collect::<Option<Vec<_>>>()?;
+            env.pending_pars
+                .push(crate::env::PendingPar { span: e.span, components: types.clone() });
+            types.into_iter().rev().reduce(|acc, ty| Type::Par(Box::new(ty), Box::new(acc)))
         }
         // A bundle of exits: every component is supplied, and whoever
         // holds it takes exactly one — the additive conjunction.

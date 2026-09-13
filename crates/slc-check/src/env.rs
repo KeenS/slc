@@ -37,6 +37,14 @@ pub(crate) struct PendingInjection {
     pub(crate) sum: Type,
 }
 
+/// One form value awaiting its components' polarities, which decide which
+/// way each of its cuts faces.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingPar {
+    pub(crate) span: slc_syntax::token::Span,
+    pub(crate) components: Vec<Type>,
+}
+
 /// One trait-method call awaiting its `Self`: a negative method's `Self`
 /// appears only in what it consumes, so the cut fixes it after the call.
 #[derive(Debug, Clone)]
@@ -84,6 +92,8 @@ pub(crate) struct Env<'a> {
     pub(crate) pending_methods: Vec<PendingMethod>,
     /// Injections whose sum is not known yet, for the same reason.
     pub(crate) pending_injections: Vec<PendingInjection>,
+    /// Form values whose components' types are not settled yet.
+    pub(crate) pending_pars: Vec<PendingPar>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
@@ -108,6 +118,7 @@ impl<'a> Env<'a> {
             pending_dicts: Vec::new(),
             pending_methods: Vec::new(),
             pending_injections: Vec::new(),
+            pending_pars: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
         }
     }

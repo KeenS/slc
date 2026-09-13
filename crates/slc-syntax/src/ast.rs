@@ -46,6 +46,10 @@ pub enum Expr {
         index: usize,
         value: Box<Node<Expr>>,
     },
+    /// `(k1 ; k2 ; …)` — a form value: one continuation per component of a
+    /// `;`. Fed the product of what they want, it hands each its part, left
+    /// to right.
+    Par(Vec<Node<Expr>>),
     Match {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
@@ -176,6 +180,7 @@ impl Expr {
             Expr::Inject { value, .. } => vec![value],
             Expr::Pair(items)
             | Expr::Bundle(items)
+            | Expr::Par(items)
             | Expr::Block(items)
             | Expr::Flow { stages: items, .. } => items.iter().collect(),
             Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)

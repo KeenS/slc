@@ -1526,3 +1526,27 @@ fn an_alternative_outside_its_sum_is_refused() {
         assert!(stderr.contains(expected), "missing {expected:?} in: {stderr}");
     }
 }
+
+#[test]
+fn a_form_value_hands_each_continuation_its_part_in_order() {
+    // `(k1 ; k2)` consumes the product of what its continuations want, left
+    // to right: both parts arrive when the first continuation returns, and
+    // only the first when it is an exit that jumps.
+    let dir = std::env::temp_dir().join("slc_test_form_value.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: i32) / {IO} {
+            let first = select i64 { n => n | println };
+            let second = select String { s => s | println };
+            (7, "seven") | (first ; second)⟩;
+            mu i64 { k <= (1, "never") | (k ; second)⟩ } | println;
+            let typed: (-i64 ; -String) = (first ; second);
+            (8, "eight") | typed⟩;
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "\"seven\"", "1", "8", "\"eight\""]);
+}
