@@ -61,15 +61,19 @@ feature is mid-flight; what remains open is below.
   outcome shape). Doing it needs a resumption point that dispatches on the
   outcome, which is a frame the machine does not have yet.
 
+- **An alternative's position needs its sum by the end of its declaration.**
+  `::i(v)` is resolved against the sum its context gives — a return type, an
+  annotation, a parameter, a cut — once the declaration is checked; where
+  nothing has said which sum it is, `::1(v)` and later are refused, and only
+  `::0(v)` stands. An injection pattern is taken apart at the top of an arm
+  only: `::0(::1(x))` is refused, and the payload is matched inside the arm.
+
 ## Next
 
 **Connective spellings** (DESIGN §8, *Connective spellings*), in order:
 
-1. **Enum values.** `::i(v)` and the pattern `::i(x)`, counted from 0 and
-   resolved against the type past the second alternative; `select` and
-   `match` cover a sum by its positions; lowering to labelled injections.
-2. **Form values.** `(k1 ; k2)` and its pattern, delivering left to right.
-3. **Migration.** Rewrite the examples, the stdlib, tests and DESIGN to the
+1. **Form values.** `(k1 ; k2)` and its pattern, delivering left to right.
+2. **Migration.** Rewrite the examples, the stdlib, tests and DESIGN to the
    new spellings, and record old → new in docs/MIGRATION.md.
 
 ## Deferred, for discussion

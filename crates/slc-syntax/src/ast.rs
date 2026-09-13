@@ -39,6 +39,13 @@ pub enum Expr {
     /// introduction: every component is supplied, and whoever holds it
     /// takes exactly one. Its type is the `&` of its components'.
     Bundle(Vec<Node<Expr>>),
+    /// `::0(v)` — an alternative of an anonymous sum, by position: an enum
+    /// value with the enum's name left out. Which sum it belongs to, and so
+    /// how many alternatives follow, is its context's to say.
+    Inject {
+        index: usize,
+        value: Box<Node<Expr>>,
+    },
     Match {
         scrutinee: Box<Node<Expr>>,
         arms: Vec<MatchArm>,
@@ -166,6 +173,7 @@ impl Expr {
                 vec![body]
             }
             Expr::Call { callee, args } => std::iter::once(&**callee).chain(args).collect(),
+            Expr::Inject { value, .. } => vec![value],
             Expr::Pair(items)
             | Expr::Bundle(items)
             | Expr::Block(items)
@@ -356,6 +364,12 @@ pub enum Pattern {
     /// `(p & q)` — the bundle copattern: the anonymous menu's counterpart
     /// to the tuple pattern, binding each exit.
     Bundle(Vec<Pattern>),
+    /// `::0(p)` — the alternative at a position of a sum, its payload matched
+    /// by `p`.
+    Inject {
+        index: usize,
+        pattern: Box<Pattern>,
+    },
     Data {
         name: String,
         fields: Vec<(String, Pattern)>,

@@ -226,6 +226,23 @@ impl Value {
             Value::PartialBuiltin(s, args) => {
                 format!("<partial {s} with {} args>", args.len())
             }
+            // An alternative of an anonymous sum, by its position: the right
+            // alternatives it passes over, then the left one it is.
+            Value::Tagged(label, _) if label == "|0" || label == "|1" => {
+                let mut index = 0;
+                let mut current = self;
+                while let Value::Tagged(label, payload) = current
+                    && label == "|1"
+                {
+                    index += 1;
+                    current = payload;
+                }
+                let payload = match current {
+                    Value::Tagged(label, payload) if label == "|0" => payload.as_ref(),
+                    last => last,
+                };
+                format!("::{index}({})", payload.display())
+            }
             Value::Tagged(label, payload) => match payload.as_ref() {
                 Value::Unit => label.clone(),
                 payload => format!("{label}({})", payload.display()),

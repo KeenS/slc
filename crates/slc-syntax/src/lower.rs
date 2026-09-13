@@ -37,6 +37,8 @@ thread_local! {
     /// Expression span → the swap its value needs: it is used at the
     /// mirrored `⅋` spelling of its type.
     static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
+    static INJECTIONS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
+    static SUM_ARITIES: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -81,6 +83,12 @@ pub struct DispatchInfo {
     /// Expression span → the swap its value needs, where a value of `A ⅋ B`
     /// is stored at, passed as, or returned for `B ⅋ A`.
     pub swaps: HashMap<Span, Swap>,
+    /// Injection span → how many alternatives its sum has, flattened: what
+    /// `::i(v)` lowers to depends on whether position `i` is the last.
+    pub injections: HashMap<Span, usize>,
+    /// `select`/`match` span → how many alternatives the sum its injection
+    /// arms cover has.
+    pub sum_arities: HashMap<Span, usize>,
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -225,6 +233,16 @@ fn projection(span: Span) -> Option<usize> {
     PROJECTIONS.with(|cell| cell.borrow().get(&span).copied())
 }
 
+/// How many alternatives the checker resolved for the injection at `span`.
+fn injection_arity(span: Span) -> Option<usize> {
+    INJECTIONS.with(|cell| cell.borrow().get(&span).copied())
+}
+
+/// How many alternatives the sum a `select` or `match` at `span` covers.
+fn sum_arity(span: Span) -> Option<usize> {
+    SUM_ARITIES.with(|cell| cell.borrow().get(&span).copied())
+}
+
 /// The qualified destructor label a destructor name denotes, if it names a
 /// declared menu item unambiguously (or is already qualified).
 fn lookup_dtor(name: &str) -> Option<String> {
@@ -251,6 +269,8 @@ pub fn lower_program_resolving(
     CALL_GROUPS.with(|cell| *cell.borrow_mut() = dispatch.call_groups.clone());
     FLOWS.with(|cell| *cell.borrow_mut() = dispatch.flows.clone());
     SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
+    INJECTIONS.with(|cell| *cell.borrow_mut() = dispatch.injections.clone());
+    SUM_ARITIES.with(|cell| *cell.borrow_mut() = dispatch.sum_arities.clone());
     let result = lower_program(p);
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
@@ -259,6 +279,8 @@ pub fn lower_program_resolving(
     CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
     FLOWS.with(|cell| cell.borrow_mut().clear());
     SWAPS.with(|cell| cell.borrow_mut().clear());
+    INJECTIONS.with(|cell| cell.borrow_mut().clear());
+    SUM_ARITIES.with(|cell| cell.borrow_mut().clear());
     result
 }
 
@@ -455,6 +477,15 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 acc = Term::Pair(Box::new(t), Box::new(acc));
             }
             Ok(acc)
+        }
+        // `::i(v)`: the checker counted the sum's alternatives. `::0` is the
+        // left injection whatever the count.
+        Expr::Inject { index, value } => {
+            let arity =
+                injection_arity(e.span).or((*index == 0).then_some(2)).ok_or_else(|| {
+                    LowerError::Unsupported("an alternative was not resolved by the checker".into())
+                })?;
+            Ok(injection_term(*index, arity, lower_expr(value, continuations)?))
         }
         Expr::Pair(items) => {
             // (e1, e2) → e1' ⊗ e2'
@@ -796,7 +827,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // delivered to the match's own continuation. Guards, literals,
             // or-patterns, defaults among labelled arms, and everything else
             // order-sensitive falls through to the dispatch builtin below.
-            if let Some(term) = lower_match_canonical(scrutinee, arms, continuations)? {
+            if let Some(term) = lower_match_canonical(scrutinee, arms, continuations, e.span)? {
                 return Ok(term);
             }
             // match s { p1 => e1, p2 => e2, ... }
@@ -808,7 +839,8 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // Each arm is a Lam so it is only evaluated when selected.
             let mut arm_terms = Vec::new();
             for arm in arms {
-                let descriptor = Term::Var(format!("$str_{}", pattern_descriptor(&arm.pattern)));
+                let descriptor =
+                    Term::Var(format!("$str_{}", arm_descriptor(&arm.pattern, sum_arity(e.span))));
                 let b = lower_expr(&arm.body, continuations)?;
                 let guard = match &arm.guard {
                     Some(guard) => lower_expr(guard, continuations)?,
@@ -888,6 +920,33 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                      `mu Menu { item: k <= c, … }`"
                         .into(),
                 ));
+            }
+            // A sum's alternatives, by position: `::0(x)`, `::1(y)`.
+            if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
+                let arity = sum_arity(e.span).ok_or_else(|| {
+                    LowerError::Unsupported(
+                        "a `select` over a sum was not resolved by the checker".into(),
+                    )
+                })?;
+                let mut rows = Vec::new();
+                for arm in arms {
+                    let Pattern::Inject { index, pattern } = &arm.pattern else {
+                        return Err(LowerError::Unsupported(
+                            "a `select` over a sum covers its alternatives, `::0(x)` and \
+                             `::1(y)`, and nothing else"
+                                .into(),
+                        ));
+                    };
+                    let command = lower_select_command(&arm.command, continuations)?;
+                    rows.push((*index, arity, pattern.as_ref(), command));
+                }
+                return injection_table(rows)?.map(|table| Term::Co(Box::new(table))).ok_or_else(
+                    || {
+                        LowerError::Unsupported(
+                            "a `select` over a sum has one arm per alternative".into(),
+                        )
+                    },
+                );
             }
             let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
                 TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
@@ -1145,7 +1204,7 @@ fn lower_binding(
     // The one-arm match it abbreviates: the pattern's binders scope over the
     // body, so the body is the arm's own command.
     let arm = (pattern, Command::Cut(body, CoTerm::Covar(MATCH_COVAR.into())));
-    let consumer = branch_table(vec![arm])?.ok_or_else(|| {
+    let consumer = branch_table(None, vec![arm])?.ok_or_else(|| {
         LowerError::Unsupported("a binder pattern the core cannot express".into())
     })?;
     let value = lower_expr(value, continuations)?;
@@ -1189,10 +1248,11 @@ fn bind_group(params: &[Param], group: &str, body: Term) -> Result<Term, LowerEr
     };
     let packed = format!("__{group}");
     let out = format!("__{group}_body");
-    let consumer = branch_table(vec![(&pattern, Command::Cut(body, CoTerm::Covar(out.clone())))])?
-        .ok_or_else(|| {
-            LowerError::Unsupported("a parameter pattern the core cannot express".into())
-        })?;
+    let consumer =
+        branch_table(None, vec![(&pattern, Command::Cut(body, CoTerm::Covar(out.clone())))])?
+            .ok_or_else(|| {
+                LowerError::Unsupported("a parameter pattern the core cannot express".into())
+            })?;
     Ok(Term::Lam(
         packed.clone(),
         Box::new(Term::Mu(out, Box::new(Command::Cut(Term::Var(packed), consumer)))),
@@ -1365,6 +1425,7 @@ fn lower_match_canonical(
     scrutinee: &Node<Expr>,
     arms: &[MatchArm],
     continuations: &[String],
+    span: Span,
 ) -> Result<Option<Term>, LowerError> {
     if arms.iter().any(|arm| arm.guard.is_some()) {
         return Ok(None);
@@ -1373,7 +1434,7 @@ fn lower_match_canonical(
     for arm in arms {
         lowered.push((&arm.pattern, lower_match_body(&arm.body, continuations)?));
     }
-    let Some(consumer) = branch_table(lowered)? else { return Ok(None) };
+    let Some(consumer) = branch_table(sum_arity(span), lowered)? else { return Ok(None) };
     let scrutinee = lower_expr(scrutinee, continuations)?;
     Ok(Some(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(scrutinee, consumer)))))
 }
@@ -1382,7 +1443,10 @@ fn lower_match_canonical(
 /// runs: a labelled table, a single product, or a single whole-value binder.
 /// `Ok(None)` is a mix the core's branch tables cannot express, which a
 /// `match` answers with the runtime dispatch — and a binder refuses.
-fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerError> {
+fn branch_table(
+    sum_arity: Option<usize>,
+    arms: Vec<(&Pattern, Command)>,
+) -> Result<Option<CoTerm>, LowerError> {
     fn canonical_component(pattern: &Pattern) -> bool {
         match pattern {
             Pattern::Ident(name) => lookup_constant(name).is_none(),
@@ -1391,6 +1455,21 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
             Pattern::Data { fields, .. } => fields.iter().all(|(_, p)| canonical_component(p)),
             _ => false,
         }
+    }
+    // A sum's alternatives build their own nested table, when every arm is
+    // one and binds its payload plainly.
+    if arms.iter().any(|(pattern, _)| matches!(pattern, Pattern::Inject { .. })) {
+        let Some(arity) = sum_arity else { return Ok(None) };
+        let mut rows = Vec::new();
+        for (pattern, body) in arms {
+            match pattern {
+                Pattern::Inject { index, pattern } if canonical_component(pattern) => {
+                    rows.push((*index, arity, pattern.as_ref(), body))
+                }
+                _ => return Ok(None),
+            }
+        }
+        return injection_table(rows);
     }
     // One pass over the arms, sorting them into a labelled table, a single
     // product, or a single whole-value binder. Any mix the core's branch
@@ -1492,6 +1571,77 @@ fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Comma
 /// Build a labelled consumer while retaining the declaration it refutes.
 /// Nonempty tables can recover that declaration from their first qualified
 /// label; empty tables must receive it from the surface type annotation.
+/// The labels of a sum's two alternatives. A sum of more is nested to the
+/// right, as its type is, so two are all the core needs: `::2(v)` of three is
+/// the right alternative whose payload is the right alternative of the rest.
+pub const INJECT_LEFT: &str = "|0";
+pub const INJECT_RIGHT: &str = "|1";
+/// The owner a sum's branch table retains: it has no declaration.
+const SUM_OWNER: &str = "(|)";
+/// What the right alternative binds when deeper arms take it apart.
+const INJECT_REST: &str = "__inject_rest";
+
+/// `::index(payload)` of a sum of `arity`: the right alternatives the
+/// position passes over, around the left alternative it is — or around the
+/// bare payload, at the last position.
+fn injection_term(index: usize, arity: usize, payload: Term) -> Term {
+    let mut term =
+        if index + 1 < arity { Term::Tag(INJECT_LEFT.into(), Box::new(payload)) } else { payload };
+    for _ in 0..index {
+        term = Term::Tag(INJECT_RIGHT.into(), Box::new(term));
+    }
+    term
+}
+
+/// The consumer of a sum, from arms that each cover one position: the left
+/// alternative binds its payload, and the right one binds the rest of the
+/// sum — directly, at the last position, or through the table the deeper
+/// arms build. `Ok(None)` is a set of arms that is no table.
+fn injection_table(
+    arms: Vec<(usize, usize, &Pattern, Command)>,
+) -> Result<Option<CoTerm>, LowerError> {
+    let mut left = None;
+    let mut rest = None;
+    let mut inner = Vec::new();
+    for (index, arity, payload, body) in arms {
+        let slot = match (index, arity) {
+            _ if arity < 2 || index >= arity => return Ok(None),
+            (0, _) => &mut left,
+            (1, 2) => &mut rest,
+            _ => {
+                inner.push((index - 1, arity - 1, payload, body));
+                continue;
+            }
+        };
+        if slot.is_some() {
+            return Ok(None);
+        }
+        *slot = Some(components(std::iter::once(payload), body)?);
+    }
+    let mut branches = Vec::new();
+    if let Some((binders, body)) = left {
+        branches.push(CoCaseBranch { label: INJECT_LEFT.into(), binders, body: Box::new(body) });
+    }
+    match (rest, inner.is_empty()) {
+        (Some(_), false) => return Ok(None),
+        (Some((binders, body)), true) => branches.push(CoCaseBranch {
+            label: INJECT_RIGHT.into(),
+            binders,
+            body: Box::new(body),
+        }),
+        (None, false) => {
+            let Some(table) = injection_table(inner)? else { return Ok(None) };
+            branches.push(CoCaseBranch {
+                label: INJECT_RIGHT.into(),
+                binders: vec![INJECT_REST.into()],
+                body: Box::new(Command::Cut(Term::Var(INJECT_REST.into()), table)),
+            });
+        }
+        (None, true) => {}
+    }
+    Ok(Some(CoTerm::CoCase { owner: SUM_OWNER.into(), branches }))
+}
+
 fn lower_cocase(
     qualifier: Option<&str>,
     branches: Vec<CoCaseBranch>,
@@ -1722,6 +1872,28 @@ where
     })
 }
 
+/// A `match` arm's descriptor. An alternative by position is nested as its
+/// value is — the right alternatives it passes over, then the left one it
+/// is — which only the sum's arity decides.
+fn arm_descriptor(pattern: &Pattern, sum_arity: Option<usize>) -> String {
+    let (Pattern::Inject { index, pattern }, Some(arity)) = (pattern, sum_arity) else {
+        return pattern_descriptor(pattern);
+    };
+    let mut out = String::new();
+    let mut open = 0;
+    for _ in 0..*index {
+        out.push_str(&format!("\"{INJECT_RIGHT}\"("));
+        open += 1;
+    }
+    if index + 1 < arity {
+        out.push_str(&format!("\"{INJECT_LEFT}\"("));
+        open += 1;
+    }
+    out.push_str(&pattern_descriptor(pattern));
+    out.push_str(&")".repeat(open));
+    out
+}
+
 fn pattern_descriptor(pattern: &Pattern) -> String {
     fn escape(s: &str) -> String {
         s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -1817,6 +1989,10 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 }
                 out.push(')');
             }
+            // An alternative's position is read against the sum's arity,
+            // which only `arm_descriptor` has; the checker keeps injections
+            // from nesting.
+            Pattern::Inject { .. } => out.push('_'),
             Pattern::Tuple(items) | Pattern::Bundle(items) => {
                 // A bundle is the same right-nested pair a tuple is, so it
                 // matches the same way: the checker tells `&` from `⊗`.

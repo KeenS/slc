@@ -304,6 +304,14 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
     })
 }
 
+/// Does sending `v` to `consumer` run it? A consumer does; so does a bundle
+/// of exits when what arrives is an alternative of a sum, which picks the
+/// exit. Anything else a co-variable holds only names where the value goes.
+fn activates(consumer: &Value, v: &Value) -> bool {
+    is_applicable(consumer)
+        || matches!((consumer, v), (Value::Pair(..), Value::Tagged(label, _)) if label == "|0" || label == "|1")
+}
+
 /// ⟨ v ∥ e ⟩ with the value in hand, `e` the co-term node.
 fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match node(e) {
@@ -313,11 +321,11 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
         // continuation, as the lowering of `let`, blocks, and applications
         // does, delivers the value onward.
         Node::CoLocal(i) => match env.local(i) {
-            Some(consumer) if is_applicable(&consumer) => State::Apply { callee: consumer, arg: v },
+            Some(consumer) if activates(&consumer, &v) => State::Apply { callee: consumer, arg: v },
             _ => State::Return(v),
         },
         Node::CoDynamic(a) => match env.lookup(&a) {
-            Some(consumer) if is_applicable(&consumer) => State::Apply { callee: consumer, arg: v },
+            Some(consumer) if activates(&consumer, &v) => State::Apply { callee: consumer, arg: v },
             _ => State::Return(v),
         },
         // ⟨ f ∥ v · e ⟩ — application: evaluate the argument, apply `f` to
@@ -524,6 +532,23 @@ fn step_apply(
             };
             collected.append(&mut single);
             builtin_step(&name, collected, kont)?
+        }
+        // A bundle of exits consumes a sum, since the consumer of `(A | B)` is
+        // `(-A & -B)`: the left alternative takes the first exit, and the
+        // right one hands its payload to the rest — both nested to the right
+        // alike.
+        Value::Pair(first, rest) => {
+            let (exit, payload) = match arg {
+                Value::Tagged(label, payload) if label == "|0" => (*first, *payload),
+                Value::Tagged(label, payload) if label == "|1" => (*rest, *payload),
+                arg => {
+                    return Err(EvalError::TypeMismatch(format!(
+                        "a bundle of exits consumes an alternative of a sum, got {}",
+                        arg.display()
+                    )));
+                }
+            };
+            State::Apply { callee: exit, arg: payload }
         }
         other => {
             return Err(EvalError::TypeMismatch(format!(

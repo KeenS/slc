@@ -103,6 +103,14 @@ fn check_expr(
             }
         }
         Expr::Select { ty, arms } => {
+            // A sum's positions are counted against its type, which the type
+            // checker knows and this pass does not.
+            if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
+                for arm in arms {
+                    check_expr(&arm.command, enums, bindings, diags);
+                }
+                return;
+            }
             // `(|)` has no values, so its consumer has no arms.
             if matches!(ty.as_deref().map(|ty| &ty.kind), Some(slc_syntax::ast::TypeExpr::Zero)) {
                 if !arms.is_empty() {
@@ -204,6 +212,7 @@ fn check_expr(
                 check_expr(a, enums, bindings, diags);
             }
         }
+        Expr::Inject { value, .. } => check_expr(value, enums, bindings, diags),
         Expr::Pair(items) | Expr::Bundle(items) => {
             for i in items {
                 check_expr(i, enums, bindings, diags);
@@ -299,6 +308,7 @@ fn refutable_shape(pattern: &Pattern) -> String {
         Pattern::Or(_) => "an or-pattern".into(),
         Pattern::Range { .. } => "a range".into(),
         Pattern::Dtor { dtor, .. } => format!("the request `.{dtor}`"),
+        Pattern::Inject { .. } => "an alternative of a sum".into(),
         Pattern::Tuple(_) | Pattern::Bundle(_) => "this pattern".into(),
         _ => "a literal".into(),
     }
@@ -306,7 +316,7 @@ fn refutable_shape(pattern: &Pattern) -> String {
 
 /// Does this pattern match every value of its type? A sum needs one arm per
 /// variant, but a product has a single shape, so one arm covers it.
-fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
+pub(crate) fn is_irrefutable(pattern: &Pattern, enums: &Declarations) -> bool {
     match pattern {
         Pattern::Wildcard => true,
         // A name that is not a variant is a binding, so it matches anything;
@@ -490,6 +500,7 @@ fn check_pattern_arity(
                 check_pattern_arity(alternative, enums, span, diags);
             }
         }
+        Pattern::Inject { pattern, .. } => check_pattern_arity(pattern, enums, span, diags),
         Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 check_pattern_arity(item, enums, span, diags);
@@ -520,6 +531,10 @@ fn check_match(
 
     for arm in arms {
         check_pattern_arity(&arm.pattern, enums, span, diags);
+    }
+    // A sum's positions are the type checker's to count.
+    if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
+        return;
     }
 
     // Collect enum patterns used: Name(variant, _).

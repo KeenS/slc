@@ -39,6 +39,7 @@ pub fn check_program_resolving(
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
+    resolve_pending_injections(&mut env, &mut diags);
     if diags.is_empty() { Ok(std::mem::take(&mut env.dispatch)) } else { Err(diags) }
 }
 
@@ -482,7 +483,57 @@ fn record_bounds(
 /// cut told a call standing in consumer position — so each bound is
 /// discharged against what its parameter actually became, and the call's
 /// dictionaries recorded for lowering.
+/// Resolve each `::i(v)` against the sum its context made it: count the
+/// alternatives, check the position, and give the payload that
+/// alternative's type.
+fn resolve_pending_injections(env: &mut Env, diags: &mut Vec<Diagnostic>) {
+    for pending in std::mem::take(&mut env.pending_injections) {
+        let sum = env.uni.apply(&pending.sum);
+        let index = pending.index;
+        if let Type::Var(_) = sum {
+            diags.push(Diagnostic {
+                message: format!(
+                    "which sum `::{index}` belongs to is not known here, so neither is its \
+                     position; give the sum's type"
+                ),
+                span: pending.span,
+            });
+            continue;
+        }
+        let alternatives = sum_alternatives(&sum);
+        if alternatives.len() < 2 {
+            diags.push(Diagnostic {
+                message: format!("`::{index}` is an alternative of a sum, and it is used as {sum}"),
+                span: pending.span,
+            });
+            continue;
+        }
+        let Some(alternative) = alternatives.get(index) else {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`::{index}` is out of range for {sum}, which has {} alternatives",
+                    alternatives.len()
+                ),
+                span: pending.span,
+            });
+            continue;
+        };
+        if env.uni.unify(alternative, &pending.payload).is_err() {
+            let payload = env.uni.apply(&pending.payload);
+            diags.push(Diagnostic {
+                message: format!(
+                    "`::{index}` of {sum} carries {alternative}; this value has type {payload}"
+                ),
+                span: pending.span,
+            });
+            continue;
+        }
+        env.dispatch.injections.insert(pending.span, alternatives.len());
+    }
+}
+
 fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
+    resolve_pending_injections(env, diags);
     for pending in std::mem::take(&mut env.pending_methods) {
         let target = env.uni.apply(&pending.self_ty);
         resolve_method_dispatch(
@@ -532,10 +583,6 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 .flatten();
             let body_type = check_expr(body, enums, env, diags);
             env.consumed = outer;
-            resolve_pending_dicts(env, diags);
-            env.bounds = outer_bounds;
-            env.rigid_vars = outer_rigid;
-            env.pop();
             // The body produces what the declaration promises: the return
             // type for `->`, its consumer for `<-`. A body that ends in a
             // cut produces nothing and promises nothing.
@@ -554,6 +601,13 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     span: body.span,
                 });
             }
+            // Pending dispatch and injections are resolved once the promise has
+            // been unified too: a return type may be all that says which sum
+            // `::1(v)` belongs to.
+            resolve_pending_dicts(env, diags);
+            env.bounds = outer_bounds;
+            env.rigid_vars = outer_rigid;
+            env.pop();
         }
         Decl::Command {
             value_params,
@@ -666,6 +720,7 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Ident(_)
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
+        Expr::Inject { value, .. } => is_value_form(&value.kind, enums),
         Expr::Pair(items) | Expr::Bundle(items) => {
             items.iter().all(|item| is_value_form(&item.kind, enums))
         }
@@ -1258,6 +1313,12 @@ fn bind_match_pattern(
                 bind_match_pattern(item, ty, enums, env);
             }
         }
+        // An alternative binds its payload, at its position in the sum.
+        Pattern::Inject { index, pattern } => {
+            if let Some(payload) = sum_alternatives(scrutinee).get(*index) {
+                bind_match_pattern(pattern, payload, enums, env);
+            }
+        }
         // A bundle binds the exits of an anonymous menu, as a tuple binds
         // the components of a product.
         Pattern::Bundle(items) => {
@@ -1463,6 +1524,14 @@ fn bind_select_arm(
         (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
         // A menu of exits: its items, likewise.
         (Type::With(..), Pattern::Bundle(_)) => flatten_with(consumed),
+        // An alternative of a sum: its payload. `check_alternatives` has
+        // already said what is wrong with a position that is not there.
+        (_, Pattern::Inject { index, .. }) => {
+            match sum_alternatives(&env.uni.apply(consumed)).get(*index) {
+                Some(payload) => vec![payload.clone()],
+                None => return,
+            }
+        }
         _ => {
             diags.push(Diagnostic {
                 message: format!("a `select {consumed}` arm must cover a shape of {consumed}"),
@@ -1476,6 +1545,7 @@ fn bind_select_arm(
         Pattern::Enum { fields, .. } => fields.iter().collect(),
         Pattern::Data { fields, .. } => fields.iter().map(|(_, p)| p).collect(),
         Pattern::Tuple(items) => items.iter().collect(),
+        Pattern::Inject { pattern, .. } => vec![pattern.as_ref()],
         _ => Vec::new(),
     };
     if binders.len() != components.len() {
@@ -1552,6 +1622,153 @@ fn flatten_tensor(ty: &Type) -> Vec<Type> {
 }
 
 /// The items of a `&`, flattened right-nested — the exits a bundle holds.
+/// A sum's alternatives, flattened along its right nesting as a tuple's
+/// components are: `(A | B | C)` has three. Anything else is one.
+fn sum_alternatives(ty: &Type) -> Vec<Type> {
+    match ty {
+        Type::Sum(a, b) => {
+            let mut alternatives = vec![(**a).clone()];
+            alternatives.extend(sum_alternatives(b));
+            alternatives
+        }
+        other => vec![other.clone()],
+    }
+}
+
+/// Does a pattern hold an injection anywhere inside?
+fn contains_injection(pattern: &slc_syntax::ast::Pattern) -> bool {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Inject { .. } => true,
+        Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
+            items.iter().any(contains_injection)
+        }
+        Pattern::Enum { fields, .. } => fields.iter().any(contains_injection),
+        Pattern::Data { fields, .. } => fields.iter().any(|(_, p)| contains_injection(p)),
+        Pattern::Binding { pattern, .. } | Pattern::Dtor { arg: pattern, .. } => {
+            contains_injection(pattern)
+        }
+        _ => false,
+    }
+}
+
+/// The arms of a `select` or `match` over a sum, by position. The sum is the
+/// scrutinee's type — or, where that is still unknown, the sum of as many
+/// alternatives as the arms name. A `select` answers each position exactly
+/// once and nothing else; a `match` covers every position, or has an arm
+/// that matches anything. Returns the sum, its arity recorded for lowering.
+fn check_alternatives(
+    keyword: &str,
+    consumed: &Type,
+    arms: &[(&slc_syntax::ast::Pattern, bool)],
+    span: Span,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    use slc_syntax::ast::Pattern;
+    let indices: Vec<usize> = arms
+        .iter()
+        .filter_map(|(pattern, _)| match pattern {
+            Pattern::Inject { index, .. } => Some(*index),
+            _ => None,
+        })
+        .collect();
+    let mut ty = env.uni.apply(consumed);
+    if let Type::Var(_) = ty {
+        let arity = indices.iter().max().map_or(2, |most| (most + 1).max(2));
+        let mut shape = env.uni.fresh_var();
+        for _ in 1..arity {
+            shape = Type::Sum(Box::new(env.uni.fresh_var()), Box::new(shape));
+        }
+        let _ = env.uni.unify(&ty, &shape);
+        ty = env.uni.apply(&shape);
+    }
+    let alternatives = sum_alternatives(&ty);
+    let arity = alternatives.len();
+    if arity < 2 {
+        diags.push(Diagnostic {
+            message: format!(
+                "`::{}` is an alternative of a sum, and this `{keyword}` is over {ty}",
+                indices.first().copied().unwrap_or(0)
+            ),
+            span,
+        });
+        return None;
+    }
+    env.dispatch.sum_arities.insert(span, arity);
+    let mut covered = vec![false; arity];
+    let mut covers_everything = false;
+    let mut well_formed = true;
+    for (pattern, guarded) in arms {
+        match pattern {
+            Pattern::Inject { index, pattern } => {
+                if *index >= arity {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`::{index}` is out of range for {ty}, which has {arity} alternatives"
+                        ),
+                        span,
+                    });
+                    well_formed = false;
+                    continue;
+                }
+                if contains_injection(pattern) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "take the payload of `::{index}` apart in the arm: an alternative's \
+                             pattern holds no other alternative"
+                        ),
+                        span,
+                    });
+                    well_formed = false;
+                }
+                if keyword == "select" {
+                    if covered[*index] {
+                        diags.push(Diagnostic {
+                            message: format!("`select` answers `::{index}` in more than one arm"),
+                            span,
+                        });
+                    }
+                    covered[*index] = true;
+                } else if !guarded && crate::exhaustive::is_irrefutable(pattern, enums) {
+                    covered[*index] = true;
+                }
+            }
+            _ if keyword == "select" => {
+                diags.push(Diagnostic {
+                    message: "a `select` over a sum covers its alternatives, `::0(x)` and \
+                              `::1(y)`, and nothing else"
+                        .into(),
+                    span,
+                });
+                well_formed = false;
+            }
+            other => {
+                if !guarded && crate::exhaustive::is_irrefutable(other, enums) {
+                    covers_everything = true;
+                }
+            }
+        }
+    }
+    let missing: Vec<String> = covered
+        .iter()
+        .enumerate()
+        .filter(|(_, covered)| !**covered)
+        .map(|(index, _)| format!("`::{index}`"))
+        .collect();
+    if !covers_everything && !missing.is_empty() {
+        diags.push(Diagnostic {
+            message: format!(
+                "non-exhaustive `{keyword}` over {ty}: missing {}",
+                missing.join(", ")
+            ),
+            span,
+        });
+    }
+    well_formed.then_some(ty)
+}
+
 fn flatten_with(ty: &Type) -> Vec<Type> {
     match ty {
         Type::With(a, b) => {
@@ -2152,6 +2369,19 @@ fn check_expr_unapplied(
         }
         Expr::Match { scrutinee, arms } => {
             let scrutinee_ty = check_expr(scrutinee, enums, env, diags);
+            // A sum's alternatives, by position.
+            let scrutinee_ty = match scrutinee_ty {
+                Some(ty)
+                    if arms.iter().any(|arm| {
+                        matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. })
+                    }) =>
+                {
+                    let rows: Vec<(&slc_syntax::ast::Pattern, bool)> =
+                        arms.iter().map(|arm| (&arm.pattern, arm.guard.is_some())).collect();
+                    check_alternatives("match", &ty, &rows, e.span, enums, env, diags)
+                }
+                other => other,
+            };
             if let Some(scrutinee_ty) = &scrutinee_ty {
                 for arm in arms {
                     check_pattern(&arm.pattern, scrutinee_ty, enums, arm.body.span, diags);
@@ -2311,7 +2541,13 @@ fn check_expr_unapplied(
                 },
                 // Left out: an arm's pattern may name the type, and inside a
                 // negative `fn` the declaration already said it.
-                None => named_by_arms(arms, enums).or_else(|| env.consumed.clone()),
+                None => named_by_arms(arms, enums).or_else(|| env.consumed.clone()).or_else(|| {
+                    // Arms that name positions consume some sum; which one,
+                    // the positions and the cut will say.
+                    arms.iter()
+                        .any(|arm| matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. }))
+                        .then(|| env.uni.fresh_var())
+                }),
             };
             let Some(resolved) = resolved else {
                 diags.push(Diagnostic {
@@ -2374,7 +2610,16 @@ fn check_expr_unapplied(
                 });
                 return None;
             }
-            let consumed = resolved.clone();
+            let consumed = if arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. }))
+            {
+                let rows: Vec<(&slc_syntax::ast::Pattern, bool)> =
+                    arms.iter().map(|arm| (&arm.pattern, false)).collect();
+                check_alternatives("select", &resolved, &rows, e.span, enums, env, diags)?
+            } else {
+                resolved.clone()
+            };
             for arm in arms {
                 env.push();
                 bind_select_arm(&consumed, &arm.pattern, enums, env, e.span, diags);
@@ -2562,6 +2807,24 @@ fn check_expr_unapplied(
                 }
                 None => Some(body_ty),
             }
+        }
+        // `::i(v)` — one alternative of a sum. Which sum is the context's to
+        // say, so the position is resolved once the declaration's
+        // unification is done; only the left alternative is known already.
+        Expr::Inject { index, value } => {
+            let payload = check_expr(value, enums, env, diags)?;
+            let sum = if *index == 0 {
+                Type::Sum(Box::new(payload.clone()), Box::new(env.uni.fresh_var()))
+            } else {
+                env.uni.fresh_var()
+            };
+            env.pending_injections.push(crate::env::PendingInjection {
+                span: e.span,
+                index: *index,
+                payload,
+                sum: sum.clone(),
+            });
+            Some(sum)
         }
         // A bundle of exits: every component is supplied, and whoever
         // holds it takes exactly one — the additive conjunction.

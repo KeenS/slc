@@ -33,6 +33,21 @@ fn repository_example_suite_has_expected_results() {
         ),
         ("logical_units.sl", Expected { success: true, stdout: &["(,)"], stderr: &[] }),
         (
+            "sums.sl",
+            Expected {
+                success: true,
+                stdout: &[
+                    "\"number 7\"",
+                    "\"text hi\"",
+                    "\"second, yes\"",
+                    "\"third last\"",
+                    "\"3\"",
+                    "\"big\"",
+                ],
+                stderr: &[],
+            },
+        ),
+        (
             "composition.sl",
             Expected {
                 success: true,

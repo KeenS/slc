@@ -1383,6 +1383,20 @@ impl Parser {
         Ok(e)
     }
 
+    /// The position after `::` in `::0(v)`, counted from 0.
+    fn expect_alternative_index(&mut self) -> Result<usize, ParseError> {
+        match self.peek_kind().cloned() {
+            Some(TokenKind::Int(n)) if n >= 0 => {
+                self.pos += 1;
+                Ok(n as usize)
+            }
+            _ => Err(ParseError {
+                message: "expected an alternative's position after `::`, as in `::0(v)`".into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            }),
+        }
+    }
+
     fn parse_primary(&mut self) -> Result<Node<Expr>, ParseError> {
         let start = self.span_start();
         match self.peek_kind().cloned() {
@@ -1397,6 +1411,18 @@ impl Parser {
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
                     kind: Expr::Request { dtor, arg: Box::new(arg) },
+                })
+            }
+            // `::0(v)` — an alternative of an anonymous sum, by position.
+            Some(TokenKind::ColonColon) => {
+                self.pos += 1;
+                let index = self.expect_alternative_index()?;
+                self.expect(TokenKind::LParen, "`(` after the alternative's position")?;
+                let value = self.parse_expr()?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Inject { index, value: Box::new(value) },
                 })
             }
             Some(TokenKind::Int(n)) => {
@@ -2025,6 +2051,15 @@ impl Parser {
                 let arg = self.parse_pattern()?;
                 self.expect(TokenKind::RParen, "`)`")?;
                 Ok(Pattern::Dtor { dtor, arg: Box::new(arg) })
+            }
+            // `::0(p)` — the alternative at a position of a sum.
+            Some(TokenKind::ColonColon) => {
+                self.pos += 1;
+                let index = self.expect_alternative_index()?;
+                self.expect(TokenKind::LParen, "`(` after the alternative's position")?;
+                let pattern = self.parse_pattern()?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                Ok(Pattern::Inject { index, pattern: Box::new(pattern) })
             }
             Some(TokenKind::Minus) => {
                 self.pos += 1;

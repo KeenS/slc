@@ -1462,3 +1462,67 @@ fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
         ]
     );
 }
+
+#[test]
+fn an_alternative_is_resolved_against_the_sum_its_context_gives() {
+    // `::1(v)` is the second alternative of whatever sum it meets: of two it
+    // is the last, of three the middle. A return type, a `let` annotation and
+    // a parameter each give the sum, and the payload takes that alternative's
+    // type.
+    let dir = std::env::temp_dir().join("slc_test_resolved_alternatives.sl");
+    std::fs::write(
+        &dir,
+        r#"fn pick(x: (i64 | bool | String)) -> String {
+            match x {
+                ::0(n) => n | int_to_str,
+                ::1(b) => (if b { "yes" } else { "no" }),
+                _ => "other",
+            }
+        }
+        fn middle() -> (i64 | bool | String) { ::1(true) }
+        command main | (exit: i32) -> (;) / {IO} {
+            let last: (i64 | String) = ::1("two");
+            let third: (i64 | bool | String) = ::2("three");
+            middle() | pick | println;
+            third | pick | println;
+            ::0(5) | pick | println;
+            let shown = match last { ::0(n) => n | int_to_str, ::1(s) => s };
+            shown | println;
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"yes\"", "\"other\"", "\"5\"", "\"two\""]);
+}
+
+#[test]
+fn an_alternative_outside_its_sum_is_refused() {
+    let dir = std::env::temp_dir().join("slc_test_refused_alternatives.sl");
+    std::fs::write(
+        &dir,
+        r#"fn missing(out: String) <- (i64 | bool | String) {
+            select (i64 | bool | String) { ::0(n) => "x" | out⟩, ::1(b) => "y" | out⟩ }
+        }
+        fn twice(out: String) <- (i64 | String) {
+            select (i64 | String) { ::0(n) => "x" | out⟩, ::1(s) => "y" | out⟩, ::0(m) => "z" | out⟩ }
+        }
+        fn beyond() -> (i64 | String) { ::2(1) }
+        fn wrong() -> (i64 | String) { ::1(1) }
+        fn unknown() -> i64 { let x = ::1(1); 0 }
+        command main | (exit: i32) { 0 | exit⟩ }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "every alternative here is out of its sum");
+    for expected in [
+        "missing `::2`",
+        "answers `::0` in more than one arm",
+        "`::2` is out of range",
+        "carries +String; this value has type +i64",
+        "which sum `::1` belongs to is not known here",
+    ] {
+        assert!(stderr.contains(expected), "missing {expected:?} in: {stderr}");
+    }
+}

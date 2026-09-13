@@ -27,6 +27,16 @@ pub(crate) struct PendingDicts {
     pub(crate) bounds: Vec<(String, Type)>,
 }
 
+/// One `::i(v)` awaiting its sum: the position is read against the type the
+/// context gives it, which only the finished declaration knows.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingInjection {
+    pub(crate) span: slc_syntax::token::Span,
+    pub(crate) index: usize,
+    pub(crate) payload: Type,
+    pub(crate) sum: Type,
+}
+
 /// One trait-method call awaiting its `Self`: a negative method's `Self`
 /// appears only in what it consumes, so the cut fixes it after the call.
 #[derive(Debug, Clone)]
@@ -72,6 +82,8 @@ pub(crate) struct Env<'a> {
     /// Trait-method calls whose dispatch is not resolved yet, for the same
     /// reason as `pending_dicts`.
     pub(crate) pending_methods: Vec<PendingMethod>,
+    /// Injections whose sum is not known yet, for the same reason.
+    pub(crate) pending_injections: Vec<PendingInjection>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
@@ -95,6 +107,7 @@ impl<'a> Env<'a> {
             rigid_vars: HashMap::new(),
             pending_dicts: Vec::new(),
             pending_methods: Vec::new(),
+            pending_injections: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
         }
     }
