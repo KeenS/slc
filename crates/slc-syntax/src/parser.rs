@@ -1287,7 +1287,8 @@ impl Parser {
         // the sum along. The chain is flat: composition is associative, and
         // the syntax says so rather than nesting.
         let start = self.span_start();
-        let from_value = self.eat(&TokenKind::CutOpen);
+        self.split_arrow_before_number();
+        let from_value = self.eat(&TokenKind::Lt) || self.eat(&TokenKind::CutOpen);
         let first = self.parse_flow_stage()?;
         if !from_value && self.peek_kind() != Some(&TokenKind::Pipe) {
             return Ok(first);
@@ -1296,7 +1297,7 @@ impl Parser {
         while self.eat(&TokenKind::Pipe) {
             written.push(self.parse_chain_stage()?);
         }
-        let into_consumer = self.eat(&TokenKind::CutClose);
+        let into_consumer = self.eat(&TokenKind::Gt) || self.eat(&TokenKind::CutClose);
         if from_value && into_consumer && written.len() < 2 {
             return Err(ParseError {
                 message: "a cut sends a value to a consumer, so it has both: \
@@ -1317,6 +1318,29 @@ impl Parser {
         let stages = resolve_consumer_binders(written, into_consumer)?;
         let span = Span { start, end: self.span_end() };
         Ok(Node { span, kind: Expr::Flow { stages, from_value, into_consumer } })
+    }
+
+    /// `<-1 | k>` lexes its opening as the reverse arrow `<-`. A number
+    /// touching it is the chain's first value, so the token is the chain's
+    /// `<` and the number's `-`.
+    fn split_arrow_before_number(&mut self) {
+        let Some(arrow) = self
+            .tokens
+            .get(self.pos)
+            .filter(|t| matches!(t.kind, TokenKind::ReverseArrow))
+            .map(|t| t.span)
+        else {
+            return;
+        };
+        let touching_number = self.tokens.get(self.pos + 1).is_some_and(|t| {
+            t.span.start == arrow.end && matches!(t.kind, TokenKind::Int(_) | TokenKind::Float(_))
+        });
+        if touching_number {
+            let open = Span { start: arrow.start, end: arrow.start + 1 };
+            let minus = Span { start: arrow.start + 1, end: arrow.end };
+            self.tokens[self.pos] = Token { kind: TokenKind::Lt, span: open };
+            self.tokens.insert(self.pos + 1, Token { kind: TokenKind::Minus, span: minus });
+        }
     }
 
     /// One stage of a flow: everything that binds tighter than `|`.
@@ -1390,7 +1414,6 @@ impl Parser {
             Some(TokenKind::EqEq) => Some(("==", "eq")),
             Some(TokenKind::NotEq) => Some(("!=", "ne")),
             Some(TokenKind::Lt) => Some(("<", "lt")),
-            Some(TokenKind::Gt) => Some((">", "gt")),
             Some(TokenKind::Le) => Some(("<=", "le")),
             Some(TokenKind::Ge) => Some((">=", "ge")),
             _ => None,
@@ -2966,6 +2989,28 @@ mod tests {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(errors[0].message.contains(fragment), "{source}: {errors:?}");
         }
+    }
+
+    #[test]
+    fn angle_brackets_open_and_close_a_chain() {
+        let flow = |source: &str| {
+            let p = parse_str(source);
+            let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
+            match &body.kind {
+                Expr::Flow { stages, from_value, into_consumer } => {
+                    (stages.len(), *from_value, *into_consumer, stages[0].kind.clone())
+                }
+                other => panic!("{source}: expected a flow, got {other:?}"),
+            }
+        };
+        let (width, from_value, into_consumer, _) = flow("<1 | k>");
+        assert_eq!((width, from_value, into_consumer), (2, true, true));
+        let (width, from_value, into_consumer, _) = flow("<(1, 2) | add | show");
+        assert_eq!((width, from_value, into_consumer), (3, true, false));
+        // `<-` touching a number opens the chain on a negative literal.
+        let (_, from_value, into_consumer, first) = flow("<-1 | k>");
+        assert!(from_value && into_consumer);
+        assert!(matches!(first, Expr::Int(-1)), "{first:?}");
     }
 
     #[test]
