@@ -106,19 +106,73 @@ the built-in one.
   stage supplies the whole group (§3), so a stage that takes anything
   besides what flows in has to have the chain so far wrapped in parentheses
   and packed into a tuple with the rest. Each such stage adds a level, the
-  data ends up in the middle of the expression, and it reads inside out.
-  `DESIGN.md`'s own `Seq` example shows it:
+  data ends up in the middle of the expression, and it reads inside out, as
+  in `examples/seq.sl`:
 
   ```sl
-  ⟨(⟨(odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take
+  ⟨(⟨(odd, ⟨naturals | seq::of_stream) | seq::filter, 4) | seq::take
   ```
 
-  The same program should read as one flat chain from left to right, with
-  each stage's other arguments written at that stage. Whatever syntax does
-  this has to fit with `f(a)` being refused and with a stage taking its
-  whole group, since both exist so that a call and a chain are not two
-  things to learn. It also has to say where in the group the flowing value
-  goes: `seq::filter` takes it last and `seq::take` takes it first.
+  The consumer side has the mirror problem. When a command's first exit
+  carries on with the rest of the work, the rest nests inside its bundle, or
+  a `mu` captures it to get back to direct style — ten times across
+  `json_parser.sl`, `file_io.sl` and `tree_search.sl`:
+
+  ```sl
+  let value_end = mu { k <= ⟨(input, pos) | parse_value | (k & failed)⟩ };
+  ```
+
+  The chosen direction is a binder stage for each side of a chain:
+
+  - `x => e` names the value flowing in, and passes on `e`, built from it.
+  - `k <= e` names the consumer the rest of the chain builds, and hands the
+    stage before it `e`, built from it.
+
+  ```sl
+  ⟨naturals | seq::of_stream
+     | s => (odd, s) | seq::filter
+     | s => (s, 4)   | seq::take
+     | seq::to_list | fmt | println;
+
+  // `parse` and `render` are commands whose rows are `(ok: … & failed: String)`.
+  ⟨path | fs::read | ok <= (ok & failed) | parse | ok <= (ok & failed) | render | out⟩
+  ```
+
+  The binders treat the connectives alike — `x => ::1(x)` builds a choice,
+  `k <= (k ; other)` a joint — because they build nothing themselves. A
+  binder stage is an anonymous function in stage position, positive for `=>`
+  and negative for `<=`: the two styles `fn f(x) -> B` and `fn f(k) <- A`
+  already have, without the declaration. Its body ends at the next `|`,
+  which binds more loosely than anything, so nothing nests; the bound name
+  says which parenthesis abstracts, so nothing is ambiguous; and every stage
+  is still applied to its whole group. The value side runs today spelled
+  out, `| fn(s) { ⟨(odd, s) | seq::filter }`.
+
+  What landing it takes:
+
+  - **Parsing.** A stage that begins with a name and `=>` or `<=` is a
+    binder. Only a stage can be one, so a `match` arm and the head of a chain
+    keep their meaning. `<=` is also less-or-equal, so the rule is stated by
+    position until "Infix operators become functions" retires the
+    comparison.
+  - **Commands.** A command's row closes its chain today. The consumer
+    binder needs the stage after a command to take the rest of the chain as
+    its continuation, in the checker and in lowering.
+  - **Checking.** The bound name takes its type from what flows in, or from
+    the consumer the rest of the chain builds, as an unannotated lambda
+    parameter does.
+
+  Considered and set aside:
+
+  - a hole, `(odd, _)`, which leaves open which parenthesis abstracts in
+    `(a, (b, _))`;
+  - curried definitions, which bring partial application of commands and of
+    their exits one at a time;
+  - `/` and `\`, joining a tuple or a bundle to the chain, which cover two
+    of the four connectives — they may return as shorthand for `x => (x, e)`
+    and `k <= (k & e)`;
+  - optional parentheses, which collide with `,` in every list and with `;`
+    between statements, leaving only a bare bundle at a chain's end.
 
 - **Infix operators become functions.** `+ - * / % == != < > <= >= && ||`
   leave the surface, and each is an ordinary function a value flows into:
