@@ -112,6 +112,13 @@ pub enum Value {
         body: crate::chunk::NodeId,
         env: Env,
     },
+    /// A delayed computation of negative type, with the environment it was
+    /// written in. It is passed on unrun — bound, stored, supplied as an
+    /// argument — and runs afresh wherever its result is demanded.
+    Delayed {
+        body: crate::chunk::NodeId,
+        env: Env,
+    },
     /// A captured continuation: the machine's frame stack, reified. It can
     /// be reinstated any number of times, at any time — activating it
     /// replaces the current stack, which is what makes the jump.
@@ -197,7 +204,10 @@ impl Value {
             Value::Resume(_) => Type::BOTTOM,
             Value::Unit => Type::ONE,
             Value::Tuple(items) => Type::Tensor(items.iter().map(Value::type_of).collect()),
-            Value::Closure { .. } | Value::Builtin(_) | Value::PartialBuiltin(..) => Type::BOTTOM,
+            Value::Closure { .. }
+            | Value::Delayed { .. }
+            | Value::Builtin(_)
+            | Value::PartialBuiltin(..) => Type::BOTTOM,
             Value::Tagged(label, _) => Type::Named(
                 label.split_once("::").map(|(owner, _)| owner.to_string()).unwrap_or_default(),
                 Vec::new(),
@@ -224,6 +234,7 @@ impl Value {
                 format!("({})", items.iter().map(Value::display).collect::<Vec<_>>().join(", "))
             }
             Value::Closure { .. } => "<closure>".to_string(),
+            Value::Delayed { .. } => "<delayed>".to_string(),
             Value::Kont(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {

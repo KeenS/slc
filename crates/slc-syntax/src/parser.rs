@@ -1980,6 +1980,17 @@ impl Parser {
             }
             Some(TokenKind::Let) => {
                 self.pos += 1;
+                // `let+` and `let-`: the sign touches the keyword, so
+                // `let -1 = …` still binds a negative literal pattern.
+                let let_end = self.tokens[self.pos - 1].span.end;
+                let touching = self.peek().is_some_and(|t| t.span.start == let_end);
+                let mode = if touching && self.eat(&TokenKind::Plus) {
+                    LetMode::Now
+                } else if touching && self.eat(&TokenKind::Minus) {
+                    LetMode::Delay
+                } else {
+                    LetMode::Follow
+                };
                 // A binder is a pattern; a bare name is the trivial one.
                 // `parse_single_pattern`, not `parse_pattern`: an
                 // or-pattern's `|` is the flow operator here.
@@ -2001,7 +2012,7 @@ impl Parser {
                 };
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Let { pattern, ty, value: Box::new(value), body },
+                    kind: Expr::Let { pattern, ty, value: Box::new(value), body, mode },
                 })
             }
             // There is no `if`: a choice on a `bool` is a `match` on it. The
@@ -2918,6 +2929,28 @@ mod tests {
         };
         assert_eq!(type_param_signs, &[("T".to_string(), Negative)]);
         assert_eq!(bounds, &[("T".to_string(), "Show".to_string())]);
+    }
+
+    #[test]
+    fn a_let_says_when_it_computes() {
+        let mode_of = |source: &str| {
+            let p = parse_str(source);
+            let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
+            let found = match &body.kind {
+                Expr::Let { mode, .. } => Some(*mode),
+                Expr::Block(items) => items.iter().find_map(|item| match &item.kind {
+                    Expr::Let { mode, .. } => Some(*mode),
+                    _ => None,
+                }),
+                _ => None,
+            };
+            found.unwrap_or_else(|| panic!("no let in {source}"))
+        };
+        assert_eq!(mode_of("let x = 1; x"), LetMode::Follow);
+        assert_eq!(mode_of("let+ x = 1; x"), LetMode::Now);
+        assert_eq!(mode_of("let- x = 1; x"), LetMode::Delay);
+        // A sign apart from the keyword begins the pattern.
+        assert_eq!(mode_of("let -1 = 1; 0"), LetMode::Follow);
     }
 
     #[test]

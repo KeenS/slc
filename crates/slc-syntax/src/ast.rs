@@ -77,6 +77,8 @@ pub enum Expr {
         ty: Option<TypeExpr>,
         value: Box<Node<Expr>>,
         body: Option<Box<Node<Expr>>>,
+        /// `let`, `let+` or `let-`: when the value is computed.
+        mode: LetMode,
     },
     BinOp {
         op: BinOp,
@@ -455,6 +457,19 @@ impl ParamPolarity {
             ParamPolarity::Negative => '-',
         }
     }
+}
+
+/// When a `let` computes its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LetMode {
+    /// `let`: where it is written.
+    Follow,
+    /// `let+`: now, whatever the type — the way to perform a computation's
+    /// effects under the handler in scope.
+    Now,
+    /// `let-`: not here. The binding holds the computation, which runs each
+    /// time its result is demanded — applied, cut into, or asked for an item.
+    Delay,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

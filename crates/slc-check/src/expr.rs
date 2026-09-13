@@ -1494,6 +1494,7 @@ fn check_let_binding(
     pattern: &slc_syntax::ast::Pattern,
     ty: &Option<TypeExpr>,
     value: &Node<Expr>,
+    mode: slc_syntax::ast::LetMode,
     enums: &Declarations,
     env: &mut Env,
     diags: &mut Vec<Diagnostic>,
@@ -1524,9 +1525,46 @@ fn check_let_binding(
             span: value.span,
         });
     }
+    if mode == slc_syntax::ast::LetMode::Delay {
+        check_delayed_binding(pattern, annotation.as_ref().or(actual.as_ref()), value, env, diags);
+    }
     // A binder the checker cannot type is a variable its uses will solve,
     // never a wildcard.
     annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var())
+}
+
+/// `let-` holds a computation to run where it is demanded, so what it binds
+/// is negative — a function, a consumer, a menu — and it binds a name: a
+/// pattern takes a value apart, and a delayed computation is not one yet.
+fn check_delayed_binding(
+    pattern: &slc_syntax::ast::Pattern,
+    ty: Option<&Type>,
+    value: &Node<Expr>,
+    env: &Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if pattern.binder_name().is_none() {
+        diags.push(Diagnostic {
+            message: "`let-` binds a name: a pattern takes a value apart, and a delayed \
+                      computation is not a value until it runs"
+                .into(),
+            span: value.span,
+        });
+        return;
+    }
+    let ty = ty.map(|ty| env.uni.apply(ty));
+    let message = match ty.as_ref().and_then(|ty| type_polarity(ty, env)) {
+        Some(ParamPolarity::Negative) => return,
+        Some(ParamPolarity::Positive) => format!(
+            "`let-` delays a computation of negative type, and this one has the positive \
+             type {}, which is computed where it is written: write `let` or `let+`",
+            ty.expect("a polarity came from a type")
+        ),
+        None => "`let-` delays a computation of negative type, and this one's type is not \
+                 known: annotate it"
+            .into(),
+    };
+    diags.push(Diagnostic { message, span: value.span });
 }
 
 /// Bind a `match` pattern's variables with their declared types, silently
@@ -2393,8 +2431,8 @@ fn check_expr_unapplied(
                 }
             }
         }
-        Expr::Let { pattern, ty, value, body } => {
-            let binding_ty = check_let_binding(pattern, ty, value, enums, env, diags);
+        Expr::Let { pattern, ty, value, body, mode } => {
+            let binding_ty = check_let_binding(pattern, ty, value, *mode, enums, env, diags);
             env.push();
             bind_let_pattern(pattern, binding_ty, value, enums, env);
             let result = body.as_ref().and_then(|body| check_expr(body, enums, env, diags));
@@ -3050,10 +3088,11 @@ fn check_expr_unapplied(
             let mut result = None;
             env.push();
             for expr in exprs {
-                if let Expr::Let { pattern, ty, value, body: None } = &expr.kind {
+                if let Expr::Let { pattern, ty, value, body: None, mode } = &expr.kind {
                     // A bodyless `let` scopes over the rest of the block; the
                     // binding itself is checked exactly as the expression form.
-                    let binding_ty = check_let_binding(pattern, ty, value, enums, env, diags);
+                    let binding_ty =
+                        check_let_binding(pattern, ty, value, *mode, enums, env, diags);
                     bind_let_pattern(pattern, binding_ty, value, enums, env);
                 } else {
                     result = check_expr(expr, enums, env, diags);
@@ -4292,6 +4331,17 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`Held` declares `<+T>`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_delayed_let_binds_a_negative_computation_to_a_name() {
+        assert!(check("fn f() -> i64 { let- g = fn(y: i64) { y }; ⟨1 | g }").is_ok());
+        let diags = check("fn f() -> i64 { let- n = 1; n }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("has the positive type")), "{diags:?}");
+        let diags = check("fn f() -> i64 { let- (a, b) = (fn(y: i64) { y }, 1); b }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`let-` binds a name")), "{diags:?}");
+        // `let+` computes now whatever the type.
+        assert!(check("fn f() -> i64 { let+ n = 1; n }").is_ok());
     }
 
     #[test]

@@ -135,6 +135,7 @@ pub(crate) fn is_applicable(v: &Value) -> bool {
     matches!(
         v,
         Value::Closure { .. }
+            | Value::Delayed { .. }
             | Value::CoCase { .. }
             | Value::CoTensor { .. }
             | Value::Kont(_)

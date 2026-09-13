@@ -68,7 +68,7 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         },
         Term::Lam(x, body) => {
             let body = compile_ir(body, &scope.with(std::slice::from_ref(x)), chunk);
-            Node::Lam(body)
+            if x == slc_core::term::DELAY_BINDER { Node::Delay(body) } else { Node::Lam(body) }
         }
         Term::Mu(a, c) => {
             let body = compile_cmd(c, &scope.with(std::slice::from_ref(a)), chunk);

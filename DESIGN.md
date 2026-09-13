@@ -406,6 +406,29 @@ pattern, and its leaves are the names of the exits.
 `let … else` is out of scope: a binder that may fail is a `match`.
 `examples/patterns.sl` writes all of it.
 
+### When a `let` computes
+
+A binding says when its value is computed. `let+` computes it where it is
+written, whatever its type — the way to perform a computation's effects under
+the handler in scope. `let-` does not compute it there: the name holds the
+computation, which runs afresh each time its result is demanded — applied,
+cut into, or asked for a menu item — and is passed on unrun when it is bound
+again, stored, or supplied as an argument.
+
+```sl
+let- shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };
+⟨"a" | shout;       // made, a
+⟨"b" | shout;       // made, b
+```
+
+What `let-` holds is negative — a function, a consumer, a menu — and a
+positive type is refused: a value delayed would bring back the `↑` that §8
+removed, so `Lazy<T>` stays the spelling of a delayed value. It binds a name,
+since a pattern takes apart a value and a delayed computation is not one
+until it runs. In the core a delayed computation is `λ$delay. t`, a thunk of
+the unit, and the runtime runs it where it is demanded. A plain `let`
+computes where it is written today.
+
 ## 5. `command`: consumer abstraction
 
 A `command` declaration is the form that takes **both** values and

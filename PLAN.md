@@ -130,9 +130,12 @@ delayed.
     Only a concrete row can ride on a type today, so until the rows-in-types
     upgrade that "Effect tracking follows names" names, a computation in a
     by-name position whose row is a variable is refused.
-  - **`let+` and `let-`.** A plain `let` follows the polarity of its type.
-    `let+` computes now whatever the type — the way to perform a delayed
-    computation's effects under the handler in scope — and `let-` delays.
+  - **A plain `let` follows the polarity of its type.** `let+` and `let-`
+    have landed (`DESIGN.md` §4, "When a `let` computes"): a delayed value
+    is `λ$delay. t` in the core and runs wherever it is applied, cut into or
+    asked for an item. A plain `let` still computes where it is written; it
+    is to delay a negative computation as `let-` does, with the other
+    by-name positions below.
   - **An unknown polarity is an error.** A binding or lambda parameter whose
     type inference leaves a variable is refused, asking for an annotation or
     for `let+`/`let-`.

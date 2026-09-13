@@ -31,6 +31,9 @@ pub enum Node {
     Dynamic(Rc<str>),
     /// `λ. t` — binds one positional slot; child is the body term.
     Lam(NodeId),
+    /// `λ$delay. t` — a delayed computation, run each time it is demanded.
+    /// It binds one positional slot, the unit it is run with.
+    Delay(NodeId),
     /// `μ. c` — binds one positional slot; child is the command.
     Mu(NodeId),
     /// A tuple: its component terms, evaluated left to right.

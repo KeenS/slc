@@ -502,13 +502,13 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             items.iter().map(|item| lower_expr(item, continuations)).collect::<Result<_, _>>()?,
         )),
 
-        Expr::Let { pattern, value, body, .. } => {
+        Expr::Let { pattern, value, body, mode, .. } => {
             let b = body
                 .as_ref()
                 .map(|b| lower_expr(b, continuations))
                 .transpose()?
                 .unwrap_or_else(|| Term::Var("$unit".into()));
-            lower_binding(pattern, value, b, continuations)
+            lower_binding(pattern, value, b, *mode, continuations)
         }
 
         Expr::BinOp { op, lhs, rhs } => {
@@ -941,12 +941,12 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     return Ok(Term::Var("$unit".into()));
                 };
 
-                if let Expr::Let { pattern, value, body: None, .. } = &e.kind {
+                if let Expr::Let { pattern, value, body: None, mode, .. } = &e.kind {
                     // A bodyless `let` scopes over the rest of the block, so
                     // the rest is lowered as its body. Both `let` forms use
                     // the same binding lowering.
                     let rest = lower_block(exprs, index + 1, seq_counter, continuations)?;
-                    return lower_binding(pattern, value, rest, continuations);
+                    return lower_binding(pattern, value, rest, *mode, continuations);
                 }
 
                 let rest = lower_block(exprs, index + 1, seq_counter, continuations)?;
@@ -1136,10 +1136,19 @@ fn lower_binding(
     pattern: &Pattern,
     value: &Node<Expr>,
     body: Term,
+    mode: crate::ast::LetMode,
     continuations: &[String],
 ) -> Result<Term, LowerError> {
     if let Some(name) = pattern.binder_name() {
-        return Ok(lower_let(name, lower_expr(value, continuations)?, body));
+        let value = lower_expr(value, continuations)?;
+        // `let-` binds the computation itself, run where it is demanded.
+        let value = match mode {
+            crate::ast::LetMode::Delay => {
+                Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(value))
+            }
+            crate::ast::LetMode::Follow | crate::ast::LetMode::Now => value,
+        };
+        return Ok(lower_let(name, value, body));
     }
     if matches!(pattern, Pattern::Wildcard) {
         return Ok(lower_let(DISCARDED_BINDING, lower_expr(value, continuations)?, body));

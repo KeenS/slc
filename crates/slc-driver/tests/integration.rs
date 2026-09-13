@@ -1663,3 +1663,26 @@ fn anonymous_data_types_display() {
         assert!(stdout.contains(expected), "missing {expected}: {stdout}");
     }
 }
+
+#[test]
+fn a_delayed_let_runs_at_each_demand_and_a_now_let_once() {
+    // `let-` holds the block and runs it wherever the function is applied,
+    // so its effect happens at each use; `let+` runs it where it is written.
+    let dir = std::env::temp_dir().join("slc_test_delayed_let.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) / {IO} {
+            let- shout = { ⟨"made" | println; fn(s: String) { ⟨s | println } };
+            ⟨"a" | shout;
+            ⟨"b" | shout;
+            let+ once = { ⟨"once" | println; fn(s: String) { ⟨s | println } };
+            ⟨"c" | once;
+            ⟨"d" | once;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b", "once", "c", "d"]);
+}

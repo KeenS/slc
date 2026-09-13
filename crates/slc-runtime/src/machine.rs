@@ -213,6 +213,7 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
         ),
         Node::Dynamic(name) => State::Return(crate::eval::literal_or_lookup(&name, &env)?),
         Node::Lam(body) => State::Return(Value::Closure { body, env }),
+        Node::Delay(body) => State::Return(Value::Delayed { body, env }),
         Node::Mu(command) => {
             // The μ: bind the co-variable (positional slot 0) to the
             // continuation itself. Capturing the stack is one `Rc` bump.
@@ -310,8 +311,23 @@ fn activates(consumer: &Value, v: &Value) -> bool {
         || matches!((consumer, v), (Value::Tuple(..), Value::Tagged(label, _)) if crate::value::alternative_index(label).is_some())
 }
 
+/// Run a delayed computation: its one slot is the unit it is run with.
+fn run_delayed(body: NodeId, env: Env) -> State {
+    let mut env = env;
+    env.define_local(Value::Unit);
+    State::Term(body, env)
+}
+
 /// ⟨ v ∥ e ⟩ with the value in hand, `e` the co-term node.
 fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
+    // A request demands what a delayed computation produces: run it, and
+    // send the request to the result.
+    if let Value::Delayed { body, env: delayed_env } = &v
+        && matches!(node(e), Node::Dtor(..))
+    {
+        kont.push(Frame::Consume(e, env));
+        return Ok(run_delayed(*body, delayed_env.clone()));
+    }
     Ok(match node(e) {
         // ⟨v ∥ α⟩ sends v to α. When α names a consumer — a continuation
         // parameter, a `select` consumer, a captured continuation — the cut
@@ -424,6 +440,12 @@ fn step_apply(
             let mut call_env = env;
             call_env.define_local(arg);
             State::Term(body, call_env)
+        }
+        // Applying a delayed computation demands it: run it, then apply what
+        // it produced. It runs again at the next demand.
+        Value::Delayed { body, env } => {
+            kont.push(Frame::ApplyTo(arg));
+            run_delayed(body, env)
         }
         // Activating a labelled consumer runs exactly one branch.
         Value::CoCase { co, env } => {

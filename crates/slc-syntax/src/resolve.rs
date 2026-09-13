@@ -799,7 +799,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut body.kind, stack, locals);
             locals.pop();
         }
-        Expr::Let { pattern, ty, value, body } => {
+        Expr::Let { pattern, ty, value, body, .. } => {
             if let Some(ty) = ty {
                 resolve_type(ty, stack);
             }

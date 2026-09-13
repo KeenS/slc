@@ -15,6 +15,13 @@ pub struct CoMatchBranch {
     pub body: Box<Command>,
 }
 
+/// The binder of a delayed computation. A computation of negative type
+/// written in a by-name position is not run there: it is `λ$delay. t`, a
+/// thunk of the unit, and it runs — afresh — each time its result is
+/// demanded. The runtime recognises the binder, so a delayed value is never
+/// mistaken for a function; `$` keeps it apart from every source name.
+pub const DELAY_BINDER: &str = "$delay";
+
 /// A term — the proof side of a cut.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
