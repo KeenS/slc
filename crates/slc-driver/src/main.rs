@@ -15,7 +15,7 @@ const LIBRARY: &[(&str, &str)] = &[
     ("num", include_str!("stdlib/num.sl")),
     ("list", include_str!("stdlib/list.sl")),
     ("option", include_str!("stdlib/option.sl")),
-    ("result", include_str!("stdlib/result.sl")),
+    ("either", include_str!("stdlib/either.sl")),
     ("lazy", include_str!("stdlib/lazy.sl")),
     ("stream", include_str!("stdlib/stream.sl")),
     ("seq", include_str!("stdlib/seq.sl")),

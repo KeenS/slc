@@ -548,6 +548,22 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## `result::Result` is `either::Either`
+
+The two-way sum is named for what it is rather than for one use of it:
+
+```sl
+result::Result::Ok(1)            // old
+result::Result::Err("no")
+
+either::Either::Left(1)          // new
+either::Either::Right("no")
+```
+
+`Result<T, E>` becomes `Either<L, R>`, and `Ok`/`Err` become `Left`/`Right`
+in the same order. Neither side means success; a program that wants that
+reading says so in its own names.
+
 ## Library names are carried by their module
 
 A stdlib name no longer repeats the module it lives in. Call through the

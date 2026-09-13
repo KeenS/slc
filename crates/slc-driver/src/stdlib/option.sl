@@ -1,4 +1,4 @@
-// ── Option and Result ────────────────────────────────────────────────────
+// `option`: a value that may be absent.
 //
 // Either/or outcomes are *additive* — one variant, not every field — so
 // they are enums, and their consumers are `select`s over them. (A `form`

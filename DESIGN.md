@@ -1184,7 +1184,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | module | what it offers |
 |---|---|
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
-| `option`, `result` | `Option<T>` with `unwrap_or`; `Result<T, E>`. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
+| `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
