@@ -3038,7 +3038,7 @@ fn check_expr_unapplied(
                     // commuted `;` reading below.
                     && signature.result.as_ref() == Some(&Type::BOTTOM)
                 {
-                    let (signature, _) = instantiate(signature, &mut env.uni);
+                    let (signature, seen) = instantiate(signature, &mut env.uni);
                     let split = signature.continuations.iter().filter(|c| !**c).count();
                     let values = packed_group(signature.params[..split].iter().cloned());
                     let row = exit_row(signature.params[split..].iter().cloned());
@@ -3060,6 +3060,22 @@ fn check_expr_unapplied(
                                 "`{name}` offers the exits {row}, and this menu has type {exits}"
                             ),
                             span: stages[index + 1].span,
+                        });
+                    }
+                    // A bounded command takes its dictionaries first, as a
+                    // bounded function does.
+                    if !signature.bounds.is_empty() {
+                        let bounds = signature
+                            .bounds
+                            .iter()
+                            .filter_map(|(position, trait_name)| {
+                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
+                            })
+                            .collect();
+                        env.pending_dicts.push(crate::env::PendingDicts {
+                            span: stages[index].span,
+                            callee: name.clone(),
+                            bounds,
                         });
                     }
                     row_stage = Some(index);
@@ -3358,6 +3374,9 @@ mod tests {
     use slc_syntax::parser::parse;
 
     fn check(s: &str) -> Result<(), Vec<Diagnostic>> {
+        // Printing lives in the prelude, which these checks do not load; a
+        // stand-in is appended, so no diagnostic's position moves.
+        let s = &format!("{s}\nfn println<T>(x: T) -> (,) {{ (,) }}\n");
         let toks = lex(s).unwrap();
         let prog = parse(toks).unwrap();
         let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -3922,7 +3941,7 @@ mod tests {
     fn unit_is_a_type_and_not_a_wildcard() {
         let diags = check(
             "fn wants(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) / {IO} { println(wants((,))); ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { ⟨wants((,)) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(
@@ -4017,7 +4036,7 @@ mod tests {
                  fn u() -> i64 / {Ask} { ask() + 5 }
                  command main | (exit: -i32) / {IO} {
                      let r = handle u() { ask(): resume => 1000 + resume(7), return(n) => n };
-                     println(r); ⟨0 | exit⟩
+                     ⟨r | println; ⟨0 | exit⟩
                  }"
             )
             .is_ok()
@@ -4036,7 +4055,7 @@ mod tests {
                          c(): resume => resume(true) + resume(false),
                          return(n) => n,
                      };
-                     println(r); ⟨0 | exit⟩
+                     ⟨r | println; ⟨0 | exit⟩
                  }"
             )
             .is_ok()
@@ -4061,6 +4080,8 @@ mod tests {
         // `show(1)` has a concrete receiver, so it resolves to the i64 impl;
         // `show(x)` under `<T: Show>` stays dynamic (the map does not name it).
         let resolve = |s: &str| {
+            // The prelude's printing, stood in for as `check` does.
+            let s = &format!("{s}\nfn println<T>(x: T) -> (,) {{ (,) }}\n");
             let toks = lex(s).unwrap();
             let prog = parse(toks).unwrap();
             let (prog, traits) = slc_syntax::traits::elaborate(&prog).expect("elaborate");
@@ -4126,7 +4147,7 @@ mod tests {
         let diags = check(
             "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { int_to_str(self) } }
-             command main | (exit: -i32) / {IO} { println(show(true)); ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { ⟨show(true) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("no `impl Show for bool`")), "{diags:?}");
@@ -4151,10 +4172,10 @@ mod tests {
             check(
                 "command main | (exit: -i32) / {IO} {
                      let f = fn(x) { x };
-                     println(f(1) + 1);
-                     println(str_len(f(\"s\")));
+                     ⟨f(1) + 1 | println;
+                     ⟨str_len(f(\"s\")) | println;
                      let alias = f;
-                     println(alias(true));
+                     ⟨alias(true) | println;
                      ⟨0 | exit⟩
                  }"
             )
@@ -4170,8 +4191,8 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let g = mu { k <= ⟨fn(x) { x } | k⟩ };
-                 println(g(1) + 1);
-                 println(str_len(g(\"s\")));
+                 ⟨g(1) + 1 | println;
+                 ⟨str_len(g(\"s\")) | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4184,8 +4205,8 @@ mod tests {
             "fn id<T>(x: T) -> T { x }
              command main | (exit: -i32) / {IO} {
                  let h = id(fn(x) { x });
-                 println(h(1) + 1);
-                 println(str_len(h(\"s\")));
+                 ⟨h(1) + 1 | println;
+                 ⟨str_len(h(\"s\")) | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4201,8 +4222,8 @@ mod tests {
             check(
                 "command main | (exit: -i32) / {IO} {
                      let fresh = fn(u) { mu { k <= ⟨fn(x) { x } | k⟩ } };
-                     println(fresh((,))(1) + 1);
-                     println(str_len(fresh((,))(\"s\")));
+                     ⟨fresh((,))(1) + 1 | println;
+                     ⟨str_len(fresh((,))(\"s\")) | println;
                      ⟨0 | exit⟩
                  }"
             )
@@ -4217,7 +4238,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let g = fn(x) { x };
-                 println(g(1) + str_len(g(1)));
+                 ⟨g(1) + str_len(g(1)) | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4230,7 +4251,7 @@ mod tests {
         // The body constrains the parameter, and the call site honors it.
         let diags = check(
             "command main | (exit: -i32) / {IO} {
-                 println(fn(x) { x + 1 }(\"not a number\"));
+                 ⟨fn(x) { x + 1 }(\"not a number\") | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4256,7 +4277,7 @@ mod tests {
         // Within one call, T is one type.
         let diags = check(
             "fn id<T>(x: T) -> T { x }
-             command main | (exit: -i32) / {IO} { println(str_len(id(42))); ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { ⟨str_len(id(42)) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected +String")), "{diags:?}");
@@ -4403,7 +4424,7 @@ mod tests {
         // A type with no impl is still refused.
         let diags = check(&format!(
             "{prelude} command main | (exit: -i32) / {{IO}} {{
-                 println(mu String {{ s <= ⟨\"text\" | emit(s)⟩ }}); ⟨0 | exit⟩
+                 ⟨mu String {{ s <= ⟨\"text\" | emit(s)⟩ }} | println; ⟨0 | exit⟩
              }}"
         ))
         .unwrap_err();
@@ -4424,8 +4445,8 @@ mod tests {
         assert!(
             check(&format!(
                 "{prelude} command main | (exit: -i32) / {{IO}} {{
-                     println(mu String {{ s <= ⟨42 | deliver(s)⟩ }});
-                     println(mu String {{ s <= ⟨true | deliver(s)⟩ }});
+                     ⟨mu String {{ s <= ⟨42 | deliver(s)⟩ }} | println;
+                     ⟨mu String {{ s <= ⟨true | deliver(s)⟩ }} | println;
                      ⟨0 | exit⟩
                  }}"
             ))
@@ -4433,7 +4454,7 @@ mod tests {
         );
         let diags = check(&format!(
             "{prelude} command main | (exit: -i32) / {{IO}} {{
-                 println(mu String {{ s <= ⟨\"text\" | deliver(s)⟩ }}); ⟨0 | exit⟩
+                 ⟨mu String {{ s <= ⟨\"text\" | deliver(s)⟩ }} | println; ⟨0 | exit⟩
              }}"
         ))
         .unwrap_err();
@@ -4510,7 +4531,7 @@ mod tests {
     fn value_arguments_are_checked_against_the_declaration() {
         let diags = check(
             "fn f(x: +String) -> i64 { 0 }
-             command main | (exit: -i32) / {IO} { println(f(42)); ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { ⟨f(42) | println; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(
@@ -4559,7 +4580,7 @@ mod tests {
         // Outside one, with no arm naming a type, it has to be written.
         let diags = check(
             "command main | (exit: -i32) / {IO} {
-                 let show = select { n => println(n) };
+                 let show = select { n => ⟨n | println };
                  ⟨42 | show⟩;
                  ⟨0 | exit⟩
              }",
@@ -4574,9 +4595,9 @@ mod tests {
         // and the `mu` therefore produces a `+String`.
         let diags = check(
             "command main | (exit: -i32) / {IO} {
-                 let complain = select { m => { println(m); 1 | exit⟩ } };
+                 let complain = select { m => { ⟨m | println; 1 | exit⟩ } };
                  let text = mu { k <= __read_file(\"in\", k, complain) };
-                 println(text + 1);
+                 ⟨text + 1 | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4590,7 +4611,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let answer = mu { k <= ⟨42 | k⟩ };
-                 println(str_len(answer));
+                 ⟨str_len(answer) | println;
                  ⟨0 | exit⟩
              }",
         )

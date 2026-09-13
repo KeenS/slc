@@ -15,7 +15,8 @@ fn run_sl(path: &str) -> (String, String, bool) {
 #[test]
 fn run_int_main() {
     let dir = std::env::temp_dir().join("slc_test_int.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(42); ⟨0 | exit⟩ }").unwrap();
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨42 | println; ⟨0 | exit⟩ }")
+        .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
     assert!(stdout.contains("42"));
@@ -68,7 +69,8 @@ fn malformed_generic_main_is_rejected() {
 #[test]
 fn the_accepted_entry_point_is_a_command_with_one_exit_continuation() {
     let dir = std::env::temp_dir().join("slc_test_valid_main.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(7); ⟨0 | exit⟩ }").unwrap();
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨7 | println; ⟨0 | exit⟩ }")
+        .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
     assert!(stdout.contains("7"), "stdout: {stdout}");
@@ -101,7 +103,7 @@ fn diagnostic_that_merely_looks_like_exit_is_not_treated_as_exit() {
     std::fs::write(
         &dir,
         r#"fn missing(value: +String, exit: -i32) -> i32 { ⟨0 | exit⟩ }
-        command main | (exit: -i32) / {IO} { println(exit_like); ⟨0 | exit⟩ }"#,
+        command main | (exit: -i32) / {IO} { ⟨exit_like | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -126,8 +128,8 @@ fn checker_diagnostics_include_source_locations() {
     let cases = [
         (
             "slc_test_location_type.sl",
-            "command main | (exit: -i32) / {IO} { println(1 + true); ⟨0 | exit⟩ }",
-            ["type:", "1:46", "`1 + true`"],
+            "command main | (exit: -i32) / {IO} { ⟨1 + true | println; ⟨0 | exit⟩ }",
+            ["type:", "1:39", "`1 + true`"],
         ),
         (
             "slc_test_location_polarity.sl",
@@ -190,7 +192,7 @@ fn no_input_file() {
 #[test]
 fn builtin_add() {
     let dir = std::env::temp_dir().join("slc_test_add.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(add(1, 2)); ⟨0 | exit⟩ }")
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨add(1, 2) | println; ⟨0 | exit⟩ }")
         .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
@@ -200,7 +202,8 @@ fn builtin_add() {
 #[test]
 fn builtin_println() {
     let dir = std::env::temp_dir().join("slc_test_println.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(42); ⟨0 | exit⟩ }").unwrap();
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨42 | println; ⟨0 | exit⟩ }")
+        .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
     assert!(stdout.contains("42"));
@@ -211,12 +214,12 @@ fn program_output_appears_in_order() {
     let dir = std::env::temp_dir().join("slc_test_println_vs_final_value.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(\"program output\"); println(42); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨\"program output\" | println; ⟨42 | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout, "\"program output\"\n42\n");
+    assert_eq!(stdout, "program output\n42\n");
 }
 
 #[test]
@@ -224,7 +227,8 @@ fn a_program_prints_only_what_it_prints() {
     // The entry point is a command, so there is no final value to report:
     // output is exactly what the program printed.
     let dir = std::env::temp_dir().join("slc_test_no_final_value.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(42); ⟨0 | exit⟩ }").unwrap();
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨42 | println; ⟨0 | exit⟩ }")
+        .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout, "42\n");
@@ -235,7 +239,7 @@ fn lambda_application() {
     let dir = std::env::temp_dir().join("slc_test_lambda.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(fn(x: +i32) -> i32 { x }(5)); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨fn(x: +i32) -> i32 { x }(5) | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
@@ -248,7 +252,7 @@ fn string_operations() {
     let dir = std::env::temp_dir().join("slc_test_str.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(str_concat(int_to_str(1), int_to_str(2))); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨str_concat(int_to_str(1), int_to_str(2)) | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
@@ -259,7 +263,7 @@ fn string_operations() {
 #[test]
 fn comparison() {
     let dir = std::env::temp_dir().join("slc_test_cmp.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(eq(1, 1)); ⟨0 | exit⟩ }")
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨eq(1, 1) | println; ⟨0 | exit⟩ }")
         .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
@@ -269,7 +273,7 @@ fn comparison() {
 #[test]
 fn division_by_zero_rejected() {
     let dir = std::env::temp_dir().join("slc_test_div.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(div(1, 0)); ⟨0 | exit⟩ }")
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { ⟨div(1, 0) | println; ⟨0 | exit⟩ }")
         .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
@@ -282,9 +286,9 @@ fn parse_int_offers_a_parsed_value_to_its_ok_continuation() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-    let ok = fn(n: +i64) -> i32 { println(n); ⟨1 | exit⟩ };
-    let invalid = fn(s: +String) -> i32 { println(s); println(2); ⟨2 | exit⟩ };
-    let overflow = fn(s: +String) -> i32 { println(s); println(3); ⟨3 | exit⟩ };
+    let ok = fn(n: +i64) -> i32 { ⟨n | println; ⟨1 | exit⟩ };
+    let invalid = fn(s: +String) -> i32 { ⟨s | println; ⟨2 | println; ⟨2 | exit⟩ };
+    let overflow = fn(s: +String) -> i32 { ⟨s | println; ⟨3 | println; ⟨3 | exit⟩ };
     parse_int("42", ok, invalid, overflow)
 }"#,
     )
@@ -300,9 +304,9 @@ fn parse_int_offers_an_invalid_input_to_its_failure_continuation() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-    let ok = fn(n: +i64) -> i32 { println(n); ⟨1 | exit⟩ };
-    let invalid = fn(s: +String) -> i32 { println(s); println(2); ⟨2 | exit⟩ };
-    let overflow = fn(s: +String) -> i32 { println(s); println(3); ⟨3 | exit⟩ };
+    let ok = fn(n: +i64) -> i32 { ⟨n | println; ⟨1 | exit⟩ };
+    let invalid = fn(s: +String) -> i32 { ⟨s | println; ⟨2 | println; ⟨2 | exit⟩ };
+    let overflow = fn(s: +String) -> i32 { ⟨s | println; ⟨3 | println; ⟨3 | exit⟩ };
     parse_int("", ok, invalid, overflow)
 }"#,
     )
@@ -318,9 +322,9 @@ fn parse_int_offers_an_out_of_range_input_to_its_overflow_continuation() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-    let ok = fn(n: +i64) -> i32 { println(n); ⟨1 | exit⟩ };
-    let invalid = fn(s: +String) -> i32 { println(s); println(2); ⟨2 | exit⟩ };
-    let overflow = fn(s: +String) -> i32 { println(s); println(3); ⟨3 | exit⟩ };
+    let ok = fn(n: +i64) -> i32 { ⟨n | println; ⟨1 | exit⟩ };
+    let invalid = fn(s: +String) -> i32 { ⟨s | println; ⟨2 | println; ⟨2 | exit⟩ };
+    let overflow = fn(s: +String) -> i32 { ⟨s | println; ⟨3 | println; ⟨3 | exit⟩ };
     parse_int("99999999999999999999999", ok, invalid, overflow)
 }"#,
     )
@@ -335,7 +339,7 @@ fn short_circuit_and_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(match false { true => match 1 / 0 == 1 { true => 1, _ => 2 }, _ => 2 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match false { true => match 1 / 0 == 1 { true => 1, _ => 2 }, _ => 2 } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -349,7 +353,7 @@ fn short_circuit_or_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit_or.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(match true { true => 3, _ => match 1 / 0 == 1 { true => 3, _ => 4 } }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match true { true => 3, _ => match 1 / 0 == 1 { true => 3, _ => 4 } } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -361,8 +365,11 @@ fn short_circuit_or_does_not_evaluate_rhs() {
 #[test]
 fn subtraction_is_left_associative() {
     let dir = std::env::temp_dir().join("slc_test_assoc.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(10 - 3 - 2); ⟨0 | exit⟩ }")
-        .unwrap();
+    std::fs::write(
+        &dir,
+        "command main | (exit: -i32) / {IO} { ⟨10 - 3 - 2 | println; ⟨0 | exit⟩ }",
+    )
+    .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
     assert!(stdout.contains("5"));
@@ -371,8 +378,11 @@ fn subtraction_is_left_associative() {
 #[test]
 fn out_of_range_index_rejected() {
     let dir = std::env::temp_dir().join("slc_test_oob.sl");
-    std::fs::write(&dir, r#"command main | (exit: -i32) / {IO} { println("ab"[5]); ⟨0 | exit⟩ }"#)
-        .unwrap();
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) / {IO} { ⟨"ab"[5] | println; ⟨0 | exit⟩ }"#,
+    )
+    .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.contains("out of range"));
@@ -383,7 +393,7 @@ fn slice_bounds_checked() {
     let dir = std::env::temp_dir().join("slc_test_slice_bounds.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} { println("abc"[1..9]); ⟨0 | exit⟩ }"#,
+        r#"command main | (exit: -i32) / {IO} { ⟨"abc"[1..9] | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -400,8 +410,8 @@ fn named_error_propagation_success_path() {
             match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { println("ok: " + value); ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { println("err: " + message); ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨"ok: " + value | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨"err: " + message | println; ⟨1 | exit⟩ };
             ⟨"ok" | parse | (ok & err)⟩
         }"#,
     )
@@ -420,8 +430,8 @@ fn named_error_propagation_error_path() {
             match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { println("ok: " + value); ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { println("err: " + message); ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨"ok: " + value | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨"err: " + message | println; ⟨1 | exit⟩ };
             ⟨"bad" | parse | (ok & err)⟩
         }"#,
     )
@@ -447,8 +457,8 @@ fn json_selected_error_continuation_reports_parse_error() {
             }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { println("parsed: " + value); ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { println("error: " + message); ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨"parsed: " + value | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨"error: " + message | println; ⟨1 | exit⟩ };
             ⟨"x" | parse_json | (ok & err)⟩
         }"#,
     )
@@ -567,9 +577,9 @@ fn fs_read_offers_a_missing_file_to_its_failure_continuation() {
         &dir,
         r#"command main | (exit: -i32) / {IO} {
             ⟨"does-not-exist.sl" | fs::read | (select String {
-                source => { println("unexpectedly read " + source); ⟨1 | exit⟩ },
+                source => { ⟨"unexpectedly read " + source | println; ⟨1 | exit⟩ },
             } & select String {
-                message => { println("failed: " + message); ⟨0 | exit⟩ },
+                message => { ⟨"failed: " + message | println; ⟨0 | exit⟩ },
             })⟩
         }"#,
     )
@@ -588,10 +598,10 @@ fn fs_write_and_read_round_trip_through_their_continuations() {
         &dir,
         format!(
             r#"command main | (exit: -i32) / {{IO}} {{
-            let failed = select String {{ message => {{ println(message); ⟨1 | exit⟩ }} }};
+            let failed = select String {{ message => {{ ⟨message | println; ⟨1 | exit⟩ }} }};
             ⟨({path:?}, "written") | fs::write | (select unit {{
                 done => ⟨{path:?} | fs::read | (select String {{
-                    source => {{ println(source); ⟨0 | exit⟩ }},
+                    source => {{ ⟨source | println; ⟨0 | exit⟩ }},
                 }} & failed)⟩,
             }} & failed)⟩
         }}"#,
@@ -610,17 +620,17 @@ fn lookup_builtins_offer_both_outcomes() {
     std::fs::write(
         &dir,
         r#"fn report(message: +String, exit: -i32) -> (;) / {IO} {
-            println(message);
+            ⟨message | println;
             ⟨1 | exit⟩
         }
 
         command main | (exit: -i32) / {IO} {
             char_at("slant", 1, fn(second: +char) -> (;) {
-                println(second);
+                ⟨second | println;
                 char_at("slant", 9, fn(unexpected: +char) -> (;) {
                     (⟨("unexpectedly found something", exit) | report)
                 }, fn(message: +String) -> (;) {
-                    println(message);
+                    ⟨message | println;
                     ⟨0 | exit⟩
                 })
             }, fn(message: +String) -> (;) { (⟨(message, exit) | report) })
@@ -629,7 +639,7 @@ fn lookup_builtins_offer_both_outcomes() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert!(stdout.contains("'l'"), "stdout: {stdout}");
+    assert!(stdout.lines().next() == Some("l"), "stdout: {stdout}");
     assert!(stdout.contains("out of range"), "stdout: {stdout}");
 }
 
@@ -685,7 +695,7 @@ fn a_struct_is_built_and_taken_apart_anywhere() {
 
         command main | (exit: -i32) / {IO} {
             let d = D { left: 10, right: 20 };
-            println((⟨d | sum));
+            ⟨(⟨d | sum) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -703,11 +713,11 @@ fn control_does_not_return_from_a_cut() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-            println(mu i64 { k <= {
-                println("before");
+            ⟨mu i64 { k <= {
+                ⟨"before" | println;
                 ⟨1 | k⟩;
-                println("after")
-            } });
+                ⟨"after" | println
+            } } | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -807,7 +817,7 @@ fn json_parser_preserves_output_and_exit_status() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(
         stdout.trim(),
-        "\"parsed: {\\\"name\\\":\\\"slant\\\",\\\"tags\\\":[1,2,-3.25],\\\"active\\\":true,\\\"none\\\":null,\\\"escaped\\\":\\\"a\\\\\\\"b\\\\u0041\\\"}\"",
+        r#"parsed: {"name":"slant","tags":[1,2,-3.25],"active":true,"none":null,"escaped":"a\"b\u0041"}"#,
         "stdout: {stdout}"
     );
 }
@@ -890,13 +900,13 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
         &dir,
         format!(
             r#"command main | (exit: -i32) / {{IO}} {{
-                let fail = select String {{ m => {{ println(m); ⟨1 | exit⟩ }} }};
+                let fail = select String {{ m => {{ ⟨m | println; ⟨1 | exit⟩ }} }};
                 let fh = mu {{ k <= ⟨"{}" | fs::open | (k & fail)⟩ }};
                 ⟨fh | fs::close;
                 let line = mu {{ k <=
-                    ⟨fh | fs::read_line | (k & select unit {{ e => {{ println("eof"); ⟨1 | exit⟩ }} }})⟩
+                    ⟨fh | fs::read_line | (k & select unit {{ e => {{ ⟨"eof" | println; ⟨1 | exit⟩ }} }})⟩
                 }};
-                println(line);
+                ⟨line | println;
                 ⟨0 | exit⟩
             }}"#,
             data.display()
@@ -917,27 +927,27 @@ fn the_prelude_is_available_and_shadowable() {
         &dir,
         r#"fn double(n: +i64) -> i64 { n * 2 }
         command main | (exit: -i32) / {IO} {
-            println((⟨21 | double | to_string));
-            println((⟨true | fmt));
+            ⟨(⟨21 | double | to_string) | println;
+            ⟨(⟨true | fmt) | println;
             ⟨0 | exit⟩
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["\"42\"", "\"true\""]);
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["42", "true"]);
 
     // A program's own definition shadows the prelude's.
     let dir = std::env::temp_dir().join("slc_test_prelude_shadow.sl");
     std::fs::write(
         &dir,
         r#"fn to_string(n: +i64) -> String { "mine" }
-        command main | (exit: -i32) / {IO} { println((⟨7 | to_string)); ⟨0 | exit⟩ }"#,
+        command main | (exit: -i32) / {IO} { ⟨(⟨7 | to_string) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
-    assert_eq!(stdout.trim(), "\"mine\"");
+    assert_eq!(stdout.trim(), "mine");
 
     // The program's text precedes the prelude, so a diagnostic keeps the
     // program's own line and column.
@@ -945,7 +955,7 @@ fn the_prelude_is_available_and_shadowable() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-    println(1 + "x");
+    ⟨1 + "x" | println;
     ⟨0 | exit⟩
 }"#,
     )
@@ -965,10 +975,10 @@ fn a_multi_parameter_function_travels_as_a_value() {
         r#"fn plus(a: i64, b: i64) -> i64 { a + b }
         fn apply2(f: ((+i64, +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
         command main | (exit: -i32) / {IO} {
-            println((⟨(1, 2) | plus));
+            ⟨(⟨(1, 2) | plus) | println;
             let g = plus;
-            println(g(10, 20));
-            println((⟨(plus, 3, 4) | apply2));
+            ⟨g(10, 20) | println;
+            ⟨(⟨(plus, 3, 4) | apply2) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1000,7 +1010,7 @@ fn a_function_headed_chain_composes_unless_marked() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["42", "20", "\"a function\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["42", "20", "a function"]);
 }
 
 #[test]
@@ -1062,7 +1072,7 @@ fn the_four_logical_units_are_nullary_connectives() {
         fn absurd(out: -i64) <- (|) { select (|) {} }
         command halt | (exit: -i32) -> (;) { ⟨0 | exit⟩ }
         command main | (exit: -i32) / {IO} {
-            match unit_value() { (,) => println("unit") };
+            match unit_value() { (,) => ⟨"unit" | println };
             top_value();
             ⟨0 | exit⟩
         }"#,
@@ -1070,7 +1080,7 @@ fn the_four_logical_units_are_nullary_connectives() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"unit\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["unit"]);
 }
 
 #[test]
@@ -1080,8 +1090,8 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
         &dir,
         r#"use num::max;
         command main | (exit: -i32) / {IO} {
-            println((⟨(3, 7) | num::min));
-            println((⟨(3, 7) | max));
+            ⟨(⟨(3, 7) | num::min) | println;
+            ⟨(⟨(3, 7) | max) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1094,7 +1104,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     let dir = std::env::temp_dir().join("slc_test_stdlib_unreached.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} { println((⟨(3, 7) | min)); ⟨0 | exit⟩ }"#,
+        r#"command main | (exit: -i32) / {IO} { ⟨(⟨(3, 7) | min) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1106,7 +1116,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     std::fs::write(
         &dir,
         r#"mod num { pub fn min(a: +i64, b: +i64) -> i64 { a + 100 } }
-        command main | (exit: -i32) / {IO} { println((⟨(3, 7) | num::min)); ⟨0 | exit⟩ }"#,
+        command main | (exit: -i32) / {IO} { ⟨(⟨(3, 7) | num::min) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1150,10 +1160,7 @@ fn the_prelude_tap_is_a_command_and_composes_with_builtins() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(
-        stdout.split_whitespace().collect::<Vec<_>>(),
-        ["\"answer\"", "42", "42", "7", "35"]
-    );
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["answer", "42", "42", "7", "35"]);
 }
 
 #[test]
@@ -1163,14 +1170,14 @@ fn display_formats_through_bounded_impls() {
         &dir,
         r#"use list::List;
         command main | (exit: -i32) / {IO} {
-            println(fmt(42));
-            println(fmt("plain"));
-            println(fmt(false));
-            println((⟨7 | to_string));
+            ⟨fmt(42) | println;
+            ⟨fmt("plain") | println;
+            ⟨fmt(false) | println;
+            ⟨(⟨7 | to_string) | println;
             let xs = List::Cons(1, List::Cons(2, List::Nil));
-            println(fmt(xs));
-            println((⟨xs | to_string));
-            println(fmt(List::Cons(xs, List::Cons(List::Nil, List::Nil))));
+            ⟨fmt(xs) | println;
+            ⟨(⟨xs | to_string) | println;
+            ⟨fmt(List::Cons(xs, List::Cons(List::Nil, List::Nil))) | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1180,15 +1187,7 @@ fn display_formats_through_bounded_impls() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(
         lines,
-        [
-            "\"42\"",
-            "\"plain\"",
-            "\"false\"",
-            "\"7\"",
-            "\"[1, 2]\"",
-            "\"[1, 2]\"",
-            "\"[[1, 2], []]\""
-        ],
+        ["42", "plain", "false", "7", "[1, 2]", "[1, 2]", "[[1, 2], []]"],
         "stdout: {stdout}"
     );
 
@@ -1197,7 +1196,7 @@ fn display_formats_through_bounded_impls() {
     std::fs::write(
         &dir,
         r#"data P { x: i64 }
-        command main | (exit: -i32) / {IO} { println(fmt(P { x: 1 })); ⟨0 | exit⟩ }"#,
+        command main | (exit: -i32) / {IO} { ⟨fmt(P { x: 1 }) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1237,7 +1236,7 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
         fn count(xs: Mine) -> i64 {
             match xs { Nil => 0, Cons(_, rest) => 1 + count(rest) }
         }
-        command main | (exit: -i32) / {IO} { println(count(Mine::Nil)); ⟨0 | exit⟩ }"#,
+        command main | (exit: -i32) / {IO} { ⟨count(Mine::Nil) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -1298,9 +1297,9 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         fn label<T: Describe>(x: T) -> String { describe(x) }
 
         command main | (exit: -i32) / {IO} {
-            println(describe(config()));
-            println(describe((⟨exit | printer)));
-            println(describe(ones()));
+            ⟨describe(config()) | println;
+            ⟨describe((⟨exit | printer)) | println;
+            ⟨describe(ones()) | println;
             ⟨config() | label | println;
             ⟨(⟨exit | printer) | label | println;
             ⟨0 | exit⟩
@@ -1313,11 +1312,11 @@ fn traits_dispatch_on_menu_and_form_receivers() {
     assert_eq!(
         lines,
         [
-            "\"slant with 3 retries\"",
-            "\"a report sink\"",
-            "\"stream starting 1\"",
-            "\"slant with 3 retries\"",
-            "\"a report sink\"",
+            "slant with 3 retries",
+            "a report sink",
+            "stream starting 1",
+            "slant with 3 retries",
+            "a report sink",
         ],
         "stdout: {stdout}"
     );
@@ -1365,7 +1364,7 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
     std::fs::write(
         &dir,
         "command main | (exit: -i32) / {IO} {
-             let show = select +i64 { n => println(n * 2) };
+             let show = select +i64 { n => ⟨n * 2 | println };
              ⟨21 | show⟩;
              ⟨0 | exit⟩
          }",
@@ -1404,7 +1403,7 @@ fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"the number 42\"", "\"n=7\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["the number 42", "n=7"]);
 }
 
 #[test]
@@ -1439,13 +1438,7 @@ fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(
         stdout.lines().collect::<Vec<_>>(),
-        [
-            "\"the number 1\"",
-            "\"the number 2\"",
-            "\"the number 42\"",
-            "\"the number 3\"",
-            "\"the number 4\""
-        ]
+        ["the number 1", "the number 2", "the number 42", "the number 3", "the number 4"]
     );
 }
 
@@ -1480,7 +1473,7 @@ fn an_alternative_is_resolved_against_the_sum_its_context_gives() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"yes\"", "\"other\"", "\"5\"", "\"two\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["yes", "other", "5", "two"]);
 }
 
 #[test]
@@ -1543,7 +1536,7 @@ fn nesting_is_significant_and_a_position_needs_no_sum() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["(2, 3)", "3", "\"deep\"", "\"flat\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["(2, 3)", "3", "deep", "flat"]);
 
     // The inner alternative's payload is checked once the outer one says
     // which sum it is in.
@@ -1580,7 +1573,7 @@ fn a_form_value_hands_each_continuation_its_part_in_order() {
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "\"seven\"", "1", "8", "\"eight\""]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "seven", "1", "8", "eight"]);
 }
 
 #[test]

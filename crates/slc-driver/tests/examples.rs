@@ -36,14 +36,7 @@ fn repository_example_suite_has_expected_results() {
             "sums.sl",
             Expected {
                 success: true,
-                stdout: &[
-                    "\"number 7\"",
-                    "\"text hi\"",
-                    "\"second, yes\"",
-                    "\"third last\"",
-                    "\"3\"",
-                    "\"big\"",
-                ],
+                stdout: &["number 7", "text hi", "second, yes", "third last", "3", "big"],
                 stderr: &[],
             },
         ),
@@ -51,7 +44,7 @@ fn repository_example_suite_has_expected_results() {
             "composition.sl",
             Expected {
                 success: true,
-                stdout: &["\"demo\"", "\"slant\"", "2", "2", "\"7\"", "\"quit\""],
+                stdout: &["demo", "slant", "2", "2", "7", "quit"],
                 stderr: &[],
             },
         ),
@@ -76,15 +69,15 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: true,
                 stdout: &[
-                    "\"slant with 3 retries\"",
-                    "\"a sink for one number\"",
-                    "\"stream starting 7\"",
-                    "\"slant with 3 retries\"",
-                    "\"a sink for one number\"",
-                    "\"42\"",
-                    "\"[1, 2]\"",
-                    "\"the number 42\"",
-                    "\"affirmative\"",
+                    "slant with 3 retries",
+                    "a sink for one number",
+                    "stream starting 7",
+                    "slant with 3 retries",
+                    "a sink for one number",
+                    "42",
+                    "[1, 2]",
+                    "the number 42",
+                    "affirmative",
                 ],
                 stderr: &[],
             },
@@ -101,7 +94,7 @@ fn repository_example_suite_has_expected_results() {
             "effects.sl",
             Expected {
                 success: true,
-                stdout: &["-1", "5", "1070", "HH HT TH TT", "\"[4, 2]\"", "\"[]\"", "42"],
+                stdout: &["-1", "5", "1070", "HH HT TH TT", "[4, 2]", "[]", "42"],
                 stderr: &[],
             },
         ),
@@ -132,7 +125,7 @@ fn repository_example_suite_has_expected_results() {
                 success: true,
                 // `,`, then `;` three ways, then `|`, `&`, a menu's two items, and
                 // the units.
-                stdout: &["42", "7", "\"green\"", "1", "3", "\"slant\"", "(,)"],
+                stdout: &["42", "7", "green", "1", "3", "slant", "(,)"],
                 stderr: &[],
             },
         ),
@@ -152,10 +145,10 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: true,
                 stdout: &[
-                    "\"hello, world\"",
+                    "hello, world",
                     "captured instead:",
-                    "about to write 14 characters",
-                    "\"hello, again\"",
+                    "about to write 12 characters",
+                    "hello, again",
                 ],
                 stderr: &[],
             },
@@ -164,7 +157,7 @@ fn repository_example_suite_has_expected_results() {
             "stdlib.sl",
             Expected {
                 success: true,
-                stdout: &["3", "3", "0", "3", "\"[1, 2, 3]\"", "\"[3, 1, 2]\""],
+                stdout: &["3", "3", "0", "3", "[1, 2, 3]", "[3, 1, 2]"],
                 stderr: &[],
             },
         ),
@@ -175,10 +168,10 @@ fn repository_example_suite_has_expected_results() {
                 success: true,
                 stdout: &[
                     "parsed:",
-                    "\\\"name\\\":\\\"slant\\\"",
-                    "\\\"tags\\\":[1,2,-3.25]",
-                    "\\\"active\\\":true",
-                    "\\\"none\\\":null",
+                    "\"name\":\"slant\"",
+                    "\"tags\":[1,2,-3.25]",
+                    "\"active\":true",
+                    "\"none\":null",
                     "escaped",
                 ],
                 stderr: &[],
@@ -201,15 +194,11 @@ fn repository_example_suite_has_expected_results() {
         ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
             "form.sl",
-            Expected {
-                success: true,
-                stdout: &["\"answer\"", "42", "\"relabelled!\"", "7"],
-                stderr: &[],
-            },
+            Expected { success: true, stdout: &["answer", "42", "relabelled!", "7"], stderr: &[] },
         ),
         (
             "menu.sl",
-            Expected { success: true, stdout: &["3", "\"slant\"", "\"slant!\"", "3"], stderr: &[] },
+            Expected { success: true, stdout: &["3", "slant", "slant!", "3"], stderr: &[] },
         ),
         (
             "mu_tilde.sl",
@@ -219,7 +208,7 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("nested_calls.sl", Expected { success: true, stdout: &["\"320\""], stderr: &[] }),
+        ("nested_calls.sl", Expected { success: true, stdout: &["320"], stderr: &[] }),
         (
             "multi.sl",
             Expected {
@@ -249,12 +238,12 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: true,
                 stdout: &[
-                    "\"[2, 6, 10]\"",
-                    "\"[1, 3, 5, 7]\"",
-                    "\"[1, 2, 3, 4, 5, 6, 7, 8, 9]\"",
-                    "\"[64, 32, 16, 8, 4]\"",
-                    "\"[4, 5, 6]\"",
-                    "\"[1, 2, 4, 8, 16]\"",
+                    "[2, 6, 10]",
+                    "[1, 3, 5, 7]",
+                    "[1, 2, 3, 4, 5, 6, 7, 8, 9]",
+                    "[64, 32, 16, 8, 4]",
+                    "[4, 5, 6]",
+                    "[1, 2, 4, 8, 16]",
                 ],
                 stderr: &[],
             },
@@ -264,7 +253,7 @@ fn repository_example_suite_has_expected_results() {
             "stream.sl",
             Expected {
                 success: true,
-                stdout: &["10", "11", "13", "22", "\"[10, 11, 12]\"", "\"[7, 7]\""],
+                stdout: &["10", "11", "13", "22", "[10, 11, 12]", "[7, 7]"],
                 stderr: &[],
             },
         ),

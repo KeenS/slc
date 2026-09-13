@@ -8,8 +8,8 @@
 //         fn write_line(text: String) -> (,);
 //     }
 //
-// — and `println` and `print` are the friendly front: they render any value
-// and then *perform* `write_line`/`write` with the text. So a function that
+// — and `println` and `print` are the friendly front: they render a value
+// through `Display` and then *perform* `write_line`/`write` with the text. So a function that
 // prints says so in its row, and the row travels up the call graph the way
 // every other effect's does, until something handles it.
 //

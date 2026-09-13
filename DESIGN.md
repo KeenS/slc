@@ -994,15 +994,17 @@ prelude:
 
 ```sl
 effect IO {
-    fn write(text: String) -> Unit;
-    fn write_line(text: String) -> Unit;
+    fn write(text: String) -> (,);
+    fn write_line(text: String) -> (,);
 }
 ```
 
-`println` and `print` are the friendly front — they render any value, then
-perform `write_line`/`write` with the text — so a function that prints says
-so in its row, and the row travels up the call graph until something
-handles it. What is special about `IO` is only where it ends: the runtime
+`println` and `print` are the friendly front — prelude functions over
+`<T: Display>` that render their argument with `fmt`, then perform
+`write_line`/`write` with the text — so a function that prints says so in
+its row, and the row travels up the call graph until something handles it.
+A string prints as itself, unquoted, and a value prints only if its type has
+`Display`. What is special about `IO` is only where it ends: the runtime
 installs a handler around `main`, so `main` may declare `{IO}` and leave it
 undischarged. Nothing else may.
 

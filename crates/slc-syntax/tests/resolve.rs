@@ -99,10 +99,10 @@ fn a_use_gives_a_name_and_a_local_takes_it_back() {
 
 #[test]
 fn an_unclaimed_name_is_left_for_later_passes() {
-    // `println` is a builtin: no module claims it, so it stays bare.
-    let p = resolved("mod m { fn f() -> i64 { println(1); 1 } }");
+    // `str_len` is a builtin: no module claims it, so it stays bare.
+    let p = resolved("mod m { fn f() -> i64 { str_len(\"x\"); 1 } }");
     let body = format!("{:?}", p.decls[0].kind);
-    assert!(body.contains("\"println\""), "{body}");
+    assert!(body.contains("\"str_len\""), "{body}");
 }
 
 #[test]

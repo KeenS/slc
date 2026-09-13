@@ -1013,6 +1013,22 @@ a || b                                             // old
 match a { true => true, _ => b }                   // new
 ```
 
+## `println` and `print` render through `Display`
+
+The two were builtins that took any value and quoted a string. They are now
+prelude functions over `<T: Display>`: a call is a flow like any other, a
+string prints as itself, and a value prints only if its type has `Display`.
+
+```sl
+println(x);            // old: accepted as a builtin
+⟨x | println;          // new
+
+⟨"hi" | println;       // prints `hi`; the builtin printed `"hi"`
+```
+
+The prelude has `Display` for the base types, for the unit, and for tuples
+and choices up to eight components.
+
 ## Removed constructs
 
 ### `spawn`

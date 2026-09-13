@@ -612,21 +612,6 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         }
         return next_match_arm(scrutinee, arms);
     }
-    // `println` and `print` reach the outside world, so they do not write:
-    // they render, and then perform the `IO` operation that writes. The
-    // handler is the runtime's own unless the program installed a nearer
-    // one, which is what lets a program mock its output.
-    if let Some(op) = match name {
-        "println" => Some("write_line"),
-        "print" => Some("write"),
-        _ => None,
-    } {
-        let text = args.first().map(|v| v.display()).unwrap_or_default();
-        return Ok(State::Apply {
-            callee: Value::Operation { effect: "IO".into(), op: op.into() },
-            arg: Value::Str(text),
-        });
-    }
     // A builtin that offers its outcome activates one of its continuations;
     // the rest return a value.
     match crate::eval::run_offering_builtin(name, &args)? {

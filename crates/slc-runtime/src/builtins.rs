@@ -43,19 +43,17 @@ fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
 pub fn apply_builtin(
     name: &str,
     args: &[Value],
-    out: &mut dyn std::io::Write,
+    _out: &mut dyn std::io::Write,
 ) -> Result<Value, BuiltinError> {
     match name {
-        "println" => {
-            let s = args.first().map(|v| v.display()).unwrap_or_default();
-            writeln!(out, "{s}").map_err(|e| BuiltinError::TypeMismatch(e.to_string()))?;
-            Ok(Value::Unit)
-        }
-        "print" => {
-            let s = args.first().map(|v| v.display()).unwrap_or_default();
-            write!(out, "{s}").map_err(|e| BuiltinError::TypeMismatch(e.to_string()))?;
-            Ok(Value::Unit)
-        }
+        // A base value as the text a person reads: a string or a character is
+        // itself, unquoted. The prelude's `Display` impls rest on it.
+        "__display" => Ok(Value::Str(match args.first() {
+            Some(Value::Str(s)) => s.clone(),
+            Some(Value::Char(c)) => c.to_string(),
+            Some(v) => v.display(),
+            None => String::new(),
+        })),
         "neg" => match args.first() {
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
@@ -281,11 +279,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn println_outputs() {
+    fn display_renders_unquoted() {
         let mut buf: Vec<u8> = Vec::new();
-        let r = apply_builtin("println", &[Value::Int(42)], &mut buf).unwrap();
-        assert_eq!(r, Value::Unit);
-        assert_eq!(String::from_utf8(buf).unwrap(), "42\n");
+        for (value, text) in
+            [(Value::Int(42), "42"), (Value::Str("hi".into()), "hi"), (Value::Char('c'), "c")]
+        {
+            let r = apply_builtin("__display", &[value], &mut buf).unwrap();
+            assert_eq!(r, Value::Str(text.into()));
+        }
     }
 
     #[test]

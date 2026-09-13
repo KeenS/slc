@@ -142,16 +142,9 @@ delayed.
   - **An unknown polarity is an error.** A binding or lambda parameter whose
     type inference leaves a variable is refused, asking for an annotation or
     for `let+`/`let-`.
-  - **Printing is generic over `Display`.** `println` and `print` stop being
-    builtins and become prelude functions with a bounded positive parameter,
-    rendering through `Display` and performing `IO`'s operation:
-
-    ```sl
-    fn println<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write_line }
-    fn print<+T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write }
-    ```
-
-    So no builtin is polymorphic over polarity.
+  - **Printing is already generic over `Display`.** `println` and `print`
+    are prelude functions over `<T: Display>`, so no builtin is polymorphic
+    over polarity; their parameter takes its `+` with every other.
 
   What it changes, as found so far:
 
@@ -165,15 +158,6 @@ delayed.
   - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
     prints `(,)` because it runs at once; it becomes a `let+`, rendered
     through `Display`.
-  - Every type a program prints needs a `Display` impl. The prelude has them
-    for `i64`, `String`, `bool`, the unit, and tuples and choices up to eight
-    components — bounded `<A: Display, …>` today, `<+A: Display, …>` once
-    polarity is marked — and `list` for `List`. Bundles and joints are
-    negative, and `println`'s parameter is positive, so they have none.
-  - A `String` prints as `Display` renders it, unquoted, where the builtin
-    quotes it today (`"Hello, Slant!"`). Expected outputs that carry the
-    quotes — `examples/sums.sl`, `examples/io.sl` and others — change, and
-    the prelude's comment that `fmt("hi")` is `hi` becomes true of printing.
   - Lowering needs each position's polarity from the checker, as `pars`
     already carries a joint's components.
 

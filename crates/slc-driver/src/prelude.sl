@@ -16,8 +16,8 @@
 // sits nearer the operation and answers first, which is how output is
 // mocked (`examples/io.sl`).
 //
-// `println` and `print` are the friendly front: they render any value and
-// then perform `write_line`/`write` with the text.
+// `println` and `print` are the friendly front: they render a value through
+// `Display`, below, and then perform `write_line`/`write` with the text.
 
 effect IO {
     fn write(text: String) -> (,);
@@ -47,6 +47,17 @@ impl Display for bool {
 }
 
 fn to_string<T: Display>(x: T) -> String { ⟨x | fmt }
+
+impl Display for i32 { fn fmt(self: i32) -> String { ⟨self | __display } }
+impl Display for u32 { fn fmt(self: u32) -> String { ⟨self | __display } }
+impl Display for u64 { fn fmt(self: u64) -> String { ⟨self | __display } }
+impl Display for char { fn fmt(self: char) -> String { ⟨self | __display } }
+impl Display for unit { fn fmt(self: unit) -> String { "(,)" } }
+impl Display for File { fn fmt(self: File) -> String { ⟨self | __display } }
+
+// Printing renders through `Display`, then performs `IO`'s operation.
+fn println<T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write_line }
+fn print<T: Display>(x: T) -> (,) / {IO} { ⟨(⟨x | fmt) | write }
 
 // ── Display for anonymous data ───────────────────────────────────────────
 //

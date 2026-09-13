@@ -68,10 +68,8 @@ fn builtin_functions() -> Vec<Builtin> {
     };
 
     vec![
-        // Printing takes anything, but it does take it: a template
-        // parameter, so `x | println` has something to flow into.
-        function("println", vec![same.clone()], Some(Type::ONE)),
-        function("print", vec![same.clone()], Some(Type::ONE)),
+        // A base value as text, beneath the prelude's `Display` impls.
+        function("__display", vec![same.clone()], Some(string.clone())),
         function("add", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("sub", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),

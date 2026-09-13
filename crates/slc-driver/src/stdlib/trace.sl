@@ -11,8 +11,9 @@
 //     ("answer", 42) | trace::tap | out⟩
 
 mod trace {
-    // A tap: log a label and the value passing through, then forward it.
-    pub command tap<T>(label: String, x: T) | (k: T) / {IO} {
+    // A tap: log a label and the value passing through, then forward it. What
+    // passes through is printed, so it has `Display`.
+    pub command tap<T: Display>(label: String, x: T) | (k: T) / {IO} {
         ⟨label | println;
         ⟨x | println;
         ⟨x | k⟩
