@@ -937,6 +937,27 @@ Experimental struct-based `choose` implementation work has been removed while
 its design is deferred. Do not migrate programs to any `choose` form; a future
 design will be discussed separately.
 
+## A `select` arm writes its shape first
+
+An arm reads as a `match` arm does: the pattern, then what runs.
+
+```sl
+select T { command => pattern }     // old
+select T { pattern => command }     // new
+```
+
+An arm that delivered to a continuation by calling it cuts instead:
+
+```sl
+select T { V => k(v) }              // old
+select T { V => ⟨v | k⟩ }           // new
+```
+
+## A cut sends its value
+
+`t | k` used to lower to a μ binder that shadowed `k`, so the value was sent
+nowhere. The cut `⟨t | k⟩` now delivers `t` to `k`, as it always claimed to.
+
 ## Removed constructs
 
 ### `spawn`
@@ -954,3 +975,7 @@ Concurrency-like process creation is not part of the λ̄μμ̃ core.
 The old expression-level/value-returning `mu` is removed. Use either a
 positive function or the final `mu(values) | (continuations)` declaration,
 according to the intended control behavior.
+
+### `choose Struct`
+
+`choose Struct` is removed, and no replacement exists.

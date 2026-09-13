@@ -75,34 +75,23 @@ documentation pass, and one defect.
 
 ### Documentation
 
-- **`DESIGN.md` is cleaned up.** Parts of it predate the surface changes it
-  documents, and its `sl` blocks are not checked, so nothing catches the
-  drift. What a pass has to cover:
+- **Connective glyphs in `DESIGN.md` follow one rule.** "Connective
+  spellings" keeps `⊗`, `⅋` and `⊥` for the core's terms and the prose,
+  never for a program. The `sl` blocks break that in comments
+  (`// -Shape ⅋ +i64`, `// ⅋ every field, wanted`,
+  ``// dual(Reading) is `-i64 ⅋ -String` ``), and the prose names surface
+  types by glyph throughout ("`⅋` is commutative", "a `⅋` value", a form
+  denoting `-i64 ⅋ -String`). Decide whether prose about a surface type
+  spells it `;`, a joint, and keeps the glyphs for core terms only; then
+  apply the rule everywhere, this file included.
 
-  - **Connective glyphs.** "Connective spellings" keeps `⊗`, `⅋` and `⊥`
-    for the core's terms and the prose, never for a program. The `sl` blocks
-    break that in comments (`// -Shape ⅋ +i64`, `// ⅋ every field, wanted`,
-    ``// dual(Reading) is `-i64 ⅋ -String` ``), and the prose names surface
-    types by glyph throughout ("`⅋` is commutative", "a `⅋` value", a form
-    denoting `-i64 ⅋ -String`). Decide whether prose about a surface type
-    spells it `;`, a joint, and keeps the glyphs for core terms only. Then
-    apply the rule everywhere, this file included.
-  - **Chains without `⟨`,** which the surface now refuses:
-    `(2, 40) | total | out⟩`, `{ label | println; value | out⟩ }`,
-    `"s" | f | str_len | println`, and §13's own entries.
-  - **Calls in the refused `f(a)` form,** in code and prose:
-    `select { n => println(n) }`, `map(half, xs)`, `drop(42)` (said to
-    perform the operation), `handle(k)`, `take(s, n)`, `inner::deep()`,
-    `lem()`.
-  - **Examples that do not check.** The modules example's `main` prints
-    without `/ {IO}`, and the handlers example answers `flip()`, which
-    neither `Exn` nor `Reader` declares.
-  - **§13, the migration summary,** is a change log inside the definition.
-    It belongs in `docs/MIGRATION.md` or `docs/HISTORY.md`, and its entries
-    use the old forms too.
-
-  Keeping it clean afterwards means checking the complete programs in
-  `DESIGN.md`, for instance by extracting them into the examples test.
+  The rest of the drift the cleanup found is fixed. What would keep it from
+  returning is checking the `sl` blocks, though only two in `DESIGN.md` are
+  complete programs today; the rest are fragments.
+- **`docs/MIGRATION.md` is brought up to date.** Its "Write:" forms predate
+  `⟨` being required (`select Colour { Red => 0 | out, … }`), and "Removed
+  constructs" still recommends the `mu(values) | (continuations)`
+  declaration, which is now a `command`.
 
 ### Surface simplifications
 

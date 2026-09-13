@@ -767,7 +767,7 @@ Either is consumed by the cut that supplies the whole product:
 
 ```sl
 ⟨Reading { value: 42, unit: "m" } | show | out⟩
-(2, 40) | total | out⟩
+⟨(2, 40) | total | out⟩
 ```
 
 ### `form`: the negative multiplicative declared
@@ -791,7 +791,7 @@ form's dual.
 ```sl
 fn printer(out: -i64) -> Report {
     select Report {
-        Report { value, label } => { label | println; value | out⟩ },
+        Report { value, label } => { ⟨label | println; ⟨value | out⟩ },
     }
 }
 
@@ -886,15 +886,21 @@ the carried continuation the copattern way — after a colon, under any name
 ```sl
 effect Exn    { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
+effect Choose { fn flip() -> bool; }
 
-command main | (exit: i32) {
-    let safe = handle ⟨(10, 0) | checked_div {
-        throw(message) => 0 - 1,           // never resumes: an exception
+// `checked_div`, `scaled` and `pick` perform them, as in `examples/effects.sl`.
+command main | (exit: i32) / {IO} {
+    let safe = handle (⟨(10, 0) | checked_div) {
+        throw(message) => 0 - 1,                    // never resumes: an exception
         return(n) => n,
     };
-    let scaled = handle x * (⟨(,) | config) {
-        flip(): resume => (⟨true | resume) + (⟨false | resume),  // resumes twice
+    let reading = handle (⟨7 | scaled) {
+        config(): resume => (⟨10 | resume) + 1000,  // resumes once
         return(n) => n,
+    };
+    let all = handle pick() {
+        flip(): resume => (⟨true | resume) + " " + (⟨false | resume),  // resumes twice
+        return(s) => s,
     };
     …
 }
@@ -925,7 +931,7 @@ fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}
 ```
 
 A call instantiates the callee's row variables from the arguments standing
-at the positions that mention them: `map(half, xs)` sets `E` to `half`'s
+at the positions that mention them: `⟨(half, xs) | map` sets `E` to `half`'s
 row, so the call incurs exactly what `half` performs. `{Exn, ..E}` extends
 a variable — what the written part covers does not flow through it. A
 rowless arrow in a parameter's type is a promise of purity, enforced at
@@ -1009,8 +1015,8 @@ An operation may take several parameters; since calls are curried, the
 performing value collects them all before suspending. **Operations are
 positive, and need no negative form.** An operation that consumes rather
 than answers is already writable: `A → ⊥` *is* `-A`, so
-`fn drop(x: +i64) -> (;);` declares a consumer, and both `drop(42)` and the
-cut `⟨42 | drop` perform it. Routing to a chosen outcome needs nothing new
+`fn drop(x: +i64) -> (;);` declares a consumer, and the cut `⟨42 | drop`
+performs it. Routing to a chosen outcome needs nothing new
 either, now that consumers are values — an operation takes them as
 ordinary parameters, and the clause cuts into whichever it picks:
 
@@ -1068,7 +1074,7 @@ afresh:
 ```sl
 let f = fn(x) { x };
 ⟨(⟨1 | f) + 1 | println;       // a := +i64
-"s" | f | str_len | println; // a := +String
+⟨"s" | f | str_len | println;    // a := +String
 ```
 
 Anything that computes stays monomorphic — `mu { k <= c }` above all, and every
@@ -1120,7 +1126,7 @@ returning `T`, and a one-field `form` is a named, storable consumer.
 
 So a consumer travels bare everywhere a value does: an enum payload
 (`Refutes(-i64)`), a record field, a `fn` value parameter — passing a
-continuation is an ordinary application, `handle(k)`. `dual` is an
+continuation is an ordinary application, `⟨k | handle`. `dual` is an
 involution on the nose: `-(-T)` *is* `T`, and double-negation elimination
 is the identity function.
 
@@ -1189,7 +1195,7 @@ fn twice(out: i64) <- i64 {
 }
 ```
 
-What is left is what nothing else says. `select { n => println(n) }` bound to
+What is left is what nothing else says. `select { n => ⟨n | k⟩ }` bound to
 a `let`, outside any negative `fn`, is rejected: no arm names a type and no
 declaration supplied one, so it is written.
 
@@ -1260,7 +1266,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs` |
-| `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
+| `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `⟨(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, over the runtime's `__read_file` and siblings |
@@ -1452,7 +1458,7 @@ mod geometry {
 
 use geometry::area;
 
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     ⟨geometry::Shape::Circle(5) | area | println;
     ⟨0 | exit⟩
 }
@@ -1763,31 +1769,3 @@ In `examples/json_parser.sl` every parser takes `failed`, but only the
 top-level one takes `parsed`, so no inner parser can report success by
 mistake. Keep an `enum` for data that a program *holds*; outcomes that a
 program *reaches* are a row.
-
-## 13. Migration summary
-
-- `k(v)` (activating a continuation) → `v | k`
-- `EXIT(0)` → `0 | EXIT` → gone: end the program through a continuation
-  parameter, the way `main` does with `exit`
-- `select T { c => p }` → `select T { p => c }` — the shape comes first, as
-  in a `match`
-- `select T { V => k(v) }` → `select T { V => v | k }`
-- `t | k` previously lowered to a μ binder that shadowed `k`, so it sent the
-  value nowhere; it is now the cut it always claimed to be
-- `mu name(...) | (...)` → `command name(...) | (...)` — a declaration is a
-  `command`; `mu` is the expression that captures the current continuation
-- `spawn` → removed; no replacement exists
-- `mu(x, to k)` → `mu(x) | (k)`
-- `agent.to(k, h)` and `agent.consume(k, h)` → removed; no partial-agent replacement exists
-- `+fn` → `fn ... -> ...`
-- `-fn` → `fn ... <- ...`
-- bare `fn` → rejected; write either `->` or `<-`
-- old variant-style `choose T { Variant }` → removed
-- `choose Struct` → removed while its design is deferred
-- nesting is significant: `(a, (b, c)).1` is `(b, c)`, no longer `b`
-- `(A ⊗ B)` → `(A, B)`, `(A ⅋ B)` → `(A ; B)`, `⊥` → `(;)`; `⊗` no longer
-  multiplies
-- `Unit` → `(,)`, `Bottom` → `(;)`, `Empty` → `(|)`, `Top` and `mu Top {}` →
-  `(&)`, `select Empty {}` → `select (|) {}`
-- a declared `enum` for a one-off sum → `(A | B)`, with values `::0(v)`,
-  `::1(v)`
