@@ -5,7 +5,7 @@
 // structure is just a menu that offers itself again. `Stream` is the
 // coinductive mirror of `List`. There is no `impl Display for Stream` — an
 // infinite structure cannot print whole; the honest form is
-// `(s, n) | take | fmt`.
+// `⟨(s, n) | take | fmt`.
 
 mod stream {
     use list::List::*;

@@ -10,7 +10,7 @@
 // trait method can consume `Self` rather than receive it. Such a method
 // takes no `self` parameter — a negative function's parameters are all
 // continuations — so its `Self` is the type it consumes, and the cut it
-// stands in is what fixes it: in `42 | deliver(s)`, `Self` is `+i64`.
+// stands in is what fixes it: in `⟨42 | deliver(s)`, `Self` is `+i64`.
 
 use list::List::*;
 use stream::Stream;
@@ -76,7 +76,7 @@ fn emit<T: Display>(out: String) <- T {
 }
 
 // A trait method that consumes `Self`. Dispatch reads the type the cut
-// sends, so `42 | deliver(s)` finds the `i64` impl.
+// sends, so `⟨42 | deliver(s)` finds the `i64` impl.
 trait Deliver {
     fn deliver(out: String) <- Self;
 }

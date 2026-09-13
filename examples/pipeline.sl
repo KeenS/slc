@@ -2,15 +2,16 @@
 // Brackets say where a chain is closed — and the stage beside a bracket
 // takes its role from it:
 //
-//   v | f | k⟩    closed at both ends: a value in, a consumer at the end
+//   ⟨v | f | k⟩    closed at both ends: a value in, a consumer at the end
 //                  — a command, and the only thing that is
-//   v | f         closed at the left: a value flowing on, awaiting a
+//   ⟨v | f         closed at the left: a value flowing on, awaiting a
 //                  continuation
 //   f | k⟩         closed at the right: a consumer, awaiting a value
 //   f | g          neither: function composition, always
 //
-// So `f | k` never has to be read twice: unbracketed it composes, and the
-// cut that sends `f` itself to `k` is `f | k⟩`.
+// `⟨` is never left out, so a chain without it always begins with a
+// function: `f | k⟩` composes, and the cut that sends `f` itself to `k` is
+// `⟨f | k⟩`.
 
 fn double(n: i64) -> i64 { n * 2 }
 fn incr(n: i64) -> i64 { n + 1 }
