@@ -100,10 +100,6 @@ documentation pass, and one defect.
   The rest of the drift the cleanup found is fixed. What would keep it from
   returning is checking the `sl` blocks, though only two in `DESIGN.md` are
   complete programs today; the rest are fragments.
-- **`docs/MIGRATION.md` is brought up to date.** Its "Write:" forms predate
-  `⟨` being required (`select Colour { Red => 0 | out, … }`), and "Removed
-  constructs" still recommends the `mu(values) | (continuations)`
-  declaration, which is now a `command`.
 
 ### Surface simplifications
 

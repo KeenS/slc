@@ -1,15 +1,17 @@
 # Migration Guide
 
-This guide covers the syntax changes made during the λ̄μμ̃ redesign. Old forms
-are rejected by the current compiler; each section shows the unsupported form
-and its replacement.
+This guide covers the syntax changes made during and after the λ̄μμ̃
+redesign, in the order they were made. Old forms are rejected by the current
+compiler; each section shows the unsupported form and its replacement, and
+every replacement is written in today's syntax, even where a later section is
+what made it so.
 
 ## Lists
 
 The builtin list type `[A]`, the list patterns `[p, …]`, and the
 `list_new`/`list_len`/`list_push`/`list_get` builtins are gone. `List<T>` is
-an ordinary recursive enum in the prelude, with `length`, `map`, `append`,
-and the outcome-offering `command nth` beside it.
+an ordinary recursive enum in the stdlib's `list` module, with `length`,
+`map`, `append`, and the outcome-offering `command nth` beside it.
 
 Unsupported:
 
@@ -21,8 +23,10 @@ let xs = list_push(list_new(), 10);
 Write:
 
 ```sl
-fn f(xs: List<i64>) -> i64 { … }
-let xs = List::Cons(10, List::Nil);
+use list::List::*;
+
+fn f(xs: list::List<i64>) -> i64 { … }
+let xs = Cons(10, Nil);
 ```
 
 ## Arm arrows
@@ -42,7 +46,7 @@ match k { .retries(out) => .retries(out) }
 Write:
 
 ```sl
-select Colour { Red => 0 | out, Green => 1 | out }
+select Colour { Red => ⟨0 | out⟩, Green => ⟨1 | out⟩ }
 match k { .retries(out) <= .retries(out) }
 ```
 
@@ -62,8 +66,8 @@ mu Config { .retries(out) <= 3 | out, .name => "slant" }
 Write:
 
 ```sl
-mu Config { retries: out <= 3 | out, name: out <= "slant" | out }
-mu Config { retries <= 3 | retries, name <= "slant" | name }
+mu Config { retries: out <= ⟨3 | out⟩, name: out <= ⟨"slant" | out⟩ }
+mu Config { retries <= ⟨3 | retries⟩, name <= ⟨"slant" | name⟩ }
 ```
 
 Nested menu copatterns repeat the field shape: `tail: head: out <= c`.
@@ -89,8 +93,8 @@ mu here(k: -i64) { read_file(path, k, complain) }
 Write:
 
 ```sl
-mu { k <= 42 | k }
-mu i64 { k <= read_file(path, k, complain) }
+mu { k <= ⟨42 | k⟩ }
+mu String { k <= ⟨path | fs::read | (k & complain)⟩ }
 ```
 
 ## Function polarity
@@ -141,11 +145,11 @@ Unsupported:
 Write:
 
 ```sl
-fn k(k1: -i32, k2: -i32) <- (i32, i32) { ... }
+fn k(k1: i32 & k2: i32) <- (i32, i32) { ... }
 ```
 
-The comma-separated parameters before `<-` form the consumed continuation row.
-The type after `<-` is the continuation produced by the function.
+The parameters before `<-` are the function's row, a menu of exits separated
+by `&`. The function produces the consumer of the type written after `<-`.
 
 ## Consumer abstraction
 
@@ -163,7 +167,7 @@ command route(x: +i32, k: -i32) { k(x) }
 Write:
 
 ```sl
-command route(x: +i32) | (k: -i32) { k(x) }
+command route(x: +i32) | (k: -i32) { ⟨x | k⟩ }
 ```
 
 ### `mu` is the expression, `command` is the declaration
@@ -175,20 +179,20 @@ caller supplies, against `μα. c`, the ambient continuation), and one keyword
 for both hid that.
 
 ```sl
-mu route(x: +i32) | (k: -i32) { x | k }        // old: the declaration
-command route(x: +i32) | (k: -i32) { x | k }   // new
+mu route(x: +i32) | (k: -i32) { x | k }          // old: the declaration
+command route(x: +i32) | (k: -i32) { ⟨x | k⟩ }   // new
 
-let source = mu(k) { read_file(path, k, err) };   // unchanged: the capture
+let source = mu { k <= ⟨path | fs::read | (k & err)⟩ };   // the capture
 ```
 
 A declaration written with `mu` is a parse error naming the difference.
 
 A `mu` expression binds one thing, the continuation it captures, and writes it
-in one group:
+as its one arm:
 
 ```sl
 mu | (k: -String) { … }   // old
-mu(k: -String) { … }      // new
+mu String { k <= … }      // new
 ```
 
 It has no value parameters: `mu(v) { … }` used to lower to `λv. …`, exactly
@@ -208,7 +212,7 @@ command route(x: +i32, to k: -i32) { k(x) }
 Write:
 
 ```sl
-command route(x: +i32) | (k: -i32) { k(x) }
+command route(x: +i32) | (k: -i32) { ⟨x | k⟩ }
 ```
 
 ### An empty parameter group is left out
@@ -223,8 +227,7 @@ command log(message: +String) | () { … }   // old
 command log(message: +String) { … }        // new
 ```
 
-The same applies to a local `mu`, which is usually the one with no values:
-`mu(k) { … }`.
+A local `mu` has no parameter group at all: `mu { k <= … }`.
 
 ### Bottom annotation
 
@@ -232,7 +235,7 @@ The declaration denotes a command, so its result is bottom. The annotation is
 optional and does not change lowering:
 
 ```sl
-command route(x: +i32) | (k: -i32) -> ⊥ { k(x) }
+command route(x: +i32) | (k: -i32) -> (;) { ⟨x | k⟩ }
 ```
 
 ## Partial agents
@@ -258,19 +261,19 @@ symmetric-agent convenience and is not part of the accepted λ̄μμ̃ surface.
 Use the explicit polarity-bearing type forms instead:
 
 ```sl
-(-I ⅋ O)
+(-I ; O)
 ```
 
-For a function-shaped positive type, use:
+For a function type, use:
 
 ```sl
-fn(I) -> O
+(I -> O)
 ```
 
 For a negative function declaration, use:
 
 ```sl
-fn(k: -O) <- I
+fn k(out: O) <- I { … }
 ```
 
 ### Expression-level `dual(e)`
@@ -287,19 +290,18 @@ a function and returns; a cut sends a value to a consumer and does not return.
 
 ```sl
 k(v)        // old
-v | k       // new
+⟨v | k⟩     // new
 
 EXIT(0)     // old
 0 | EXIT    // later — and `EXIT` itself is now gone, see below
 ```
 
-`@` binds more loosely than every operator, so `a + b | k` sends the sum, and
-it is not associative. The consumer may be any expression that produces one,
-including a negative function applied to its row: `Color::Blue | code(answer)`.
+`|` binds more loosely than every operator, so `⟨a + b | k⟩` sends the sum.
+The consumer may be any expression that produces one, including a negative
+function applied to its row: `⟨Color::Blue | code | answer⟩`.
 
-Applying a function to a continuation is unchanged: it is ordinary call
-syntax, because the callee's declared row already says which arguments are
-consumers. `deliver(ok, err)` still reads as it did.
+A continuation passed to a function is an ordinary argument, since a
+consumer is a value: `⟨k | handle`.
 
 A cut has type `⊥`, so a branch that ends in one leaves the type of an `if` to
 the other branch, and code after a cut in a block is unreachable.
@@ -313,8 +315,8 @@ it is in scope.
 ```sl
 fn die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
 
-command main | (exit: i32) {                             // new
-    let die = select { m => { m | println; 1 | exit⟩ } };
+command main | (exit: i32) / {IO} {                      // new
+    let die = select String { m => { ⟨m | println; ⟨1 | exit⟩ } };
     …
 }
 ```
@@ -330,35 +332,35 @@ fn main() -> i32 {          // old
     42
 }
 
-command main | (exit: i32) {  // new
-    "hi" | println;
-    0 | exit⟩
+command main | (exit: i32) / {IO} {  // new
+    ⟨"hi" | println;
+    ⟨0 | exit⟩
 }
 ```
 
 The final value is no longer printed: a program's output is exactly what it
 prints, and its status is what it sends to `exit`. A `main` that used to end
 with a value must print it. Inside `main`, cut against the `exit` parameter
-rather than the global `EXIT` — a `command` must consume the continuation it was
-given, so a `main` that never reaches `exit` is a linearity error.
+rather than the global `EXIT` — a `command` body must reach a continuation on
+every path, so a `main` that falls off the end is refused by the type checker.
 
 ## `select` covers any positive type
 
 `select` is no longer restricted to enums, its arms use the same patterns
-`match` uses, and an arm is written `pattern <= command`:
+`match` uses, and an arm is written `pattern => command`:
 
 ```sl
 select Color {                     // one arm per variant — the negative additive
-    Red => 0 | return⟩,
-    Green => 1 | return⟩,
+    Red => ⟨0 | return⟩,
+    Green => ⟨1 | return⟩,
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } => ((value | int_to_str) + unit) | out⟩,
+    Reading { value, unit } => ⟨(⟨value | int_to_str) + unit | out⟩,
 }
 
-select (+i64 ⊗ +i64) {             // a bare product names its type
-    (left, right) => (left + right) | out⟩,
+select (+i64, +i64) {              // a bare product names its type
+    (left, right) => ⟨left + right | out⟩,
 }
 ```
 
@@ -370,14 +372,14 @@ way `match` writes it. And an arm used to be written the other way round, as
 ```sl
 select Color {
     0 | return => Red,     // old
-    Red => 0 | return,     // new
+    Red => ⟨0 | return⟩,   // new
 }
 ```
 
-The shape now comes first, where a `match` puts it, and `<=` points back at the
-command — a `match` arm produces a value from a shape, and a `select` arm runs
-a command when a shape arrives. Writing the old order is a parse error that
-says so.
+The shape now comes first, where a `match` puts it, and `=>` points from it to
+the command — data flows forward into the arm. A `match` arm produces a value
+from a shape, and a `select` arm runs a command when a shape arrives. Writing
+the old order is a parse error that says so.
 
 ## Struct literals and patterns
 
@@ -394,7 +396,7 @@ continuation each outcome belongs to.
 ```sl
 let content = read_file(path);          // old: a runtime error if it fails
 
-path | fs::read | (                            // new
+⟨path | fs::read | (                           // new
     select String { content => ... }
     & select String { message => ... }
 )⟩
@@ -431,7 +433,7 @@ let value_end = parse_value(input, pos, report);
 ...
 
 // new
-(input, pos) | parse_value | (select i64 { value_end => ... } & report)⟩
+⟨(input, pos) | parse_value | (select i64 { value_end => ... } & report)⟩
 ```
 
 A helper that only computes with values stays an ordinary positive `fn`.
@@ -453,24 +455,23 @@ f | k                          // new — the same consumer, composed
 ⟨21 | double | out⟩            // new
 ```
 
-`⟩` closes a chain: the stage before it consumes. A head that is not a
-function needs no mark, so `v | f` applies and `v | k⟩` cuts; a head
-that *is* a function composes, and `⟨` says it is the value flowing in
-instead — `f | k⟩` composes into `k`, while `⟨f | k⟩` sends `f` to it. A
-chain is flat, because composition is associative. `@` keeps its other
+`⟨` marks the value flowing in, and `⟩` closes a chain: the stage before it
+consumes. A chain without `⟨` begins with a function and composes, so
+`f | k⟩` composes into `k`, while `⟨f | k⟩` sends `f` to it (see "`⟨` is
+never left out"). A chain is flat, because composition is associative. `@` keeps its other
 job, the as-pattern binder `c @ '0'..='9'`.
 
 ## A function is applied by flowing into it
 
-`f(a)` is gone: an application is `a | f`, and several arguments are the
+`f(a)` is gone: an application is `⟨a | f`, and several arguments are the
 product they always were.
 
 ```sl
 println(label(area(shape)))            // old
-shape | area | label | println         // new
+⟨shape | area | label | println        // new
 
 add(a, b)                              // old
-(a, b) | add                           // new
+⟨(a, b) | add                          // new
 ```
 
 Constructors still build — `Cons(h, t)` is unchanged. Everything else
@@ -479,7 +480,7 @@ are the closing stage.
 
 ```sl
 nth(xs, 2, found, missing)             // old
-(xs, 2) | nth | (found & missing)⟩     // new
+⟨(xs, 2) | nth | (found & missing)⟩    // new
 ```
 
 ## Calls and rows are unary
@@ -492,9 +493,9 @@ be passed whole:
 ```sl
 command nth(xs: List<T>, i: i64) | (found: T & missing: String)
 
-(xs, 2) | nth | (found & missing)⟩           // the exits, as one menu
+⟨(xs, 2) | nth | (found & missing)⟩          // the exits, as one menu
 command forward(…) | (row: (T & String)) {   // or handed on unopened
-    (xs, 2) | nth | row⟩
+    ⟨(xs, 2) | nth | row⟩
 }
 ```
 
@@ -506,17 +507,17 @@ and then cut into it. It takes values *and* continuations, which is what a
 
 ```sl
 42 | (("answer", out) | traced)⟩          // old
-("answer", 42) | trace::tap | out⟩        // new
+⟨("answer", 42) | trace::tap | out⟩       // new
 ```
 
 `defaulting(fallback, k)` is gone rather than converted. Its job was to
 *be* a consumer in a row slot, and a command is not one; the slot takes
-`select String { m => fallback | k⟩ }`, which is what the combinator was
+`select String { m => ⟨fallback | k⟩ }`, which is what the combinator was
 hiding.
 
 ```sl
 (xs, 9) | nth | (out & (0, out) | defaulting)⟩              // old
-(xs, 9) | nth | (out & select String { m => 0 | out⟩ })⟩    // new
+⟨(xs, 9) | nth | (out & select String { m => ⟨0 | out⟩ })⟩  // new
 ```
 
 ## Printing is an effect
@@ -533,11 +534,11 @@ command main | (exit: i32) {                    // old
 }
 
 command main | (exit: i32) / {IO} {             // new
-    "hi" | println;
-    0 | exit⟩
+    ⟨"hi" | println;
+    ⟨0 | exit⟩
 }
 
-fn greet(name: String) -> Unit / {IO} { "hello, " + name | println }
+fn greet(name: String) -> (,) / {IO} { ⟨"hello, " + name | println }
 ```
 
 A program can now handle its own output: a `handle` with a `write_line`
@@ -545,7 +546,7 @@ clause sits nearer the operation than the runtime's handler and answers
 first. See `examples/io.sl`.
 
 This bites where it did not before because a pipeline stage now charges
-its effects at all: `x | throw` was silently free, and only the old call
+its effects at all: `⟨x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
 ## `⟨` is never left out
@@ -605,7 +606,7 @@ command consume | (k: (-i64 ⅋ -i64)) { … }         // old
 command consume | (k: (-i64 ; -i64)) { … }         // new
 
 fn stop(k: -i32) -> ⊥ { 0 | k⟩ }                   // old
-fn stop(k: -i32) -> (;) { 0 | k⟩ }                 // new
+fn stop(k: -i32) -> (;) { ⟨0 | k⟩ }               // new
 
 2 ⊗ 3                                              // old
 2 * 3                                              // new
@@ -641,11 +642,11 @@ alternative by position, counted from 0:
 ```sl
 enum Outcome { Number(i64), Text(String) }                // old: a declaration
 fn show(x: Outcome) -> String {
-    match x { Outcome::Number(n) => n | int_to_str, Outcome::Text(s) => s }
+    match x { Outcome::Number(n) => ⟨n | int_to_str, Outcome::Text(s) => s }
 }
 
 fn show(x: (i64 | String)) -> String {                    // new
-    match x { ::0(n) => n | int_to_str, ::1(s) => s }
+    match x { ::0(n) => ⟨n | int_to_str, ::1(s) => s }
 }
 ```
 
@@ -703,10 +704,10 @@ of 2 components received …". It is refused at check time now:
 
 ```sl
 let inc = 1 | add;                    // was accepted, then crashed
-(1, 2) | add                          // the call
+⟨(1, 2) | add                         // the call
 
-"high" | route                        // refused: `route` takes (String ⊗ i64)
-("high", 7) | route | k⟩              // the call, closing on its exits
+⟨"high" | route                       // refused: `route` takes (String, i64)
+⟨("high", 7) | route | k⟩             // the call, closing on its exits
 ```
 
 A program's own function named like a builtin — `fn add` — is now checked
@@ -751,7 +752,7 @@ were already names that do not restate their module, and are unchanged.
 use seq::map_seq;                                        // old
 (double, s) | map_seq
 
-(double, s) | seq::map                                   // new
+⟨(double, s) | seq::map                                  // new
 ```
 
 ## File operations are the `fs` module's
@@ -763,7 +764,7 @@ the stdlib's `fs` module — commands over runtime primitives renamed
 ```sl
 path | read_file | (ok & failed)⟩              // old
 
-path | fs::read | (ok & failed)⟩               // new
+⟨path | fs::read | (ok & failed)⟩              // new
 ```
 
 Their outcome rows are unchanged; their names lost the `_file` the module
@@ -782,9 +783,9 @@ xs | length | println;
 use list::List::*;                                   // new
 use list::length;
 let xs = Cons(1, Cons(2, Nil));
-xs | length | println;
-(3, 7) | num::min | println;                         // or by path, no import
-("answer", 42) | trace::tap | out⟩
+⟨xs | length | println;
+⟨(3, 7) | num::min | println;                        // or by path, no import
+⟨("answer", 42) | trace::tap | out⟩
 ```
 
 A name that is neither local, declared, nor imported is now a checker
@@ -843,7 +844,7 @@ throw(m) resume => 0 - 1               // old
 throw(m) => 0 - 1                      // new: never resumes, no binder
 
 config() resume => resume(10)          // old
-config(): resume => resume(10)         // new: bound after the colon
+config(): resume => ⟨10 | resume        // new: bound after the colon
 ```
 
 ## Effect rows: row variables, written like generics
@@ -859,8 +860,8 @@ fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
 
 A bare arrow still means pure — now enforced against arguments too:
 passing an effectful function where a rowless arrow is declared is an
-error at the call site. `{Exn, ..E}` extends a variable; `main`'s row must
-be empty.
+error at the call site. `{Exn, ..E}` extends a variable; `main`'s row is
+`{IO}` or empty.
 
 ## Shifts removed: a consumer is a value
 
@@ -878,15 +879,15 @@ Choice::Refutes(↓k)                // old
 Choice::Refutes(k)                 // new
 
 Refutes(r) => 42 | ↑r              // old
-Refutes(r) => 42 | r               // new
+Refutes(r) => ⟨42 | r⟩            // new
 
 fn describe(note: ↓-String) -> ⊥ { "…" | ↑note }   // old
-fn describe(note: -String) -> ⊥ { "…" | note }     // new
+fn describe(note: -String) -> (;) { ⟨"…" | note⟩ }  // new
 ```
 
 With no box to go through, `dual` is an involution on the nose: `-(-T)`
 *is* `T`, and double-negation elimination is `fn dne<T>(t: -(-T)) -> T
-{ t }`. The one rule that remains is orientation: the left of `@` is the
+{ t }`. The one rule that remains is orientation: the left of `|` is the
 value side, so a continuation is passed as an argument, never cut against
 data. Where a named box is still wanted, declare it — `menu Lazy<T>
 { force: T }` is the computation returning `T`, and a one-field `form` is
@@ -904,9 +905,9 @@ enum Color { Red, Green, Blue }
 
 fn k(return: i32) <- Color {
     select Color {
-        Red => 0 | return,
-        Green => 1 | return,
-        Blue => 2 | return,
+        Red => ⟨0 | return⟩,
+        Green => ⟨1 | return⟩,
+        Blue => ⟨2 | return⟩,
     }
 }
 ```
@@ -920,8 +921,8 @@ enum ParseResult { Parsed(String), Failed(String) }
 
 fn deliver(ok: String & err: String) <- ParseResult {
     select ParseResult {
-        Parsed(text) => text | ok⟩,
-        Failed(message) => message | err⟩,
+        Parsed(text) => ⟨text | ok⟩,
+        Failed(message) => ⟨message | err⟩,
     }
 }
 ```
@@ -931,32 +932,49 @@ can therefore be replaced by one continuation that accepts a result enum.
 
 ### `choose`
 
-Old variant-style `choose T { Variant }` syntax is removed.
-
-Experimental struct-based `choose` implementation work has been removed while
-its design is deferred. Do not migrate programs to any `choose` form; a future
-design will be discussed separately.
-
-## A `select` arm writes its shape first
-
-An arm reads as a `match` arm does: the pattern, then what runs.
-
-```sl
-select T { command => pattern }     // old
-select T { pattern => command }     // new
-```
-
-An arm that delivered to a continuation by calling it cuts instead:
-
-```sl
-select T { V => k(v) }              // old
-select T { V => ⟨v | k⟩ }           // new
-```
+Old variant-style `choose T { Variant }` syntax is removed, and so is the
+experimental struct-based `choose Struct`. No `choose` form exists.
 
 ## A cut sends its value
 
 `t | k` used to lower to a μ binder that shadowed `k`, so the value was sent
 nowhere. The cut `⟨t | k⟩` now delivers `t` to `k`, as it always claimed to.
+
+## A `match` arm has no guard
+
+`p if e => …` is gone. A test on what a pattern bound is a `match` inside the
+arm:
+
+```sl
+match n { m if m > 0 => ⟨m | ok⟩, _ => ⟨0 | ok⟩ }   // old
+match n > 0 { true => ⟨n | ok⟩, _ => ⟨0 | ok⟩ }      // new
+```
+
+The exhaustiveness diagnostic says "add a `_` arm" rather than "an unguarded
+`_` arm".
+
+## A bundle item that ends in a cut is refused
+
+Every item of a bundle is built with it, and the consumer chooses one after,
+so an item that ends in a cut jumped before anything chose it. It is refused;
+write the consumer it meant:
+
+```sl
+⟨c | choose | ({ ⟨0 | exit⟩ } & { ⟨1 | exit⟩ })⟩               // old: took the first exit
+⟨c | choose | (fn(_) { ⟨0 | exit⟩ } & fn(_) { ⟨1 | exit⟩ })⟩   // new
+```
+
+## A builtin stage is held to its signature
+
+What flows into a builtin is checked as it is for a declared function —
+against the builtin's signature, with its whole value group:
+
+```sl
+⟨(1, "b") | add        // old: accepted, then failed at run time; now refused
+⟨1 | add               // old: a partial application; now refused
+⟨("a", "b") | add      // old: joined the strings; now refused
+⟨("a", "b") | str_concat
+```
 
 ## `!` is the prelude's `not`
 
@@ -979,12 +997,9 @@ spawn { ... }
 
 Concurrency-like process creation is not part of the λ̄μμ̃ core.
 
-### Expression-level value-returning `mu`
+### `mu` declarations with value groups
 
-The old expression-level/value-returning `mu` is removed. Use either a
-positive function or the final `mu(values) | (continuations)` declaration,
-according to the intended control behavior.
-
-### `choose Struct`
-
-`choose Struct` is removed, and no replacement exists.
+`mu(values) | (continuations)` declared a consumer abstraction. A
+declaration is a `command` (see "`mu` is the expression, `command` is the
+declaration"), and `mu` is only the expression that captures the current
+continuation, `mu T { k <= … }`.
