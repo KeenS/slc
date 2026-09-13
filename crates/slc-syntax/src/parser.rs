@@ -1283,12 +1283,13 @@ impl Parser {
     }
 
     pub fn parse_expr(&mut self) -> Result<Node<Expr>, ParseError> {
-        // `|` binds more loosely than every operator, so `a + b | k` sends
-        // the sum along. The chain is flat: composition is associative, and
-        // the syntax says so rather than nesting.
+        // `<value | stage | consumer>`: `<` marks what flows in and `>` the
+        // consumer that closes. The chain is flat: composition is
+        // associative, and the syntax says so rather than nesting.
         let start = self.span_start();
         self.split_arrow_before_number();
-        let from_value = self.eat(&TokenKind::Lt) || self.eat(&TokenKind::CutOpen);
+        self.refuse_old_chain_bracket()?;
+        let from_value = self.eat(&TokenKind::Lt);
         let first = self.parse_flow_stage()?;
         if !from_value && self.peek_kind() != Some(&TokenKind::Pipe) {
             return Ok(first);
@@ -1297,7 +1298,8 @@ impl Parser {
         while self.eat(&TokenKind::Pipe) {
             written.push(self.parse_chain_stage()?);
         }
-        let into_consumer = self.eat(&TokenKind::Gt) || self.eat(&TokenKind::CutClose);
+        self.refuse_old_chain_bracket()?;
+        let into_consumer = self.eat(&TokenKind::Gt);
         if from_value && into_consumer && written.len() < 2 {
             return Err(ParseError {
                 message: "a cut sends a value to a consumer, so it has both: \
@@ -1318,6 +1320,23 @@ impl Parser {
         let stages = resolve_consumer_binders(written, into_consumer)?;
         let span = Span { start, end: self.span_end() };
         Ok(Node { span, kind: Expr::Flow { stages, from_value, into_consumer } })
+    }
+
+    /// `⟨` and `⟩` are gone; the tokens stay only so that writing one says
+    /// what replaced it.
+    fn refuse_old_chain_bracket(&self) -> Result<(), ParseError> {
+        let replacement = match self.peek_kind() {
+            Some(TokenKind::CutOpen) => ("⟨", "<"),
+            Some(TokenKind::CutClose) => ("⟩", ">"),
+            _ => return Ok(()),
+        };
+        Err(ParseError {
+            message: format!(
+                "`{}` is gone: a chain is written `<value | stage | consumer>`, so write `{}`",
+                replacement.0, replacement.1
+            ),
+            span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+        })
     }
 
     /// `<-1 | k>` lexes its opening as the reverse arrow `<-`. A number
@@ -3011,6 +3030,16 @@ mod tests {
         let (_, from_value, into_consumer, first) = flow("<-1 | k>");
         assert!(from_value && into_consumer);
         assert!(matches!(first, Expr::Int(-1)), "{first:?}");
+    }
+
+    #[test]
+    fn the_old_chain_brackets_are_refused() {
+        for (source, fragment) in
+            [("⟨1 | k>", "`⟨` is gone"), ("<1 | k⟩", "`⟩` is gone"), ("⟨1 | k⟩", "`⟨` is gone")]
+        {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains(fragment), "{source}: {errors:?}");
+        }
     }
 
     #[test]
