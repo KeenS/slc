@@ -6,6 +6,6 @@ command main | (exit: i32) / {IO} {
     ⟨3 < 5 | println;
     ⟨10 >= 10 | println;
     ⟨'a' < 'b' | println;
-    ⟨true && (⟨false | not) | println;
+    ⟨match true { true => ⟨false | not, _ => false } | println;
     ⟨0 | exit⟩
 }

@@ -1341,8 +1341,16 @@ impl Parser {
                 Some(TokenKind::Gt) => (BinOp::Gt, 2),
                 Some(TokenKind::Le) => (BinOp::Le, 2),
                 Some(TokenKind::Ge) => (BinOp::Ge, 2),
-                Some(TokenKind::AmpAmp) => (BinOp::And, 1),
-                Some(TokenKind::PipePipe) => (BinOp::Or, 0),
+                // There is no `&&` or `||`: a choice on a `bool` is a `match`.
+                // The tokens stay only so that writing one says so.
+                Some(TokenKind::AmpAmp | TokenKind::PipePipe) => {
+                    return Err(ParseError {
+                        message: "there is no `&&` or `||`: a choice on a `bool` is a `match`, \
+                                  `match a { true => b, _ => false }`"
+                            .into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                }
                 _ => break,
             };
             if prec < min_prec {
@@ -2897,12 +2905,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_boolean_and_unary_operators() {
-        let p = parse_str("-a && b || c");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(&body.kind, Expr::BinOp { op: BinOp::Or, .. }));
+    fn there_is_no_and_or() {
+        for source in [
+            "fn f(a: bool, b: bool) -> bool { a && b }",
+            "fn f(a: bool, b: bool) -> bool { a || b }",
+        ] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains("there is no `&&` or `||`"), "{source}: {errors:?}");
+        }
     }
 
     #[test]

@@ -335,7 +335,7 @@ fn short_circuit_and_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(match false && (1 / 0 == 1) { true => 1, _ => 2 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { println(match false { true => match 1 / 0 == 1 { true => 1, _ => 2 }, _ => 2 }); ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -349,7 +349,7 @@ fn short_circuit_or_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit_or.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(match true || (1 / 0 == 1) { true => 3, _ => 4 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { println(match true { true => 3, _ => match 1 / 0 == 1 { true => 3, _ => 4 } }); ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -363,19 +363,6 @@ fn subtraction_is_left_associative() {
     let dir = std::env::temp_dir().join("slc_test_assoc.sl");
     std::fs::write(&dir, "command main | (exit: -i32) / {IO} { println(10 - 3 - 2); ⟨0 | exit⟩ }")
         .unwrap();
-    let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok);
-    assert!(stdout.contains("5"));
-}
-
-#[test]
-fn boolean_precedence_below_comparisons() {
-    let dir = std::env::temp_dir().join("slc_test_bool_prec.sl");
-    std::fs::write(
-        &dir,
-        "command main | (exit: -i32) / {IO} { println(match 1 == 1 || 2 == 3 { true => 5, _ => 6 }); ⟨0 | exit⟩ }",
-    )
-    .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
     assert!(stdout.contains("5"));

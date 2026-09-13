@@ -1000,6 +1000,19 @@ Logical not is an ordinary function a `bool` flows into.
 ⟨done | not            // new
 ```
 
+## `&&` and `||` are gone
+
+A conjunction or a disjunction is a `match` on its left side, which runs the
+right side only when it is needed:
+
+```sl
+ok && ⟨x | valid                                   // old
+match ok { true => ⟨x | valid, _ => false }        // new
+
+a || b                                             // old
+match a { true => true, _ => b }                   // new
+```
+
 ## Removed constructs
 
 ### `spawn`

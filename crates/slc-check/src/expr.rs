@@ -2306,23 +2306,6 @@ fn check_expr_unapplied(
             let lhs_ty = check_expr(lhs, enums, env, diags);
             let rhs_ty = check_expr(rhs, enums, env, diags);
             match op {
-                slc_syntax::ast::BinOp::And | slc_syntax::ast::BinOp::Or => {
-                    for (operand, ty) in [(lhs, lhs_ty.clone()), (rhs, rhs_ty.clone())] {
-                        if !ty
-                            .as_ref()
-                            .is_some_and(|ty| fits(env, &Type::Pos(Base::Bool), ty, &operand.kind))
-                        {
-                            diags.push(Diagnostic {
-                                message: format!(
-                                    "boolean operand has type {}; expected +bool",
-                                    ty.map(|ty| ty.to_string()).unwrap_or_else(|| "unknown".into())
-                                ),
-                                span: operand.span,
-                            });
-                        }
-                    }
-                    Some(Type::Pos(Base::Bool))
-                }
                 slc_syntax::ast::BinOp::Add
                 | slc_syntax::ast::BinOp::Sub
                 | slc_syntax::ast::BinOp::Mul
@@ -3779,18 +3762,6 @@ mod tests {
             diags.iter().any(|d| d.message.contains("continuation row of 1")),
             "diags: {diags:?}"
         );
-    }
-
-    #[test]
-    fn boolean_operators_ok() {
-        assert!(check("fn f(a: +bool, b: +bool) -> bool { a && b || a }").is_ok());
-    }
-
-    #[test]
-    fn boolean_operand_mismatch_rejected() {
-        let diags = check("fn f(a: +i32) -> bool { a && true }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("boolean operand")));
-        assert!(diags[0].span.start > 0);
     }
 
     #[test]

@@ -512,11 +512,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         }
 
         Expr::BinOp { op, lhs, rhs } => {
-            if matches!(op, BinOp::And | BinOp::Or)
-                && let Some(expanded) = lower_boolean_operator(op, lhs, rhs, e.span)
-            {
-                return lower_expr(&expanded, continuations);
-            }
             let name = match op {
                 BinOp::Add => "add",
                 BinOp::Sub => "sub",
@@ -529,7 +524,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 BinOp::Gt => "gt",
                 BinOp::Le => "le",
                 BinOp::Ge => "ge",
-                BinOp::And | BinOp::Or => unreachable!("boolean operators expand before lowering"),
             };
             Ok(call_curried(
                 Term::Var(name.into()),
@@ -1714,41 +1708,6 @@ fn call_curried(callee: Term, args: Vec<Term>) -> Term {
     result
 }
 
-fn lower_boolean_operator<T>(
-    op: &BinOp,
-    lhs: &Node<T>,
-    rhs: &Node<T>,
-    span: Span,
-) -> Option<Node<Expr>>
-where
-    T: Clone,
-    Expr: From<T>,
-{
-    if !matches!(op, BinOp::And | BinOp::Or) {
-        return None;
-    }
-
-    let rhs_body = Node { span: rhs.span, kind: rhs.kind.clone().into() };
-    let (true_body, false_body) = if matches!(op, BinOp::And) {
-        (rhs_body, Node { span: rhs.span, kind: Expr::Bool(false) })
-    } else {
-        (Node { span: rhs.span, kind: Expr::Bool(true) }, rhs_body)
-    };
-    // A `match` on the left operand: the right one is an arm's body, so it
-    // runs only when that arm is taken.
-    let lhs_expr = lhs.kind.clone().into();
-    Some(Node {
-        span,
-        kind: Expr::Match {
-            scrutinee: Box::new(Node { span: lhs.span, kind: lhs_expr }),
-            arms: vec![
-                MatchArm { pattern: Pattern::Bool(true), body: true_body },
-                MatchArm { pattern: Pattern::Wildcard, body: false_body },
-            ],
-        },
-    })
-}
-
 fn pattern_descriptor(pattern: &Pattern) -> String {
     fn escape(s: &str) -> String {
         s.replace('\\', "\\\\").replace('"', "\\\"")
@@ -2214,16 +2173,6 @@ mod tests {
     fn lower_lambda() {
         let out = lower_str("fn id(x: +i32) -> i32 { x }");
         assert_eq!(out[0].1, Term::Lam("x".into(), Box::new(Term::Var("x".into()))));
-    }
-
-    #[test]
-    fn lower_boolean_operators_expand_to_a_match() {
-        // The right operand is an arm's body, so it runs only when chosen.
-        for source in ["true && false", "false || true"] {
-            let out = lower_str(source);
-            let printed = format!("{}", out[0].1);
-            assert!(printed.contains("__match_dispatch"), "{source}: {printed}");
-        }
     }
 
     #[test]

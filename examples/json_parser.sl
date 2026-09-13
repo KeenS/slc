@@ -49,7 +49,8 @@ fn at(input: String, pos: i64) -> char {
 }
 
 fn parse_digits(input: String, pos: i64) -> i64 {
-    match pos < (⟨input | str_len) && (⟨(input, pos) | at | is_digit) { true => {
+    let more = match pos < (⟨input | str_len) { true => (⟨(input, pos) | at | is_digit), _ => false };
+    match more { true => {
         ⟨(input, pos + 1) | parse_digits
     }, _ => {
         pos
@@ -123,7 +124,8 @@ command parse_fraction(input: String, pos: i64) | (ok: i64 & failed: String) {
 
 command parse_exponent(input: String, pos: i64) | (ok: i64 & failed: String) {
     let ch = ⟨(input, pos) | at;
-    match ch == 'e' || ch == 'E' { true => {
+    let exponent = match ch == 'e' { true => true, _ => ch == 'E' };
+    match exponent { true => {
         ⟨(input, pos + 1) | parse_exponent_tail | (ok & failed)⟩
     }, _ => {
         ⟨pos | ok⟩
@@ -131,7 +133,8 @@ command parse_exponent(input: String, pos: i64) | (ok: i64 & failed: String) {
 }
 
 command parse_exponent_tail(input: String, pos: i64) | (ok: i64 & failed: String) {
-    let after_sign = match (⟨(input, pos) | at) == '-' || (⟨(input, pos) | at) == '+' { true => {
+    let signed = match (⟨(input, pos) | at) == '-' { true => true, _ => (⟨(input, pos) | at) == '+' };
+    let after_sign = match signed { true => {
         pos + 1
     }, _ => {
         pos
@@ -174,12 +177,17 @@ command parse_escape(input: String, pos: i64) | (ok: i64 & failed: String) {
     }
 }
 
+// Whether `count` hexadecimal digits start at `pos`, looking no further than
+// the first that is not one.
+fn hex_digits(input: String, pos: i64, count: i64) -> bool {
+    match count == 0 { true => true, _ => match (⟨(input, pos) | at | is_hex) {
+        true => ⟨(input, pos + 1, count - 1) | hex_digits,
+        _ => false,
+    } }
+}
+
 command parse_hex4(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (⟨(input, pos) | at | is_hex)
-        && (⟨(input, pos + 1) | at | is_hex)
-        && (⟨(input, pos + 2) | at | is_hex)
-        && (⟨(input, pos + 3) | at | is_hex)
-    { true => {
+    match (⟨(input, pos, 4) | hex_digits) { true => {
         ⟨(input, pos + 4) | parse_string_tail | (ok & failed)⟩
     }, _ => {
         ⟨"invalid hexadecimal digit in \\u escape" | failed⟩
@@ -188,7 +196,9 @@ command parse_hex4(input: String, pos: i64) | (ok: i64 & failed: String) {
 
 command parse_literal(input: String, pos: i64, text: String) | (ok: i64 & failed: String) {
     let end = pos + (⟨text | str_len);
-    match end <= (⟨input | str_len) && input[pos..end] == text { true => {
+    // The slice is taken only once it is known to be in range.
+    let matches = match end <= (⟨input | str_len) { true => input[pos..end] == text, _ => false };
+    match matches { true => {
         ⟨end | ok⟩
     }, _ => {
         ⟨"invalid JSON literal" | failed⟩

@@ -55,10 +55,10 @@ fn roundtrip_printing_stable() {
 #[test]
 fn roundtrip_operators_and_indexing() {
     let a = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match 1 + 2 * 3 == 7 && s[0] == 'a' { true => s[1..], _ => "" } }"#,
+        r#"fn main() -> i32 { let s = "abc"; match 1 + 2 * 3 == 7 { true => match s[0] == 'a' { true => s[1..], _ => "" }, _ => "" } }"#,
     );
     let b = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match 1 + 2 * 3 == 7 && s[0] == 'a' { true => s[1..], _ => "" } }"#,
+        r#"fn main() -> i32 { let s = "abc"; match 1 + 2 * 3 == 7 { true => match s[0] == 'a' { true => s[1..], _ => "" }, _ => "" } }"#,
     );
     assert_eq!(a, b);
 }

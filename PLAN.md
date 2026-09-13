@@ -89,7 +89,7 @@ ordinary declarations, and one defect.
 
 ### Evaluation
 
-Independent of the surface simplifications below: `&&` and `||` are removed
+Independent of the surface simplifications below: `&&` and `||` are gone
 rather than made functions, so no operator waits on how an operand is
 delayed.
 
@@ -189,22 +189,8 @@ delayed.
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
 They depend on each other, so they are listed in the order they can land:
-`&&` and `||` go first, and `bool` becomes the prelude's `Bool` last, once
-nothing left in the language is built on the built-in one.
-
-- **`&&` and `||` are removed.** A conjunction is a `match`, which runs its
-  right side only when the left one holds:
-
-  ```sl
-  ok && ⟨x | valid                                  // old
-  match ok { true => ⟨x | valid, _ => false }       // new
-  ```
-
-  They lower to exactly that `match` today, so nothing changes at run time.
-  What goes: `BinOp::And` and `BinOp::Or` in the parser, the checker and
-  lowering, and their precedence levels; the tokens stay only so that
-  writing them says where they went. The migration touches
-  `examples/comparison.sl`, `examples/json_parser.sl` and the Rust tests.
+`bool` becomes the prelude's `Bool` last, once nothing left in the language
+is built on the built-in one.
 
 - **Infix operators become functions.** `+ - * / % == != < > <= >=`,
   prefix `-`, and indexing `a[i]` and `a[i..j]` leave the surface, and each
@@ -236,9 +222,8 @@ nothing left in the language is built on the built-in one.
   the stdlib, the examples, the docs and the Rust tests, so it wants a
   converter, as `if` had.
 
-- **`bool` becomes the prelude's `Bool`.** The last of these, possible once
-  "`&&` and `||` are removed", since those lower to a `match` on the
-  built-in type. It becomes an ordinary enum, `enum Bool { False, True }`,
+- **`bool` becomes the prelude's `Bool`.** The last of these. It becomes an
+  ordinary enum, `enum Bool { False, True }`,
   so a `match` on it is exhaustive the way a match on any enum is, and the
   `bool` exhaustiveness defect goes with it: coverage is counted only over
   enum variants (`exhaustive.rs`), and a match over literals always asks for

@@ -428,8 +428,6 @@ pub enum BinOp {
     Gt,
     Le,
     Ge,
-    And,
-    Or,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -1708,7 +1708,7 @@ nested left to right for several arguments.
 | `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
-| `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to a `match` on the left operand first, whose arm is the right one, keeping them short-circuiting |
+| `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`. There is no `&&` or `\|\|`: a choice on a `bool` is a `match` |
 | `expr.unop` | `-a` | `neg(⟦a⟧)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
