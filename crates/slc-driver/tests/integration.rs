@@ -128,8 +128,8 @@ fn checker_diagnostics_include_source_locations() {
     let cases = [
         (
             "slc_test_location_type.sl",
-            "command main | (exit: -i32) / {IO} { ⟨1 + true | println; ⟨0 | exit⟩ }",
-            ["type:", "1:39", "`1 + true`"],
+            "command main | (exit: -i32) / {IO} { ⟨(1, true) | add | println; ⟨0 | exit⟩ }",
+            ["type:", "1:51", "`add`"],
         ),
         (
             "slc_test_location_polarity.sl",
@@ -166,7 +166,7 @@ fn earlier_diagnostic_phases_take_precedence_over_later_phases() {
 
     // A valid parse with a type error must stop before polarity checking.
     let dir = std::env::temp_dir().join("slc_test_phase_type_precedence.sl");
-    std::fs::write(&dir, "command bad(x: -i32) | (k: -i32) { k(1 + true) }").unwrap();
+    std::fs::write(&dir, "command bad(x: -i32) | (k: -i32) { k((⟨(1, true) | add)) }").unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
     assert!(stderr.starts_with("error: type:"), "stderr: {stderr}");
@@ -339,7 +339,7 @@ fn short_circuit_and_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { ⟨match false { true => match 1 / 0 == 1 { true => 1, _ => 2 }, _ => 2 } | println; ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match false { true => match (⟨(1, 0) | div | x => (x, 1) | eq) { true => 1, _ => 2 }, _ => 2 } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -353,7 +353,7 @@ fn short_circuit_or_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit_or.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { ⟨match true { true => 3, _ => match 1 / 0 == 1 { true => 3, _ => 4 } } | println; ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨match true { true => 3, _ => match (⟨(1, 0) | div | x => (x, 1) | eq) { true => 3, _ => 4 } } | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -367,7 +367,7 @@ fn subtraction_is_left_associative() {
     let dir = std::env::temp_dir().join("slc_test_assoc.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { ⟨10 - 3 - 2 | println; ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { ⟨(10, 3) | sub | x => (x, 2) | sub | println; ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
@@ -380,7 +380,7 @@ fn out_of_range_index_rejected() {
     let dir = std::env::temp_dir().join("slc_test_oob.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} { ⟨"ab"[5] | println; ⟨0 | exit⟩ }"#,
+        r#"command main | (exit: -i32) / {IO} { ⟨("ab", 5) | index | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -393,7 +393,7 @@ fn slice_bounds_checked() {
     let dir = std::env::temp_dir().join("slc_test_slice_bounds.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} { ⟨"abc"[1..9] | println; ⟨0 | exit⟩ }"#,
+        r#"command main | (exit: -i32) / {IO} { ⟨("abc", 1, 9) | substring | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -407,11 +407,11 @@ fn named_error_propagation_success_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
+            match (⟨(input, "ok") | eq) { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { ⟨"ok: " + value | println; ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { ⟨"err: " + message | println; ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨("ok: ", value) | add | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨("err: ", message) | add | println; ⟨1 | exit⟩ };
             ⟨"ok" | parse | (ok & err)⟩
         }"#,
     )
@@ -427,11 +427,11 @@ fn named_error_propagation_error_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
+            match (⟨(input, "ok") | eq) { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { ⟨"ok: " + value | println; ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { ⟨"err: " + message | println; ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨("ok: ", value) | add | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨("err: ", message) | add | println; ⟨1 | exit⟩ };
             ⟨"bad" | parse | (ok & err)⟩
         }"#,
     )
@@ -448,17 +448,17 @@ fn json_selected_error_continuation_reports_parse_error() {
         &dir,
         r#"command parse_json(input: +String) | (ok: -String & err: -String) {
             let start = ⟨(input, 0) | skip_ws;
-            match start < (⟨input | str_len) {
-                true => match input[start] {
-                    '0'..='9' => ⟨input[start..start + 1] | ok⟩,
+            match (⟨(start, (⟨input | str_len)) | lt) {
+                true => match (⟨(input, start) | index) {
+                    '0'..='9' => ⟨(input, start, (⟨(start, 1) | add)) | substring | ok⟩,
                     _ => ⟨"expected JSON value" | err⟩
                 },
                 _ => ⟨"empty input" | err⟩,
             }
         }
         command main | (exit: -i32) / {IO} {
-            let ok = fn(value: +String) -> i32 { ⟨"parsed: " + value | println; ⟨0 | exit⟩ };
-            let err = fn(message: +String) -> i32 { ⟨"error: " + message | println; ⟨1 | exit⟩ };
+            let ok = fn(value: +String) -> i32 { ⟨("parsed: ", value) | add | println; ⟨0 | exit⟩ };
+            let err = fn(message: +String) -> i32 { ⟨("error: ", message) | add | println; ⟨1 | exit⟩ };
             ⟨"x" | parse_json | (ok & err)⟩
         }"#,
     )
@@ -577,9 +577,9 @@ fn fs_read_offers_a_missing_file_to_its_failure_continuation() {
         &dir,
         r#"command main | (exit: -i32) / {IO} {
             ⟨"does-not-exist.sl" | fs::read | (select String {
-                source => { ⟨"unexpectedly read " + source | println; ⟨1 | exit⟩ },
+                source => { ⟨("unexpectedly read ", source) | add | println; ⟨1 | exit⟩ },
             } & select String {
-                message => { ⟨"failed: " + message | println; ⟨0 | exit⟩ },
+                message => { ⟨("failed: ", message) | add | println; ⟨0 | exit⟩ },
             })⟩
         }"#,
     )
@@ -654,13 +654,13 @@ fn select_builds_the_consumer_of_a_product() {
 
         fn show(out: -String) <- Reading {
             select Reading {
-                Reading { value, unit } => ⟨((⟨value | int_to_str) + unit) | out⟩,
+                Reading { value, unit } => ⟨((⟨value | int_to_str), unit) | add | out⟩,
             }
         }
 
         fn total(out: -i64) <- (+i64, +i64) {
             select (+i64, +i64) {
-                (left, right) => ⟨(left + right) | out⟩,
+                (left, right) => ⟨(left, right) | add | out⟩,
             }
         }
 
@@ -688,7 +688,7 @@ fn a_struct_is_built_and_taken_apart_anywhere() {
 
         fn sum(d: D) -> i64 {
             match d {
-                D { left: a, right: b } => a + b,
+                D { left: a, right: b } => (⟨(a, b) | add),
                 _ => 0,
             }
         }
@@ -925,7 +925,7 @@ fn the_prelude_is_available_and_shadowable() {
     let dir = std::env::temp_dir().join("slc_test_prelude.sl");
     std::fs::write(
         &dir,
-        r#"fn double(n: +i64) -> i64 { n * 2 }
+        r#"fn double(n: +i64) -> i64 { (⟨(n, 2) | mul) }
         command main | (exit: -i32) / {IO} {
             ⟨(⟨21 | double | to_string) | println;
             ⟨(⟨true | fmt) | println;
@@ -955,7 +955,7 @@ fn the_prelude_is_available_and_shadowable() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-    ⟨1 + "x" | println;
+    ⟨(1, "x") | add | println;
     ⟨0 | exit⟩
 }"#,
     )
@@ -972,7 +972,7 @@ fn a_multi_parameter_function_travels_as_a_value() {
     let dir = std::env::temp_dir().join("slc_test_packed_hof.sl");
     std::fs::write(
         &dir,
-        r#"fn plus(a: i64, b: i64) -> i64 { a + b }
+        r#"fn plus(a: i64, b: i64) -> i64 { (⟨(a, b) | add) }
         fn apply2(f: ((+i64, +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
         command main | (exit: -i32) / {IO} {
             ⟨(⟨(1, 2) | plus) | println;
@@ -995,7 +995,7 @@ fn a_function_headed_chain_composes_unless_marked() {
     let dir = std::env::temp_dir().join("slc_test_flow_head.sl");
     std::fs::write(
         &dir,
-        r#"fn double(n: i64) -> i64 { n * 2 }
+        r#"fn double(n: i64) -> i64 { (⟨(n, 2) | mul) }
         fn describe(out: -String) <- ((+i64 -> +i64)) {
             fn(f: (+i64 -> +i64)) { ⟨"a function" | out⟩ }
         }
@@ -1022,12 +1022,12 @@ fn a_row_closes_the_chain_and_travels_whole() {
     std::fs::write(
         &dir,
         r#"command classify(n: i64) | (found: i64 & missing: String) {
-            match n > 0 { true => ⟨n | found⟩, _ => ⟨"negative" | missing⟩ }
+            match (⟨(n, 0) | gt) { true => ⟨n | found⟩, _ => ⟨"negative" | missing⟩ }
         }
         command forward(n: i64) | (row: (-i64 & -String)) { ⟨n | classify | row⟩ }
         command main | (exit: -i32) / {IO} {
             ⟨mu i64 { ok <= ⟨7 | classify | (ok & select +String { s => ⟨s | str_len | ok⟩ })⟩ } | println;
-            ⟨mu i64 { ok <= ⟨0 - 1 | forward | (ok & select +String { s => ⟨s | str_len | ok⟩ })⟩ } | println;
+            ⟨mu i64 { ok <= ⟨(0, 1) | sub | forward | (ok & select +String { s => ⟨s | str_len | ok⟩ })⟩ } | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1047,8 +1047,8 @@ fn an_operation_may_take_several_parameters() {
         &dir,
         r#"effect Tag { fn tag(label: +String, n: +i64) -> i64; }
         command main | (exit: -i32) / {IO} {
-            ⟨handle (⟨("ten", 7) | tag) { tag(l, n): k => (⟨n * 10 | k), return(m) => m } | println;
-            ⟨handle (⟨("len", 7) | tag) { tag(l, n) => (⟨l | str_len) + n, return(m) => m } | println;
+            ⟨handle (⟨("ten", 7) | tag) { tag(l, n): k => (⟨(n, 10) | mul | k), return(m) => m } | println;
+            ⟨handle (⟨("len", 7) | tag) { tag(l, n) => (⟨((⟨l | str_len), n) | add), return(m) => m } | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1115,7 +1115,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     let dir = std::env::temp_dir().join("slc_test_stdlib_shadow_mod.sl");
     std::fs::write(
         &dir,
-        r#"mod num { pub fn min(a: +i64, b: +i64) -> i64 { a + 100 } }
+        r#"mod num { pub fn min(a: +i64, b: +i64) -> i64 { (⟨(a, 100) | add) } }
         command main | (exit: -i32) / {IO} { ⟨(⟨(3, 7) | num::min) | println; ⟨0 | exit⟩ }"#,
     )
     .unwrap();
@@ -1214,7 +1214,7 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
         use list::List::*;
         enum Mine { Nil, Cons(i64, Mine) }
         fn total(xs: List<i64>) -> i64 {
-            match xs { Nil => 0, Cons(n, rest) => n + (⟨rest | total) }
+            match xs { Nil => 0, Cons(n, rest) => (⟨(n, (⟨rest | total)) | add) }
         }
         command main | (exit: -i32) / {IO} { ⟨Cons(40, Cons(2, Nil)) | total | println; ⟨0 | exit⟩ }"#,
     )
@@ -1234,7 +1234,7 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
         r#"use list::List;
         enum Mine { Nil, Cons(i64, Mine) }
         fn count(xs: Mine) -> i64 {
-            match xs { Nil => 0, Cons(_, rest) => 1 + count(rest) }
+            match xs { Nil => 0, Cons(_, rest) => (⟨(1, count(rest)) | add) }
         }
         command main | (exit: -i32) / {IO} { ⟨count(Mine::Nil) | println; ⟨0 | exit⟩ }"#,
     )
@@ -1273,7 +1273,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
 
         impl Describe for Config {
             fn describe(self: +Config) -> String {
-                self.name + " with " + fmt(self.retries) + " retries"
+                (⟨(self.name, " with ") | add | x => (x, fmt(self.retries)) | add | x => (x, " retries") | add)
             }
         }
         impl Describe for Report {
@@ -1281,7 +1281,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
         }
         impl<+T: Display> Describe for Stream2<T> {
             fn describe(self: +Stream2<T>) -> String {
-                "stream starting " + fmt(self.head)
+                (⟨("stream starting ", fmt(self.head)) | add)
             }
         }
 
@@ -1364,7 +1364,7 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
     std::fs::write(
         &dir,
         "command main | (exit: -i32) / {IO} {
-             let show = select +i64 { n => ⟨n * 2 | println };
+             let show = select +i64 { n => ⟨(n, 2) | mul | println };
              ⟨21 | show⟩;
              ⟨0 | exit⟩
          }",
@@ -1386,12 +1386,12 @@ fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
         &dir,
         r#"menu Deliver { deliver: (i64 -> String) }
         fn deliver_i64(out: String) <- i64 {
-            select i64 { n => ⟨"the number " + (⟨n | int_to_str) | out⟩ }
+            select i64 { n => ⟨("the number ", (⟨n | int_to_str)) | add | out⟩ }
         }
         fn delivers() -> Deliver { mu Deliver { deliver <= ⟨deliver_i64 | deliver⟩ } }
 
         menu Render { render: (-String -> -i64) }
-        fn render_i64(n: i64) -> String { "n=" + (⟨n | int_to_str) }
+        fn render_i64(n: i64) -> String { (⟨("n=", (⟨n | int_to_str)) | add) }
         fn renders() -> Render { mu Render { render <= ⟨render_i64 | render⟩ } }
 
         command main | (exit: i32) / {IO} {
@@ -1415,7 +1415,7 @@ fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
     std::fs::write(
         &dir,
         r#"fn deliver_i64(out: String) <- i64 {
-            select i64 { n => ⟨"the number " + (⟨n | int_to_str) | out⟩ }
+            select i64 { n => ⟨("the number ", (⟨n | int_to_str)) | add | out⟩ }
         }
         data Holder { f: (i64 -> String) }
         enum Box1 { B((i64 -> String)) }
@@ -1583,7 +1583,7 @@ fn binder_stages_keep_a_chain_flat() {
     let dir = std::env::temp_dir().join("slc_test_value_binder.sl");
     std::fs::write(
         &dir,
-        r#"fn odd(n: i64) -> bool { n % 2 == 1 }
+        r#"fn odd(n: i64) -> bool { (⟨(n, 2) | rem | x => (x, 1) | eq) }
         command main | (exit: i32) / {IO} {
             ⟨1 | stream::count_from | seq::of_stream
                | s => (odd, s) | seq::filter
@@ -1699,7 +1699,7 @@ fn a_plain_let_follows_the_polarity_of_its_type() {
             ⟨"a" | shout;
             ⟨"b" | shout;
             let n = { ⟨"computed" | println; 21 };
-            ⟨n + n | println;
+            ⟨(n, n) | add | println;
             ⟨0 | exit⟩
         }"#,
     )
@@ -1800,8 +1800,8 @@ fn a_trait_method_of_two_parameters_dispatches_on_its_self_component() {
     std::fs::write(
         &dir,
         r#"trait Combine { fn combine(self: Self, other: Self) -> Self; }
-        impl Combine for i64 { fn combine(self: i64, other: i64) -> i64 { self + other } }
-        impl Combine for String { fn combine(self: String, other: String) -> String { self + other } }
+        impl Combine for i64 { fn combine(self: i64, other: i64) -> i64 { (⟨(self, other) | add) } }
+        impl Combine for String { fn combine(self: String, other: String) -> String { (⟨(self, other) | add) } }
 
         command main | (exit: -i32) / {IO} {
             ⟨(⟨(1, 2) | combine) | println;

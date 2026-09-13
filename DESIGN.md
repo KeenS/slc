@@ -232,8 +232,8 @@ what `k` is bound to in order to tell an application from a command.
 A positive function is the familiar value-to-value function:
 
 ```sl
-fn add(x: +i32, y: +i32) -> i32 {
-    x + y
+fn plus(x: +i32, y: +i32) -> i32 {
+    ⟨(x, y) | add
 }
 ```
 
@@ -574,8 +574,8 @@ pattern binds exactly the payload its variant declares:
 ```sl
 match shape {
     Point => 0,
-    Circle(r) => 3 * r * r,
-    Rect(w, h) => w * h,
+    Circle(r) => (⟨(3, r) | mul | x => (x, r) | mul),
+    Rect(w, h) => (⟨(w, h) | mul),
 }
 ```
 
@@ -857,7 +857,7 @@ data Reading { value: i64, unit: String }
 // dual(Reading) is `(-i64 ; -String)`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        Reading { value, unit } => ⟨((⟨value | int_to_str) + unit) | out⟩,
+        Reading { value, unit } => ⟨((⟨value | int_to_str), unit) | add | out⟩,
     }
 }
 ```
@@ -867,7 +867,7 @@ A bare product needs no declaration; its shape is written as the type:
 ```sl
 fn total(out: -i64) <- (+i64, +i64) {
     select (+i64, +i64) {
-        (left, right) => ⟨(left + right) | out⟩,
+        (left, right) => ⟨(left, right) | add | out⟩,
     }
 }
 ```
@@ -963,7 +963,7 @@ trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
 impl Show for bool { fn show(self: bool) -> String { match self { true => "t", _ => "f" } } }
 
-fn labelled<+T: Show>(x: T) -> String { "= " + (⟨x | show) }
+fn labelled<+T: Show>(x: T) -> String { (⟨("= ", (⟨x | show)) | add) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -1883,8 +1883,8 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-let parsed = select +String { value => { ⟨"parsed: " + value | println; ⟨0 | exit⟩ } };
-let failed = select +String { message => { ⟨"error: " + message | println; ⟨1 | exit⟩ } };
+let parsed = select +String { value => { ⟨("parsed: ", value) | add | println; ⟨0 | exit⟩ } };
+let failed = select +String { message => { ⟨("error: ", message) | add | println; ⟨1 | exit⟩ } };
 ⟨source | parse_json | (parsed & failed)⟩
 ```
 
