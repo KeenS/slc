@@ -1,8 +1,8 @@
 // Projection: `.i` reads a tuple component, `.field` reads a record field.
 //
-// A product is right-nested with its last component bare, so projection
-// walks the spine to the i-th element — resolved from the value's type, so
-// `t.2` and `p.z` know which component they name.
+// Projection is resolved against the value's type, so `t.2` and `p.z` know
+// which component they name. Nesting is significant: `(10, (20, 30))` has two
+// components, and its `.1` is `(20, 30)`.
 
 data Point { x: i64, y: i64, z: i64 }
 

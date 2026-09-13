@@ -63,13 +63,7 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-**Multiarity connectives.** `Tensor`, `Par`, `With` and `Sum` hold any
-number of components, and 1, ⊥, 0 and ⊤ are their empty forms. Nesting is
-significant: `(A, (B, C))` is not `(A, B, C)`, nor `(A | (B | C))`
-`(A | B | C)`. In order:
-
-1. **Docs.** DESIGN (projection, §8, the core grammar), MIGRATION (nesting
-   is significant), and the examples.
+Nothing is queued.
 
 ## Deferred, for discussion
 

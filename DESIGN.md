@@ -451,7 +451,7 @@ A variant may carry a payload. A variant with no payload is a value of the
 declaration; a variant with a payload is a constructor from that payload to
 it, so `Shape::Point` is a `Shape` while `Shape::Circle` is only a `Shape`
 once it is applied to an `i64`. Several payload values are packed into one
-right-nested tensor, so every variant carries exactly one payload.
+tensor, so every variant carries exactly one payload.
 
 `match` decomposes an enum by choosing the corresponding arm, and a variant
 pattern binds exactly the payload its variant declares:
@@ -624,7 +624,7 @@ named types as equal only when their names match; the surface checker owns
 field presence, field types, order, and exhaustiveness. This keeps named
 declarations distinct from the tensor unit `1`.
 
-A record declaration's *representation* is the right-nested tensor of its
+A record declaration's *representation* is the tensor of its
 field types — `+i32 ⊗ +i32` for the declaration above — and a record with no
 fields is the tensor unit `1`. A record literal and a record pattern must both
 write every declared field exactly once, in declaration order, with the
@@ -635,24 +635,24 @@ an `enum` variant is its payload labelled by the variant's name. One core form
 covers both, which is why one surface form — `match` — takes either apart.
 
 A `data` value carries every field at once, which is what `⊗` means: the
-positive product of its field types, associated to the right. `data
+positive product of its field types, one component each. `data
 Direction { left: i32, right: i32 }` describes `+i32 ⊗ +i32`, and the surface
 tuple `(a, b)` is the same connective written anonymously.
 
 A product is taken apart by `match`/`select`, which binds every component, or
 by **projection** for a single one: `t.0`, `t.1`, … reads a tuple component,
-and `s.field` reads a record field. Because the product is right-nested with
-its last component stored bare, projection is resolved against the value's
-type — the checker turns `.i` and `.field` into the component index — and then
-walks the spine to it. A nested tuple and a flat one of the same shape are the
-same value, so `(a, (b, c)).1` is `b`, not `(b, c)`: projection sees the flat
-spine. `examples/projection.sl` uses both forms.
+and `s.field` reads a record field. Projection is resolved against the
+value's type — the checker turns `.i` and `.field` into the component index —
+and reads that component. Nesting is significant: `(a, (b, c))` has two
+components, so its `.1` is `(b, c)`, while `(a, b, c)` has three. A record's
+field is read by binding the record's fields under its label, so a record of
+one field is read the same way. `examples/projection.sl` uses both forms.
 
 ### Explicit connective types
 
 Every connective is available as explicit *type* syntax, always
 parenthesized; a paren joins any number of components with one connective,
-nested to the right as the value is:
+and nesting is significant — `(A, (B, C))` is not `(A, B, C)`:
 
 ```sl
 fn sum_pair(p: (i64, i64)) -> i64 { … }
@@ -693,11 +693,12 @@ pair is a pair of punctuation marks.
 
 - **Enum values** name their alternative by position, as `Enum::Variant(v)`
   does with the name left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`.
-  Positions count from 0, as tuple projection `t.0` does. `(T1 | T2 | T3)`
-  nests to the right, as a tuple does, and a position is read along that
-  nesting — against the sum its context gives, a return type, an annotation,
-  a parameter or a cut, once the declaration is checked. Where nothing has
-  said which sum it is, `::1(v)` and later are refused. A `select` over a sum
+  Positions count from 0, as tuple projection `t.0` does, and an alternative
+  is built by its position alone, so it needs no sum known to build it. Its
+  payload meets the alternative at that position of the sum its context gives
+  — a return type, an annotation, a parameter or a cut — once the
+  declaration is checked. `(T1 | (T2 | T3))` has two alternatives, the second
+  itself a sum, so a value of it is `::1(::0(v))`. A `select` over a sum
   answers each position exactly once; a `match` covers every one, or has an
   arm that matches anything. The consumer of `(A | B)` is `(-A & -B)`, so a
   bundle of exits consumes an alternative as it is: the position picks the
@@ -1517,7 +1518,7 @@ prelude means, and the two never collide.
 Term      t ::= x                     variable
               | λx. t                 value abstraction
               | μα. c                 capture of the ambient continuation
-              | t ⊗ t                 tensor pair
+              | (t₁ ⊗ … ⊗ tₙ)          tuple, n ≥ 2
               | L(t)                  labelled additive injection (enum value)
               | μ[M; .d₁(α). c₁ | … ] menu (negative additive value)
               | μ[M]                  empty menu, retaining its named owner
@@ -1535,9 +1536,10 @@ CoTerm    e ::= α                     co-variable
 Command   c ::= ⟨ t ∥ e ⟩             cut
 
 Type      A ::= +B | -B               positive / negative atom
-              | A ⊗ A | A ⅋ A         multiplicatives
-              | 1 | ⊥                 their units
-              | A + A | A & A         additives
+              | (A ⊗ … ⊗ A) | (A ⅋ … ⅋ A)  multiplicatives, any number of components
+              | 1 | ⊥                 their units: no components
+              | (A + … + A) | (A & … & A)  additives, any number of components
+              | 0 | ⊤                 their units
               | A → A                 function
               | dual(A) | Named | ?v  dual, declaration name, inference variable
 ```
@@ -1603,11 +1605,11 @@ re-parsed without loss.
 ⟨ v ∥ μ̃x. c ⟩                → c[v/x]              μ̃ — the binder
 ⟨ λx. t ∥ v · e ⟩            → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩  → — application
 ⟨ co(e′) ∥ v · e ⟩           → ⟨ v ∥ e′ ⟩           apply the reified consumer
-⟨ (t₀ ⊗ … ) ∥ prj:i ⟩        → tᵢ                  projection
+⟨ (t₀ ⊗ … ⊗ tₙ) ∥ prj:i ⟩    → tᵢ                  projection
 ⟨ L(v₁ ⊗ …) ∥ μ̃[M; … L(x…). c …] ⟩ → c[vᵢ/xᵢ]       labelled
 ⟨ μ[… .d(α). c …] ∥ .d(e) ⟩  → c[e/α]              copattern
 ⟨ co(.d(e)) ∥ μ̃[M; … .d(x). c …] ⟩ → c[co(e)/x]     co-labelled
-⟨ v₁ ⊗ v₂ ∥ μ̃(x, y). c ⟩     → c[v₁/x, v₂/y]      product
+⟨ (v₁ ⊗ … ⊗ vₙ) ∥ μ̃(x₁, …, xₙ). c ⟩ → c[vᵢ/xᵢ]    product
 ```
 
 The labelled rule is what makes `select` lazy: the label of the value selects
@@ -1633,8 +1635,8 @@ nested left to right for several arguments.
 | `expr.enum` | `Color::Red`, `Shape::Circle(r)` | `Color::Red(unit)`, `Shape::Circle(⟦r⟧)` — several payload values pack into one tensor |
 | `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧` |
-| `expr.pair` | `(a, b)`, `(,)` | `⟦a⟧ ⊗ ⟦b⟧`, right-nested; `(,)` is `unit` |
-| `expr.inject` | `::i(v)` | `i` right injections `\|1(…)` around a left one `\|0(⟦v⟧)`, or around `⟦v⟧` bare at the last position of the sum the checker resolved |
+| `expr.pair` | `(a, b, …)`, `(,)` | the tuple `(⟦a⟧ ⊗ ⟦b⟧ ⊗ …)`; `(,)` is `unit` |
+| `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
 | `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
@@ -1645,7 +1647,7 @@ nested left to right for several arguments.
 | `expr.flow` | `v | k`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut`. A chain that does not close is a fold of applications, and one that does not begin with a value is that fold under a λ. A chain whose stage is a `command` is neither: the stages before it fold into its value group, the closing stage is its row, and the two are applied together — `⟦callee⟧ ⟦values⟧ ⟦row⟧` |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
-| `expr.data` | `S { f: v, g: w }` | `S(⟦v⟧ ⊗ ⟦w⟧)` — the declaration's name labelling the right-nested tensor of its fields, the same shape a variant has |
+| `expr.data` | `S { f: v, g: w }` | `S((⟦v⟧ ⊗ ⟦w⟧))` — the declaration's name labelling the tuple of its fields, the same shape a variant has |
 | `expr.select` | `select T { p => c, … }` | `co(μ̃[T; L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃[T])` when it has no shapes; `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.comatch` | `mu T { item: k <= c, … }` | `μ[T; .T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
@@ -1757,6 +1759,7 @@ program *reaches* are a row.
 - bare `fn` → rejected; write either `->` or `<-`
 - old variant-style `choose T { Variant }` → removed
 - `choose Struct` → removed while its design is deferred
+- nesting is significant: `(a, (b, c)).1` is `(b, c)`, no longer `b`
 - `(A ⊗ B)` → `(A, B)`, `(A ⅋ B)` → `(A ; B)`, `⊥` → `(;)`; `⊗` no longer
   multiplies
 - `Unit` → `(,)`, `Bottom` → `(;)`, `Empty` → `(|)`, `Top` and `mu Top {}` →

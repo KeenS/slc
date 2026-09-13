@@ -548,6 +548,25 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## Nesting is significant
+
+A tuple, a sum, a menu of exits and a form value hold as many components as
+are written, and a nested one is a component. A nested tuple and a flat one
+used to be the same value:
+
+```sl
+let t = (1, (2, 3));
+t.1                        // old: 2 — projection saw the flat spine
+t.1                        // new: (2, 3)
+t.2                        // old: 3; new: refused, `t` has two components
+
+fn f(p: (i64, i64, i64))   // takes (1, 2, 3), and no longer (1, (2, 3))
+```
+
+An alternative is built by its position alone, so `::1(v)` no longer needs
+its sum known by the end of its declaration; `(A | (B | C))` has two
+alternatives, and its values are `::0(a)`, `::1(::0(b))` and `::1(::1(c))`.
+
 ## Types are joined by ASCII connectives
 
 The glyphs are gone from the surface: `⊗` is `,`, `⅋` is `;`, and `⊥` is
