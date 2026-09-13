@@ -371,7 +371,7 @@ impl Parser {
             Some('(') => {
                 self.pos += 1;
                 let left = self.ty()?;
-                let connective = ["⊗", "⅋", "&", "+", "->"]
+                let connective = ["⊗", "⅋", "&", "⊕", "+", "->"]
                     .into_iter()
                     .find(|connective| self.eat(connective))
                     .ok_or_else(|| self.error("expected a type connective"))?;
@@ -382,7 +382,7 @@ impl Parser {
                     "⊗" => Type::Tensor(left, right),
                     "⅋" => Type::Par(left, right),
                     "&" => Type::With(left, right),
-                    "+" => Type::Sum(left, right),
+                    "⊕" | "+" => Type::Sum(left, right),
                     // `A -> B` is `-A ⅋ B`.
                     _ => Type::arrow(*left, *right),
                 })

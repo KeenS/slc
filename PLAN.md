@@ -64,10 +64,3 @@ feature is mid-flight; what remains open is below.
 ## Next
 
 Nothing is queued.
-
-## Deferred, for discussion
-
-- **A surface spelling for `0`.** ⊤'s value is settled as `(&)` (above).
-  `0` has no values, and its consumer stays `select Empty {}`; whether the
-  empty sum deserves an anonymous type spelling is still open.
-

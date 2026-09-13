@@ -290,6 +290,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
             TypeExpr::Tensor(a, b)
             | TypeExpr::Par(a, b)
             | TypeExpr::With(a, b)
+            | TypeExpr::Sum(a, b)
             | TypeExpr::Fun(a, b) => {
                 ty(&a.kind, out);
                 ty(&b.kind, out);
@@ -318,6 +319,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
                     pattern(i, out);
                 }
             }
+            Pattern::Inject { pattern: p, .. } => pattern(p, out),
             Pattern::Dtor { arg, .. } => pattern(arg, out),
             _ => {}
         }
@@ -736,6 +738,7 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         TypeExpr::Tensor(a, b)
         | TypeExpr::Par(a, b)
         | TypeExpr::With(a, b)
+        | TypeExpr::Sum(a, b)
         | TypeExpr::Fun(a, b) => {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
@@ -856,6 +859,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut arg.kind, stack, locals);
             }
         }
+        Expr::Inject { value, .. } => resolve_expr(&mut value.kind, stack, locals),
         Expr::Pair(items) | Expr::Bundle(items) | Expr::Flow { stages: items, .. } => {
             for item in items {
                 resolve_expr(&mut item.kind, stack, locals);
@@ -937,6 +941,7 @@ fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>])
             }
         }
         Pattern::Binding { pattern, .. } => resolve_pattern(pattern, stack, locals),
+        Pattern::Inject { pattern, .. } => resolve_pattern(pattern, stack, locals),
         Pattern::Range { start, end } => {
             resolve_pattern(start, stack, locals);
             resolve_pattern(end, stack, locals);
@@ -964,7 +969,7 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         Pattern::Ident(name) => {
             out.insert(name.clone());
         }
-        Pattern::Dtor { arg, .. } => {
+        Pattern::Dtor { arg, .. } | Pattern::Inject { pattern: arg, .. } => {
             collect_binders(arg, out);
         }
         Pattern::Binding { name, pattern } => {
@@ -1047,6 +1052,7 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
                 rewrite_expr_imports(&mut arg.kind, imported);
             }
         }
+        Expr::Inject { value, .. } => rewrite_expr_imports(&mut value.kind, imported),
         Expr::Pair(items)
         | Expr::Bundle(items)
         | Expr::Flow { stages: items, .. }
@@ -1128,7 +1134,9 @@ fn rewrite_pattern_imports(p: &mut Pattern, imported: &HashMap<String, String>) 
                 rewrite_pattern_imports(field, imported);
             }
         }
-        Pattern::Binding { pattern, .. } => rewrite_pattern_imports(pattern, imported),
+        Pattern::Binding { pattern, .. } | Pattern::Inject { pattern, .. } => {
+            rewrite_pattern_imports(pattern, imported)
+        }
         Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
                 rewrite_pattern_imports(item, imported);

@@ -669,6 +669,7 @@ fn is_value_form(e: &Expr, enums: &Declarations) -> bool {
         | Expr::Ident(_)
         | Expr::Lambda { .. }
         | Expr::Select { .. } => true,
+        Expr::Inject { value, .. } => is_value_form(&value.kind, enums),
         Expr::Pair(items) | Expr::Bundle(items) => {
             items.iter().all(|item| is_value_form(&item.kind, enums))
         }
@@ -849,6 +850,11 @@ fn check_pattern(
         }
         Pattern::Binding { pattern, .. } => {
             check_pattern(pattern, expected, declarations, span, diags)
+        }
+        Pattern::Inject { index, arity, pattern } => {
+            if let Some(payload) = injected(expected, *index, *arity) {
+                check_pattern(pattern, &payload, declarations, span, diags);
+            }
         }
         Pattern::Tuple(items) | Pattern::Bundle(items) => {
             for item in items {
@@ -1263,6 +1269,12 @@ fn bind_match_pattern(
                 bind_match_pattern(item, ty, enums, env);
             }
         }
+        // An alternative binds its payload, at the type its slot has.
+        Pattern::Inject { index, arity, pattern } => {
+            if let Some(payload) = injected(scrutinee, *index, *arity) {
+                bind_match_pattern(pattern, &payload, enums, env);
+            }
+        }
         // A bundle binds the exits of an anonymous menu, as a tuple binds
         // the components of a product.
         Pattern::Bundle(items) => {
@@ -1469,6 +1481,23 @@ fn bind_select_arm(
         (Type::Tensor(..), Pattern::Tuple(_)) => flatten_tensor(consumed),
         // A menu of exits: its items, likewise.
         (Type::With(..), Pattern::Bundle(_)) => flatten_with(consumed),
+        // An alternative of a sum: its payload, at the type its slot has.
+        (_, Pattern::Inject { index, arity, .. }) => {
+            match injected(&env.uni.apply(consumed), *index, *arity) {
+                Some(payload) => vec![payload],
+                None => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "this arm covers alternative {} of a sum of {arity}, and {consumed} \
+                             is not one",
+                            index + 1
+                        ),
+                        span,
+                    });
+                    return;
+                }
+            }
+        }
         _ => {
             diags.push(Diagnostic {
                 message: format!("a `select {consumed}` arm must cover a shape of {consumed}"),
@@ -1482,6 +1511,7 @@ fn bind_select_arm(
         Pattern::Enum { fields, .. } => fields.iter().collect(),
         Pattern::Data { fields, .. } => fields.iter().map(|(_, p)| p).collect(),
         Pattern::Tuple(items) => items.iter().collect(),
+        Pattern::Inject { pattern, .. } => vec![pattern.as_ref()],
         _ => Vec::new(),
     };
     if binders.len() != components.len() {
@@ -1558,6 +1588,39 @@ fn flatten_tensor(ty: &Type) -> Vec<Type> {
 }
 
 /// The items of a `&`, flattened right-nested — the exits a bundle holds.
+/// The payload type of the alternative in slot `index` of a sum of `arity`,
+/// read through the right-nesting; `None` when `ty` is not that deep a sum.
+fn injected(ty: &Type, index: usize, arity: usize) -> Option<Type> {
+    let mut ty = ty;
+    for _ in 0..index {
+        let Type::Sum(_, rest) = ty else { return None };
+        ty = rest;
+    }
+    if index + 1 < arity {
+        let Type::Sum(payload, _) = ty else { return None };
+        ty = payload;
+    }
+    Some(ty.clone())
+}
+
+/// The type of an injection: its payload in its slot, a fresh variable in
+/// every other, nested to the right.
+fn injection_type(env: &mut Env, payload: Type, index: usize, arity: usize) -> Type {
+    let mut ty = if index + 1 == arity {
+        payload
+    } else {
+        let mut rest = env.uni.fresh_var();
+        for _ in index + 2..arity {
+            rest = Type::Sum(Box::new(env.uni.fresh_var()), Box::new(rest));
+        }
+        Type::Sum(Box::new(payload), Box::new(rest))
+    };
+    for _ in 0..index {
+        ty = Type::Sum(Box::new(env.uni.fresh_var()), Box::new(ty));
+    }
+    ty
+}
+
 fn flatten_with(ty: &Type) -> Vec<Type> {
     match ty {
         Type::With(a, b) => {
@@ -2576,6 +2639,12 @@ fn check_expr_unapplied(
                 None => Some(body_ty),
             }
         }
+        // An injection: one alternative is supplied, and the slots around it
+        // are the alternatives not taken, whatever their types turn out to be.
+        Expr::Inject { index, arity, value } => {
+            let payload = check_expr(value, enums, env, diags)?;
+            Some(injection_type(env, payload, *index, *arity))
+        }
         // A bundle of exits: every component is supplied, and whoever
         // holds it takes exactly one — the additive conjunction.
         Expr::Bundle(items) => items
@@ -2915,10 +2984,15 @@ fn check_expr_unapplied(
                         } else {
                             ""
                         };
-                        format!(
-                            "`{name}` takes its whole value group, {group}{exits}; what flows \
-                             in has type {acc}, and a call is not applied to part of a group"
-                        )
+                        if values.len() == 1 {
+                            format!("`{name}` takes {group}{exits}; what flows in has type {acc}")
+                        } else {
+                            format!(
+                                "`{name}` takes its whole value group, {group}{exits}; what \
+                                 flows in has type {acc}, and a call is not applied to part of \
+                                 a group"
+                            )
+                        }
                     };
                     diags.push(Diagnostic { message, span: stages[index].span });
                     return None;

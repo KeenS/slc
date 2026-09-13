@@ -552,12 +552,38 @@ menu Top {}
 ```
 
 The exact nullary `Unit` and `Bottom` declarations are recognized structurally:
-`Unit` is the surface name of core `1`, constructed interchangeably as `()` or
+`Unit` is the surface name of core `1`, constructed interchangeably as `(,)` or
 `Unit {}`, and `Bottom` is the surface name of core `⊥`; its nullary demand
-`Bottom {}` is likewise `()`. A differently shaped declaration that shadows
-either name stays nominal. `select Empty {}` is the empty consumer of the
-uninhabited `Empty`, and `mu Top {}` is the unique `Top` value. Concise surface
-aliases for `Empty` and `Top` are deliberately deferred.
+`Bottom {}` is likewise `(,)`. A differently shaped declaration that shadows
+either name stays nominal.
+
+Each connective is written three ways — declared by name, anonymously, and
+nullary — and each unit has its logical name as well:
+
+| declared | anonymous type | value | unit type | unit value | unit |
+|---|---|---|---|---|---|
+| `data` | `(T1, T2)` | `(v1, v2)` | `(,)` | `(,)` | `1` |
+| `enum` | `(T1 \| T2)` | `(v1 \|)`, `(\| v2)` | `(\|)` | — | `0` |
+| `menu` | `(T1 & T2)` | `(v1 & v2)` | `(&)` | `(&)` | `⊤` |
+| `form` | `(T1 ⅋ T2)` | `select (A, B) { (a, b) => c }`, of `(-A ⅋ -B)` | `(⅋)` | — | `⊥` |
+
+A paren holding only its separator is the nullary form of that connective,
+so each unit is its anonymous spelling with no components. `0` and `⊥` have
+no values: `0` is uninhabited, and `⊥` is the type of a command, which runs
+rather than being held. `0` is still consumed — `select (|) {}` is its
+consumer, with no arms — and `(&)` is `⊤`'s unique value.
+
+`⅋` alone has no componentwise value. `(v1, v2)` and `(v1 & v2)` supply
+every component and `(v |)` supplies one, but a value of `-A ⅋ -B` is one
+consumer of both halves at once, in a single command — so it is built by the
+`select` over the product it consumes, or, since `A -> B` is `-A ⅋ B`, by
+any function. For the same reason its separator is the glyph alone: no
+ASCII punctuation already means it.
+
+`(|)` and `0` name `Empty`, and `(&)` and `⊤` name `Top`, so the additive
+units stay nominal, as their declarations are; `(,)` and `1`, `(⅋)` and `⊥`
+are the core's units directly. `⊗` and `⊕` may be written for `,` and `|`
+between the components of a type.
 
 The two declarations above are each other's dual: `dual(i64 & String)` is
 `-i64 ⊕ -String`, a sum of requests each carrying the continuation that wants
@@ -666,8 +692,9 @@ spine. `examples/projection.sl` uses both forms.
 
 ### Explicit connective types
 
-Both multiplicative connectives are available as explicit *type* syntax, and
-are always parenthesized:
+Every connective is available as explicit *type* syntax, and is always
+parenthesized; a paren joins any number of components with one connective,
+nested to the right as the value is:
 
 ```sl
 fn sum_pair(p: (i64 ⊗ i64)) -> i64 { … }
@@ -676,11 +703,13 @@ command consume_pair | (k: (-i64 ⅋ -i64)) { … }
 
 | Type syntax | Meaning |
 |---|---|
-| `(A ⊗ B)` | positive product; the anonymous form of a two-field `data` |
+| `(A, B)` | positive product; the anonymous form of a two-field `data`, also written `(A ⊗ B)` |
+| `(A \| B)` | positive sum; the anonymous form of a two-variant `enum`, also written `(A ⊕ B)` |
+| `(A & B)` | negative sum; the anonymous form of a two-item `menu` |
 | `(A ⅋ B)` | negative product; the dual of `⊗`, a joint consumer of both sides |
 | `(A -> B)` | function: `-A ⅋ B`. So a function is negative, `(A -> ⊥)` *is* `-A`, and `dual(A -> B)` is `A ⊗ -B` — an argument together with a continuation for the result, which is what a call stack is |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
-| `⊥` | bottom |
+| `1`, `0`, `⊤`, `⊥` | the units of `,`, `\|`, `&` and `⅋`; also written `(,)`, `(\|)`, `(&)`, `(⅋)` |
 
 `⊗` and `data` are the same connective: a `data` declaration names a
 product and its fields, while `(A ⊗ B)` writes one anonymously. Neither is
@@ -720,6 +749,38 @@ Either is consumed by the cut that supplies the whole product:
 ```sl
 Reading { value: 42, unit: "m" } | show | out⟩
 (2, 40) | total | out⟩
+```
+
+### Anonymous sums
+
+`(T1 | T2)` is the enum of two alternatives written without a declaration,
+as `(T1, T2)` is the record of two fields. Its value names its alternative
+by position: the value fills one slot, and a `|` stands for each other.
+
+```sl
+fn describe(out: String) <- (i64 | String) {
+    select (i64 | String) {
+        (n |) => "number " + (n | int_to_str) | out⟩,
+        (| s) => "text " + s | out⟩,
+    }
+}
+```
+
+More alternatives nest to the right, as a tuple's components do: `(A | B | C)`
+is `(A | (B | C))`, and `(| | v)` is `(| (| v))`, so the core needs only a
+left and a right injection. An arm may therefore stop at the rest — `(| rest)`
+over `(A | B | C)` binds a `(B | C)`. A `select` answers each alternative
+exactly once; a `match` covers every one, or has a `_`.
+
+Beside an empty slot — before `)` or another `|` — a `|` is a slot; anywhere
+else it keeps its meaning, a chain's next stage or an or-pattern's next
+alternative. `(v || w)` is still `or`, and `(v ||)` is the first of three.
+
+`dual(A ⊕ B)` is `-A & -B`, so a bundle of exits consumes a sum as it is: the
+alternative picks the exit, and a command can offer its outcome as one value.
+
+```sl
+(| "text") | (on_number & on_text)⟩     // runs on_text with "text"
 ```
 
 ### `form`: the negative multiplicative declared

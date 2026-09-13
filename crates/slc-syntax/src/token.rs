@@ -85,6 +85,8 @@ pub enum TokenKind {
     Tensor,   // ⊗
     Par,      // ⅋
     Bot,      // ⊥
+    Oplus,    // ⊕
+    Top,      // ⊤
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -164,6 +166,8 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Tensor => write!(f, "`⊗`"),
             TokenKind::Par => write!(f, "`⅋`"),
             TokenKind::Bot => write!(f, "`⊥`"),
+            TokenKind::Oplus => write!(f, "`⊕`"),
+            TokenKind::Top => write!(f, "`⊤`"),
         }
     }
 }
