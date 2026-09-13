@@ -1087,6 +1087,22 @@ fn id<+T>(x: T) -> T { x }         // new: a declaration
 let inc = fn(x) { x + 1 };         // still accepted: `+` fixes `x`
 ```
 
+## Arithmetic and comparison are trait methods
+
+`add`, `sub`, `mul`, `div`, `rem`, `neg`, `eq`, `ne`, `lt`, `gt`, `le` and
+`ge` are now methods of the prelude's `Add`, `Sub`, `Mul`, `Div`, `Rem`,
+`Neg`, `Eq` and `Ord`, with impls for each integer width, and `Add`, `Eq`
+and `Ord` for the other base types they apply to. A value flows into them as
+before, and a pair of strings is joined again:
+
+```sl
+⟨(1, 2) | add          // dispatches to `i64`'s `add`
+⟨("a", "b") | add      // `String`'s `add`: "ab"
+```
+
+The builtins beneath them are `__add` and so on; a program that named a
+builtin directly names the method instead.
+
 ## Removed constructs
 
 ### `spawn`

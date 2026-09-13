@@ -569,17 +569,17 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
 
         Expr::BinOp { op, lhs, rhs } => {
             let name = match op {
-                BinOp::Add => "add",
-                BinOp::Sub => "sub",
-                BinOp::Mul => "mul",
-                BinOp::Div => "div",
-                BinOp::Mod => "rem",
-                BinOp::Eq => "eq",
-                BinOp::Ne => "ne",
-                BinOp::Lt => "lt",
-                BinOp::Gt => "gt",
-                BinOp::Le => "le",
-                BinOp::Ge => "ge",
+                BinOp::Add => "__add",
+                BinOp::Sub => "__sub",
+                BinOp::Mul => "__mul",
+                BinOp::Div => "__div",
+                BinOp::Mod => "__rem",
+                BinOp::Eq => "__eq",
+                BinOp::Ne => "__ne",
+                BinOp::Lt => "__lt",
+                BinOp::Gt => "__gt",
+                BinOp::Le => "__le",
+                BinOp::Ge => "__ge",
             };
             Ok(call_curried(
                 Term::Var(name.into()),
@@ -588,7 +588,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         }
 
         Expr::UnOp { body, .. } => {
-            Ok(call_curried(Term::Var("neg".into()), vec![lower_expr(body, continuations)?]))
+            Ok(call_curried(Term::Var("__neg".into()), vec![lower_expr(body, continuations)?]))
         }
 
         Expr::Index { value, index } => Ok(call_curried(

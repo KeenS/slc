@@ -40,9 +40,9 @@ const ROWS: &[Row] = &[
     },
     Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "μ̃__discarded." },
     Row {
-        id: "expr.binop", source: "fn f() -> i32 { 1 + 2 }", core: "⟨add ∥ $int_1 · __call⟩"
+        id: "expr.binop", source: "fn f() -> i32 { 1 + 2 }", core: "⟨__add ∥ $int_1 · __call⟩"
     },
-    Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨neg ∥" },
+    Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨__neg ∥" },
     Row { id: "expr.index", source: "fn f(s: +String) -> char { s[0] }", core: "⟨__index ∥" },
     Row {
         id: "expr.slice",

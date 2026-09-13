@@ -3664,7 +3664,7 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
         // An arm that yields a value falls through on its path.
         let diags = check(
-            "command bad(x: +i32) | (k: -i32) { match eq(x, 0) { true => ⟨x | k⟩, _ => (,) } }",
+            "command bad(x: +i32) | (k: -i32) { match __eq(x, 0) { true => ⟨x | k⟩, _ => (,) } }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
@@ -4119,14 +4119,16 @@ mod tests {
         // What flows into a builtin is checked the way it is for a declared
         // function: `add` takes two integers, and the whole group at once.
         for (body, expected) in [
-            (r#"let n = ⟨(1, "b") | add;"#, "what flows in"),
-            ("let inc = ⟨1 | add;", "not applied to part of a group"),
+            (r#"let n = ⟨(1, "b") | __add;"#, "what flows in"),
+            ("let inc = ⟨1 | __add;", "not applied to part of a group"),
         ] {
             let diags =
                 check(&format!("command main | (exit: -i32) {{ {body} ⟨0 | exit⟩ }}")).unwrap_err();
             assert!(diags.iter().any(|d| d.message.contains(expected)), "{body}: {diags:?}");
         }
-        assert!(check("command main | (exit: -i32) { let n = ⟨(1, 2) | add; ⟨0 | exit⟩ }").is_ok());
+        assert!(
+            check("command main | (exit: -i32) { let n = ⟨(1, 2) | __add; ⟨0 | exit⟩ }").is_ok()
+        );
     }
 
     #[test]
@@ -4155,7 +4157,7 @@ mod tests {
 
     #[test]
     fn non_constant_const_initializer_rejected() {
-        let diags = check("const X: +i32 = add(1, 2);").unwrap_err();
+        let diags = check("const X: +i32 = __add(1, 2);").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("literal or another constant")));
     }
 
@@ -4690,7 +4692,7 @@ mod tests {
         // used to inherit every builtin exemption by name and slip past.
         let diags = check(
             "fn add(a: i64, b: i64) -> i64 { a + b }
-             command main | (exit: -i32) / {IO} { let inc = ⟨1 | add; ⟨0 | exit⟩ }",
+             command main | (exit: -i32) / {IO} { let inc = ⟨1 | __add; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(

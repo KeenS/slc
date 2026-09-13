@@ -29,12 +29,12 @@ impl std::error::Error for BuiltinError {}
 
 fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
     match name {
-        "eq" => a == b,
-        "ne" => a != b,
-        "lt" => a < b,
-        "gt" => a > b,
-        "le" => a <= b,
-        "ge" => a >= b,
+        "__eq" => a == b,
+        "__ne" => a != b,
+        "__lt" => a < b,
+        "__gt" => a > b,
+        "__le" => a <= b,
+        "__ge" => a >= b,
         _ => false,
     }
 }
@@ -54,28 +54,28 @@ pub fn apply_builtin(
             Some(v) => v.display(),
             None => String::new(),
         })),
-        "neg" => match args.first() {
+        "__neg" => match args.first() {
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
         },
-        "add" | "sub" | "mul" | "div" | "rem" => {
-            if name == "add"
+        "__add" | "__sub" | "__mul" | "__div" | "__rem" => {
+            if name == "__add"
                 && let (Some(Value::Str(a)), Some(Value::Str(b))) = (args.first(), args.get(1))
             {
                 return Ok(Value::Str(format!("{a}{b}")));
             }
             let (a, b) = two_ints(name, args)?;
             let r = match name {
-                "add" => a
+                "__add" => a
                     .checked_add(b)
                     .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("add({a}, {b})")))?,
-                "sub" => a
+                "__sub" => a
                     .checked_sub(b)
                     .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("sub({a}, {b})")))?,
-                "mul" => a
+                "__mul" => a
                     .checked_mul(b)
                     .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("mul({a}, {b})")))?,
-                "div" => {
+                "__div" => {
                     if b == 0 {
                         return Err(BuiltinError::DivisionByZero);
                     }
@@ -90,7 +90,7 @@ pub fn apply_builtin(
             };
             Ok(Value::Int(r))
         }
-        "eq" | "ne" | "lt" | "gt" | "le" | "ge" => {
+        "__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge" => {
             let r = match (args.first(), args.get(1)) {
                 (Some(Value::Int(a)), Some(Value::Int(b))) => Some(cmp_op(name, *a, *b)),
                 (Some(Value::Char(a)), Some(Value::Char(b))) => Some(cmp_op(name, *a, *b)),
@@ -292,21 +292,21 @@ mod tests {
     #[test]
     fn add_works() {
         let mut buf: Vec<u8> = Vec::new();
-        let r = apply_builtin("add", &[Value::Int(1), Value::Int(2)], &mut buf).unwrap();
+        let r = apply_builtin("__add", &[Value::Int(1), Value::Int(2)], &mut buf).unwrap();
         assert_eq!(r, Value::Int(3));
     }
 
     #[test]
     fn div_by_zero() {
         let mut buf: Vec<u8> = Vec::new();
-        let r = apply_builtin("div", &[Value::Int(1), Value::Int(0)], &mut buf);
+        let r = apply_builtin("__div", &[Value::Int(1), Value::Int(0)], &mut buf);
         assert_eq!(r, Err(BuiltinError::DivisionByZero));
     }
 
     #[test]
     fn eq_works() {
         let mut buf: Vec<u8> = Vec::new();
-        let r = apply_builtin("eq", &[Value::Int(1), Value::Int(1)], &mut buf).unwrap();
+        let r = apply_builtin("__eq", &[Value::Int(1), Value::Int(1)], &mut buf).unwrap();
         assert_eq!(r, Value::Bool(true));
     }
 
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn overflow_detected() {
         let mut buf: Vec<u8> = Vec::new();
-        let r = apply_builtin("mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
+        let r = apply_builtin("__mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
         assert!(matches!(r, Err(BuiltinError::ArithmeticOverflow(_))));
     }
 }

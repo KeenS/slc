@@ -127,9 +127,10 @@ is built on the built-in one.
     way `Display` is: one trait per arithmetic operator — `Add`, `Sub`,
     `Mul`, `Div`, `Rem`, `Neg` — with impls for each integer width and
     `Add` for `String`, and comparison grouped as `Eq { eq, ne }` and
-    `Ord { lt, gt, le, ge }`. The builtins beneath become `__add` and so on,
-    so the methods can take their names. A method of several parameters
-    already reads `Self` off its group (`DESIGN.md` "Traits").
+    `Ord { lt, gt, le, ge }`. These have landed in the prelude over builtins
+    renamed `__add` and so on, and `⟨(a, b) | add` dispatches through them;
+    what is left is removing the operator syntax, which still lowers to the
+    builtins directly.
   - **A negative literal is `-` touching a digit.** Prefix `-` goes, and
     `-1` lexes as one literal, as a pattern already reads it; it adapts its
     width as any integer literal does. `a -1` is then two expressions.
