@@ -1793,3 +1793,24 @@ fn what_flows_into_a_function_is_by_name() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b"]);
 }
+
+#[test]
+fn a_trait_method_of_two_parameters_dispatches_on_its_self_component() {
+    let dir = std::env::temp_dir().join("slc_test_binary_method.sl");
+    std::fs::write(
+        &dir,
+        r#"trait Combine { fn combine(self: Self, other: Self) -> Self; }
+        impl Combine for i64 { fn combine(self: i64, other: i64) -> i64 { self + other } }
+        impl Combine for String { fn combine(self: String, other: String) -> String { self + other } }
+
+        command main | (exit: -i32) / {IO} {
+            ⟨(⟨(1, 2) | combine) | println;
+            ⟨(⟨("a", "b") | combine) | println;
+            ⟨0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["3", "ab"]);
+}

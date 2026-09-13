@@ -219,6 +219,7 @@ fn fits_piecewise(
 fn check_method_stage(
     method: &str,
     receiver: &Type,
+    shape: &Expr,
     span: Span,
     enums: &Declarations,
     env: &mut Env,
@@ -226,7 +227,14 @@ fn check_method_stage(
 ) -> Option<Type> {
     let sig = env.traits.method_sig(method)?.clone();
     let trait_name = env.traits.method_owner.get(method)?.clone();
-    let target = env.uni.apply(receiver);
+    let target = match sig.value_params.len() {
+        // A method of several parameters takes them as one group: `Self`
+        // is read off the components its parameters give that type.
+        width if width >= 2 => {
+            receiver_of_group(method, &sig.value_params, receiver, shape, span, enums, env, diags)?
+        }
+        _ => env.uni.apply(receiver),
+    };
     resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
     if sig.is_command {
         return Some(Type::BOTTOM);
@@ -235,6 +243,68 @@ fn check_method_stage(
         Some(ty) => resolve_with_self(ty, &target, enums).map(|t| env.uni.apply(&t)),
         None => Some(Type::ONE),
     }
+}
+
+/// The `Self` of a method of several parameters, from the group flowing into
+/// it: each component is checked against its parameter, the components that
+/// are not integer literals first, so a literal takes its width from the
+/// others — `⟨(1, x) | add` with `x: i32` is `i32`'s `add`.
+#[allow(clippy::too_many_arguments)]
+fn receiver_of_group(
+    method: &str,
+    params: &[slc_syntax::ast::Param],
+    receiver: &Type,
+    shape: &Expr,
+    span: Span,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let components = tensor_spine(&env.uni.apply(receiver));
+    if components.len() != params.len() {
+        diags.push(Diagnostic {
+            message: format!(
+                "`{method}` takes {} parameters as one group, and what flows in has type {}",
+                params.len(),
+                env.uni.apply(receiver)
+            ),
+            span,
+        });
+        return None;
+    }
+    let written: Vec<Option<&Expr>> = match shape {
+        Expr::Pair(items) if items.len() == params.len() => {
+            items.iter().map(|item| Some(&item.kind)).collect()
+        }
+        _ => vec![None; params.len()],
+    };
+    let self_ty = env.uni.fresh_var();
+    let mut order: Vec<usize> = (0..params.len()).collect();
+    order.sort_by_key(|&i| written[i].is_some_and(is_integer_literal));
+    for index in order {
+        let Some(expected) =
+            params[index].ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+        else {
+            continue;
+        };
+        let actual = &components[index];
+        let fitted = match written[index] {
+            Some(expr) => fits(env, &expected, actual, expr),
+            None => fits(env, &expected, actual, &Expr::Pair(Vec::new())),
+        };
+        if !fitted {
+            let expected = env.uni.apply(&expected);
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{method}` takes {expected} as parameter {}, and what flows in there has \
+                     type {actual}",
+                    index + 1
+                ),
+                span,
+            });
+        }
+    }
+    Some(env.uni.apply(&self_ty))
 }
 
 /// Record how a trait-method call dispatches, once `Self` is known: a
@@ -3352,7 +3422,7 @@ fn check_expr_unapplied(
                     && let Expr::Ident(name) = &stages[index].kind
                     && env.traits.is_method(name)
                     && let Some(result) =
-                        check_method_stage(name, &acc, stages[index].span, enums, env, diags)
+                        check_method_stage(name, &acc, shape, stages[index].span, enums, env, diags)
                 {
                     acc = result;
                     flowing = None;
@@ -4394,6 +4464,23 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("`let-` binds a name")), "{diags:?}");
         // `let+` computes now whatever the type.
         assert!(check("fn f() -> i64 { let+ n = 1; n }").is_ok());
+    }
+
+    #[test]
+    fn a_method_of_two_parameters_reads_self_off_its_group() {
+        const COMBINE: &str = "trait Combine { fn combine(self: Self, other: Self) -> Self; }
+             impl Combine for i64 { fn combine(self: i64, other: i64) -> i64 { self } }
+             impl Combine for i32 { fn combine(self: i32, other: i32) -> i32 { self } }
+             impl Combine for String { fn combine(self: String, other: String) -> String { self } }\n";
+        assert!(check(&format!("{COMBINE}fn f() -> i64 {{ ⟨(1, 2) | combine }}")).is_ok());
+        assert!(
+            check(&format!("{COMBINE}fn f() -> String {{ ⟨(\"a\", \"b\") | combine }}")).is_ok()
+        );
+        // A literal takes its width from the other operand.
+        assert!(check(&format!("{COMBINE}fn f(x: i32) -> i32 {{ ⟨(1, x) | combine }}")).is_ok());
+        let diags = check(&format!("{COMBINE}fn f(x: i32) -> i32 {{ ⟨(x, \"s\") | combine }}"))
+            .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("as parameter 2")), "{diags:?}");
     }
 
     #[test]

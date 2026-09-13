@@ -984,6 +984,13 @@ keys by its connective and width, and its components stand where a
 declaration's type arguments do, so each bound is read off the component in
 its position: `impl<+A: Display, +B: Display> Display for (A, B)`.
 
+A method of several parameters takes them as one group, as any function
+does, and `Self` is read off the components its parameters give that type.
+Each component is checked against its parameter, and an integer literal
+takes its width from the others, so with
+`trait Combine { fn combine(self: Self, other: Self) -> Self; }`,
+`⟨(1, x) | combine` for `x: i32` is `i32`'s `combine`.
+
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and
