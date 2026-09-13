@@ -661,13 +661,13 @@ command consume_pair | (k: (-i64 ; -i64)) { … }
 
 | Type syntax | Meaning |
 |---|---|
-| `(A, B)` | positive product; the anonymous form of a two-field `data` |
-| `(A \| B)` | positive sum; the anonymous form of a two-variant `enum` |
-| `(A & B)` | negative sum; the anonymous form of a two-item `menu` |
-| `(A ; B)` | negative product; the dual of `,`, a joint consumer of both sides |
+| `(A, B)` | a **tuple**: positive product; the anonymous form of a two-field `data` |
+| `(A \| B)` | a **choice**: positive sum; the anonymous form of a two-variant `enum` |
+| `(A & B)` | a **bundle**: negative sum; the anonymous form of a two-item `menu` |
+| `(A ; B)` | a **joint**: negative product; the dual of `,`, a joint consumer of both sides |
 | `(A -> B)` | function: `(dual(A) ; B)`. So a function is negative, `(A -> (;))` *is* `-A`, and `dual(A -> B)` is `(A, dual(B))` — an argument together with a continuation for the result, which is what a call stack is |
 | `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
-| `(,)`, `(\|)`, `(&)`, `(;)` | the units of `,`, `\|`, `&` and `;` |
+| `(,)`, `(\|)`, `(&)`, `(;)` | the units of `,`, `\|`, `&` and `;`: the empty tuple, choice, bundle and joint |
 
 `,` and `data` are the same connective: a `data` declaration names a
 product and its fields, while `(A, B)` writes one anonymously. Neither is
@@ -679,36 +679,43 @@ an explicit tensor is structural.
 The surface is ASCII: `⊗`, `⅋` and `⊥` are the notation of the core and of
 this document's prose, never of a program. Every connective is written three
 ways — declared by name, anonymously, and nullary, as a paren holding only
-its separator:
+its separator. Each anonymous type has a name of its own:
 
-| named | anonymous type | value | unit type | unit value |
-|---|---|---|---|---|
-| `data` | `(T1, T2)` | `(v1, v2)` | `(,)` | `(,)` |
-| `enum` | `(T1 \| T2)` | `::0(v)`, `::1(v)` | `(\|)` | — |
-| `menu` | `(T1 & T2)` | `(v1 & v2)` | `(&)` | `(&)` |
-| `form` | `(T1 ; T2)` | `(k1 ; k2)` | `(;)` | — |
+| named | anonymous | its name | anonymous type | value | unit type | unit value |
+|---|---|---|---|---|---|---|
+| `data` | tuple | a tuple | `(T1, T2)` | `(v1, v2)` | `(,)` | `(,)` |
+| `enum` | choice | an alternative | `(T1 \| T2)` | `::0(v)`, `::1(v)` | `(\|)` | — |
+| `menu` | bundle | a bundle | `(T1 & T2)` | `(v1 & v2)` | `(&)` | `(&)` |
+| `form` | joint | a joint | `(T1 ; T2)` | `(k1 ; k2)` | `(;)` | — |
+
+A **tuple** gives every component; a **choice** holds one of its
+alternatives; a **bundle** offers every item and answers the one demanded;
+a **joint** wants every component, one continuation each. The names follow
+the declarations they write anonymously, not their connectives' logical
+names, so a program's vocabulary is the one its code already uses.
 
 The multiplicatives are `,` and `;`, the additives `&` and `|`: each dual
 pair is a pair of punctuation marks.
 
-- **Enum values** name their alternative by position, as `Enum::Variant(v)`
+- **Alternatives**, a choice's values, name their position, as `Enum::Variant(v)`
   does with the name left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`.
   Positions count from 0, as tuple projection `t.0` does, and an alternative
-  is built by its position alone, so it needs no sum known to build it. Its
-  payload meets the alternative at that position of the sum its context gives
+  is built by its position alone, so it needs no choice known to build it. Its
+  payload meets the alternative at that position of the choice its context gives
   — a return type, an annotation, a parameter or a cut — once the
   declaration is checked. `(T1 | (T2 | T3))` has two alternatives, the second
-  itself a sum, so a value of it is `::1(::0(v))`. A `select` over a sum
-  answers each position exactly once; a `match` covers every one, or has an
-  arm that matches anything. The consumer of `(A | B)` is `(-A & -B)`, so a
-  bundle of exits consumes an alternative as it is: the position picks the
-  exit.
-- **Form values** are built from one continuation per component: `(k1 ; k2)`
-  is a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
+  itself a choice, so a value of it is `::1(::0(v))`. A `select` over a
+  choice answers each position exactly once; a `match` covers every one, or
+  has an arm that matches anything. The consumer of a choice `(A | B)` is the
+  bundle `(-A & -B)`, so a bundle of exits consumes an alternative as it is:
+  the position picks the exit.
+- **Joints** are built from one continuation per component: `(k1 ; k2)` is
+  a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
   right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,
   `k2` never receives. It is the consumer `select (A, B) { (a, b) => … }`
-  builds, so a form keeps one runtime shape. It has no pattern form: a value
-  of `;` cannot be taken apart into the continuations it was built from
+  builds, so a joint and a `form` value keep one runtime shape. It has no
+  pattern form: a joint cannot be taken apart into the continuations it was
+  built from
   (PLAN.md, *Deferred*).
 - **`A -> B`** stays, as the spelling of `(dual(A) ; B)`.
 - **The units are structural.** `(;)` is the type of a command; `(|)` has no
