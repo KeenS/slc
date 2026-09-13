@@ -89,6 +89,8 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     errors: Vec<ParseError>,
+    /// The `pub` just read, awaiting the declaration it marks.
+    pending_pub: bool,
     /// Menu names and their item labels, collected before parsing so the
     /// one-arm shorthand `mu M { item <= c }` stays distinct from the local
     /// continuation binder `mu A { k <= c }`.
@@ -105,6 +107,7 @@ impl Parser {
         Self {
             tokens,
             pos: 0,
+            pending_pub: false,
             errors: Vec::new(),
             menu_items,
             in_block: false,
@@ -204,8 +207,19 @@ impl Parser {
         if self.errors.is_empty() { Ok(Program { decls }) } else { Err(self.errors.clone()) }
     }
 
+    /// The `pub` a declaration was written with, consumed by whichever
+    /// `parse_*` runs next. Each takes it as its first act, before any
+    /// nested declaration can set it again.
+    fn take_pub(&mut self) -> bool {
+        std::mem::take(&mut self.pending_pub)
+    }
+
     fn parse_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let start = self.span_start();
+        // A declaration is private to its module unless marked `pub`. One
+        // in no module — the program's own, and the prelude's — is visible
+        // everywhere, so `pub` there says nothing and is allowed.
+        self.pending_pub = self.eat(&TokenKind::Pub);
         match self.peek_kind() {
             Some(TokenKind::Data) => self.parse_data(),
             Some(TokenKind::Enum) => self.parse_enum(),
@@ -234,6 +248,7 @@ impl Parser {
                         span: e.span,
                         kind: Decl::Fn {
                             name: "main".into(),
+                            is_public: true,
                             type_params: vec![],
                             bounds: vec![],
                             polarity: FunctionPolarity::Positive,
@@ -281,6 +296,7 @@ impl Parser {
                     span: Span { start, end },
                     kind: Decl::Fn {
                         name: "main".into(),
+                        is_public: true,
                         type_params: vec![],
                         bounds: vec![],
                         polarity: FunctionPolarity::Positive,
@@ -295,6 +311,7 @@ impl Parser {
     }
 
     fn parse_data(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Data, "`data`")?;
         let name = self.expect_name("data name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -319,10 +336,11 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Data { name, type_params, fields } })
+        Ok(Node { span: t.span, kind: Decl::Data { name, is_public, type_params, fields } })
     }
 
     fn parse_form(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Form, "`form`")?;
         let name = self.expect_name("form name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -348,10 +366,14 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Form { name, type_params, effects, fields } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Form { name, is_public, type_params, effects, fields },
+        })
     }
 
     fn parse_menu(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Menu, "`menu`")?;
         let name = self.expect_ident("menu name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -377,10 +399,11 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Menu { name, type_params, effects, items } })
+        Ok(Node { span: t.span, kind: Decl::Menu { name, is_public, type_params, effects, items } })
     }
 
     fn parse_enum(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Enum, "`enum`")?;
         let name = self.expect_ident("enum name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -417,7 +440,7 @@ impl Parser {
                 break;
             }
         }
-        Ok(Node { span: t.span, kind: Decl::Enum { name, type_params, variants } })
+        Ok(Node { span: t.span, kind: Decl::Enum { name, is_public, type_params, variants } })
     }
 
     /// An optional effect row: `/ { E1, E2, ..R }`, or nothing for pure.
@@ -447,6 +470,7 @@ impl Parser {
     }
 
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Fn, "`fn`")?;
         let name = self.expect_ident("function name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -459,6 +483,7 @@ impl Parser {
             span: t.span,
             kind: Decl::Fn {
                 name,
+                is_public,
                 type_params,
                 bounds,
                 polarity,
@@ -518,6 +543,7 @@ impl Parser {
     }
 
     fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Command, "`command`")?;
         let name = self.expect_ident("`command` name")?;
         let (type_params, bounds) = self.parse_type_params_bounded()?;
@@ -540,6 +566,7 @@ impl Parser {
             span: t.span,
             kind: Decl::Command {
                 name,
+                is_public,
                 type_params,
                 bounds,
                 value_params,
@@ -600,6 +627,7 @@ impl Parser {
     }
 
     fn parse_mod_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Mod, "`mod`")?;
         let name = self.expect_ident("module name")?;
         self.expect(TokenKind::LBrace, "`{` after the module name")?;
@@ -613,7 +641,7 @@ impl Parser {
             }
             decls.push(self.parse_decl()?);
         }
-        Ok(Node { span: t.span, kind: Decl::Mod { name, decls } })
+        Ok(Node { span: t.span, kind: Decl::Mod { name, is_public, decls } })
     }
 
     fn parse_use_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -655,6 +683,7 @@ impl Parser {
     }
 
     fn parse_effect_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Effect, "`effect`")?;
         let name = self.expect_ident("effect name")?;
         self.expect(TokenKind::LBrace, "`{` after the effect name")?;
@@ -674,10 +703,11 @@ impl Parser {
             self.expect(TokenKind::Semicolon, "`;` after an operation")?;
             operations.push(EffectOp { name: op, params, return_type });
         }
-        Ok(Node { span: t.span, kind: Decl::Effect { name, operations } })
+        Ok(Node { span: t.span, kind: Decl::Effect { name, is_public, operations } })
     }
 
     fn parse_trait_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Trait, "`trait`")?;
         let name = self.expect_ident("trait name")?;
         self.expect(TokenKind::LBrace, "`{` after the trait name")?;
@@ -691,7 +721,7 @@ impl Parser {
             }
             methods.push(self.parse_trait_method()?);
         }
-        Ok(Node { span: t.span, kind: Decl::Trait { name, methods } })
+        Ok(Node { span: t.span, kind: Decl::Trait { name, is_public, methods } })
     }
 
     /// A method signature: a `fn` or `command` header ending in `;`.
@@ -768,6 +798,7 @@ impl Parser {
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
         let t = self.expect(TokenKind::Const, "`const`")?;
         let name = self.expect_ident("constant name")?;
         self.expect(TokenKind::Colon, "`:` in constant declaration")?;
@@ -778,7 +809,7 @@ impl Parser {
         self.eat(&TokenKind::Semicolon);
         Ok(Node {
             span: Span { start: t.span.start, end },
-            kind: Decl::Const { name, ty: ty.kind, value },
+            kind: Decl::Const { name, is_public, ty: ty.kind, value },
         })
     }
 

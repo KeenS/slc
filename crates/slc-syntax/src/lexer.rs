@@ -84,6 +84,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "dual" => TokenKind::Dual,
                 "return" => TokenKind::Return,
                 "const" => TokenKind::Const,
+                "pub" => TokenKind::Pub,
                 "true" => TokenKind::Bool(true),
                 "false" => TokenKind::Bool(false),
                 _ => TokenKind::Ident(ident),

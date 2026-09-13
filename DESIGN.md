@@ -1364,9 +1364,11 @@ brings one name into scope:
 
 ```sl
 mod geometry {
-    enum Shape { Circle(i64), Rect(i64, i64) }
+    pub enum Shape { Circle(i64), Rect(i64, i64) }
 
-    fn area(s: Shape) -> i64 { … }     // its own names are bare here
+    fn squared(n: i64) -> i64 { n * n }   // private: the module's own
+
+    pub fn area(s: Shape) -> i64 { … }    // its own names are bare here
 }
 
 use geometry::area;
@@ -1376,6 +1378,18 @@ command main | (exit: i32) {
     0 | exit⟩
 }
 ```
+
+**A declaration inside a module is private unless it is `pub`.** Private
+means reachable by that module and the modules nested inside it, and nowhere
+else — so a module's helpers are not part of its surface. A declaration in
+no module is visible everywhere, which is what lets the prelude be the
+prelude and leaves a single-file program unaffected.
+
+The rule is enforced after flattening, where both halves are known: a
+reference is a qualified name, and the declaration it sits in carries the
+module it was written in. A reference reaches the longest declared prefix of
+the path it names, so `geometry::Shape::Circle` is refused when `Shape` is
+private, not only when some `Circle` is.
 
 Modules exist only to resolution, which runs right after parsing: every
 declaration inside `mod m` is renamed `m::name`, every reference is rewritten

@@ -153,7 +153,7 @@ fn type_head(ty: &TypeExpr) -> Option<&str> {
 pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
     let mut op_effect: HashMap<String, String> = HashMap::new();
     for d in &p.decls {
-        if let Decl::Effect { name, operations } = &d.kind {
+        if let Decl::Effect { name, operations, .. } = &d.kind {
             for op in operations {
                 op_effect.insert(op.name.clone(), name.clone());
             }

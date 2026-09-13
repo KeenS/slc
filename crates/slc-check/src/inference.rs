@@ -58,7 +58,7 @@ pub fn infer_program(p: &Program) -> Result<Vec<DeclarationType>, Vec<Diagnostic
         // A generic enum's constructors are typed at their uses, where the
         // registry instantiates the parameters; only monomorphic variants
         // contribute a standalone declaration type here.
-        if let Decl::Enum { name, type_params, variants } = &d.kind
+        if let Decl::Enum { name, type_params, variants, .. } = &d.kind
             && type_params.is_empty()
         {
             for (variant, payload) in variants {

@@ -548,6 +548,26 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## A module's declarations are private unless `pub`
+
+A `mod` used to expose everything it declared. It now exposes what is
+marked, as in Rust:
+
+```sl
+mod geometry {
+    enum Shape { … }                   // old: reachable everywhere
+    fn area(s: Shape) -> i64 { … }
+
+    pub enum Shape { … }               // new
+    fn squared(n: i64) -> i64 { … }    // new: private, the module's own
+    pub fn area(s: Shape) -> i64 { … }
+}
+```
+
+Private means reachable by the declaring module and the modules nested
+inside it. A declaration in no module is visible everywhere, so a
+single-file program needs no `pub` anywhere.
+
 ## A binder is a pattern
 
 `let p = e` and a parameter `p: T` take a pattern, as in Rust; a bare name

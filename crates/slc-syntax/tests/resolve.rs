@@ -43,7 +43,7 @@ fn references_resolve_by_scope() {
     let p = resolved(
         "mod outer {
              fn shared() -> i64 { 1 }
-             mod inner { fn deep() -> i64 { shared() } }
+             mod inner { pub fn deep() -> i64 { shared() } }
              fn from_sibling() -> i64 { inner::deep() }
          }",
     );
@@ -53,9 +53,40 @@ fn references_resolve_by_scope() {
 }
 
 #[test]
+fn a_private_declaration_is_its_module_s_own() {
+    // Reachable inside the module, and from a module nested in it.
+    assert!(
+        resolve_program(
+            &parse(
+                lex("mod m { fn helper() -> i64 { 1 }
+                           pub fn f() -> i64 { helper() }
+                           mod deeper { pub fn g() -> i64 { helper() } } }")
+                .unwrap()
+            )
+            .unwrap()
+        )
+        .is_ok()
+    );
+    // And nowhere else.
+    let errors = resolve_program(
+        &parse(
+            lex("mod m { fn helper() -> i64 { 1 } }
+                    fn caller() -> i64 { m::helper() }")
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        errors.iter().any(|e| e.message.contains("`m::helper` is private to `m`")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn a_use_gives_a_name_and_a_local_takes_it_back() {
     let p = resolved(
-        "mod m { fn f() -> i64 { 1 } }
+        "mod m { pub fn f() -> i64 { 1 } }
          use m::f;
          fn caller() -> i64 { f() }
          fn shadows() -> i64 { let f = 5; f }",

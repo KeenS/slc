@@ -185,7 +185,7 @@ fn run_program(
     // resolve each other at call time regardless of definition order.
     // Enum constructors are also injected as string-valued globals.
     for d in &program.decls {
-        if let slc_syntax::ast::Decl::Effect { name, operations } = &d.kind {
+        if let slc_syntax::ast::Decl::Effect { name, operations, .. } = &d.kind {
             for op in operations {
                 env.define_global(
                     op.name.clone(),

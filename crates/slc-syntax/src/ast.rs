@@ -423,11 +423,21 @@ pub enum UnOp {
 pub enum Decl {
     Data {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         fields: Vec<(String, TypeExpr)>,
     },
     Enum {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         variants: Vec<(String, Vec<TypeExpr>)>,
     },
@@ -437,6 +447,11 @@ pub enum Decl {
     /// and the type of the answer it delivers.
     Menu {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         /// The latent row: what a demand on a value of this menu may
         /// perform. Arms of a `mu` over the menu are checked against it,
@@ -451,6 +466,11 @@ pub enum Decl {
     /// denotes `-A ⅋ -B`, and its demand is the record its fields describe.
     Form {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         /// The latent row: what feeding a value of this form may perform.
         effects: EffectRow,
@@ -458,6 +478,11 @@ pub enum Decl {
     },
     Fn {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         /// Trait bounds on the type parameters: `(T, Show)` for `<T: Show>`.
         bounds: Vec<(String, String)>,
@@ -474,6 +499,11 @@ pub enum Decl {
     /// the current continuation; this abstracts over one instead.
     Command {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         type_params: Vec<String>,
         bounds: Vec<(String, String)>,
         value_params: Vec<Param>,
@@ -487,6 +517,11 @@ pub enum Decl {
     /// qualifying each declaration as `module::name`.
     Mod {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         decls: Vec<Node<Decl>>,
     },
     /// `use a::b::name;` — brings `name` into scope for the enclosing
@@ -500,12 +535,22 @@ pub enum Decl {
     },
     Const {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         ty: TypeExpr,
         value: Node<Expr>,
     },
     /// A trait: a named set of method signatures over an implicit `Self`.
     Trait {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         methods: Vec<TraitMethod>,
     },
     /// An `impl Trait for Type { … }`: the methods that make `Type` satisfy
@@ -521,6 +566,11 @@ pub enum Decl {
     /// An effect: a named set of operations a computation may perform.
     Effect {
         name: String,
+        /// `pub` — visible outside the module that declares it. A
+        /// declaration is private by default, reachable by its own module
+        /// and the modules nested inside it; a top-level declaration, which
+        /// is in no module, is visible everywhere.
+        is_public: bool,
         operations: Vec<EffectOp>,
     },
 }

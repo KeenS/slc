@@ -573,7 +573,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             env.rigid_vars = outer_rigid;
             env.pop();
         }
-        Decl::Const { name, ty, value } => {
+        Decl::Const { name, ty, value, .. } => {
             if !is_constant_initializer(&value.kind, env) {
                 diags.push(Diagnostic {
                     message: format!(

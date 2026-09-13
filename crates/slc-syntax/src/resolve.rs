@@ -63,7 +63,228 @@ pub fn resolve_program_split(
     let mut stack = vec![root];
     flatten(&program.decls, &mut stack, &mut out, &mut errors);
     let out = apply_variant_imports(out, prelude_from, &mut errors);
+    check_visibility(&out, &mut errors);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
+}
+
+/// Enforce visibility, once every name is qualified.
+///
+/// A declaration inside a `mod` is private unless it is `pub`: reachable
+/// from that module and the modules nested inside it, and nowhere else. A
+/// top-level declaration is in no module and is visible everywhere, which
+/// is what lets the prelude be the prelude.
+///
+/// The check runs after flattening because that is where both halves are
+/// known: a reference is a qualified name, and the declaration it sits in
+/// carries the module it was written in.
+fn check_visibility(decls: &[Node<Decl>], errors: &mut Vec<ResolveError>) {
+    let mut public: HashMap<String, bool> = HashMap::new();
+    for d in decls {
+        let (name, is_public) = match &d.kind {
+            Decl::Fn { name, is_public, .. }
+            | Decl::Command { name, is_public, .. }
+            | Decl::Data { name, is_public, .. }
+            | Decl::Enum { name, is_public, .. }
+            | Decl::Menu { name, is_public, .. }
+            | Decl::Form { name, is_public, .. }
+            | Decl::Const { name, is_public, .. }
+            | Decl::Trait { name, is_public, .. }
+            | Decl::Effect { name, is_public, .. } => (name, *is_public),
+            _ => continue,
+        };
+        public.insert(name.clone(), is_public);
+        if let Decl::Effect { operations, .. } = &d.kind {
+            for op in operations {
+                let qualified = match name.rsplit_once("::") {
+                    Some((path, _)) => format!("{path}::{}", op.name),
+                    None => op.name.clone(),
+                };
+                public.insert(qualified, is_public);
+            }
+        }
+    }
+    for d in decls {
+        let Some(owner) = declared_name(&d.kind) else { continue };
+        let here = module_of(owner);
+        let mut seen = Vec::new();
+        references(&d.kind, &mut seen);
+        for name in seen {
+            // The longest declared prefix is what the reference reaches:
+            // `a::Colour::Red` reaches the enum `a::Colour`.
+            let mut target = name.as_str();
+            let reachable = loop {
+                if let Some(is_public) = public.get(target) {
+                    break Some((target.to_string(), *is_public));
+                }
+                match target.rsplit_once("::") {
+                    Some((head, _)) => target = head,
+                    None => break None,
+                }
+            };
+            let Some((target, is_public)) = reachable else { continue };
+            let owning = module_of(&target);
+            if is_public || owning.is_empty() || visible_from(&owning, &here) {
+                continue;
+            }
+            errors.push(ResolveError {
+                message: format!(
+                    "`{target}` is private to `{owning}`; mark it `pub` to use it outside"
+                ),
+                span: d.span,
+            });
+        }
+    }
+}
+
+/// The module a qualified name lives in: everything before its last segment.
+fn module_of(qualified: &str) -> String {
+    match qualified.rsplit_once("::") {
+        Some((path, _)) => path.to_string(),
+        None => String::new(),
+    }
+}
+
+/// Is a declaration of `owner` reachable from module `here` — the same
+/// module, or one nested inside it?
+fn visible_from(owner: &str, here: &str) -> bool {
+    here == owner || here.starts_with(&format!("{owner}::"))
+}
+
+/// The qualified name a declaration introduces, if it introduces one.
+fn declared_name(d: &Decl) -> Option<&String> {
+    match d {
+        Decl::Fn { name, .. }
+        | Decl::Command { name, .. }
+        | Decl::Data { name, .. }
+        | Decl::Enum { name, .. }
+        | Decl::Menu { name, .. }
+        | Decl::Form { name, .. }
+        | Decl::Const { name, .. }
+        | Decl::Trait { name, .. }
+        | Decl::Effect { name, .. } => Some(name),
+        _ => None,
+    }
+}
+
+/// Every qualified name a declaration mentions. A name with no `::` reaches
+/// nothing a module hid, so only paths are collected.
+fn references(d: &Decl, out: &mut Vec<String>) {
+    fn ty(t: &TypeExpr, out: &mut Vec<String>) {
+        match t {
+            TypeExpr::Base(name) => push(name, out),
+            TypeExpr::Apply(name, args) => {
+                push(name, out);
+                for a in args {
+                    ty(&a.kind, out);
+                }
+            }
+            TypeExpr::Positive(i) | TypeExpr::Negative(i) | TypeExpr::Dual(i) => ty(&i.kind, out),
+            TypeExpr::Effectful(i, _) => ty(&i.kind, out),
+            TypeExpr::Tensor(a, b)
+            | TypeExpr::Par(a, b)
+            | TypeExpr::With(a, b)
+            | TypeExpr::Fun(a, b) => {
+                ty(&a.kind, out);
+                ty(&b.kind, out);
+            }
+            TypeExpr::Unit | TypeExpr::Bottom => {}
+        }
+    }
+    fn push(name: &str, out: &mut Vec<String>) {
+        if name.contains("::") {
+            out.push(name.to_string());
+        }
+    }
+    fn pattern(p: &Pattern, out: &mut Vec<String>) {
+        match p {
+            Pattern::Ident(name) => push(name, out),
+            Pattern::Enum { name, .. } => push(name, out),
+            Pattern::Data { name, fields } => {
+                push(name, out);
+                for (_, f) in fields {
+                    pattern(f, out);
+                }
+            }
+            Pattern::Binding { pattern: p, .. } => pattern(p, out),
+            Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
+                for i in items {
+                    pattern(i, out);
+                }
+            }
+            Pattern::Dtor { arg, .. } => pattern(arg, out),
+            _ => {}
+        }
+    }
+    fn expr(e: &Node<Expr>, out: &mut Vec<String>) {
+        match &e.kind {
+            Expr::Ident(name) => push(name, out),
+            Expr::Data { name, .. } => push(name, out),
+            Expr::Select { ty: Some(t), arms } => {
+                ty(&t.kind, out);
+                for arm in arms {
+                    pattern(&arm.pattern, out);
+                }
+            }
+            Expr::Select { ty: None, arms } => {
+                for arm in arms {
+                    pattern(&arm.pattern, out);
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for arm in arms {
+                    pattern(&arm.pattern, out);
+                }
+            }
+            Expr::Let { ty: Some(t), .. } => ty(t, out),
+            _ => {}
+        }
+        for child in e.kind.children() {
+            expr(child, out);
+        }
+    }
+    match d {
+        Decl::Fn { params, return_type, body, .. } => {
+            for p in params {
+                if let Some(t) = &p.ty {
+                    ty(t, out);
+                }
+            }
+            if let Some(t) = return_type {
+                ty(t, out);
+            }
+            expr(body, out);
+        }
+        Decl::Command { value_params, continuation_params, body, .. } => {
+            for p in value_params.iter().chain(continuation_params) {
+                if let Some(t) = &p.ty {
+                    ty(t, out);
+                }
+            }
+            expr(body, out);
+        }
+        Decl::Const { ty: t, value, .. } => {
+            ty(t, out);
+            expr(value, out);
+        }
+        Decl::Data { fields, .. } | Decl::Form { fields, .. } => {
+            for (_, t) in fields {
+                ty(t, out);
+            }
+        }
+        Decl::Menu { items, .. } => {
+            for (_, t) in items {
+                ty(t, out);
+            }
+        }
+        Decl::Enum { variants, .. } => {
+            for (_, payload) in variants {
+                for t in payload {
+                    ty(t, out);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Apply `use Enum::*;` and `use Enum::{A, B};`: every bare use of an
@@ -153,7 +374,7 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Trait { name, .. } => {
                 scope.declares.insert(name.clone());
             }
-            Decl::Effect { name, operations } => {
+            Decl::Effect { name, operations, .. } => {
                 scope.declares.insert(name.clone());
                 for op in operations {
                     scope.declares.insert(op.name.clone());
@@ -186,7 +407,7 @@ fn flatten(
 ) {
     for d in decls {
         match &d.kind {
-            Decl::Mod { name, decls } => {
+            Decl::Mod { name, decls, .. } => {
                 let mut path = stack.last().expect("a scope").path.clone();
                 path.push(name.clone());
                 let scope = collect_scope(decls, path, errors);
@@ -302,12 +523,12 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_type(ty, stack);
             }
         }
-        Decl::Const { name, ty, value } => {
+        Decl::Const { name, ty, value, .. } => {
             *name = scope.qualify(name);
             resolve_type(ty, stack);
             resolve_expr(&mut value.kind, stack, locals);
         }
-        Decl::Trait { name, methods } => {
+        Decl::Trait { name, methods, .. } => {
             *name = scope.qualify(name);
             for m in methods {
                 for p in m.value_params.iter_mut().chain(m.continuation_params.iter_mut()) {
@@ -325,7 +546,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_decl(&mut method.kind, stack, locals);
             }
         }
-        Decl::Effect { name, operations } => {
+        Decl::Effect { name, operations, .. } => {
             *name = scope.qualify(name);
             for op in operations {
                 for p in op.params.iter_mut() {

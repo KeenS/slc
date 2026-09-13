@@ -24,15 +24,6 @@ feature is mid-flight; what remains open is below.
 
 ## Known limits
 
-- **No partial application.** A stage supplies a callee's whole value
-  group: `"high" | route` of a two-parameter `route` does not produce a
-  function awaiting the second argument, so `7 | ("high" | route)⟩` is
-  refused even though `route(tag, x) -> ⊥` would make the partial
-  application a consumer of `+i64`. Calls are curried in the core and the
-  runtime accumulates arguments, so this is a checker-side gap — the type
-  of an under-applied call — not a representational one. (Found while
-  establishing that operations need no negative form.)
-
 - **A file handle's close is not enforced.** `+File` is the first resource
   with a lifetime, and nothing checks it: an unclosed handle leaks until the
   program ends, and only a read after `close_file` fails. Enforcing it would
@@ -81,14 +72,3 @@ deferrals, not work in flight.
   `0` has no values, and its consumer stays `select Empty {}`; whether the
   empty sum deserves an anonymous type spelling is still open.
 
-## Deferred, with no accepted replacement
-
-- **Trait objects (`dyn`).** Dispatch is static — a concrete call goes direct,
-  a bounded call through a dictionary — with no runtime method value, so there
-  is no existential package that hides a value's type behind its trait. `dyn`
-  (a value carried together with its dictionary) remains open.
-
-- **The interaction-net backend.** An unwired experiment: `slc-core::net`
-  and its bridge were reachable only from their own tests, never from the
-  pipeline. Removed as dead code; git history has it, and the abstract
-  machine the redesign built is the evaluator now.

@@ -913,7 +913,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
         .decls
         .iter()
         .filter_map(|declaration| match &declaration.kind {
-            Decl::Data { name, type_params, fields }
+            Decl::Data { name, type_params, fields, .. }
                 if name == "Unit" && type_params.is_empty() && fields.is_empty() =>
             {
                 Some(name.clone())
@@ -1039,7 +1039,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
-            Decl::Const { name, ty: _, value } => {
+            Decl::Const { name, ty: _, value, .. } => {
                 out.push((name.clone(), lower_expr(value, &[])?));
             }
             // Modules are flattened by resolution before lowering; one that

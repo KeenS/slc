@@ -39,6 +39,7 @@ pub enum TokenKind {
     Dual,
     Return,
     Const,
+    Pub,
 
     // Punctuation
     LParen,
@@ -123,6 +124,7 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Dual => write!(f, "`dual`"),
             TokenKind::Return => write!(f, "`return`"),
             TokenKind::Const => write!(f, "`const`"),
+            TokenKind::Pub => write!(f, "`pub`"),
             TokenKind::LParen => write!(f, "`(`"),
             TokenKind::RParen => write!(f, "`)`"),
             TokenKind::LBrace => write!(f, "`{{`"),

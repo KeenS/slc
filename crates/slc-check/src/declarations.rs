@@ -243,7 +243,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             enums.arities.insert(name.clone(), type_params.len());
         }
         match &d.kind {
-            Decl::Data { name, type_params, fields }
+            Decl::Data { name, type_params, fields, .. }
                 if name == "Unit" && type_params.is_empty() && fields.is_empty() =>
             {
                 enums.unit_alias = true;
@@ -265,7 +265,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         // it. Field types resolve here, in the second pass, so they may
         // name any declaration — and any of the declaration's own
         // parameters.
-        if let Decl::Data { name, type_params, fields }
+        if let Decl::Data { name, type_params, fields, .. }
         | Decl::Form { name, type_params, fields, .. } = &d.kind
         {
             let params = param_scope(type_params);
@@ -297,7 +297,7 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             }
             continue;
         }
-        let Decl::Enum { name, type_params, variants } = &d.kind else { continue };
+        let Decl::Enum { name, type_params, variants, .. } = &d.kind else { continue };
         let params = param_scope(type_params);
         enums.variants.insert(name.clone(), variants.iter().map(|(v, _)| v.clone()).collect());
         for (variant, payload) in variants {

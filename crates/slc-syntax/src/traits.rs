@@ -83,7 +83,7 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
 
     // Traits first: names, methods, and method-name uniqueness.
     for d in &program.decls {
-        if let Decl::Trait { name, methods } = &d.kind {
+        if let Decl::Trait { name, methods, .. } = &d.kind {
             for m in methods {
                 if let Some(other) = info.method_owner.insert(m.name.clone(), name.clone()) {
                     errors.push(TraitError {
