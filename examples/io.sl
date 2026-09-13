@@ -18,7 +18,7 @@
 // undischarged. Nothing else may — `main` is the root, and the runtime is
 // the one handler it did not have to write.
 
-fn greet(name: String) -> Unit / {IO} {
+fn greet(name: String) -> (,) / {IO} {
     "hello, " + name | println
 }
 

@@ -33,6 +33,10 @@ pub enum Type {
     One,
     /// Unit for par.
     Bottom,
+    /// Unit for sum: `0`, which has no values.
+    Zero,
+    /// Unit for with: `⊤`, the menu with no items.
+    Top,
     /// Explicit dual application.
     Dual(Box<Type>),
     /// Additive with: `A & B`.
@@ -106,6 +110,8 @@ impl Type {
             Type::Par(a, b) => Type::Tensor(Box::new(a.dual()), Box::new(b.dual())),
             Type::One => Type::Bottom,
             Type::Bottom => Type::One,
+            Type::Zero => Type::Top,
+            Type::Top => Type::Zero,
             Type::Dual(t) => (**t).clone(),
             Type::With(a, b) => Type::Sum(Box::new(a.dual()), Box::new(b.dual())),
             Type::Sum(a, b) => Type::With(Box::new(a.dual()), Box::new(b.dual())),
@@ -127,6 +133,7 @@ impl Type {
                     | Type::Pos(_)
                     | Type::Tensor(..)
                     | Type::One
+                    | Type::Zero
                     | Type::Sum(..)
                     | Type::Named(..)
                     | Type::Param(_)
@@ -146,6 +153,7 @@ impl Type {
                     | Type::Neg(_)
                     | Type::Par(..)
                     | Type::Bottom
+                    | Type::Top
                     | Type::With(..)
             ),
         }

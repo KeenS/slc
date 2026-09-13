@@ -31,6 +31,8 @@ impl std::fmt::Display for Type {
             Type::Par(a, b) => write!(f, "({a} ⅋ {b})"),
             Type::One => write!(f, "1"),
             Type::Bottom => write!(f, "⊥"),
+            Type::Zero => write!(f, "0"),
+            Type::Top => write!(f, "⊤"),
             Type::Dual(t) => write!(f, "dual({t})"),
             Type::With(a, b) => write!(f, "({a} & {b})"),
             Type::Sum(a, b) => write!(f, "({a} + {b})"),

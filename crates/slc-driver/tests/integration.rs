@@ -1063,34 +1063,28 @@ fn an_operation_may_take_several_parameters() {
 }
 
 #[test]
-fn the_prelude_provides_all_four_logical_units() {
-    let dir = std::env::temp_dir().join("slc_test_prelude_units.sl");
+fn the_four_logical_units_are_nullary_connectives() {
+    // `(,)` and `(&)` have one value each; `(|)` has none, so a function from
+    // it never produces one and its consumer has no arms; `(;)` is what a
+    // command is.
+    let dir = std::env::temp_dir().join("slc_test_nullary_units.sl");
     std::fs::write(
         &dir,
-        r#"fn unit_value() -> Unit { (,) }
-        fn builtin_unit_value() -> unit { Unit {} }
-        fn top_value() -> Top { mu Top {} }
-        fn use_empty<T>(empty: Empty) -> T { match empty {} }
-        fn use_bottom<T>(bottom: Bottom) -> T {
-            Bottom {} | bottom⟩
-        }
-        command bottom_command | (exit: -i32) -> Bottom { 0 | exit⟩ }
+        r#"fn unit_value() -> (,) { (,) }
+        fn top_value() -> (&) { (&) }
+        fn use_empty<T>(empty: (|)) -> T { match empty {} }
+        fn absurd(out: -i64) <- (|) { select (|) {} }
+        command halt | (exit: -i32) -> (;) { 0 | exit⟩ }
         command main | (exit: -i32) / {IO} {
-            match unit_value() { Unit {} => println("unit") };
-            match builtin_unit_value() { (,) => println("unit again") };
-            println(mu i64 {
-                out <= (select Bottom { Bottom {} => 42 | out⟩ } | use_bottom) | out⟩
-            });
-            println(mu i64 {
-                out <= Bottom {} | select Bottom { (,) => 43 | out⟩ }⟩
-            });
+            match unit_value() { (,) => println("unit") };
+            top_value();
             0 | exit⟩
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"unit\"", "\"unit again\"", "42", "43"]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["\"unit\""]);
 }
 
 #[test]

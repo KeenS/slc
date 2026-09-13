@@ -552,7 +552,6 @@ impl Parser {
             if self.eat(&TokenKind::Arrow) { Some(self.parse_type()?.kind) } else { None };
         if let Some(ref ty) = return_type
             && !matches!(ty, TypeExpr::Bottom)
-            && !matches!(ty, TypeExpr::Base(name) if name == "Bottom")
         {
             return Err(ParseError {
                 message: "a `command` returns `(;)`; remove the arrow or write `(;)`".into(),
@@ -1030,7 +1029,7 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Base("Top".into()),
+                        kind: TypeExpr::Top,
                     });
                 }
                 if self.eat(&TokenKind::Comma) {
@@ -1044,7 +1043,7 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)` after `(|`")?;
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
-                        kind: TypeExpr::Base("Empty".into()),
+                        kind: TypeExpr::Zero,
                     });
                 }
                 if self.eat(&TokenKind::Semicolon) {
@@ -1870,7 +1869,7 @@ impl Parser {
                         kind: Expr::CoMatch {
                             ty: Some(Box::new(Node {
                                 span: Span { start, end: self.span_end() },
-                                kind: TypeExpr::Base("Top".into()),
+                                kind: TypeExpr::Top,
                             })),
                             arms: Vec::new(),
                         },
@@ -2359,12 +2358,6 @@ mod tests {
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Command { return_type: Some(TypeExpr::Bottom), .. }
-        ));
-
-        let p = parse_str("command step(x: +i32) | (k: -i32) -> Bottom { k(x) }");
-        assert!(matches!(
-            &p.decls[0].kind,
-            Decl::Command { return_type: Some(TypeExpr::Base(name)), .. } if name == "Bottom"
         ));
     }
 

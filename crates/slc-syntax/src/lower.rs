@@ -7,7 +7,7 @@ use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::{Base, Type};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 thread_local! {
     static CONSTANTS: RefCell<HashMap<String, Pattern>> = RefCell::new(HashMap::new());
@@ -37,9 +37,6 @@ thread_local! {
     /// Expression span → the swap its value needs: it is used at the
     /// mirrored `⅋` spelling of its type.
     static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
-    /// The exact nullary records that are aliases for the tensor unit:
-    /// `data Unit {}` and `form Bottom {}`.
-    static UNIT_RECORDS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -240,10 +237,6 @@ fn demand(span: Span) -> Option<String> {
     DEMANDS.with(|cell| cell.borrow().get(&span).cloned())
 }
 
-fn is_unit_record(name: &str) -> bool {
-    UNIT_RECORDS.with(|cell| cell.borrow().contains(name))
-}
-
 /// Lower a program with the checker's dispatch resolution in force, so that
 /// trait-method calls become direct calls or dictionary projections and
 /// bounded functions take and forward their dictionaries.
@@ -332,6 +325,8 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Dual(inner) => Ok(lower_type(&inner.kind)?.dual()),
         TypeExpr::Unit => Ok(Type::One),
         TypeExpr::Bottom => Ok(Type::Bottom),
+        TypeExpr::Zero => Ok(Type::Zero),
+        TypeExpr::Top => Ok(Type::Top),
     }
 }
 
@@ -852,9 +847,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // tags the right-nested tensor of its field values. An `enum`
             // variant is the same shape with a different label, so one core
             // form covers both.
-            if is_unit_record(name) && fields.is_empty() {
-                return Ok(Term::Var("$unit".into()));
-            }
             let mut payload = Term::Var("$unit".into());
             for (index, (_, value)) in fields.iter().enumerate().rev() {
                 let value = lower_expr(value, continuations)?;
@@ -874,6 +866,8 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         Expr::CoMatch { ty, arms } => {
             let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
                 TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
+                TypeExpr::Zero => Some(EMPTY_SUM),
+                TypeExpr::Top => Some(EMPTY_MENU),
                 _ => None,
             });
             let rows: Vec<(&Pattern, &Node<Expr>)> =
@@ -897,6 +891,8 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             }
             let qualifier = ty.as_ref().and_then(|ty| match &ty.kind {
                 TypeExpr::Base(name) | TypeExpr::Apply(name, _) => Some(name.as_str()),
+                TypeExpr::Zero => Some(EMPTY_SUM),
+                TypeExpr::Top => Some(EMPTY_MENU),
                 _ => None,
             });
             let mut branches = Vec::new();
@@ -977,24 +973,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
 }
 
 pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
-    let unit_records = p
-        .decls
-        .iter()
-        .filter_map(|declaration| match &declaration.kind {
-            Decl::Data { name, type_params, fields, .. }
-                if name == "Unit" && type_params.is_empty() && fields.is_empty() =>
-            {
-                Some(name.clone())
-            }
-            Decl::Form { name, type_params, fields, .. }
-                if name == "Bottom" && type_params.is_empty() && fields.is_empty() =>
-            {
-                Some(name.clone())
-            }
-            _ => None,
-        })
-        .collect();
-    UNIT_RECORDS.with(|cell| *cell.borrow_mut() = unit_records);
     let mut variant_labels: HashMap<String, Option<String>> = HashMap::new();
     for d in &p.decls {
         if let Decl::Enum { name, variants, .. } = &d.kind {
@@ -1135,6 +1113,11 @@ fn cut_binder(consumer: &Expr) -> String {
 }
 
 const CUT_BINDER: &str = "__cut";
+
+/// The owners the nullary additive tables retain: `select (|) {}` and `(&)`
+/// have no declaration to name them.
+const EMPTY_SUM: &str = "(|)";
+const EMPTY_MENU: &str = "(&)";
 
 /// `let x = v; body` → `μlet. ⟨ v ∥ μ̃x. ⟨ body ∥ let ⟩ ⟩`.
 ///
@@ -1291,11 +1274,7 @@ fn select_arm_shape(
         // `S { left: a, right: b }`: a record is a labelled product.
         Pattern::Data { name, fields } => {
             let (binders, command) = components(fields.iter().map(|(_, p)| p), command)?;
-            if is_unit_record(name) && fields.is_empty() {
-                Ok((None, binders, command))
-            } else {
-                Ok((Some(name.clone()), binders, command))
-            }
+            Ok((Some(name.clone()), binders, command))
         }
         // `(a, b)`: an unlabelled product.
         Pattern::Tuple(items) => {
@@ -1339,17 +1318,13 @@ fn components<'p>(
                 let (binders, command) = nested(fields.iter().map(|(_, p)| p), &fresh, command)?;
                 let cut = Command::Cut(
                     Term::Var(fresh.clone()),
-                    if is_unit_record(name) && fields.is_empty() {
-                        CoTerm::MuTildeTensor(binders, Box::new(command))
-                    } else {
-                        CoTerm::CoCase {
-                            owner: name.clone(),
-                            branches: vec![CoCaseBranch {
-                                label: name.clone(),
-                                binders,
-                                body: Box::new(command),
-                            }],
-                        }
+                    CoTerm::CoCase {
+                        owner: name.clone(),
+                        branches: vec![CoCaseBranch {
+                            label: name.clone(),
+                            binders,
+                            body: Box::new(command),
+                        }],
                     },
                 );
                 Ok((fresh, cut))
@@ -1465,15 +1440,7 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
                     return Ok(None);
                 }
                 let (binders, body) = components(fields.iter().map(|(_, p)| p), body)?;
-                if is_unit_record(name) && fields.is_empty() {
-                    product = Some(CoTerm::MuTildeTensor(binders, Box::new(body)));
-                } else {
-                    branches.push(CoCaseBranch {
-                        label: name.clone(),
-                        binders,
-                        body: Box::new(body),
-                    });
-                }
+                branches.push(CoCaseBranch { label: name.clone(), binders, body: Box::new(body) });
             }
             Pattern::Tuple(items) => {
                 if !items.iter().all(canonical_component) || arm_count != 1 {
@@ -1863,10 +1830,6 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
                 out.push(')');
             }
             Pattern::Data { name, fields } => {
-                if is_unit_record(name) && fields.is_empty() {
-                    out.push_str("()");
-                    return;
-                }
                 // Fields are written in declaration order, so the pattern is
                 // the labelled shape the value has, with positional fields.
                 out.push('"');
@@ -1949,28 +1912,6 @@ mod tests {
         assert!(matches!(
             body.as_ref(),
             Term::CoMatch { owner, branches } if owner == "Top" && branches.is_empty()
-        ));
-    }
-
-    #[test]
-    fn multiplicative_unit_aliases_erase_to_the_builtin_unit() {
-        let out = lower_str(
-            "data Unit {}
-             form Bottom {}
-             fn unit() -> Unit { Unit {} }
-             fn bottom(k: -i32) -> Bottom {
-                 select Bottom { Bottom {} => 0 | k⟩ }
-             }",
-        );
-        let unit = out.iter().find(|(name, _)| name == "unit").unwrap();
-        let Term::Lam(_, unit_body) = &unit.1 else { panic!("expected a nullary function") };
-        assert_eq!(unit_body.as_ref(), &Term::Var("$unit".into()));
-
-        let bottom = out.iter().find(|(name, _)| name == "bottom").unwrap();
-        let Term::Lam(_, bottom_body) = &bottom.1 else { panic!("expected a function") };
-        assert!(matches!(
-            bottom_body.as_ref(),
-            Term::Co(coterm) if matches!(coterm.as_ref(), CoTerm::MuTildeTensor(binders, _) if binders.is_empty())
         ));
     }
 

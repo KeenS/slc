@@ -253,6 +253,10 @@ pub enum TypeExpr {
     Dual(Box<Node<TypeExpr>>),
     Unit,
     Bottom,
+    /// `(|)`: the empty sum, 0.
+    Zero,
+    /// `(&)`: the empty menu, ⊤.
+    Top,
 }
 
 /// An effect row: the concrete effects, and the declared row variables —

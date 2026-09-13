@@ -368,6 +368,14 @@ impl Parser {
                 self.pos += 1;
                 Ok(Type::One)
             }
+            Some('0') => {
+                self.pos += 1;
+                Ok(Type::Zero)
+            }
+            Some('⊤') => {
+                self.pos += 1;
+                Ok(Type::Top)
+            }
             Some('(') => {
                 self.pos += 1;
                 let left = self.ty()?;

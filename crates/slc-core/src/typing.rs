@@ -302,6 +302,10 @@ pub fn infer_term(
         }
 
         Term::CoMatch { owner, branches } => {
+            // `(&)`: the empty menu is ⊤ itself, not a declaration.
+            if owner == "(&)" && branches.is_empty() {
+                return Ok(Type::Top);
+            }
             // A menu value inhabits the named negative type its destructors
             // belong to. Every branch must belong to the same declaration.
             for branch in branches {
@@ -363,6 +367,10 @@ pub fn infer_coterm(
         }
 
         CoTerm::CoCase { owner, branches } => {
+            // `(|)`: the consumer with no arms refutes 0 itself.
+            if owner == "(|)" && branches.is_empty() {
+                return Ok(Type::Zero);
+            }
             // A negative additive consumer refutes the named type its labels
             // belong to. Every branch must belong to the same declaration.
             for branch in branches {

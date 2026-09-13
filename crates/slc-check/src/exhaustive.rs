@@ -103,6 +103,19 @@ fn check_expr(
             }
         }
         Expr::Select { ty, arms } => {
+            // `(|)` has no values, so its consumer has no arms.
+            if matches!(ty.as_deref().map(|ty| &ty.kind), Some(slc_syntax::ast::TypeExpr::Zero)) {
+                if !arms.is_empty() {
+                    diags.push(Diagnostic {
+                        message: "`(|)` has no values, so `select (|)` has no arms".into(),
+                        span: e.span,
+                    });
+                }
+                for arm in arms {
+                    check_expr(&arm.command, enums, bindings, diags);
+                }
+                return;
+            }
             // A `select` covers each shape of its type exactly once: one arm
             // per variant of an `enum`, and exactly one for a product.
             // The written type, or the one an arm names: `Red` is a variant
@@ -320,6 +333,7 @@ fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
     match ty {
         slc_syntax::ast::TypeExpr::Base(name) => Some(name.clone()),
         slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
+        slc_syntax::ast::TypeExpr::Zero => Some("(|)".into()),
         _ => None,
     }
 }
@@ -514,6 +528,10 @@ fn check_match(
         Expr::Ident(name) => bindings.get(name),
         _ => None,
     };
+    // `(|)` has no values, so a match on one needs no arm.
+    if arms.is_empty() && scrutinee_type.is_some_and(|ty| ty.as_str() == "(|)") {
+        return;
+    }
 
     for arm in arms {
         // A binding around a pattern does not change which constructors are

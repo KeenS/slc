@@ -825,14 +825,14 @@ mod tests {
     fn printing_performs_io_and_only_main_may_leave_it() {
         // `println` performs `IO`, so a printing declaration declares it.
         let diags = check(
-            "fn shout(m: String) -> Unit { m | println }
+            "fn shout(m: String) -> (,) { m | println }
              command main | (exit: -i32) / {IO} { 0 | exit⟩ }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`shout` performs `IO`")), "{diags:?}");
         assert!(
             check(
-                "fn shout(m: String) -> Unit / {IO} { m | println }
+                "fn shout(m: String) -> (,) / {IO} { m | println }
                  command main | (exit: -i32) / {IO} { \"hi\" | shout; 0 | exit⟩ }"
             )
             .is_ok()

@@ -34,7 +34,7 @@ mod fs {
     // the file by construction when the close is composed onto the only door
     // out — shadow `exit` where the handle comes into scope, as
     // `examples/file_io.sl` does.
-    pub fn close(file: File) -> Unit / {IO} {
+    pub fn close(file: File) -> (,) / {IO} {
         file | __close_file
     }
 

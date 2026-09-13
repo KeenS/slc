@@ -295,7 +295,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
                 ty(&a.kind, out);
                 ty(&b.kind, out);
             }
-            TypeExpr::Unit | TypeExpr::Bottom => {}
+            TypeExpr::Unit | TypeExpr::Bottom | TypeExpr::Zero | TypeExpr::Top => {}
         }
     }
     fn push(name: &str, out: &mut Vec<String>) {
@@ -744,7 +744,7 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         }
         // The row names effects, not types; only the arrow resolves.
         TypeExpr::Effectful(inner, _) => resolve_type(&mut inner.kind, stack),
-        TypeExpr::Unit | TypeExpr::Bottom => {}
+        TypeExpr::Unit | TypeExpr::Bottom | TypeExpr::Zero | TypeExpr::Top => {}
     }
 }
 

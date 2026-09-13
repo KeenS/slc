@@ -35,12 +35,6 @@ pub struct Declarations {
     pub(crate) forms: std::collections::HashSet<String>,
     /// Declaration name → its type-parameter count.
     arities: HashMap<String, usize>,
-    /// The exact nullary `data Unit {}` declaration, when present. It is the
-    /// surface name of the tensor unit rather than a distinct nominal type.
-    unit_alias: bool,
-    /// The exact nullary `form Bottom {}` declaration, when present. It is
-    /// the surface name of par's unit rather than a distinct nominal type.
-    bottom_alias: bool,
 }
 
 impl Declarations {
@@ -63,8 +57,6 @@ impl Declarations {
         let resolve = |inner: &TypeExpr| self.resolve_in(inner, params);
         let resolved = match ty {
             TypeExpr::Base(name) if params.contains_key(name) => Type::Param(params[name]),
-            TypeExpr::Base(name) if name == "Unit" && self.unit_alias => Type::One,
-            TypeExpr::Base(name) if name == "Bottom" && self.bottom_alias => Type::Bottom,
             // A menu or a form name denotes the negative type itself; its
             // dual — the bare `Named` — is the positive type of its demands.
             TypeExpr::Base(name) if self.is_negative_decl(name) => {
@@ -87,9 +79,6 @@ impl Declarations {
                 }
             }
             TypeExpr::Positive(inner) => resolve(&inner.kind)?,
-            TypeExpr::Negative(inner) if matches!(&inner.kind, TypeExpr::Base(name) if name == "Bottom" && self.bottom_alias) => {
-                Type::Bottom
-            }
             TypeExpr::Negative(inner) if !matches!(inner.kind, TypeExpr::Bottom) => {
                 resolve(&inner.kind)?.dual()
             }
@@ -170,16 +159,6 @@ impl Declarations {
         self.forms.contains(name)
     }
 
-    /// Whether this record declaration is one of the two surface views of
-    /// the multiplicative units: `data Unit {}` or `form Bottom {}`.
-    pub(crate) fn is_unit_record(&self, name: &str) -> bool {
-        (name == "Unit" && self.unit_alias) || (name == "Bottom" && self.bottom_alias)
-    }
-
-    pub(crate) fn is_bottom_alias(&self, name: &str) -> bool {
-        name == "Bottom" && self.bottom_alias
-    }
-
     /// Whether a name is a negative declaration — a `menu` or a `form`.
     /// Their values are negative but nominal, so the box discipline that
     /// keeps `-A` out of data positions does not apply to them.
@@ -244,19 +223,6 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         | Decl::Form { name, type_params, .. } = &d.kind
         {
             enums.arities.insert(name.clone(), type_params.len());
-        }
-        match &d.kind {
-            Decl::Data { name, type_params, fields, .. }
-                if name == "Unit" && type_params.is_empty() && fields.is_empty() =>
-            {
-                enums.unit_alias = true;
-            }
-            Decl::Form { name, type_params, fields, .. }
-                if name == "Bottom" && type_params.is_empty() && fields.is_empty() =>
-            {
-                enums.bottom_alias = true;
-            }
-            _ => {}
         }
     }
     /// A declaration's parameter scope: each name to its position.

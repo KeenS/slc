@@ -3,21 +3,9 @@
 // The driver appends this unit to the program before parsing — the user's
 // source comes first, so its spans and line numbers are untouched — and
 // everything below goes through the same checking and lowering as user code.
-// The only compiler trick is that the exact nullary Unit and Bottom
-// declarations below are aliases for the existing multiplicative units.
 //
 // Everything else the library offers lives in `stdlib/`, one module per
 // file, reached by path — `list::length` — or brought in bare with `use`.
-
-// ── Logical units ───────────────────────────────────────────────────────
-//
-// Empty and Top remain ordinary nominal declarations. Unit and Bottom give
-// names to the existing `(,)`/`1` and `⊥` units respectively.
-
-data Unit {}
-form Bottom {}
-enum Empty {}
-menu Top {}
 
 // ── IO: the effect the runtime handles ───────────────────────────────────
 //
@@ -32,8 +20,8 @@ menu Top {}
 // then perform `write_line`/`write` with the text.
 
 effect IO {
-    fn write(text: String) -> Unit;
-    fn write_line(text: String) -> Unit;
+    fn write(text: String) -> (,);
+    fn write_line(text: String) -> (,);
 }
 
 // ── Display ──────────────────────────────────────────────────────────────

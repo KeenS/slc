@@ -1,29 +1,27 @@
-// The four logical units, supplied by the prelude.
-//
-// Unit and Bottom name the multiplicative units already written `(,)` and
-// `⊥`. Empty and Top are the nullary additive declarations; concise aliases
-// for them remain deliberately unsettled.
+// The four logical units, each the nullary form of its connective: a paren
+// holding only its separator — `(,)`, `(|)`, `(&)` and `(;)`.
 
-fn unit_value() -> Unit {
+fn unit_value() -> (,) {
     (,)
 }
 
-// Bottom's nullary demand is the unit value itself: dual(⊥) = 1.
-fn bottom_demand() -> Unit {
-    Bottom {}
-}
-
-fn use_empty<T>(empty: Empty) -> T {
+// `(|)` has no value, so a function from it never has to produce one...
+fn use_empty<T>(empty: (|)) -> T {
     match empty {}
 }
 
-fn top_value() -> Top {
-    mu Top {}
+// ...and its consumer has no arms.
+fn absurd(out: i64) <- (|) {
+    select (|) {}
 }
 
-command main | (exit: i32) -> Bottom / {IO} {
+fn top_value() -> (&) {
+    (&)
+}
+
+// `(;)` is what a command is.
+command main | (exit: i32) -> (;) / {IO} {
     unit_value() | println;
-    bottom_demand() | println;
     top_value();
     0 | exit⟩
 }
