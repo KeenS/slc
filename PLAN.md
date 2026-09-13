@@ -83,57 +83,68 @@ ordinary declarations, and one defect.
 
 - **Exhaustiveness does not know `bool`.** A `match` with `true` and `false`
   arms is reported non-exhaustive unless it adds a `_`. The fix is
-  "`bool` is defined in the prelude".
+  "`bool` becomes the prelude's `Bool`".
 
 ## Next
 
 ### Evaluation
 
-Settled first, before the infix operators become functions, since how an
-operand is delayed is part of that design.
+Independent of the surface simplifications below: `&&` and `||` are removed
+rather than made functions, so no operator waits on how an operand is
+delayed.
 
 - **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
   the choice between by-value and by-name, and it is settled for the
   producer at every type today (`reduce.rs`). It is to be settled by
   polarity instead: a computation of negative type is not run where it is
-  written, but each time it is used. Decided:
+  written, but each time it is demanded. Decided:
 
   - **Every negative position.** An argument, a tuple component, a bundle
     item and a binding all delay a negative computation — a block that ends
-    in a cut, a call that returns a consumer or a menu. A positive value is
-    still computed where it is written: delaying one would bring back the
-    `↑` that §8 removed, so `Lazy<T>` stays the spelling of a delayed value,
-    and a `bool` operand of `&&` is not reached.
-  - **Run by naming it.** A delayed computation runs where its name is used
-    as the thing it stands for, so a command that picks an exit needs no
-    `fn(_)` wrappers:
+    in a cut, or a call that returns a consumer, a function or a menu. A
+    positive value is still computed where it is written: delaying one
+    would bring back the `↑` that §8 removed, so `Lazy<T>` stays the
+    spelling of a delayed value.
+  - **Run where demanded.** A delayed value runs where its result is needed
+    — as a command, cut into, applied or demanded — and is passed on unrun
+    into another by-name position: an argument, a component, a bundle item
+    or a `let-`. So a command that picks an exit needs no `fn(_)` wrappers:
 
     ```sl
     command choose(c: bool) | (then: (;) & otherwise: (;)) {
-        match c { true => then, false => otherwise }
+        match c { true => then, _ => otherwise }       // runs the exit
     }
 
-    mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
+    command forward(c: bool) | (then: (;) & otherwise: (;)) {
+        ⟨c | choose | (then & otherwise)⟩               // passes them on
+    }
     ```
 
-    Passing it on unrun — `(then & otherwise)`, `⟨then | forward⟩` — is not
-    a use, so the rule has to tell the two apart. Named twice, it runs
-    twice, as continuations are already multi-shot.
-  - **Effects are latent.** Nothing is performed where a delayed
-    computation is written: its row moves onto its type, and each use
-    performs it, so the handler that must discharge it is the one around the
-    use. It is the rule rowed menus and returned consumers
-    (`-> (-A / {..E})`) already follow. Only a concrete row can ride on a
-    type today, so until the rows-in-types upgrade that "Effect tracking
-    follows names" names, a computation in a by-name position whose row is a
-    variable is refused.
+  - **Re-run at each use.** Nothing is cached: a delayed value demanded
+    twice runs twice, effects included, as continuations are already
+    multi-shot. `naturals` in `examples/seq.sl` is rebuilt at each use.
+  - **Effects are latent.** Nothing is performed where a delayed computation
+    is written: its row moves onto its type, and each use performs it, so
+    the handler that must discharge it is the one around the use — the rule
+    rowed menus and returned consumers (`-> (-A / {..E})`) already follow.
+    Only a concrete row can ride on a type today, so until the rows-in-types
+    upgrade that "Effect tracking follows names" names, a computation in a
+    by-name position whose row is a variable is refused.
   - **`let+` and `let-`.** A plain `let` follows the polarity of its type.
     `let+` computes now whatever the type — the way to perform a delayed
     computation's effects under the handler in scope — and `let-` delays.
-  - **Generic types state their polarity.** A type variable carries no
-    polarity, so a generic type parameter is declared with one, `<+T>` or
-    `<-T>`. The mark goes on the declaration, since `-T` in a type already
-    means `dual(T)`.
+  - **Every generic parameter states its polarity.** A type variable carries
+    no polarity, so each is declared with one, `<+T>` or `<-T>`, in type
+    declarations, functions, commands and impls alike: `enum List<+T>`, and
+    a list of consumers is a declaration of its own. The mark goes on the
+    declaration, since `-T` in a type already means `dual(T)`. The prelude,
+    stdlib and examples declare 61 such parameters across 46 declarations.
+  - **An unknown polarity is an error.** A binding or lambda parameter whose
+    type inference leaves a variable is refused, asking for an annotation or
+    for `let+`/`let-`.
+  - **Printing takes a `String`.** `println` and `print` accept only a
+    `String`, so no builtin is polymorphic over polarity; anything else is
+    rendered first through `Display`, `⟨x | fmt | println`.
 
   What it changes, as found so far:
 
@@ -142,12 +153,13 @@ operand is delayed is part of that design.
     is, `select unit { u => … }`, such an item already runs only when the
     command sends it `⟨(,) | then⟩`.
   - A bare `then` passes the checker today and does nothing at run time —
-    `main` ends holding the consumer — so running by naming is new work in
-    the checker, which knows where a name stands for a command, and in
-    lowering.
+    `main` ends holding the consumer — so running where demanded is new work
+    in the checker, which knows where a name is demanded, and in lowering.
   - `examples/connectives.sl` flows `mu (;) { k <= … }` into `println` and
-    prints `(,)` because it runs at once; under this rule it is a negative
-    computation in an argument, and delayed.
+    prints `(,)` because it runs at once; it becomes a `let+`, rendered
+    through `Display`.
+  - Every `println` and `print` of a value that is not a `String` gains a
+    `fmt`.
   - Lowering needs each position's polarity from the checker, as `pars`
     already carries a joint's components.
 
@@ -155,77 +167,73 @@ operand is delayed is part of that design.
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
 They depend on each other, so they are listed in the order they can land:
-`bool` becomes a declaration last, once nothing left in the language is
-built on the built-in one.
+`&&` and `||` go first, and `bool` becomes the prelude's `Bool` last, once
+nothing left in the language is built on the built-in one.
 
-- **Infix operators become functions.** `+ - * / % == != < > <= >= && ||`
-  leave the surface, and each is an ordinary function a value flows into:
-  `⟨(a, b) | add`. Most already are one underneath. The operators lower to
-  the builtins `add`, `sub`, `mul`, `div`, `rem`, `eq`, `ne`, `lt`, `gt`,
-  `le` and `ge`, and `⟨(1, 2) | add` and `⟨(1, 2) | lt` run today. What the
-  operators do that the functions do not yet:
+- **`&&` and `||` are removed.** A conjunction is a `match`, which runs its
+  right side only when the left one holds:
 
-  - **Overloading.** The checker types an operator by hand: arithmetic at
-    any integer width, with a literal adapting to the other side; `+` on
-    `String`; comparison on numbers, `char`, `String` and `bool`. The
-    builtins' signatures are `(i64, i64) -> i64` and the like, and a stage is
-    held to them, so `⟨("a", "b") | add` is refused. Decided: as functions
-    they are overloaded by traits, the way `Display` is — impls for each
-    integer width, and for `+` on `String`.
-  - **Short-circuiting.** `&&` and `||` lower to a `match` on the left
-    operand so their right operand runs only when needed. As functions (`and` and `or`
-    are free names) the right operand has to arrive delayed. It is a `bool`,
-    a positive type, so "Negative positions by name" does not reach it. What
-    works today is `Lazy<bool>`:
+  ```sl
+  ok && ⟨x | valid                                  // old
+  match ok { true => ⟨x | valid, _ => false }       // new
+  ```
 
-    ```sl
-    fn and(a: bool, b: Lazy<bool>) -> bool {
-        match a { true => b.force, _ => false }
-    }
-    ```
+  They lower to exactly that `match` today, so nothing changes at run time.
+  What goes: `BinOp::And` and `BinOp::Or` in the parser, the checker and
+  lowering, and their precedence levels; the tokens stay only so that
+  writing them says where they went. The migration touches
+  `examples/comparison.sl`, `examples/json_parser.sl` and the Rust tests.
 
-    This short-circuits: `⟨(false, rhs) | and` never forces a right operand
-    that divides by zero, and `⟨(true, rhs) | and` does. The cost is a
-    `mu Lazy { force <= ⟨e | force⟩ }` at every call. Delaying a positive
-    operand without writing it out is the `↑` that §8 removed. Decided:
-    settle "Negative positions by name" first and design the delayed operand
-    from there — though a `bool` operand is positive, which that entry does
-    not reach as it stands.
-  - **Nesting.** `a + b * c` becomes `⟨(b, c) | mul | x => (a, x) | add`.
-    Binder stages keep it one chain, but every operator that took a computed
-    operand becomes a stage and a binder.
-  - **Precedence.** §3's rule that `|` binds more loosely than every
-    operator, and operator precedence itself, have nothing left to order.
+- **Infix operators become functions.** `+ - * / % == != < > <= >=`,
+  prefix `-`, and indexing `a[i]` and `a[i..j]` leave the surface, and each
+  is an ordinary function a value flows into: `⟨(a, b) | add`. Most already
+  are one underneath — the operators lower to the builtins `add`, `sub`,
+  `mul`, `div`, `rem`, `eq`, `ne`, `lt`, `gt`, `le`, `ge` and `neg`, and
+  `⟨(1, 2) | add` runs today. Decided, and still to do:
 
-  Prefix `!` is already gone: `not` is a prelude function. Decided: prefix
-  `-` and postfix `a[i]` and `a[i..j]` become functions too. Migration touches every arithmetic and
-  comparison in the stdlib, the examples, the docs and the Rust tests.
+  - **Overloaded by traits.** The checker types an operator by hand today:
+    arithmetic at any integer width, `+` on `String`, comparison on numbers,
+    `char`, `String` and `bool`. As functions they are trait methods, the
+    way `Display` is, with impls for each integer width and for `+` on
+    `String`. Traits today have one `Self`, no associated types, and method
+    names unique across traits, which these fit.
+  - **Literals keep adapting.** `1 + x` with `x: i32` adapts the literal to
+    `i32` today. With dispatch on the first argument the literal would
+    default to `i64` and fail, so an integer literal has to keep taking its
+    width from the other operand.
+  - **Indexing is plain functions.** Only a `String` is indexed — by an
+    `i64`, giving a `char` — and a trait could not say that in general
+    without associated types. `a[i]` and `a[i..j]` become functions over the
+    builtins `__index` and `substring` beneath them today.
+  - **Compound expressions stay one chain.** `a + b * c` becomes
+    `⟨(b, c) | mul | x => (a, x) | add`.
+  - **Precedence goes.** §3's rule that `|` binds more loosely than every
+    operator has nothing left to order.
 
-- **`bool` is defined in the prelude.** The last of these, and possible
-  only once "Infix operators become functions" has removed `&&` and `||`,
-  which lower to a `match` on the built-in `bool`; the `if` expression is
-  already gone. `bool` then becomes an ordinary
-  `enum`, so a `match` on it is exhaustive the way a match on any enum is,
-  and the `bool` exhaustiveness defect goes with it: coverage is counted
-  only over enum variants (`exhaustive.rs`), and a match over literals
-  always asks for `_`. A declared `enum Boolean { False, True }` matched on
-  both variants is accepted and runs today. What the change touches:
+  Migration touches roughly two hundred arithmetic and comparison uses in
+  the stdlib, the examples, the docs and the Rust tests, so it wants a
+  converter, as `if` had.
 
-  - **The spelling.** `enum bool { false, true }` does not parse, because
-    `true` and `false` are keywords. Keeping the lowercase names means the
-    keywords go and a variant may be spelled lowercase; the other way is a
-    Rust-unlike `Bool { False, True }`.
-  - **The built-in `bool` everywhere else:** the `true`/`false` tokens,
-    `Expr::Bool` and `Pattern::Bool` in the front end, the core's
-    `Base::Bool` (types, typing, printing and the core tests), and the
-    runtime's `Value::Bool`. The builtins that produce one — the
-    comparisons, `is_digit`, `is_ws` and `__file_exists` — have to produce
-    the variant instead, and diagnostics that say "expected +bool" name the
-    declared type.
+- **`bool` becomes the prelude's `Bool`.** The last of these, possible once
+  "`&&` and `||` are removed", since those lower to a `match` on the
+  built-in type. It becomes an ordinary enum, `enum Bool { False, True }`,
+  so a `match` on it is exhaustive the way a match on any enum is, and the
+  `bool` exhaustiveness defect goes with it: coverage is counted only over
+  enum variants (`exhaustive.rs`), and a match over literals always asks for
+  `_`. A declared `enum Boolean { False, True }` matched on both variants is
+  accepted and runs today. What the change touches:
+
+  - **The names.** `true` and `false` stop being keywords, and every `bool`,
+    `true` and `false` a program writes becomes `Bool`, `True` and `False`.
+  - **The built-in `bool` everywhere else:** `Expr::Bool` and
+    `Pattern::Bool` in the front end, the core's `Base::Bool` (types,
+    typing, printing and the core tests), and the runtime's `Value::Bool`.
+    The builtins that produce one — the comparisons, `is_digit`, `is_ws` and
+    `__file_exists` — have to produce the variant instead, and diagnostics
+    that say "expected +bool" name the declared type.
   - **The `_` arms added meanwhile.** Every `match` on a `bool` — the
-    prelude's `not`, and those the stdlib and examples use where `if` used
-    to be — has a `_` arm until this lands; they can then name both
-    variants.
+    prelude's `not`, and those the stdlib and examples use where `if` used to
+    be — has a `_` arm until this lands; it can then name `False`.
 
 ## Deferred, for discussion
 
