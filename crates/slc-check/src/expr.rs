@@ -3909,7 +3909,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let complain = select { m => { println(m); 1 | exit⟩ } };
-                 let text = mu { k <= read_file(\"in\", k, complain) };
+                 let text = mu { k <= __read_file(\"in\", k, complain) };
                  println(text + 1);
                  0 | exit⟩
              }",

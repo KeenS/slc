@@ -159,19 +159,19 @@ pub(crate) fn collect_args(v: &Value, out: &mut Vec<Value>) {
 pub(crate) fn builtin_arity(name: &str) -> usize {
     match name {
         "println" | "print" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "neg"
-        | "file_exists" => 1,
+        | "__file_exists" => 1,
         "__index" => 2,
-        "close_file" => 1,
+        "__close_file" => 1,
         "add" | "sub" | "mul" | "div" | "rem" | "eq" | "ne" | "lt" | "gt" | "le" | "ge"
         | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
         "substring" => 3,
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
-        "read_file" | "open_file" | "read_line" => 3,
+        "__read_file" | "__open_file" | "__read_line" => 3,
         // The runtime's own clauses for `IO`: the payload, then `resume`.
         "__io_write" | "__io_write_line" => 2,
         "__io_done" => 1,
-        "char_at" | "write_file" | "parse_int" => 4,
+        "char_at" | "__write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__if_dispatch" => 3,
         "__handle" => 2,
@@ -239,14 +239,16 @@ pub(crate) fn run_offering_builtin(
                 ))),
             })
         }
-        "read_file" => {
+        "__read_file" => {
             let (ok, failed) = (value(1), value(2));
-            wrap(match crate::builtins::apply_io_builtin("read_file", &args[..1.min(args.len())]) {
-                Ok(contents) => activate(ok, contents),
-                Err(e) => activate(failed, message(e.to_string())),
-            })
+            wrap(
+                match crate::builtins::apply_io_builtin("__read_file", &args[..1.min(args.len())]) {
+                    Ok(contents) => activate(ok, contents),
+                    Err(e) => activate(failed, message(e.to_string())),
+                },
+            )
         }
-        "open_file" => {
+        "__open_file" => {
             let (opened, failed) = (value(1), value(2));
             let Value::Str(path) = value(0) else {
                 return Err(EvalError::TypeMismatch("open_file expects a String".into()));
@@ -256,7 +258,7 @@ pub(crate) fn run_offering_builtin(
                 Err(e) => activate(failed, message(e.to_string())),
             })
         }
-        "read_line" => {
+        "__read_line" => {
             let (line, end) = (value(1), value(2));
             let Value::File(id) = value(0) else {
                 return Err(EvalError::TypeMismatch("read_line expects a file handle".into()));
@@ -267,10 +269,11 @@ pub(crate) fn run_offering_builtin(
                 Err(e) => Err(EvalError::TypeMismatch(e.to_string())),
             })
         }
-        "write_file" => {
+        "__write_file" => {
             let (ok, failed) = (value(2), value(3));
             wrap(
-                match crate::builtins::apply_io_builtin("write_file", &args[..2.min(args.len())]) {
+                match crate::builtins::apply_io_builtin("__write_file", &args[..2.min(args.len())])
+                {
                     Ok(_) => activate(ok, Value::Unit),
                     Err(e) => activate(failed, message(e.to_string())),
                 },
@@ -336,7 +339,7 @@ pub(crate) fn run_builtin_function(name: &str, args: Vec<Value>) -> Result<Value
     if name == "__io_done" {
         return Ok(args.into_iter().next().unwrap_or(Value::Unit));
     }
-    if matches!(name, "file_exists" | "close_file") {
+    if matches!(name, "__file_exists" | "__close_file") {
         return crate::builtins::apply_io_builtin(name, &args)
             .map_err(|e| EvalError::TypeMismatch(e.to_string()));
     }

@@ -580,13 +580,11 @@ fn read_file_offers_a_missing_file_to_its_failure_continuation() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-            read_file("does-not-exist.sl", fn(source: +String) -> ⊥ {
-                println("unexpectedly read " + source);
-                1 | exit⟩
-            }, fn(message: +String) -> ⊥ {
-                println("failed: " + message);
-                0 | exit⟩
-            })
+            "does-not-exist.sl" | fs::read_file | (select String {
+                source => { println("unexpectedly read " + source); 1 | exit⟩ },
+            } & select String {
+                message => { println("failed: " + message); 0 | exit⟩ },
+            })⟩
         }"#,
     )
     .unwrap();
@@ -603,19 +601,15 @@ fn write_file_and_read_file_round_trip_through_their_continuations() {
     std::fs::write(
         &dir,
         format!(
-            r#"command main | (exit: -i32) / {{IO}} {{
-            write_file({path:?}, "written", fn(done: +unit) -> ⊥ {{
-                read_file({path:?}, fn(source: +String) -> ⊥ {{
-                    println(source);
-                    0 | exit⟩
-                }}, fn(message: +String) -> ⊥ {{
-                    println(message);
-                    1 | exit⟩
-                }})
-            }}, fn(message: +String) -> ⊥ {{
-                println(message);
-                2 | exit⟩
-            }})
+            r#"use fs::read_file;
+        use fs::write_file;
+        command main | (exit: -i32) / {{IO}} {{
+            let failed = select String {{ message => {{ println(message); 1 | exit⟩ }} }};
+            ({path:?}, "written") | write_file | (select unit {{
+                done => {path:?} | read_file | (select String {{
+                    source => {{ println(source); 0 | exit⟩ }},
+                }} & failed)⟩,
+            }} & failed)⟩
         }}"#,
             path = target.to_str().unwrap()
         ),
@@ -898,14 +892,11 @@ fn json_parser_rejects_malformed_input() {
 fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
     // An integer cannot close a file.
     let dir = std::env::temp_dir().join("slc_test_close_not_a_handle.sl");
-    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { close_file(42); 0 | exit⟩ }")
+    std::fs::write(&dir, "command main | (exit: -i32) / {IO} { 42 | fs::close_file; 0 | exit⟩ }")
         .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
-    assert!(
-        (stdout.clone() + &stderr).contains("expected +File"),
-        "stdout: {stdout}; stderr: {stderr}"
-    );
+    assert!((stdout.clone() + &stderr).contains("File"), "stdout: {stdout}; stderr: {stderr}");
 
     // Reading through a closed handle fails.
     let data = std::env::temp_dir().join("slc_test_handle_data.txt");
@@ -914,12 +905,15 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
     std::fs::write(
         &dir,
         format!(
-            r#"command main | (exit: -i32) / {{IO}} {{
-                let fail = select +String {{ m => {{ println(m); 1 | exit⟩ }} }};
-                let fh = mu {{ k <= open_file("{}", k, fail) }};
-                close_file(fh);
+            r#"use fs::open_file;
+            use fs::read_line;
+            use fs::close_file;
+            command main | (exit: -i32) / {{IO}} {{
+                let fail = select String {{ m => {{ println(m); 1 | exit⟩ }} }};
+                let fh = mu {{ k <= "{}" | open_file | (k & fail)⟩ }};
+                fh | close_file;
                 let line = mu {{ k <=
-                    read_line(fh, k, select +unit {{ e => {{ println("eof"); 1 | exit⟩ }} }})
+                    fh | read_line | (k & select unit {{ e => {{ println("eof"); 1 | exit⟩ }} }})⟩
                 }};
                 println(line);
                 0 | exit⟩

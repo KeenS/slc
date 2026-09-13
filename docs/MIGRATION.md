@@ -548,6 +548,23 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## File operations are the `fs` module's
+
+The six file builtins are no longer names a program has unasked. They are
+the stdlib's `fs` module — commands over runtime primitives renamed
+`__read_file` and so on, which a program is not meant to call:
+
+```sl
+path | read_file | (ok & failed)⟩              // old
+
+path | fs::read_file | (ok & failed)⟩          // new: by path
+use fs::read_file;                             // or imported
+path | read_file | (ok & failed)⟩
+```
+
+`read_file`, `write_file`, `open_file`, `read_line`, `close_file`,
+`file_exists` keep their names and their outcome rows.
+
 ## The prelude shrank; the rest is a stdlib you `use`
 
 Only `IO` and `Display` (with `fmt`/`to_string`) stay in scope unasked.

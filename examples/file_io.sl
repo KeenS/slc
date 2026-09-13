@@ -4,16 +4,21 @@
 // result: every operation takes one continuation per outcome and activates
 // exactly one — the outcome type is the row itself.
 //
-// A file can be read whole with `read_file`, or through a *file*:
-// `open_file` offers the file or a failure, `read_line` offers the next
-// line or the end of the file, and `close_file` spends the file. A file
-// is a value of its own type, `+File` — an integer cannot close a file, and
-// reading through a closed file fails.
+// Files are the `fs` module's. A file can be read whole with `read_file`,
+// or through a *file*: `open_file` offers the file or a failure, `read_line`
+// offers the next line or the end of the file, and `close_file` spends the
+// file. A file is a value of its own type, `File` — an integer cannot close
+// a file, and reading through a closed file fails.
 //
 // Once a file is open, no path may leave it behind. That is not discipline
 // at every cut — it is composition at the only door out: shadow `exit` with
 // a consumer that closes the file and then leaves, and every later
-// `@ exit` goes through the close, unhappy paths included.
+// `| exit⟩` goes through the close, unhappy paths included.
+
+use fs::read_file;
+use fs::open_file;
+use fs::read_line;
+use fs::close_file;
 
 command main | (exit: i32) / {IO} {
     let complain = select String {

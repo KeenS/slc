@@ -377,12 +377,12 @@ without nesting the rest of the program inside it:
 
 ```sl
 let source = mu String { k <=
-    path | read_file | (k & complain)⟩
+    path | fs::read_file | (k & complain)⟩
 };
 source | print;
 ```
 
-`k` is the continuation of the `let`: what `read_file` sends it becomes
+`k` is the continuation of the `let`: what `fs::read_file` sends it becomes
 `source`, and the block continues. On the other outcome `k` is never
 activated, so nothing after the `let` runs.
 
@@ -889,8 +889,9 @@ a clause runs *below* its own prompt, so what the clause itself performs
 escapes outward to the next handler — the runtime's — and a tap can both
 report the write and forward it. `examples/io.sl` writes all three.
 
-The file builtins — `read_file`, `write_file`, `open_file`, `read_line`,
-`close_file`, `file_exists` — charge `{IO}` too, so their rows are honest,
+The file operations — the `fs` module's `read_file`, `write_file`,
+`open_file`, `read_line`, `close_file`, `file_exists`, each a thin wrapper
+over a runtime primitive — charge `{IO}` too, so their rows are honest,
 but they still reach the outside world directly rather than through an
 operation: each offers its outcome to continuations, and an operation that
 carries an outcome needs a type the operation can name. Until then they
@@ -1090,10 +1091,10 @@ on the diagonal it is one the position already meets. `examples/polarity.sl`
 writes all four cells out, because the four cells are its subject.
 
 ```sl
-// `k` goes to a slot `read_file` declares, so it is `-String`, and this
+// `k` goes to a slot `fs::read_file` declares, so it is `-String`, and this
 // `let` binds a `+String`.
 let source = mu { k <=
-    "input.json" | read_file | (k & complain)⟩
+    "input.json" | fs::read_file | (k & complain)⟩
 };
 
 // `Red` is a variant of exactly one enum, so the type is `Color`.
@@ -1146,7 +1147,7 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 command main | (exit: i32) {
     let complain = select { message => { message | println; 1 | exit⟩ } };
-    "input.txt" | read_file | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
+    "input.txt" | fs::read_file | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
 }
 ```
 
@@ -1188,6 +1189,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map_stream`, `zip_stream`, `drop_stream`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
+| `fs` | files: `read_file`, `write_file`, `open_file`, `read_line`, `close_file`, `file_exists` — commands offering each outcome to its own continuation, over the runtime's `__read_file` and siblings |
 | `trace` | one **tap**, `command traced(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::traced \| out⟩` |
 
 The program's text comes first in the combined source, so its spans and
@@ -1247,10 +1249,6 @@ one of them is activated.
 | Builtin      | Values                                           | Outcomes                                            |
 |--------------|--------------------------------------------------|-----------------------------------------------------|
 | `parse_int`  | `text: +String`                                  | `ok: -i64`, `invalid: -String`, `overflow: -String` |
-| `read_file`  | `path: +String`                                  | `ok: -String`, `failed: -String`                    |
-| `open_file`  | `path: +String`                                  | `opened: -File`, `failed: -String`                  |
-| `read_line`  | `handle: +File`                                  | `line: -String`, `end: -unit`                       |
-| `write_file` | `path: +String`, `contents: +String`             | `ok: -unit`, `failed: -String`                      |
 | `char_at`    | `text: +String`, `index: +i64`                   | `ok: -char`, `out_of_range: -String`                |
 | `find_char`  | `text: +String`, `from: +i64`, `character: +i64` | `found: -i64`, `absent: -String`                    |
 
@@ -1258,7 +1256,7 @@ Every failure continuation receives a `+String` describing what happened, so
 it composes with an error consumer a program already has.
 
 ```sl
-"input.json" | read_file | (
+"input.json" | fs::read_file | (
     select String { source => source | parse_json | report⟩ }
     & complain
 )⟩
@@ -1269,23 +1267,27 @@ written where it is passed rather than declared elsewhere.
 
 Everything else is a function: `println`, `print`, and `format`; arithmetic and
 comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
-`is_digit`, `is_ws`, `skip_ws`, `skip_digits`; `file_exists`; `close_file`,
-which spends a handle so a later read through it fails; and the
-`list_` constructors and totals (`list_new`, `list_len`, `list_push`).
+`is_digit`, `is_ws`, `skip_ws`, `skip_digits`.
 
-A handle is a value of its own base type, `+File`, produced only by
-`open_file` — so nothing else closes a file or reads a line. Closing on every
-terminating path is not checked; today an
-unclosed handle merely leaks until the program ends, and a read after
-`close_file` is a runtime error.
+**Files are the `fs` module's**, not builtins a program has unasked:
+`fs::read_file`, `fs::write_file`, `fs::open_file`, `fs::read_line` offer
+their outcomes as above, and `fs::close_file` spends a handle so a later read
+through it fails, `fs::file_exists` answers a `bool`. Each is a thin wrapper
+over a runtime primitive — `__read_file` and its siblings — which is what the
+language cannot express; the module is what a program calls.
+
+A handle is a value of its own base type, `File`, produced only by
+`fs::open_file` — so nothing else closes a file or reads a line. Closing on
+every terminating path is not checked; today an unclosed handle merely leaks
+until the program ends, and a read after `fs::close_file` is a runtime error.
 
 Until a resource check watches it, the program can make the leak impossible by
 construction: compose the close onto the only door out, by shadowing `exit`
 where the handle comes into scope.
 
 ```sl
-let handle = mu { k <= path | open_file | (k & complain)⟩ };
-let exit = select i32 { status => { handle | close_file; status | exit⟩ } };
+let file = mu { k <= path | fs::open_file | (k & complain)⟩ };
+let exit = select i32 { status => { file | fs::close_file; status | exit⟩ } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the

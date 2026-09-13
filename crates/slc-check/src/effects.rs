@@ -410,12 +410,12 @@ pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
         name,
         "println"
             | "print"
-            | "read_file"
-            | "write_file"
-            | "open_file"
-            | "read_line"
-            | "close_file"
-            | "file_exists"
+            | "__read_file"
+            | "__write_file"
+            | "__open_file"
+            | "__read_line"
+            | "__close_file"
+            | "__file_exists"
     )
     .then_some(IO)
 }

@@ -89,7 +89,7 @@ fn builtin_functions() -> Vec<Builtin> {
         function("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
-        function("file_exists", vec![string.clone()], Some(bool_.clone())),
+        function("__file_exists", vec![string.clone()], Some(bool_.clone())),
         // Parsing, input/output, and lookup can fail or find nothing, so they
         // offer their outcomes to continuations.
         offers(
@@ -97,14 +97,14 @@ fn builtin_functions() -> Vec<Builtin> {
             vec![string.clone()],
             vec![Type::Neg(I64), Type::Neg(Str), Type::Neg(Str)],
         ),
-        offers("read_file", vec![string.clone()], vec![Type::Neg(Str), Type::Neg(Str)]),
+        offers("__read_file", vec![string.clone()], vec![Type::Neg(Str), Type::Neg(Str)]),
         // A file handle: opened to one continuation, read line by line, and
         // spent by `close_file`.
-        offers("open_file", vec![string.clone()], vec![Type::Neg(File), Type::Neg(Str)]),
-        offers("read_line", vec![Type::Pos(File)], vec![Type::Neg(Str), Type::Neg(Unit)]),
-        function("close_file", vec![Type::Pos(File)], Some(Type::One)),
+        offers("__open_file", vec![string.clone()], vec![Type::Neg(File), Type::Neg(Str)]),
+        offers("__read_line", vec![Type::Pos(File)], vec![Type::Neg(Str), Type::Neg(Unit)]),
+        function("__close_file", vec![Type::Pos(File)], Some(Type::One)),
         offers(
-            "write_file",
+            "__write_file",
             vec![string.clone(), string.clone()],
             vec![Type::Neg(Unit), Type::Neg(Str)],
         ),

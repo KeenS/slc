@@ -20,6 +20,7 @@ const LIBRARY: &[(&str, &str)] = &[
     ("stream", include_str!("stdlib/stream.sl")),
     ("seq", include_str!("stdlib/seq.sl")),
     ("trace", include_str!("stdlib/trace.sl")),
+    ("fs", include_str!("stdlib/fs.sl")),
 ];
 
 /// The combined source and where each unit starts in it, so a span — a char

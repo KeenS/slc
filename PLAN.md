@@ -30,7 +30,7 @@ feature is mid-flight; what remains open is below.
   take a dedicated resource/ownership check (the value side of the language is
   otherwise unrestricted — see `DESIGN.md` §4). Until then the idiom is
   composition at the door: shadow `exit` with
-  `select +i32 { status => { handle | close_file; status | exit⟩ } }` where the
+  `select +i32 { status => { file | fs::close_file; status | exit⟩ } }` where the
   handle comes into scope, and no later path can leave the file open —
   `examples/file_io.sl` does exactly this.
 
@@ -50,8 +50,9 @@ feature is mid-flight; what remains open is below.
   are instantiated only for the first stage of a chain, since that is the
   only one whose argument is syntax.
 
-- **The file builtins perform `IO` without an operation.** `read_file`,
-  `write_file`, `open_file`, `read_line`, `close_file`, and `file_exists`
+- **The file operations perform `IO` without an operation.** The `fs`
+  module's `read_file`, `write_file`, `open_file`, `read_line`,
+  `close_file`, and `file_exists`, and the `__` primitives beneath them,
   charge `{IO}`, so their rows are honest, but they reach the outside
   world directly rather than by performing an operation the way `println`
   does — so they cannot be mocked by a handler. Each offers its outcome to

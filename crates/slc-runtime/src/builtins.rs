@@ -410,7 +410,7 @@ pub fn close_file(id: u64) -> Result<Value, BuiltinError> {
 /// Install file I/O builtins (separate from pure builtins for clarity).
 pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinError> {
     match name {
-        "read_file" => {
+        "__read_file" => {
             let Some(Value::Str(path)) = args.first() else {
                 return Err(BuiltinError::TypeMismatch("read_file expects a String path".into()));
             };
@@ -419,7 +419,7 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
                 Err(e) => Err(BuiltinError::Failed(format!("cannot read {path}: {e}"))),
             }
         }
-        "write_file" => {
+        "__write_file" => {
             let (Some(Value::Str(path)), Some(Value::Str(content))) = (args.first(), args.get(1))
             else {
                 return Err(BuiltinError::TypeMismatch(
@@ -430,13 +430,13 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
                 .map_err(|e| BuiltinError::Failed(format!("cannot write {path}: {e}")))?;
             Ok(Value::Unit)
         }
-        "close_file" => {
+        "__close_file" => {
             let Some(Value::File(id)) = args.first() else {
                 return Err(BuiltinError::TypeMismatch("close_file expects a file handle".into()));
             };
             close_file(*id)
         }
-        "file_exists" => {
+        "__file_exists" => {
             let Some(Value::Str(path)) = args.first() else {
                 return Err(BuiltinError::TypeMismatch("file_exists expects a String path".into()));
             };
@@ -454,8 +454,9 @@ mod io_tests {
     fn write_and_read_file() {
         let path = std::env::temp_dir().join("slc_io_test.txt");
         let p = path.to_str().unwrap();
-        apply_io_builtin("write_file", &[Value::Str(p.into()), Value::Str("data".into())]).unwrap();
-        let r = apply_io_builtin("read_file", &[Value::Str(p.into())]).unwrap();
+        apply_io_builtin("__write_file", &[Value::Str(p.into()), Value::Str("data".into())])
+            .unwrap();
+        let r = apply_io_builtin("__read_file", &[Value::Str(p.into())]).unwrap();
         assert_eq!(r, Value::Str("data".into()));
     }
 
@@ -464,13 +465,13 @@ mod io_tests {
         let path = std::env::temp_dir().join("slc_io_exists_test.txt");
         let p = path.to_str().unwrap();
         std::fs::write(&path, "x").unwrap();
-        let r = apply_io_builtin("file_exists", &[Value::Str(p.into())]).unwrap();
+        let r = apply_io_builtin("__file_exists", &[Value::Str(p.into())]).unwrap();
         assert_eq!(r, Value::Bool(true));
     }
 
     #[test]
     fn read_missing_file_fails() {
-        let r = apply_io_builtin("read_file", &[Value::Str("/nonexistent/nope".into())]);
+        let r = apply_io_builtin("__read_file", &[Value::Str("/nonexistent/nope".into())]);
         // Reading a missing file is an outcome the caller handles, not a
         // fault in the program.
         assert!(matches!(r, Err(BuiltinError::Failed(_))), "{r:?}");
