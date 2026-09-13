@@ -500,9 +500,6 @@ mod tests {
             }
             match &e.kind {
                 Expr::Call { callee, args } => walk(callee).or_else(|| args.iter().find_map(walk)),
-                Expr::If { cond, then, otherwise } => walk(cond)
-                    .or_else(|| walk(then))
-                    .or_else(|| otherwise.as_deref().and_then(walk)),
                 Expr::Let { value, body, .. } => {
                     walk(value).or_else(|| body.as_deref().and_then(walk))
                 }

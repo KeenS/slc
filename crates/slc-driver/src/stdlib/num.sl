@@ -2,14 +2,14 @@
 
 mod num {
     pub fn min(a: i64, b: i64) -> i64 {
-        if a < b { a } else { b }
+        match a < b { true => { a }, _ => { b } }
     }
 
     pub fn max(a: i64, b: i64) -> i64 {
-        if a > b { a } else { b }
+        match a > b { true => { a }, _ => { b } }
     }
 
     pub fn abs(n: i64) -> i64 {
-        if n < 0 { 0 - n } else { n }
+        match n < 0 { true => { 0 - n }, _ => { n } }
     }
 }

@@ -573,27 +573,6 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
     if args.len() < arity && name != "__match_dispatch" {
         return Ok(State::Return(Value::PartialBuiltin(name.to_string(), args)));
     }
-    if name == "__if_dispatch" {
-        let mut it = args.into_iter();
-        let cond = it.next().unwrap_or(Value::Bool(false));
-        let then_v = it.next().unwrap_or(Value::Unit);
-        let else_v = it.next().unwrap_or(Value::Unit);
-        let chosen = match cond {
-            Value::Bool(true) => then_v,
-            Value::Bool(false) => else_v,
-            other => {
-                return Err(EvalError::TypeMismatch(format!(
-                    "if condition must be bool, got {}",
-                    other.display()
-                )));
-            }
-        };
-        // Branches are thunks; run the chosen one.
-        return Ok(match chosen {
-            Value::Closure { .. } => State::Apply { callee: chosen, arg: Value::Unit },
-            other => State::Return(other),
-        });
-    }
     if name == "__handle" {
         // args: [clauses, body_thunk]. Decode the clause tree into the
         // operation map and the return closure, push the prompt, force body.

@@ -78,11 +78,6 @@ pub enum Expr {
         value: Box<Node<Expr>>,
         body: Option<Box<Node<Expr>>>,
     },
-    If {
-        cond: Box<Node<Expr>>,
-        then: Box<Node<Expr>>,
-        otherwise: Option<Box<Node<Expr>>>,
-    },
     BinOp {
         op: BinOp,
         lhs: Box<Node<Expr>>,
@@ -193,10 +188,6 @@ impl Expr {
             Expr::Let { value, body, .. } => {
                 std::iter::once(&**value).chain(body.iter().map(|b| &**b)).collect()
             }
-            Expr::If { cond, then, otherwise } => std::iter::once(&**cond)
-                .chain(std::iter::once(&**then))
-                .chain(otherwise.iter().map(|e| &**e))
-                .collect(),
             Expr::BinOp { lhs, rhs, .. } => vec![lhs, rhs],
             Expr::Project { base, .. } => vec![base],
             Expr::Request { arg, .. } => vec![arg],

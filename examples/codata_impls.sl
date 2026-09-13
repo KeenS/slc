@@ -89,7 +89,7 @@ impl Deliver for i64 {
 
 impl Deliver for bool {
     fn deliver(out: String) <- bool {
-        fn(b: bool) { ⟨if b { "affirmative" } else { "negative" } | out⟩ }
+        fn(b: bool) { ⟨match b { true => { "affirmative" }, _ => { "negative" } } | out⟩ }
     }
 }
 

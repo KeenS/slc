@@ -20,7 +20,7 @@ effect Choose { fn flip() -> bool; }
 
 // An exception: `throw` never returns, so its clause does not resume.
 fn checked_div(a: i64, b: i64) -> i64 / {Exn} {
-    if b == 0 { ⟨"division by zero" | throw } else { a / b }
+    match b == 0 { true => { ⟨"division by zero" | throw }, _ => { a / b } }
 }
 
 // A reader: `config` asks the handler and continues — one resume, and work
@@ -31,8 +31,8 @@ fn scaled(x: i64) -> i64 / {Reader} {
 
 // Nondeterminism: two choices, and the handler takes both by resuming twice.
 fn pick() -> String / {Choose} {
-    let a = if flip() { "H" } else { "T" };
-    let b = if flip() { "H" } else { "T" };
+    let a = match flip() { true => { "H" }, _ => { "T" } };
+    let b = match flip() { true => { "H" }, _ => { "T" } };
     a + b
 }
 
@@ -45,7 +45,7 @@ fn pick() -> String / {Choose} {
 // — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
 // handler around the call is what keeps `main` pure.
 fn half(n: i64) -> i64 / {Exn} {
-    if n % 2 == 0 { n / 2 } else { ⟨"odd" | throw }
+    match n % 2 == 0 { true => { n / 2 }, _ => { ⟨"odd" | throw } }
 }
 
 // A negative function carries its row in the same place — after the `<-`

@@ -7,7 +7,7 @@
 
 trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
-impl Show for bool { fn show(self: bool) -> String { if self { "T" } else { "F" } } }
+impl Show for bool { fn show(self: bool) -> String { match self { true => { "T" }, _ => { "F" } } } }
 
 // Polymorphic: `show` here projects from `twice`'s dictionary parameter.
 fn twice<T: Show>(x: T) -> String { (⟨x | show) + (⟨x | show) }

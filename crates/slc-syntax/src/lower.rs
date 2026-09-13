@@ -511,43 +511,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             lower_binding(pattern, value, b, continuations)
         }
 
-        Expr::If { cond, then, otherwise } => {
-            // Branches are wrapped in λ so they are only evaluated when
-            // chosen — if must be lazy, or mu escapes in the untaken branch
-            // would fire eagerly.
-            let c = lower_expr(cond, continuations)?;
-            let t = Term::Lam("__unused".into(), Box::new(lower_expr(then, continuations)?));
-            let e = otherwise
-                .as_ref()
-                .map(|e| {
-                    lower_expr(e, continuations).map(|b| Term::Lam("__unused".into(), Box::new(b)))
-                })
-                .transpose()?
-                .unwrap_or_else(|| {
-                    Term::Lam("__unused".into(), Box::new(Term::Var("$unit".into())))
-                });
-            // Build: μif. ⟨ cond ∥ μ̃__cond. ⟨ μ__call. ⟨ __if_dispatch ∥ (…) · __call ⟩ ∥ __tail ⟩ ⟩
-            // The dispatch builtin applies the chosen thunk to unit.
-            let triple = Term::Tuple(vec![Term::Var("__cond".into()), t, e]);
-            let dispatch_call = Term::Mu(
-                "__call".into(),
-                Box::new(Command::Cut(
-                    Term::Var("__if_dispatch".into()),
-                    CoTerm::App(triple, Box::new(CoTerm::Covar("__call".into()))),
-                )),
-            );
-            Ok(Term::Mu(
-                "__if".into(),
-                Box::new(Command::Cut(
-                    c,
-                    CoTerm::MuTilde(
-                        "__cond".into(),
-                        Box::new(Command::Cut(dispatch_call, CoTerm::Covar("__tail".into()))),
-                    ),
-                )),
-            ))
-        }
-
         Expr::BinOp { op, lhs, rhs } => {
             if matches!(op, BinOp::And | BinOp::Or)
                 && let Some(expanded) = lower_boolean_operator(op, lhs, rhs, e.span)
@@ -1771,13 +1734,17 @@ where
     } else {
         (Node { span: rhs.span, kind: Expr::Bool(true) }, rhs_body)
     };
+    // A `match` on the left operand: the right one is an arm's body, so it
+    // runs only when that arm is taken.
     let lhs_expr = lhs.kind.clone().into();
     Some(Node {
         span,
-        kind: Expr::If {
-            cond: Box::new(Node { span: lhs.span, kind: lhs_expr }),
-            then: Box::new(true_body),
-            otherwise: Some(Box::new(false_body)),
+        kind: Expr::Match {
+            scrutinee: Box::new(Node { span: lhs.span, kind: lhs_expr }),
+            arms: vec![
+                MatchArm { pattern: Pattern::Bool(true), body: true_body },
+                MatchArm { pattern: Pattern::Wildcard, body: false_body },
+            ],
         },
     })
 }
@@ -2250,20 +2217,13 @@ mod tests {
     }
 
     #[test]
-    fn lower_boolean_operators_expand_to_lazy_if() {
-        let out = lower_str("true && false");
-        assert!(
-            !format!("{}", out[0].1).contains("__unimplemented_boolean_operator"),
-            "boolean `and` must not lower to an unimplemented marker: {}",
-            out[0].1
-        );
-
-        let out = lower_str("false || true");
-        assert!(
-            !format!("{}", out[0].1).contains("__unimplemented_boolean_operator"),
-            "boolean `or` must not lower to an unimplemented marker: {}",
-            out[0].1
-        );
+    fn lower_boolean_operators_expand_to_a_match() {
+        // The right operand is an arm's body, so it runs only when chosen.
+        for source in ["true && false", "false || true"] {
+            let out = lower_str(source);
+            let printed = format!("{}", out[0].1);
+            assert!(printed.contains("__match_dispatch"), "{source}: {printed}");
+        }
     }
 
     #[test]

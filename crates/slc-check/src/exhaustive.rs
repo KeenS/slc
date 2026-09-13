@@ -235,13 +235,6 @@ fn check_expr(
                 check_expr(b, enums, bindings, diags);
             }
         }
-        Expr::If { cond, then, otherwise } => {
-            check_expr(cond, enums, bindings, diags);
-            check_expr(then, enums, bindings, diags);
-            if let Some(o) = otherwise {
-                check_expr(o, enums, bindings, diags);
-            }
-        }
         Expr::BinOp { lhs, rhs, .. } => {
             check_expr(lhs, enums, bindings, diags);
             check_expr(rhs, enums, bindings, diags);

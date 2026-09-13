@@ -27,11 +27,11 @@ enum Request {
 //     a value: the parameter is `-String`, the caller passes `note`,
 //     and the body cuts into it directly.
 fn describe(label: +i64, note: -String) -> (;) {
-    if label > 0 {
+    match label > 0 { true => {
         ⟨"positive" | note⟩
-    } else {
+    }, _ => {
         ⟨"not positive" | note⟩
-    }
+    } }
 }
 
 // (3) POSITIVE TYPE, CONTINUATION POSITION — what follows `<-` is the

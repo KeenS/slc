@@ -34,7 +34,7 @@ fn norm(Point { x, y }: Point) -> i64 {
 // A `command` does the same, and its exits stay names: control leaves
 // through a name, and a pattern has nowhere to leave through.
 command nearer((here, there): (Point, Point)) | (closer: Point) {
-    if (⟨here | norm) < (⟨there | norm) { ⟨here | closer⟩ } else { ⟨there | closer⟩ }
+    match (⟨here | norm) < (⟨there | norm) { true => { ⟨here | closer⟩ }, _ => { ⟨there | closer⟩ } }
 }
 
 command main | (exit: i32) / {IO} {

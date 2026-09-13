@@ -14,7 +14,7 @@ fn describe(out: String) <- (i64 | String) {
 fn rank(out: String) <- (i64 | bool | String) {
     select (i64 | bool | String) {
         ::0(n) => ⟨"first " + (⟨n | int_to_str) | out⟩,
-        ::1(b) => ⟨(if b { "second, yes" } else { "second, no" }) | out⟩,
+        ::1(b) => ⟨(match b { true => { "second, yes" }, _ => { "second, no" } }) | out⟩,
         ::2(s) => ⟨"third " + s | out⟩,
     }
 }
@@ -29,7 +29,7 @@ fn show(x: (i64 | String)) -> String {
 // A command offers its outcome as one value, for a bundle of exits to take:
 // the consumer of `(A | B)` is `(-A & -B)`, and the position picks the exit.
 command classify(n: i64) | (outcome: (i64 | String)) {
-    if n < 10 { ⟨::0(n) | outcome⟩ } else { ⟨::1("big") | outcome⟩ }
+    match n < 10 { true => { ⟨::0(n) | outcome⟩ }, _ => { ⟨::1("big") | outcome⟩ } }
 }
 
 command main | (exit: i32) / {IO} {

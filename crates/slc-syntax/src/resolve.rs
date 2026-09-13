@@ -871,13 +871,6 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut item.kind, stack, locals);
             }
         }
-        Expr::If { cond, then, otherwise } => {
-            resolve_expr(&mut cond.kind, stack, locals);
-            resolve_expr(&mut then.kind, stack, locals);
-            if let Some(otherwise) = otherwise {
-                resolve_expr(&mut otherwise.kind, stack, locals);
-            }
-        }
         Expr::BinOp { lhs, rhs, .. } => {
             resolve_expr(&mut lhs.kind, stack, locals);
             resolve_expr(&mut rhs.kind, stack, locals);
@@ -1074,13 +1067,6 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
             rewrite_expr_imports(&mut value.kind, imported);
             if let Some(body) = body {
                 rewrite_expr_imports(&mut body.kind, imported);
-            }
-        }
-        Expr::If { cond, then, otherwise } => {
-            rewrite_expr_imports(&mut cond.kind, imported);
-            rewrite_expr_imports(&mut then.kind, imported);
-            if let Some(otherwise) = otherwise {
-                rewrite_expr_imports(&mut otherwise.kind, imported);
             }
         }
         Expr::BinOp { lhs, rhs, .. } => {

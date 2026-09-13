@@ -186,9 +186,9 @@ negative function applied to its row:
 ⟨Color::Blue | code | answer⟩     // `code` is a stage; `answer` closes
 ```
 
-Because a cut has type `⊥`, a branch that ends in one constrains nothing: in
-`if c { pos + 1 } else { ⟨message | err⟩ }` the `if` has the type of the branch
-that returns.
+Because a cut has type `⊥`, an arm that ends in one constrains nothing: in
+`match c { true => pos + 1, _ => ⟨message | err⟩ }` the `match` has the type of
+the arm that returns, and arms that both return must agree.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and
 not a function, because a reader — and the compiler — should not have to know
@@ -301,8 +301,8 @@ alone. Elsewhere a `⊥` value is reached when it is meant to be: a
 
 What *is* enforced is that control is **total**: a `command` body must be `⊥`
 — it reaches a continuation on every path — so a body that falls off the end
-(a bare value) or dangles (an `if` with no `else`, whose false path yields
-unit) is rejected by the type checker, not by any linearity pass. A call
+(a bare value) or dangles (a `match` with an arm that yields a value) is
+rejected by the type checker, not by any linearity pass. A call
 supplies each row position a continuation of exactly the declared type.
 
 An argument whose type the checker cannot determine — an unannotated `let`
@@ -586,7 +586,8 @@ arrives at them:
   (`k: -Config`) it takes the *request* apart: `.item(out) => e` binds the
   request's own continuation, and the arms are ordinary expressions —
   typically other requests. An arm has no guard: a test on what a pattern
-  bound is a `match` inside the arm.
+  bound is a `match` inside the arm. And there is no `if`: a choice on a
+  `bool` is a `match` on it, `match c { true => …, _ => … }`.
 
 ```sl
 fn config() -> Config {
@@ -854,7 +855,7 @@ overloaded on its first argument's type — `x | show`, never `x.show()`:
 ```sl
 trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
-impl Show for bool { fn show(self: bool) -> String { if self { "t" } else { "f" } } }
+impl Show for bool { fn show(self: bool) -> String { match self { true => "t", _ => "f" } } }
 
 fn labelled<T: Show>(x: T) -> String { "= " + (⟨x | show) }
 ```
@@ -1025,7 +1026,7 @@ ordinary parameters, and the clause cuts into whichever it picks:
 ```sl
 effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
 …
-judge(n, ok, bad) => if n > 3 { ⟨"big" | ok⟩ } else { ⟨"small" | bad⟩ },
+judge(n, ok, bad) => match n > 3 { true => ⟨"big" | ok⟩, _ => ⟨"small" | bad⟩ },
 ```
 
 Demand-time effects are the latent rows above. Between the three, a
@@ -1674,8 +1675,7 @@ nested left to right for several arguments.
 | `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
-| `expr.if` | `if c { t } else { e }` | `__if_dispatch(⟦c⟧, λ_. ⟦t⟧, λ_. ⟦e⟧)` — branches are thunks, so only the chosen one runs |
-| `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to `expr.if` first, keeping them short-circuiting |
+| `expr.binop` | `a + b` | `add(⟦a⟧)(⟦b⟧)`; `&&` and `\|\|` expand to a `match` on the left operand first, whose arm is the right one, keeping them short-circuiting |
 | `expr.unop` | `-a` | `neg(⟦a⟧)` |
 | `expr.index` | `a[i]` | `__index(⟦a⟧)(⟦i⟧)` |
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
@@ -1713,7 +1713,7 @@ become λ binders.
 | `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
 | `α` | the consumer named on the right of a cut, `v | k` |
 | `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v | f(a)`), which is the same act: applying the consumer the expression evaluates to |
-| `μ̃x. c` | every binder: `let`, a discarded block expression, an `if`'s condition; written directly as `select +A { x => c }` |
+| `μ̃x. c` | every binder: `let`, a discarded block expression; written directly as `select +A { x => c }` |
 | `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum`, a `data` or a sum `(A \| B)`, including `select (\|) {}` |
 | `μ̃(x…)` | `select` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |

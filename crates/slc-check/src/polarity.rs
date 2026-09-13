@@ -228,13 +228,6 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
             }
             check_expr(body, declared, diags);
         }
-        Expr::If { cond, then, otherwise } => {
-            check_expr(cond, declared, diags);
-            check_expr(then, declared, diags);
-            if let Some(o) = otherwise {
-                check_expr(o, declared, diags);
-            }
-        }
         Expr::Let { value, body, .. } => {
             check_expr(value, declared, diags);
             if let Some(b) = body {

@@ -30,11 +30,11 @@ fn translate(p: Point, dx: i64, dy: i64) -> Point {
 // Takes a record and returns an enum: the result is one tagged variant.
 fn classify(p: Point) -> Size {
     let area = p.x * p.y;
-    if area > 100 {
+    match area > 100 { true => {
         Size::Big(area - 100)
-    } else {
+    }, _ => {
         Size::Small
-    }
+    } }
 }
 
 // Takes an enum: `match` chooses the branch the variant selects.
@@ -66,11 +66,11 @@ fn reflect(out: Point) <- Point {
 // "Returns" an enum: consume a bare number, send one variant onward.
 fn classify_to(out: Size) <- i64 {
     select i64 {
-        area => if area > 100 {
+        area => match area > 100 { true => {
             ⟨Size::Big(area - 100) | out⟩
-        } else {
+        }, _ => {
             ⟨Size::Small | out⟩
-        },
+        } },
     }
 }
 

@@ -41,11 +41,11 @@ fn area(s: Shape) -> i64 {
 }
 
 fn label(a: i64) -> String {
-    if a > 50 {
+    match a > 50 { true => {
         "big"
-    } else {
+    }, _ => {
         "small"
-    }
+    } }
 }
 
 // ─── Continuation-centric ────────────────────────────────────────────────
@@ -65,11 +65,11 @@ fn area_of(out: i64) <- Shape {
 
 fn label_of(out: String) <- i64 {
     select i64 {
-        a => if a > 50 {
+        a => match a > 50 { true => {
             ⟨"big" | out⟩
-        } else {
+        }, _ => {
             ⟨"small" | out⟩
-        },
+        } },
     }
 }
 

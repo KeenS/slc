@@ -24,7 +24,7 @@ fn doubling(k: -i64) -> -i64 {
 // A two-exit command, written unary: one value, one menu of exits, each
 // component naming what reaches it.
 command classify(n: i64) | (found: i64 & missing: String) {
-    if n > 0 { ⟨n | found⟩ } else { ⟨"nothing there" | missing⟩ }
+    match n > 0 { true => { ⟨n | found⟩ }, _ => { ⟨"nothing there" | missing⟩ } }
 }
 
 // A row is a value: this one takes the whole menu and hands it on.

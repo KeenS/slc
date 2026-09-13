@@ -22,7 +22,7 @@ impl Show for i64 {
 
 impl Show for bool {
     fn show(self: bool) -> String {
-        if self { "true" } else { "false" }
+        match self { true => { "true" }, _ => { "false" } }
     }
 }
 

@@ -303,8 +303,8 @@ function applied to its row: `⟨Color::Blue | code | answer⟩`.
 A continuation passed to a function is an ordinary argument, since a
 consumer is a value: `⟨k | handle`.
 
-A cut has type `⊥`, so a branch that ends in one leaves the type of an `if` to
-the other branch, and code after a cut in a block is unreachable.
+A cut has type `⊥`, so a `match` arm that ends in one leaves the type of the
+match to the other arms, and code after a cut in a block is unreachable.
 
 ## The top-level `EXIT` is gone
 
@@ -975,6 +975,21 @@ against the builtin's signature, with its whole value group:
 ⟨("a", "b") | add      // old: joined the strings; now refused
 ⟨("a", "b") | str_concat
 ```
+
+## There is no `if`
+
+A choice on a `bool` is a `match` on it. The `_` arm stands for `false`:
+
+```sl
+if n > 0 { n } else { 0 - n }                          // old
+match n > 0 { true => n, _ => 0 - n }                  // new
+
+if a { x } else if b { y } else { z }                  // old
+match a { true => x, _ => match b { true => y, _ => z } }   // new
+```
+
+An `if` with no `else` yielded unit on the false path; write that arm
+explicitly, `_ => (,)`.
 
 ## `!` is the prelude's `not`
 

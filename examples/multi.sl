@@ -11,7 +11,7 @@ trait Show  { fn show(self: Self) -> String; }
 trait Width { fn width(self: Self) -> i64; }
 
 impl Show for i64  { fn show(self: i64) -> String { ⟨self | int_to_str } }
-impl Show for bool { fn show(self: bool) -> String { if self { "yes" } else { "no" } } }
+impl Show for bool { fn show(self: bool) -> String { match self { true => { "yes" }, _ => { "no" } } } }
 impl Show for String { fn show(self: String) -> String { self } }
 impl Width for i64 { fn width(self: i64) -> i64 { ⟨self | int_to_str | str_len } }
 
@@ -32,11 +32,11 @@ effect Reader { fn config() -> i64; }
 
 // The row lists every effect the body may perform.
 fn scale(x: i64) -> i64 / {Exn, Reader} {
-    if x == 0 {
+    match x == 0 { true => {
         ⟨"cannot scale zero" | fail
-    } else {
+    }, _ => {
         x * config()
-    }
+    } }
 }
 
 command main | (exit: i32) / {IO} {

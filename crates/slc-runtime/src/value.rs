@@ -280,7 +280,6 @@ pub fn install_stdlib(env: &mut Env) {
         "__close_file",
         "__write_file",
         "__file_exists",
-        "__if_dispatch",
         "__match_dispatch",
         "__handle",
         "char_at",

@@ -40,11 +40,6 @@ const ROWS: &[Row] = &[
     },
     Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "μ̃__discarded." },
     Row {
-        id: "expr.if",
-        source: "fn f() -> i32 { if true { 1 } else { 2 } }",
-        core: "__if_dispatch",
-    },
-    Row {
         id: "expr.binop", source: "fn f() -> i32 { 1 + 2 }", core: "⟨add ∥ $int_1 · __call⟩"
     },
     Row { id: "expr.unop", source: "fn f() -> i32 { -1 }", core: "⟨neg ∥" },

@@ -43,7 +43,7 @@ impl Display for String {
 }
 
 impl Display for bool {
-    fn fmt(self: bool) -> String { if self { "true" } else { "false" } }
+    fn fmt(self: bool) -> String { match self { true => { "true" }, _ => { "false" } } }
 }
 
 fn to_string<T: Display>(x: T) -> String { ⟨x | fmt }

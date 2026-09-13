@@ -68,25 +68,25 @@ mod seq {
         mu Seq {
             next <= match s.next {
                 Step::Done => ⟨Step::Done | next⟩,
-                Step::Yield(h, rest) => if ⟨h | keep {
+                Step::Yield(h, rest) => match ⟨h | keep { true => {
                     ⟨Step::Yield(h, ⟨(keep, rest) | filter) | next⟩
-                } else {
+                }, _ => {
                     ⟨(⟨(keep, rest) | filter).next | next⟩
-                },
+                } },
             },
         }
     }
 
     pub fn take<T>(s: Seq<T>, n: i64) -> Seq<T> {
         mu Seq {
-            next <= if n <= 0 {
+            next <= match n <= 0 { true => {
                 ⟨Step::Done | next⟩
-            } else {
+            }, _ => {
                 match s.next {
                     Step::Done => ⟨Step::Done | next⟩,
                     Step::Yield(h, rest) => ⟨Step::Yield(h, ⟨(rest, n - 1) | take) | next⟩,
                 }
-            },
+            } },
         }
     }
 
@@ -95,11 +95,11 @@ mod seq {
     // does.
     pub fn take_while<T, E>(keep: (T -> bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
         mu Seq {
-            next <= if ⟨s.head | keep {
+            next <= match ⟨s.head | keep { true => {
                 ⟨Step::Yield(s.head, ⟨(keep, s.tail) | take_while) | next⟩
-            } else {
+            }, _ => {
                 ⟨Step::Done | next⟩
-            },
+            } },
         }
     }
 }

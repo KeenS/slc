@@ -71,11 +71,13 @@ documentation pass, and one defect.
   after the first: the first jump to the `mu`'s continuation leaves the
   clause instead of returning into it. Under
   `flip(): resume => (⟨true | resume) + " " + (⟨false | resume)`,
-  `let a = mu String { r <= ⟨(if flip() { "H" } else { "T" }) | r⟩ }`
+  `let a = mu String { r <= ⟨(match flip() { true => "H", _ => "T" }) | r⟩ }`
   answers `"H"`; the same program without the `mu`, or with `flip()`
   performed before it, answers `"H T"`. Stopping a `mu`'s capture at the
   nearest prompt would change what `mu` means under a handler, so this is a
-  design question, and "`if` becomes a prelude command" waits on it.
+  design question, set aside for now. It is what kept `if` from becoming a
+  prelude command: a value-returning one needs a `mu` around a condition
+  that may perform, so `if` became a `match` instead.
 
 ### Defects
 
@@ -99,49 +101,6 @@ They depend on each other, so they are listed in the order they can land:
 chains have to stop nesting before operators become stages, and `bool`
 becomes a declaration last, once nothing left in the language is built on
 the built-in one.
-
-- **`if` becomes a prelude command.** The `if` expression is removed in
-  favour of an ordinary declaration in the prelude:
-
-  ```sl
-  command if(c: bool) | (then: -(,) & otherwise: -(,)) {
-      match c { true => ⟨(,) | then⟩, false => ⟨(,) | otherwise⟩ }
-  }
-  ```
-
-  It has to be a `command`, not a `fn`: a function's arguments are
-  evaluated before the call, so an `if` taking its branches as values would
-  run both, and every recursion an `if` guards would diverge. A row delays
-  both, and the `bool` picks one — `⟨c | if | (fn(_) { … } & fn(_) { … })⟩`,
-  under a `mu` where the `if` is to produce a value. The shape works today
-  under another name. The `fn(_)` wrappers exist only to delay the branches;
-  "Negative positions by name" would let a bare block stand in their place.
-
-  What stands between it and the name `if`:
-
-  - **Multi-shot handlers.** A value-returning `if` is a `mu` around the
-    command, so a condition or branch that performs an operation runs into
-    "A `mu` that performs escapes a resuming clause". `examples/effects.sl`'s
-    `pick`, rewritten this way, answers `"HH"` instead of `"HH HT TH TT"`.
-    The migration waits for that to be settled. Every other shape it needs
-    was tried under another name and works: a `let`, a function body with an
-    untyped `mu`, a command body with no `mu` at all, a generic function, an
-    arm of a rowed `mu` or `select`, and a branch that throws, written
-    `⟨(⟨"…" | throw) | r⟩` since `⟨⟨` does not parse.
-  - `if` is a keyword. Match guards are gone, so nothing else spells it,
-    and it simply stops being one.
-  - The prelude body needs a `_` arm until "`bool` is defined in the
-    prelude" lands.
-  - `&&` and `||` expand to the `if` expression to short-circuit. They
-    become functions in "Infix operators become functions", and until then
-    they need to lower to a `match` on the `bool`. `__if_dispatch` and the
-    `expr.if` lowering row then go.
-  - The rule that a `⊥` branch constrains nothing (§3), and the note that
-    an `else`-less `if` dangles, leave `DESIGN.md` — each continuation of a
-    row is typed on its own, so there is no join to state.
-  - Every use migrates: the stdlib, the examples, the docs, and the Rust
-    tests' sources. A value-returning `if` grows a `mu`, and an `else if`
-    chain becomes nested bundles, which is the real cost to weigh first.
 
 - **A chain through a stage with more than one argument stops nesting.** A
   stage supplies the whole group (§3), so a stage that takes anything
@@ -174,8 +133,8 @@ the built-in one.
     builtins' signatures are `(i64, i64) -> i64` and the like, and a stage is
     held to them, so `⟨("a", "b") | add` is refused. As functions they need
     traits, the way `Display` works, or one name per type.
-  - **Short-circuiting.** `&&` and `||` expand to the `if` expression so
-    their right operand runs only when needed. As functions (`and` and `or`
+  - **Short-circuiting.** `&&` and `||` lower to a `match` on the left
+    operand so their right operand runs only when needed. As functions (`and` and `or`
     are free names) the right operand has to arrive delayed. It is a `bool`,
     a positive type, so "Negative positions by name" does not reach it. What
     works today is `Lazy<bool>`:
@@ -202,10 +161,9 @@ the built-in one.
   comparison in the stdlib, the examples, the docs and the Rust tests.
 
 - **`bool` is defined in the prelude.** The last of these, and possible
-  only once "`if` becomes a prelude command" and "Infix operators become
-  functions" have removed the `if` expression, `&&` and `||`, which are
-  built on the built-in `bool`: `__if_dispatch` tests a `Value::Bool`, and
-  the logical operators expand to `if`. `bool` then becomes an ordinary
+  only once "Infix operators become functions" has removed `&&` and `||`,
+  which lower to a `match` on the built-in `bool`; the `if` expression is
+  already gone. `bool` then becomes an ordinary
   `enum`, so a `match` on it is exhaustive the way a match on any enum is,
   and the `bool` exhaustiveness defect goes with it: coverage is counted
   only over enum variants (`exhaustive.rs`), and a match over literals
@@ -223,24 +181,25 @@ the built-in one.
     comparisons, `is_digit`, `is_ws` and `__file_exists` — have to produce
     the variant instead, and diagnostics that say "expected +bool" name the
     declared type.
-  - **The `_` arms added meanwhile.** The prelude's `if`, `and`, `or` and
-    `not` match on `bool` with a `_` arm until this lands; they can then
-    name both variants.
+  - **The `_` arms added meanwhile.** Every `match` on a `bool` — the
+    prelude's `not`, and those the stdlib and examples use where `if` used
+    to be — has a `_` arm until this lands; they can then name both
+    variants.
 
 ## Deferred, for discussion
 
 - **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
   the choice between by-value and by-name, and it is settled for the
   producer at every type today (`reduce.rs`). Settled by polarity instead, a
-  `⊥` item of a row would be a thunk, run by naming it, and `if` would need
-  no wrappers:
+  `⊥` item of a row would be a thunk, run by naming it, and a command that
+  picks one exit, such as this `choose`, would need no `fn(_)` wrappers:
 
   ```sl
-  command if(c: bool) | (then: (;) & otherwise: (;)) {
+  command choose(c: bool) | (then: (;) & otherwise: (;)) {
       match c { true => then, false => otherwise }
   }
 
-  mu i64 { r <= ⟨n > 0 | if | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
+  mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
   ```
 
   Today the checker refuses this bundle, because an item that ends in a cut
@@ -248,7 +207,7 @@ the built-in one.
   would be a thunk and the refusal would lift. Only negative positions would
   change: delaying a positive
   value without writing it would bring back the `↑` that §8 removed, so a
-  value-returning `if` keeps its `mu`, `Lazy<T>` stays the spelling of a
+  value-returning `choose` keeps its `mu`, `Lazy<T>` stays the spelling of a
   delayed value, and a `bool` operand of `&&` is not reached. A by-name
   continuation named twice runs twice, which is consistent with
   continuations already being multi-shot.

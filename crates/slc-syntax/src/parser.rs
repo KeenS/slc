@@ -1252,8 +1252,7 @@ impl Parser {
     }
 
     /// Parse an expression in a position where a following `{` opens a block
-    /// rather than a record literal: the condition of an `if`, the scrutinee
-    /// of a `match`.
+    /// rather than a record literal: the scrutinee of a `match`.
     fn parse_scrutinee(&mut self) -> Result<Node<Expr>, ParseError> {
         let outer = self.no_struct_literal;
         self.no_struct_literal = true;
@@ -1824,24 +1823,14 @@ impl Parser {
                     kind: Expr::Let { pattern, ty, value: Box::new(value), body },
                 })
             }
-            Some(TokenKind::If) => {
-                self.pos += 1;
-                let cond = self.parse_scrutinee()?;
-                let then = self.parse_block()?;
-                let otherwise = if self.eat(&TokenKind::Else) {
-                    if self.peek_kind() == Some(&TokenKind::If) {
-                        Some(Box::new(self.parse_expr()?))
-                    } else {
-                        Some(Box::new(self.parse_block()?))
-                    }
-                } else {
-                    None
-                };
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::If { cond: Box::new(cond), then: Box::new(then), otherwise },
-                })
-            }
+            // There is no `if`: a choice on a `bool` is a `match` on it. The
+            // word stays a token only so that writing it says so.
+            Some(TokenKind::If) => Err(ParseError {
+                message: "there is no `if`: match on the condition, \
+                          `match c { true => …, _ => … }`"
+                    .into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+            }),
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // Inside parentheses a `{` can only open a record literal,
@@ -2773,29 +2762,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_else_if_chain() {
-        let p = parse_str("if a { 1 } else if b { 2 } else if c { 3 } else { 4 }");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(&body.kind, Expr::If { .. }));
-        let Expr::If { otherwise: Some(outer), .. } = &body.kind else {
-            panic!("expected else");
-        };
-        assert!(matches!(&outer.kind, Expr::If { .. }));
-    }
-
-    #[test]
-    fn parse_else_if_without_final_else() {
-        let p = parse_str("if a { 1 } else if b { 2 }");
-        let Decl::Fn { body, .. } = &p.decls[0].kind else {
-            panic!("expected main declaration");
-        };
-        assert!(matches!(
-            &body.kind,
-            Expr::If { otherwise: Some(outer), .. }
-                if matches!(&outer.kind, Expr::If { otherwise: None, .. })
-        ));
+    fn there_is_no_if() {
+        let errors =
+            parse(lex("fn f(b: bool) -> i64 { if b { 1 } else { 2 } }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("there is no `if`"), "got: {errors:?}");
     }
 
     #[test]

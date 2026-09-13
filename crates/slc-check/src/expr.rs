@@ -2294,47 +2294,6 @@ fn check_expr_unapplied(
                 }
             }
         }
-        Expr::If { cond, then, otherwise } => {
-            let cond_ty = check_expr(cond, enums, env, diags);
-            if !cond_ty.as_ref().is_some_and(|ty| fits(env, &Type::Pos(Base::Bool), ty, &cond.kind))
-            {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "`if` condition has type {}; expected +bool",
-                        cond_ty.map(|ty| ty.to_string()).unwrap_or_else(|| "unknown".into())
-                    ),
-                    span: cond.span,
-                });
-            }
-            let then_ty = check_expr(then, enums, env, diags);
-            let Some(otherwise) = otherwise else {
-                // No `else`: the then-branch's value is discarded and the
-                // false path yields unit, so the `if` is a unit statement —
-                // never `(;)`, even when the then-branch ends in a cut.
-                return Some(Type::ONE);
-            };
-            let else_ty = check_expr(otherwise, enums, env, diags);
-            // A branch that ends in a cut never returns, so it constrains
-            // nothing: the `if` has the type of the branch that does return.
-            match (then_ty, else_ty) {
-                (Some(then_ty), else_ty) if then_ty == Type::BOTTOM => else_ty,
-                (then_ty, Some(else_ty)) if else_ty == Type::BOTTOM => then_ty,
-                (Some(then_ty), Some(else_ty)) => {
-                    if env.uni.unify(&then_ty, &else_ty).is_err() {
-                        let then_ty = env.uni.apply(&then_ty);
-                        let else_ty = env.uni.apply(&else_ty);
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "`if` branches have incompatible types {then_ty} and {else_ty}"
-                            ),
-                            span: otherwise.span,
-                        });
-                    }
-                    Some(then_ty)
-                }
-                (then_ty, _) => then_ty,
-            }
-        }
         Expr::Let { pattern, ty, value, body } => {
             let binding_ty = check_let_binding(pattern, ty, value, enums, env, diags);
             env.push();
@@ -2506,6 +2465,7 @@ fn check_expr_unapplied(
                     check_pattern(&arm.pattern, scrutinee_ty, enums, arm.body.span, diags);
                 }
             }
+            let mut joined = Some(Type::BOTTOM);
             for arm in arms {
                 env.push();
                 // Bind the arm's pattern variables with their declared types,
@@ -2513,10 +2473,31 @@ fn check_expr_unapplied(
                 if let Some(scrutinee_ty) = &scrutinee_ty {
                     bind_match_pattern(&arm.pattern, scrutinee_ty, enums, env);
                 }
-                check_expr(&arm.body, enums, env, diags);
+                let arm_ty = check_expr(&arm.body, enums, env, diags);
                 env.pop();
+                // The match has the type its arms agree on. An arm that ends
+                // in a cut never returns, so it constrains nothing; an arm of
+                // unknown type leaves the match's unknown too.
+                joined = match (joined, arm_ty) {
+                    (joined, Some(arm_ty)) if arm_ty == Type::BOTTOM => joined,
+                    (Some(joined), Some(arm_ty)) if joined == Type::BOTTOM => Some(arm_ty),
+                    (Some(joined), Some(arm_ty)) => {
+                        if env.uni.unify(&joined, &arm_ty).is_err() {
+                            let joined = env.uni.apply(&joined);
+                            let arm_ty = env.uni.apply(&arm_ty);
+                            diags.push(Diagnostic {
+                                message: format!(
+                                    "`match` arms have incompatible types {joined} and {arm_ty}"
+                                ),
+                                span: arm.body.span,
+                            });
+                        }
+                        Some(joined)
+                    }
+                    _ => None,
+                };
             }
-            None
+            if arms.is_empty() { None } else { joined }
         }
         Expr::Data { name, fields } => {
             let type_args = fresh_args(enums, name, &mut env.uni);
@@ -3399,9 +3380,11 @@ mod tests {
         // A bare value reaches no continuation.
         let diags = check("command bad(x: +i32) | (k: -i32) { x }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
-        // An `if` with no `else` falls through on the false path.
-        let diags =
-            check("command bad(x: +i32) | (k: -i32) { if eq(x, 0) { ⟨x | k⟩ } }").unwrap_err();
+        // An arm that yields a value falls through on its path.
+        let diags = check(
+            "command bad(x: +i32) | (k: -i32) { match eq(x, 0) { true => ⟨x | k⟩, _ => (,) } }",
+        )
+        .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("must reach a continuation")), "{diags:?}");
     }
 
@@ -3696,10 +3679,10 @@ mod tests {
     #[test]
     fn a_cut_is_a_command() {
         // A cut has type `(;)`: it produces nothing and control does not return,
-        // so a branch that ends in one leaves the `if` type to the other.
+        // so an arm that ends in one leaves the `match` type to the other.
         let ok = check(
             "fn parse(input: +String, err: -String) -> i64 {
-                 if str_len(input) > 0 { 1 } else { ⟨\"empty\" | err⟩ }
+                 match str_len(input) > 0 { true => 1, _ => ⟨\"empty\" | err⟩ }
              }",
         );
         assert!(ok.is_ok(), "{ok:?}");
@@ -4070,7 +4053,7 @@ mod tests {
         assert!(
             check(
                 "effect C { fn c() -> bool; }
-                 fn f() -> i64 / {C} { if c() { 1 } else { 2 } }
+                 fn f() -> i64 / {C} { match c() { true => 1, _ => 2 } }
                  command main | (exit: -i32) / {IO} {
                      let r = handle f() {
                          c(): resume => resume(true) + resume(false),

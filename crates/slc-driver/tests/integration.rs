@@ -76,7 +76,7 @@ fn the_accepted_entry_point_is_a_command_with_one_exit_continuation() {
     // A value parameter, or a row that is not one exit status, is rejected.
     for rejected in [
         "command main(x: +i32) | (exit: -i32) { ⟨0 | exit⟩ }",
-        "command main | (a: -i32 & b: -i32) { if true { ⟨0 | a⟩ } else { ⟨1 | b⟩ } }",
+        "command main | (a: -i32 & b: -i32) { match true { true => ⟨0 | a⟩, _ => ⟨1 | b⟩ } }",
         "command main | (exit: -String) { ⟨\"done\" | exit⟩ }",
     ] {
         std::fs::write(&dir, rejected).unwrap();
@@ -335,7 +335,7 @@ fn short_circuit_and_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(if false && (1 / 0 == 1) { 1 } else { 2 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { println(match false && (1 / 0 == 1) { true => 1, _ => 2 }); ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -349,7 +349,7 @@ fn short_circuit_or_does_not_evaluate_rhs() {
     let dir = std::env::temp_dir().join("slc_test_short_circuit_or.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(if true || (1 / 0 == 1) { 3 } else { 4 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { println(match true || (1 / 0 == 1) { true => 3, _ => 4 }); ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
@@ -373,7 +373,7 @@ fn boolean_precedence_below_comparisons() {
     let dir = std::env::temp_dir().join("slc_test_bool_prec.sl");
     std::fs::write(
         &dir,
-        "command main | (exit: -i32) / {IO} { println(if 1 == 1 || 2 == 3 { 5 } else { 6 }); ⟨0 | exit⟩ }",
+        "command main | (exit: -i32) / {IO} { println(match 1 == 1 || 2 == 3 { true => 5, _ => 6 }); ⟨0 | exit⟩ }",
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
@@ -410,7 +410,7 @@ fn named_error_propagation_success_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            if input == "ok" { ⟨"parsed" | ok⟩ } else { ⟨"failed" | err⟩ }
+            match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
             let ok = fn(value: +String) -> i32 { println("ok: " + value); ⟨0 | exit⟩ };
@@ -430,7 +430,7 @@ fn named_error_propagation_error_path() {
     std::fs::write(
         &dir,
         r#"command parse(input: +String) | (ok: -String & err: -String) {
-            if input == "ok" { ⟨"parsed" | ok⟩ } else { ⟨"failed" | err⟩ }
+            match input == "ok" { true => ⟨"parsed" | ok⟩, _ => ⟨"failed" | err⟩ }
         }
         command main | (exit: -i32) / {IO} {
             let ok = fn(value: +String) -> i32 { println("ok: " + value); ⟨0 | exit⟩ };
@@ -451,13 +451,12 @@ fn json_selected_error_continuation_reports_parse_error() {
         &dir,
         r#"command parse_json(input: +String) | (ok: -String & err: -String) {
             let start = ⟨(input, 0) | skip_ws;
-            if start < (⟨input | str_len) {
-                match input[start] {
+            match start < (⟨input | str_len) {
+                true => match input[start] {
                     '0'..='9' => ⟨input[start..start + 1] | ok⟩,
                     _ => ⟨"expected JSON value" | err⟩
-                }
-            } else {
-                ⟨"empty input" | err⟩
+                },
+                _ => ⟨"empty input" | err⟩,
             }
         }
         command main | (exit: -i32) / {IO} {
@@ -1026,7 +1025,7 @@ fn a_row_closes_the_chain_and_travels_whole() {
     std::fs::write(
         &dir,
         r#"command classify(n: i64) | (found: i64 & missing: String) {
-            if n > 0 { ⟨n | found⟩ } else { ⟨"negative" | missing⟩ }
+            match n > 0 { true => ⟨n | found⟩, _ => ⟨"negative" | missing⟩ }
         }
         command forward(n: i64) | (row: (-i64 & -String)) { ⟨n | classify | row⟩ }
         command main | (exit: -i32) / {IO} {
@@ -1475,7 +1474,7 @@ fn an_alternative_is_resolved_against_the_sum_its_context_gives() {
         r#"fn pick(x: (i64 | bool | String)) -> String {
             match x {
                 ::0(n) => ⟨n | int_to_str,
-                ::1(b) => (if b { "yes" } else { "no" }),
+                ::1(b) => match b { true => "yes", _ => "no" },
                 _ => "other",
             }
         }
@@ -1539,7 +1538,7 @@ fn nesting_is_significant_and_a_position_needs_no_sum() {
         fn nested(x: (i64 | (bool | String))) -> String {
             match x {
                 ::0(n) => ⟨n | int_to_str,
-                ::1(rest) => match rest { ::0(b) => (if b { "yes" } else { "no" }), ::1(s) => s },
+                ::1(rest) => match rest { ::0(b) => match b { true => "yes", _ => "no" }, ::1(s) => s },
             }
         }
         fn flat(x: (i64 | bool | String)) -> String {
