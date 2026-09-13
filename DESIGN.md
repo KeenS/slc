@@ -1203,9 +1203,9 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 
 The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,
-`list.sl:53:57`. Every unit is parsed and checked on every run, `use`d or
-not — fine at this size, and per-module loading is the upgrade when it
-stops being fine. `examples/stdlib.sl` draws on the second layer only.
+`list.sl:53:57`. Only the units a program reaches are loaded: the prelude always, and each
+module named by a path or a `use`, with the modules those name in turn — so a
+program that touches no module is checked against the prelude alone. `examples/stdlib.sl` draws on the second layer only.
 
 **`Seq<T>` is the one that pays for menus in ordinary code.** `List` is
 data and `Stream` is codata that never ends; a `Seq` is a menu whose single
@@ -1415,6 +1415,14 @@ nothing else. A program's `mod` of a library module's name shadows it
 whole, as its `fn` shadows a prelude function. `use list;` — naming a
 module already reachable at the root — is allowed, so a program can say
 what it draws on.
+
+`use m::*;` brings every `pub` member of module `m` in bare — a glob. It is
+the weakest way a name arrives: an explicit `use m::f;` and the importing
+module's own declarations both win over it. Two globs may bring the same
+name, and that is not an error until the name is used — `use list::*; use
+seq::*;` is fine, and a bare `map` after it says it could be either and asks
+for the one you mean. A glob over an enum, `use list::List::*;`, still
+brings its variants, as before.
 
 Modules exist only to resolution, which runs right after parsing: every
 declaration inside `mod m` is renamed `m::name`, every reference is rewritten

@@ -23,6 +23,51 @@ const LIBRARY: &[(&str, &str)] = &[
     ("fs", include_str!("stdlib/fs.sl")),
 ];
 
+/// The library units a program needs: the prelude always, and each stdlib
+/// module the program reaches — by a path `list::…` or a `use list…` —
+/// together with the modules those reach in turn, to a fixpoint. A unit
+/// nothing reaches is never parsed or checked.
+///
+/// Reaching is read off tokens, not a parse: a name followed by `::`, or a
+/// name after `use`. A false positive only loads a unit the program did not
+/// need, and a lexing error loads nothing extra — the real lex reports it.
+fn library_for(program: &str) -> Vec<(&'static str, &'static str)> {
+    use slc_syntax::token::TokenKind;
+    fn reached(text: &str) -> std::collections::HashSet<String> {
+        let mut out = std::collections::HashSet::new();
+        let Ok(tokens) = slc_syntax::lexer::lex(text) else { return out };
+        for pair in tokens.windows(2) {
+            match (&pair[0].kind, &pair[1].kind) {
+                (TokenKind::Ident(name), TokenKind::ColonColon)
+                | (TokenKind::Use, TokenKind::Ident(name)) => {
+                    out.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+    let (_, prelude) = LIBRARY[0];
+    let mut wanted = reached(program);
+    wanted.extend(reached(prelude));
+    let mut included = vec![false; LIBRARY.len()];
+    included[0] = true;
+    loop {
+        let mut grew = false;
+        for (index, (name, text)) in LIBRARY.iter().enumerate() {
+            if !included[index] && wanted.contains(*name) {
+                included[index] = true;
+                wanted.extend(reached(text));
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    LIBRARY.iter().zip(included).filter(|(_, needed)| *needed).map(|(unit, _)| *unit).collect()
+}
+
 /// The combined source and where each unit starts in it, so a span — a char
 /// offset into the whole — can be named by its unit, line, and column.
 struct SourceMap {
@@ -32,13 +77,14 @@ struct SourceMap {
 }
 
 impl SourceMap {
-    /// The program's text under `program`, then every library unit, each
-    /// on a line of its own. The program comes first so its spans — and its
-    /// diagnostics' line numbers — are untouched.
+    /// The program's text under `program`, then each library unit it
+    /// needs, each on a line of its own. The program comes first so its
+    /// spans — and its diagnostics' line numbers — are untouched.
     fn new(program: &str, source: String) -> Self {
+        let library = library_for(&source);
         let mut text = source;
         let mut units = vec![(program.to_string(), 0)];
-        for (name, unit) in LIBRARY {
+        for (name, unit) in library {
             text.push('\n');
             units.push((name.to_string(), text.chars().count()));
             text.push_str(unit);
@@ -371,4 +417,31 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
         return Err(MAIN_ENTRY_POINT_ERROR.into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::library_for;
+
+    fn loaded(program: &str) -> Vec<&'static str> {
+        library_for(program).into_iter().map(|(name, _)| name).collect()
+    }
+
+    #[test]
+    fn a_program_that_reaches_no_module_loads_only_the_prelude() {
+        assert_eq!(
+            loaded(r#"command main | (exit: i32) / {IO} { "hi" | println; 0 | exit⟩ }"#),
+            ["prelude"]
+        );
+    }
+
+    #[test]
+    fn a_module_loads_with_the_modules_it_reaches() {
+        // A path is enough; so is a `use`, of a name or a glob.
+        assert_eq!(loaded("x | fs::read"), ["prelude", "fs"]);
+        assert_eq!(loaded("use num::*;"), ["prelude", "num"]);
+        assert_eq!(loaded("use option;"), ["prelude", "option"]);
+        // `seq` reaches `list` and `stream`, and `stream` reaches `list`.
+        assert_eq!(loaded("use seq::Seq;"), ["prelude", "list", "stream", "seq"]);
+    }
 }

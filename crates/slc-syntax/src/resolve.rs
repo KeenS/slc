@@ -32,6 +32,79 @@ struct Scope {
     declares: HashSet<String>,
     /// `use a::b::c;` makes `c` mean `a::b::c` here.
     aliases: HashMap<String, String>,
+    /// `use m::*;` — every `pub` member of module `m`, bare, by the targets
+    /// each name could mean. Weaker than an explicit `use` and than the
+    /// module's own declarations; two globs bringing one name make it
+    /// ambiguous, which is an error only where the name is used.
+    globs: HashMap<String, Vec<String>>,
+    /// Ambiguous glob names met while resolving, kept on the root scope and
+    /// drained by `flatten` onto the declaration that used them — resolving
+    /// a name has nowhere else to report.
+    ambiguous: std::cell::RefCell<Vec<(String, Vec<String>)>>,
+}
+
+/// Every module's members, by the module's qualified name, with whether each
+/// is `pub` — what `use m::*;` draws from.
+type Modules = HashMap<String, Vec<(String, bool)>>;
+
+fn collect_modules(decls: &[Node<Decl>], prefix: &str, out: &mut Modules) {
+    for d in decls {
+        let Decl::Mod { name, decls: inner, .. } = &d.kind else { continue };
+        let path = if prefix.is_empty() { name.clone() } else { format!("{prefix}::{name}") };
+        let mut members = Vec::new();
+        for m in inner {
+            match &m.kind {
+                Decl::Fn { name, is_public, .. }
+                | Decl::Command { name, is_public, .. }
+                | Decl::Data { name, is_public, .. }
+                | Decl::Enum { name, is_public, .. }
+                | Decl::Menu { name, is_public, .. }
+                | Decl::Form { name, is_public, .. }
+                | Decl::Const { name, is_public, .. }
+                | Decl::Trait { name, is_public, .. }
+                | Decl::Mod { name, is_public, .. } => members.push((name.clone(), *is_public)),
+                Decl::Effect { name, is_public, operations } => {
+                    members.push((name.clone(), *is_public));
+                    for op in operations {
+                        members.push((op.name.clone(), *is_public));
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.insert(path.clone(), members);
+        collect_modules(inner, &path, out);
+    }
+}
+
+/// The module a glob's path names, looked up the way a name is: from the
+/// importing module outward to the root.
+fn find_module(path: &[String], here: &[String], modules: &Modules) -> Option<String> {
+    let written = path.join("::");
+    (0..=here.len()).rev().find_map(|k| {
+        let candidate =
+            if k == 0 { written.clone() } else { format!("{}::{written}", here[..k].join("::")) };
+        modules.contains_key(&candidate).then_some(candidate)
+    })
+}
+
+/// Fill a scope's globs from its `use m::*;` declarations that name modules.
+/// A glob over an enum is a variant import, handled after flattening.
+fn expand_globs(scope: &mut Scope, decls: &[Node<Decl>], modules: &Modules) {
+    for d in decls {
+        let Decl::Use { path, imports: crate::ast::UseImports::Glob } = &d.kind else { continue };
+        let Some(module) = find_module(path, &scope.path, modules) else { continue };
+        for (member, is_public) in &modules[&module] {
+            if !is_public {
+                continue;
+            }
+            let target = format!("{module}::{member}");
+            let candidates = scope.globs.entry(member.clone()).or_default();
+            if !candidates.contains(&target) {
+                candidates.push(target);
+            }
+        }
+    }
 }
 
 impl Scope {
@@ -72,10 +145,17 @@ pub fn resolve_program_split(
     units: &[usize],
 ) -> Result<Program, Vec<ResolveError>> {
     let mut errors = Vec::new();
+    let mut modules = Modules::new();
+    collect_modules(&program.decls, "", &mut modules);
     for d in &program.decls {
-        if let Decl::Use { imports: crate::ast::UseImports::Member, .. } = &d.kind
-            && unit_of(d.span.start, units) > 0
-        {
+        let brings_names = match &d.kind {
+            Decl::Use { imports: crate::ast::UseImports::Member, .. } => true,
+            Decl::Use { path, imports: crate::ast::UseImports::Glob } => {
+                find_module(path, &[], &modules).is_some()
+            }
+            _ => false,
+        };
+        if brings_names && unit_of(d.span.start, units) > 0 {
             errors.push(ResolveError {
                 message: "a library unit imports names inside its `mod`, not at the top: \
                           the root scope is shared with the program"
@@ -85,9 +165,10 @@ pub fn resolve_program_split(
         }
     }
     let mut out = Vec::new();
-    let root = collect_scope(&program.decls, Vec::new(), &mut errors);
+    let mut root = collect_scope(&program.decls, Vec::new(), &mut errors);
+    expand_globs(&mut root, &program.decls, &modules);
     let mut stack = vec![root];
-    flatten(&program.decls, &mut stack, &mut out, &mut errors);
+    flatten(&program.decls, &mut stack, &mut out, &modules, &mut errors);
     let out = apply_variant_imports(out, units, &mut errors);
     check_visibility(&out, &mut errors);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
@@ -347,7 +428,7 @@ fn apply_variant_imports(
         let enum_name = path.join("::");
         let Some(variants) = variants_of.get(&enum_name) else {
             errors.push(ResolveError {
-                message: format!("`use {enum_name}::…` does not name a declared enum"),
+                message: format!("`use {enum_name}::…` names neither a module nor a declared enum"),
                 span: d.span,
             });
             continue;
@@ -386,7 +467,13 @@ fn apply_variant_imports(
 }
 
 fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<ResolveError>) -> Scope {
-    let mut scope = Scope { path, declares: HashSet::new(), aliases: HashMap::new() };
+    let mut scope = Scope {
+        path,
+        declares: HashSet::new(),
+        aliases: HashMap::new(),
+        globs: HashMap::new(),
+        ambiguous: std::cell::RefCell::new(Vec::new()),
+    };
     for d in decls {
         match &d.kind {
             Decl::Fn { name, .. }
@@ -429,6 +516,7 @@ fn flatten(
     decls: &[Node<Decl>],
     stack: &mut Vec<Scope>,
     out: &mut Vec<Node<Decl>>,
+    modules: &Modules,
     errors: &mut Vec<ResolveError>,
 ) {
     for d in decls {
@@ -436,16 +524,20 @@ fn flatten(
             Decl::Mod { name, decls, .. } => {
                 let mut path = stack.last().expect("a scope").path.clone();
                 path.push(name.clone());
-                let scope = collect_scope(decls, path, errors);
+                let mut scope = collect_scope(decls, path, errors);
+                expand_globs(&mut scope, decls, modules);
                 stack.push(scope);
-                flatten(decls, stack, out, errors);
+                flatten(decls, stack, out, modules, errors);
                 stack.pop();
             }
             Decl::Use { path, imports } => {
                 // A variant import survives flattening — with the enum it
                 // names resolved to its flat name — and a later pass applies
-                // it to the whole program.
-                if !matches!(imports, crate::ast::UseImports::Member) {
+                // it to the whole program. A glob over a module is not one:
+                // its names are already in the scope.
+                let over_module = matches!(imports, crate::ast::UseImports::Glob)
+                    && find_module(path, &stack.last().expect("a scope").path, modules).is_some();
+                if !matches!(imports, crate::ast::UseImports::Member) && !over_module {
                     let mut path = path.clone();
                     if let Some(first) = path.first_mut() {
                         *first = resolve_name(first, stack);
@@ -460,6 +552,21 @@ fn flatten(
                 let mut resolved = other.clone();
                 let locals = &mut Vec::new();
                 resolve_decl(&mut resolved, stack, locals);
+                let mut reported = HashSet::new();
+                for (name, candidates) in stack[0].ambiguous.borrow_mut().drain(..) {
+                    if reported.insert(name.clone()) {
+                        let listed: Vec<String> =
+                            candidates.iter().map(|c| format!("`{c}`")).collect();
+                        errors.push(ResolveError {
+                            message: format!(
+                                "`{name}` is brought in by more than one glob — {} — so \
+                                 write the one you mean, or `use` it by name",
+                                listed.join(", ")
+                            ),
+                            span: d.span,
+                        });
+                    }
+                }
                 out.push(Node { span: d.span, kind: resolved });
             }
         }
@@ -487,6 +594,16 @@ fn resolve_name(written: &str, stack: &[Scope]) -> String {
                 Some(rest) => format!("{qualified}::{rest}"),
                 None => qualified,
             };
+        }
+        if let Some(candidates) = scope.globs.get(first) {
+            if let [target] = candidates.as_slice() {
+                return match rest {
+                    Some(rest) => format!("{target}::{rest}"),
+                    None => target.clone(),
+                };
+            }
+            stack[0].ambiguous.borrow_mut().push((first.to_string(), candidates.clone()));
+            return written.to_string();
         }
     }
     written.to_string()

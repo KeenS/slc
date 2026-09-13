@@ -548,6 +548,27 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## `use m::*` brings a module's `pub` members
+
+A glob used to mean an enum's variants only. Over a module it now brings
+every `pub` member in bare:
+
+```sl
+use num::min;                      // old: one name at a time
+use num::max;
+
+use num::*;                        // new: every `pub` member of `num`
+```
+
+A named `use` and the module's own declarations win over a glob. Two globs
+bringing the same name are allowed until that name is used; then write the
+path, or `use` the one you mean by name.
+
+Only the stdlib modules a program reaches are loaded now, so a program that
+names no module is checked against the prelude alone. Nothing to change —
+but a program relying on a stdlib name *without* its path or `use` was
+already an error, and stays one.
+
 ## A call is not applied to part of its group
 
 A stage supplies a callee's whole value group. Giving a declared function

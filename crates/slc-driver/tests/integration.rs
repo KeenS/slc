@@ -1245,11 +1245,15 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     assert_eq!(stdout.trim(), "42");
 
     // Without an import, an ambiguous bare pattern is an error — never a
-    // silent catch-all binder.
+    // silent catch-all binder. The program reaches `list`, so its `List` is
+    // loaded and competes with `Mine` for `Nil` and `Cons`; a program that
+    // reaches no `list` has no such competition, since the module is not
+    // loaded at all.
     let dir = std::env::temp_dir().join("slc_test_use_ambiguous.sl");
     std::fs::write(
         &dir,
-        r#"enum Mine { Nil, Cons(i64, Mine) }
+        r#"use list::List;
+        enum Mine { Nil, Cons(i64, Mine) }
         fn count(xs: Mine) -> i64 {
             match xs { Nil => 0, Cons(_, rest) => 1 + count(rest) }
         }

@@ -86,15 +86,7 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **Stdlib follow-ups.** The library is two layers and shipped; what the
-  breakdown left open:
-  - [ ] A module glob, `use list::*;` bringing every `pub` member in bare.
-        Decided against for now — imports are explicit, one name each, and
-        the examples read fine that way — but the corpus is small; revisit
-        if `use` blocks grow long.
-  - [ ] Every library unit is parsed and checked on every run, `use`d or
-        not. Fine at this size; per-module loading is the upgrade when it
-        stops being fine.
+Nothing is queued.
 
 ## Deferred, for discussion
 
