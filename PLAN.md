@@ -97,25 +97,9 @@ documentation pass, and one defect.
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
 They depend on each other, so they are listed in the order they can land:
-guards go before `if` can stop being a keyword, chains have to stop nesting
-before operators become stages, and `bool` becomes a declaration last, once
-nothing left in the language is built on the built-in one.
-
-- **Match guards are removed.** `p if e => …` goes from `match`, and a
-  test that needs one is a `match` inside the arm, as §7 already says of
-  `select`. Nothing written in Slant uses a guard: no stdlib module,
-  example or doc. Only the Rust tests do (`roundtrip.rs` and unit tests in
-  the parser, lowering, checker and exhaustiveness). What goes with it:
-
-  - the parser's guard and `MatchArm::guard`, and the resolver's passes
-    over it;
-  - the checker's `+bool` check on a guard, and the "unguarded" reasoning in
-    exhaustiveness, whose diagnostic says "add an unguarded `_` arm";
-  - the guard slot of `__match_arm` and the runtime's `MatchGuard` frame.
-    `__match_dispatch` itself stays, since literals, or-patterns and a
-    default among labelled arms are still order-sensitive;
-  - guards in `DESIGN.md`: the `expr.match` lowering row, and §7's reason
-    `select` has none, which then only needs to speak of literal arms.
+chains have to stop nesting before operators become stages, and `bool`
+becomes a declaration last, once nothing left in the language is built on
+the built-in one.
 
 - **`if` becomes a prelude command.** The `if` expression is removed in
   favour of an ordinary declaration in the prelude:
@@ -136,8 +120,8 @@ nothing left in the language is built on the built-in one.
 
   What stands between it and the name `if`:
 
-  - `if` is a keyword. Once "Match guards are removed" lands, nothing else
-    spells it, so it simply stops being one.
+  - `if` is a keyword. Match guards are gone, so nothing else spells it,
+    and it simply stops being one.
   - The prelude body needs a `_` arm until "`bool` is defined in the
     prelude" lands.
   - `&&` and `||` expand to the `if` expression to short-circuit. They

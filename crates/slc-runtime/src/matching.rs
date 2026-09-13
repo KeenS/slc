@@ -19,7 +19,7 @@ pub(crate) enum RuntimePattern {
 }
 
 /// A match dispatch payload is one tuple, `(scrutinee, arm₁, arm₂, …)`, each
-/// arm itself a tagged `(descriptor, guard, thunk)`.
+/// arm itself a tagged `(descriptor, thunk)`.
 pub(crate) fn split_match_payload(v: &Value) -> Vec<Value> {
     match v {
         Value::Tuple(items) => items.clone(),

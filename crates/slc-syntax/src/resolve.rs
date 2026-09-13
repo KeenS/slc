@@ -830,9 +830,6 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             for arm in arms {
                 resolve_pattern(&mut arm.pattern, stack, locals);
                 locals.push(pattern_binders(&arm.pattern));
-                if let Some(guard) = &mut arm.guard {
-                    resolve_expr(&mut guard.kind, stack, locals);
-                }
                 resolve_expr(&mut arm.body.kind, stack, locals);
                 locals.pop();
             }
@@ -1040,9 +1037,6 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
             rewrite_expr_imports(&mut scrutinee.kind, imported);
             for arm in arms {
                 rewrite_pattern_imports(&mut arm.pattern, imported);
-                if let Some(guard) = &mut arm.guard {
-                    rewrite_expr_imports(&mut guard.kind, imported);
-                }
                 rewrite_expr_imports(&mut arm.body.kind, imported);
             }
         }

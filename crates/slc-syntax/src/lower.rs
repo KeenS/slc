@@ -837,9 +837,9 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         Expr::Match { scrutinee, arms } => {
             // A match the core can express lowers to a genuine cut against
             // its branch table — μ̃[…], μ̃(x…), or μ̃x — with each arm's value
-            // delivered to the match's own continuation. Guards, literals,
-            // or-patterns, defaults among labelled arms, and everything else
-            // order-sensitive falls through to the dispatch builtin below.
+            // delivered to the match's own continuation. Literals, or-patterns,
+            // defaults among labelled arms, and everything else order-sensitive
+            // falls through to the dispatch builtin below.
             if let Some(term) = lower_match_canonical(scrutinee, arms, continuations)? {
                 return Ok(term);
             }
@@ -854,15 +854,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             for arm in arms {
                 let descriptor = Term::Var(format!("$str_{}", pattern_descriptor(&arm.pattern)));
                 let b = lower_expr(&arm.body, continuations)?;
-                let guard = match &arm.guard {
-                    Some(guard) => lower_expr(guard, continuations)?,
-                    None => Term::Var("true".into()),
-                };
                 arm_terms.push(Term::Tag(
                     "__match_arm".into(),
                     Box::new(Term::Tuple(vec![
                         descriptor,
-                        guard,
                         Term::Lam("__match_arg".into(), Box::new(b)),
                     ])),
                 ));
@@ -1410,15 +1405,12 @@ const MATCH_COVAR: &str = "__match";
 /// can express it: every arm is a shape — a variant, a record, a tuple, a
 /// request, or one whole-value binder — with components that are binders or
 /// nested products. `Ok(None)` means the match needs the runtime dispatch
-/// (guards, literals, or-patterns, ordered defaults); errors are real.
+/// (literals, or-patterns, ordered defaults); errors are real.
 fn lower_match_canonical(
     scrutinee: &Node<Expr>,
     arms: &[MatchArm],
     continuations: &[String],
 ) -> Result<Option<Term>, LowerError> {
-    if arms.iter().any(|arm| arm.guard.is_some()) {
-        return Ok(None);
-    }
     let mut lowered = Vec::new();
     for arm in arms {
         lowered.push((&arm.pattern, lower_match_body(&arm.body, continuations)?));
@@ -2201,7 +2193,7 @@ mod tests {
 
     #[test]
     fn a_flat_match_lowers_to_a_branch_table() {
-        // Every arm a shape, no guards: the match is a genuine cut against
+        // Every arm a shape: the match is a genuine cut against
         // μ̃[…], not a call into the dispatch builtin.
         let out = lower_str(
             "enum Colour { Red, Green } \
@@ -2212,17 +2204,6 @@ mod tests {
         assert!(!printed.contains("__match_dispatch"), "canonical, not dispatch: {printed}");
         assert!(printed.contains("μ̃[Colour; Colour::Red()."), "a labelled branch table: {printed}");
         assert!(printed.contains("∥ __match⟩"), "arm values reach the match: {printed}");
-    }
-
-    #[test]
-    fn a_guarded_match_still_dispatches() {
-        let out = lower_str(
-            "enum Colour { Red, Green } \
-             fn f(c: Colour, n: +i32) -> i32 { match c { Red if n > 0 => 1, _ => 2 } }",
-        );
-        let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
-        let printed = format!("{}", f.1);
-        assert!(printed.contains("__match_dispatch"), "guards are order-sensitive: {printed}");
     }
 
     #[test]

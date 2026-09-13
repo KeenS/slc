@@ -66,10 +66,10 @@ fn roundtrip_operators_and_indexing() {
 #[test]
 fn roundtrip_patterns() {
     let a = lower_str(
-        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, c if c < '0' => 2, _ => 3 } }"#,
+        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
     );
     let b = lower_str(
-        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, c if c < '0' => 2, _ => 3 } }"#,
+        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
     );
     assert_eq!(a, b);
 }

@@ -514,9 +514,9 @@ not. A component that is itself a product — a tuple or a record — may be
 taken apart in place, `Rect((w, h))` or `At(Point { x, y }, d)`: a product
 has one shape, so deeper destructuring keeps the one-arm-per-shape law. A
 *sum* inside a component cannot be split across arms, and there are no
-guards or literal arms: a branch table answers each shape exactly once,
-unordered, while guards and literals make the arm list ordered, first-match
-— that is `match`, inside the arm.
+literal arms: a branch table answers each shape exactly once, unordered,
+while literals make the arm list ordered, first-match — that is `match`,
+inside the arm.
 
 An arm writes `=>`, exactly as a `match` arm does, because the arrow marks
 which side of the mirror the scrutinee is on: **data flows forward into an
@@ -585,7 +585,8 @@ arrives at them:
   Over an enum value it takes data apart; over a continuation of a menu type
   (`k: -Config`) it takes the *request* apart: `.item(out) => e` binds the
   request's own continuation, and the arms are ordinary expressions —
-  typically other requests.
+  typically other requests. An arm has no guard: a test on what a pattern
+  bound is a `match` inside the arm.
 
 ```sl
 fn config() -> Config {
@@ -1677,7 +1678,7 @@ nested left to right for several arguments.
 | `expr.slice` | `a[i..j]` | `substring(⟦a⟧)(⟦i⟧)(⟦j⟧)` |
 | `expr.flow` | `v | k`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut`. A chain that does not close is a fold of applications, and one that does not begin with a value is that fold under a λ. A chain whose stage is a `command` is neither: the stages before it fold into its value group, the closing stage is its row, and the two are applied together — `⟦callee⟧ ⟦values⟧ ⟦row⟧` |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
-| `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no guards, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — guards, literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ (guard ⊗ λ__match_arg. ⟦e⟧))` |
+| `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ λ__match_arg. ⟦e⟧)` |
 | `expr.data` | `S { f: v, g: w }` | `S((⟦v⟧ ⊗ ⟦w⟧))` — the declaration's name labelling the tuple of its fields, the same shape a variant has |
 | `expr.select` | `select T { p => c, … }` | `co(μ̃[T; L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃[T])` when it has no shapes; `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.comatch` | `mu T { item: k <= c, … }` | `μ[T; .T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |

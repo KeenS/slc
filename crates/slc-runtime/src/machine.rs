@@ -69,13 +69,6 @@ pub enum Frame {
     /// clause is `λarg. λresume. body`, so after `clause(arg)` we apply the
     /// result to `resume`.
     ApplyTo(Value),
-    /// A match in progress: the guard of a candidate arm is being evaluated.
-    MatchGuard {
-        scrutinee: Value,
-        thunk: Value,
-        bindings: Vec<(String, Value)>,
-        remaining: Vec<Value>,
-    },
 }
 
 /// The continuation as a persistent stack: a shared cons of frames with the
@@ -306,13 +299,6 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
             State::Apply { callee: ret, arg: v }
         }
         Frame::ApplyTo(arg) => State::Apply { callee: v, arg },
-        Frame::MatchGuard { scrutinee, thunk, bindings, remaining } => {
-            if v == Value::Bool(true) {
-                run_match_thunk(&thunk, &bindings)?
-            } else {
-                next_match_arm(scrutinee, remaining, kont)?
-            }
-        }
     })
 }
 
@@ -645,7 +631,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         if arms.last() == Some(&Value::Unit) {
             arms.pop();
         }
-        return next_match_arm(scrutinee, arms, kont);
+        return next_match_arm(scrutinee, arms);
     }
     // `println` and `print` reach the outside world, so they do not write:
     // they render, and then perform the `IO` operation that writes. The
@@ -670,21 +656,14 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
     }
 }
 
-/// Try the arms in order. A pattern that matches hands over to its guard —
-/// evaluated in this same machine, so a jump inside a guard is a jump — and
-/// a guard that holds runs the arm's thunk.
-fn next_match_arm(
-    scrutinee: Value,
-    mut arms: Vec<Value>,
-    kont: &mut Kont,
-) -> Result<State, EvalError> {
+/// Try the arms in order, and run the thunk of the first whose pattern
+/// matches.
+fn next_match_arm(scrutinee: Value, mut arms: Vec<Value>) -> Result<State, EvalError> {
     while !arms.is_empty() {
         let arm = unwrap_match_arm(&arms.remove(0));
-        let (descriptor, guard, thunk) = match &arm {
+        let (descriptor, thunk) = match &arm {
             Value::Tuple(parts) => match parts.as_slice() {
-                [Value::Str(descriptor), guard, thunk] => {
-                    (descriptor.clone(), guard.clone(), thunk.clone())
-                }
+                [Value::Str(descriptor), thunk] => (descriptor.clone(), thunk.clone()),
                 _ => {
                     return Err(EvalError::TypeMismatch(format!(
                         "malformed match arm payload: {}",
@@ -704,20 +683,6 @@ fn next_match_arm(
         if let Descriptor::Pattern(pattern) = &descriptor
             && !pattern_matches(pattern, &scrutinee, &mut bindings)
         {
-            continue;
-        }
-        // The pattern matches; the guard decides. Pattern variables are
-        // injected by name (the overlay), leaving de Bruijn slots untouched.
-        if let Value::Closure { body, env } = &guard {
-            let mut guard_env = env.clone();
-            for (name, value) in &bindings {
-                guard_env.define_named(name.clone(), value.clone());
-            }
-            guard_env.define_local(Value::Unit);
-            kont.push(Frame::MatchGuard { scrutinee, thunk, bindings, remaining: arms });
-            return Ok(State::Term(*body, guard_env));
-        }
-        if guard != Value::Bool(true) {
             continue;
         }
         return run_match_thunk(&thunk, &bindings);

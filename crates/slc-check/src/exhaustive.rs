@@ -96,9 +96,6 @@ fn check_expr(
             check_match(scrutinee, arms, enums, bindings, e.span, diags);
             // Recurse into arm bodies
             for arm in arms {
-                if let Some(guard) = &arm.guard {
-                    check_expr(guard, enums, bindings, diags);
-                }
                 check_expr(&arm.body, enums, bindings, diags);
             }
         }
@@ -524,9 +521,9 @@ fn check_match(
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // An unguarded irrefutable arm covers everything: a wildcard, a plain
-    // binding, or the single shape of a product.
-    if arms.iter().any(|a| a.guard.is_none() && is_irrefutable(&a.pattern, enums)) {
+    // An irrefutable arm covers everything: a wildcard, a plain binding, or
+    // the single shape of a product.
+    if arms.iter().any(|a| is_irrefutable(&a.pattern, enums)) {
         return;
     }
 
@@ -611,12 +608,8 @@ fn check_match(
     }
 
     // Without enum coverage information, a match is exhaustive only when it
-    // has an unguarded wildcard. This conservatively rejects guarded
-    // wildcards and literal-only matches.
-    diags.push(Diagnostic {
-        message: "non-exhaustive match: add an unguarded `_` arm".into(),
-        span,
-    });
+    // has a wildcard. This conservatively rejects literal-only matches.
+    diags.push(Diagnostic { message: "non-exhaustive match: add a `_` arm".into(), span });
 }
 
 #[cfg(test)]
@@ -705,8 +698,8 @@ mod tests {
     }
 
     #[test]
-    fn guarded_wildcard_is_not_exhaustive() {
-        let r = check("fn f(c: +i64) -> i64 { match c { _ if c > 0 => 1 } }");
+    fn a_literal_only_match_is_not_exhaustive() {
+        let r = check("fn f(c: +i64) -> i64 { match c { 0 => 1 } }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("non-exhaustive"));
     }

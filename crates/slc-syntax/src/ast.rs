@@ -183,9 +183,9 @@ impl Expr {
             | Expr::Par(items)
             | Expr::Block(items)
             | Expr::Flow { stages: items, .. } => items.iter().collect(),
-            Expr::Match { scrutinee, arms } => std::iter::once(&**scrutinee)
-                .chain(arms.iter().flat_map(|a| a.guard.iter().chain(std::iter::once(&a.body))))
-                .collect(),
+            Expr::Match { scrutinee, arms } => {
+                std::iter::once(&**scrutinee).chain(arms.iter().map(|a| &a.body)).collect()
+            }
             Expr::Data { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
             Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
                 arms.iter().map(|arm| &arm.command).collect()
@@ -337,7 +337,6 @@ pub struct SelectArm {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     pub pattern: Pattern,
-    pub guard: Option<Node<Expr>>,
     pub body: Node<Expr>,
 }
 

@@ -1698,14 +1698,18 @@ impl Parser {
                     let pattern = self.parse_pattern()?;
                     // A request arm matches a continuation, so its demand
                     // reaches back: `.item(out) <= e`. A data arm flows
-                    // forward, `pattern => e`. (A request's payload is
-                    // opaque, so a guard has nothing to test.)
+                    // forward, `pattern => e`.
                     let copattern = pattern_is_copattern(&pattern);
-                    let guard = if !copattern && self.eat(&TokenKind::If) {
-                        Some(self.parse_expr()?)
-                    } else {
-                        None
-                    };
+                    // An arm has no guard: a test on what the pattern bound
+                    // is a `match` inside the arm.
+                    if self.peek_kind() == Some(&TokenKind::If) {
+                        return Err(ParseError {
+                            message: "a `match` arm has no guard; test inside the arm, with \
+                                      a `match` on the condition"
+                                .into(),
+                            span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                        });
+                    }
                     if copattern {
                         if self.peek_kind() == Some(&TokenKind::FatArrow) {
                             return Err(ParseError {
@@ -1735,7 +1739,7 @@ impl Parser {
                     }
                     let body = self.parse_expr()?;
                     self.eat(&TokenKind::Comma);
-                    arms.push(MatchArm { pattern, guard, body });
+                    arms.push(MatchArm { pattern, body });
                 }
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
@@ -2363,6 +2367,13 @@ mod tests {
     }
 
     #[test]
+    fn a_match_arm_has_no_guard() {
+        let tokens = lex("fn f(c: +i64) -> i64 { match c { _ if c > 0 => 1, _ => 2 } }").unwrap();
+        let errors = parse(tokens).unwrap_err();
+        assert!(errors[0].message.contains("has no guard"), "got: {errors:?}");
+    }
+
+    #[test]
     fn parse_rejects_bare_fn() {
         let tokens = lex("fn f(x: +i32) { x }").unwrap();
         let errors = parse(tokens).unwrap_err();
@@ -2813,15 +2824,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_match_guard_or_range_binding() {
-        let p = parse_str("match c { c @ '0'..='9' if c < 'a' => 1, 'x' | 'y' => 2, _ => 3 }");
+    fn parse_match_range_binding() {
+        let p = parse_str("match c { c @ '0'..='9' => 1, 'x' | 'y' => 2, _ => 3 }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
         };
         let Expr::Match { arms, .. } = &body.kind else {
             panic!("expected match");
         };
-        assert!(matches!((&arms[0].pattern, &arms[0].guard), (Pattern::Binding { .. }, Some(_))));
+        assert!(matches!(&arms[0].pattern, Pattern::Binding { .. }));
         assert!(matches!(&arms[1].pattern, Pattern::Or(_)));
     }
 

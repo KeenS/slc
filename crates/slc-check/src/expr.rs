@@ -1,7 +1,7 @@
 //! Expression type checking for the ergonomic surface syntax.
 //!
 //! This pass is intentionally concrete: it validates boolean operators,
-//! numeric/comparison operators, indexing, patterns, guards, and annotated
+//! numeric/comparison operators, indexing, patterns, and annotated
 //! bindings using known literal and declaration types. It is not a
 //! replacement for the core inference pass; it catches the surface-syntax
 //! mistakes that used to appear only at runtime.
@@ -1822,7 +1822,7 @@ fn contains_injection(pattern: &slc_syntax::ast::Pattern) -> bool {
 fn check_alternatives(
     keyword: &str,
     consumed: &Type,
-    arms: &[(&slc_syntax::ast::Pattern, bool)],
+    arms: &[&slc_syntax::ast::Pattern],
     span: Span,
     enums: &Declarations,
     env: &mut Env,
@@ -1831,7 +1831,7 @@ fn check_alternatives(
     use slc_syntax::ast::Pattern;
     let indices: Vec<usize> = arms
         .iter()
-        .filter_map(|(pattern, _)| match pattern {
+        .filter_map(|pattern| match pattern {
             Pattern::Inject { index, .. } => Some(*index),
             _ => None,
         })
@@ -1857,7 +1857,7 @@ fn check_alternatives(
     let mut covered = vec![false; arity];
     let mut covers_everything = false;
     let mut well_formed = true;
-    for (pattern, guarded) in arms {
+    for pattern in arms.iter().copied() {
         match pattern {
             Pattern::Inject { index, pattern } => {
                 if *index >= arity {
@@ -1888,7 +1888,7 @@ fn check_alternatives(
                         });
                     }
                     covered[*index] = true;
-                } else if !guarded && crate::exhaustive::is_irrefutable(pattern, enums) {
+                } else if crate::exhaustive::is_irrefutable(pattern, enums) {
                     covered[*index] = true;
                 }
             }
@@ -1902,7 +1902,7 @@ fn check_alternatives(
                 well_formed = false;
             }
             other => {
-                if !guarded && crate::exhaustive::is_irrefutable(other, enums) {
+                if crate::exhaustive::is_irrefutable(other, enums) {
                     covers_everything = true;
                 }
             }
@@ -2515,8 +2515,8 @@ fn check_expr_unapplied(
                         matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. })
                     }) =>
                 {
-                    let rows: Vec<(&slc_syntax::ast::Pattern, bool)> =
-                        arms.iter().map(|arm| (&arm.pattern, arm.guard.is_some())).collect();
+                    let rows: Vec<&slc_syntax::ast::Pattern> =
+                        arms.iter().map(|arm| &arm.pattern).collect();
                     check_alternatives("match", &ty, &rows, e.span, enums, env, diags)
                 }
                 other => other,
@@ -2532,20 +2532,6 @@ fn check_expr_unapplied(
                 // so the body sees `h: i64` for `Cons(h, _)`.
                 if let Some(scrutinee_ty) = &scrutinee_ty {
                     bind_match_pattern(&arm.pattern, scrutinee_ty, enums, env);
-                }
-                if let Some(guard) = &arm.guard {
-                    let guard_ty = check_expr(guard, enums, env, diags);
-                    if guard_ty != Some(Type::Pos(Base::Bool)) {
-                        diags.push(Diagnostic {
-                            message: format!(
-                                "match guard has type {}; expected +bool",
-                                guard_ty
-                                    .map(|ty| ty.to_string())
-                                    .unwrap_or_else(|| "unknown".into())
-                            ),
-                            span: guard.span,
-                        });
-                    }
                 }
                 check_expr(&arm.body, enums, env, diags);
                 env.pop();
@@ -2753,8 +2739,8 @@ fn check_expr_unapplied(
                 .iter()
                 .any(|arm| matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. }))
             {
-                let rows: Vec<(&slc_syntax::ast::Pattern, bool)> =
-                    arms.iter().map(|arm| (&arm.pattern, false)).collect();
+                let rows: Vec<&slc_syntax::ast::Pattern> =
+                    arms.iter().map(|arm| &arm.pattern).collect();
                 check_alternatives("select", &resolved, &rows, e.span, enums, env, diags)?
             } else {
                 resolved.clone()
@@ -3864,12 +3850,6 @@ mod tests {
     #[test]
     fn string_concat_ok() {
         assert!(check(r#"fn f(a: +String, b: +String) -> String { a + b }"#).is_ok());
-    }
-
-    #[test]
-    fn guard_must_be_bool() {
-        let diags = check("fn f(c: +i64) -> i64 { match c { _ if c => 1 } }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("match guard")));
     }
 
     #[test]
