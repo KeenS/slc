@@ -3674,6 +3674,26 @@ mod tests {
     }
 
     #[test]
+    fn a_chain_without_an_opening_bracket_begins_with_a_function() {
+        // A value flows in only when `⟨` marks it.
+        let diags = check("fn shout(k: -String) -> (;) { \"hi\" | k⟩ }").unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("a chain without `⟨` begins with a function")
+                && d.message.contains("+String")),
+            "{diags:?}"
+        );
+        assert!(check("fn shout(k: -String) -> (;) { ⟨\"hi\" | k⟩ }").is_ok());
+        // Without it, a function heads the chain and composes.
+        assert!(
+            check(
+                "fn double(n: i64) -> i64 { n * 2 }
+                 fn quadruple(n: i64) -> i64 { ⟨n | (double | double) }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn a_continuation_is_cut_against_not_called() {
         let diags = check("command route(x: +i32) | (k: -i32) { k(x) }").unwrap_err();
         assert!(
