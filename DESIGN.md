@@ -714,9 +714,12 @@ pair is a pair of punctuation marks.
   right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,
   `k2` never receives. It is the consumer `select (A, B) { (a, b) => … }`
   builds, so a joint and a `form` value keep one runtime shape. It has no
-  pattern form: a joint cannot be taken apart into the continuations it was
-  built from
-  (PLAN.md, *Deferred*).
+  pattern form, for the reason a form has none. A joint value is one
+  consumer, a closure over a single command, and does not hold the
+  continuations it was built from; one built by `select` never had separate
+  ones. A pattern `(k1 ; k2)` would have to invent them, as `form.field`
+  would. What can be matched is what a joint is fed: `select (A, B)` takes
+  the product apart.
 - **`A -> B`** stays, as the spelling of `(dual(A) ; B)`.
 - **The units are structural.** `(;)` is the type of a command; `(|)` has no
   value, is consumed by `select (|) {}`, and a `match` on one needs no arm;
@@ -1193,7 +1196,7 @@ A program is a command, so its entry point is a `command`. It takes no values
 and exactly one continuation — the exit status:
 
 ```sl
-command main | (exit: i32) {
+command main | (exit: i32) / {IO} {
     ⟨"Hello, Slant!" | println;
     ⟨0 | exit⟩
 }
@@ -1209,9 +1212,9 @@ one it takes for itself. (An earlier design had a top-level `EXIT`; it let any
 function end the program behind `main`'s back, and it is gone.)
 
 ```sl
-command main | (exit: i32) {
-    let complain = select { message => { message | println; 1 | exit⟩ } };
-    ⟨"input.txt" | fs::read | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
+command main | (exit: i32) / {IO} {
+    let complain = select String { message => { ⟨message | println; ⟨1 | exit⟩ } };
+    ⟨"input.txt" | fs::read | (select String { text => { ⟨text | print; ⟨0 | exit⟩ } } & complain)⟩
 }
 ```
 
