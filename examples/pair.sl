@@ -4,6 +4,6 @@
 
 command main | (exit: i32) / {IO} {
     let x = 10;
-    (x, 20) | add | println;
-    0 | exit⟩
+    ⟨(x, 20) | add | println;
+    ⟨0 | exit⟩
 }

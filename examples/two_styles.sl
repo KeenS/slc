@@ -58,40 +58,40 @@ fn label(a: i64) -> String {
 
 fn area_of(out: i64) <- Shape {
     select Shape {
-        Circle(r) => (3 * r * r) | out⟩,
-        Rect(w, h) => (w * h) | out⟩,
+        Circle(r) => ⟨(3 * r * r) | out⟩,
+        Rect(w, h) => ⟨(w * h) | out⟩,
     }
 }
 
 fn label_of(out: String) <- i64 {
     select i64 {
         a => if a > 50 {
-            "big" | out⟩
+            ⟨"big" | out⟩
         } else {
-            "small" | out⟩
+            ⟨"small" | out⟩
         },
     }
 }
 
 command main | (exit: i32) / {IO} {
     // Value-first: the shape flows through `area`, then `label`.
-    Shape::Circle(5) | area | label | println;
-    Shape::Rect(6, 7) | area | label | println;
+    ⟨Shape::Circle(5) | area | label | println;
+    ⟨Shape::Rect(6, 7) | area | label | println;
 
     // Continuation-first: the same chain, stage for stage. Each `_of` is a
     // consumer transformer, and a pipeline reads it as the function it
     // equally is — so nothing nests and nothing is written backwards.
-    (mu String { out <= Shape::Circle(5) | area_of | label_of | out⟩ } | println);
-    (mu String { out <= Shape::Rect(6, 7) | area_of | label_of | out⟩ } | println);
+    (⟨mu String { out <= ⟨Shape::Circle(5) | area_of | label_of | out⟩ } | println);
+    (⟨mu String { out <= ⟨Shape::Rect(6, 7) | area_of | label_of | out⟩ } | println);
 
     // Where the two differ is what they *are*: the value-first chain
     // returns a String, and the continuation-first one ends in a cut. The
     // `mu` above is what turns the second back into a value; without it,
     // the rest of the program is written inside the last consumer.
-    Shape::Circle(5) | area_of | label_of | select String {
+    ⟨Shape::Circle(5) | area_of | label_of | select String {
         answer => {
-            "and directly: " + answer | println;
-            0 | exit⟩
+            ⟨"and directly: " + answer | println;
+            ⟨0 | exit⟩
         },
     }⟩
 }

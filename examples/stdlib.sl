@@ -22,16 +22,16 @@ fn first(xs: List<i64>) -> Option<i64> {
 
 command main | (exit: i32) / {IO} {
     let xs = Cons(3, Cons(1, Cons(2, Nil)));
-    xs | length | println;                              // 3
-    (xs | first, 0) | unwrap_or | println;              // 3
-    (Nil | first, 0) | unwrap_or | println;             // 0
+    ⟨xs | length | println;                              // 3
+    ⟨(⟨xs | first, 0) | unwrap_or | println;              // 3
+    ⟨(⟨Nil | first, 0) | unwrap_or | println;             // 0
 
     // Reached by path, nothing imported: the module's name is the prefix.
-    (3, 7) | num::min | println;                        // 3
-    (1 | stream::count_from, 3) | stream::take | fmt | println;   // "[1, 2, 3]"
+    ⟨(3, 7) | num::min | println;                        // 3
+    ⟨(⟨1 | stream::count_from, 3) | stream::take | fmt | println;   // "[1, 2, 3]"
 
     // `fmt` on a list is the prelude's `Display` at the stdlib's `List`:
     // the impl lives with the type, in `list`, and is found from here.
-    xs | fmt | println;                                 // "[3, 1, 2]"
-    0 | exit⟩
+    ⟨xs | fmt | println;                                 // "[3, 1, 2]"
+    ⟨0 | exit⟩
 }

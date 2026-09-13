@@ -19,13 +19,13 @@ menu Fallible / {Exn} {
 // to Fallible's latent row and are checked against it.
 fn checked(n: i64) -> Fallible {
     mu Fallible {
-        value <= (if n >= 0 { n } else { "negative" | throw }) | value⟩,
-        doubled <= (if n >= 0 { n * 2 } else { "negative" | throw }) | doubled⟩,
+        value <= ⟨(if n >= 0 { n } else { ⟨"negative" | throw }) | value⟩,
+        doubled <= ⟨(if n >= 0 { n * 2 } else { ⟨"negative" | throw }) | doubled⟩,
     }
 }
 
 fn risky(x: i64) -> i64 / {Exn} {
-    "late" | throw
+    ⟨"late" | throw
 }
 
 effect Reader { fn config() -> i64; }
@@ -39,7 +39,7 @@ menu Scaled / {Reader} {
 
 fn scaled(base: i64) -> Scaled {
     mu Scaled {
-        amount: out <= base * config() | out⟩,
+        amount: out <= ⟨base * config() | out⟩,
     }
 }
 
@@ -52,43 +52,43 @@ form Validated / {Exn} {
 
 fn admit() -> Validated {
     select Validated {
-        Validated { age, out } => (if age >= 18 { age } else { "too young" | throw }) | out⟩,
+        Validated { age, out } => ⟨(if age >= 18 { age } else { ⟨"too young" | throw }) | out⟩,
     }
 }
 
 command main | (exit: i32) / {IO} {
-    let f = 21 | checked;
+    let f = ⟨21 | checked;
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.
-    handle f.value { throw(m) => 0 - 1, return(n) => n } | println;
-    handle f.doubled { throw(m) => 0 - 1, return(n) => n } | println;
-    handle (0 - 5 | checked).value { throw(m) => 0 - 1, return(n) => n } | println;
+    ⟨handle f.value { throw(m) => 0 - 1, return(n) => n } | println;
+    ⟨handle f.doubled { throw(m) => 0 - 1, return(n) => n } | println;
+    ⟨handle (⟨0 - 5 | checked).value { throw(m) => 0 - 1, return(n) => n } | println;
 
     // A consumer carries a latent row too: `risky | out` composes without
     // performing anything — the row fires when the consumer is FED, so the
     // handler belongs around the cut.
-    let n = handle (mu i64 { out <= 5 | risky | out⟩ }) {
+    let n = handle (mu i64 { out <= ⟨5 | risky | out⟩ }) {
         throw(m) => 0 - 1,
         return(x) => x,
     };
-    n | println;
+    ⟨n | println;
 
     // What no trait can do: the SAME value answers the SAME demand
     // differently under different handlers — dispatch is chosen per
     // demand by the dynamic context, not sealed into the type.
-    let s = 7 | scaled;
-    handle s.amount { config(): resume => 10 | resume, return(n) => n } | println;
-    handle s.amount { config(): resume => 100 | resume, return(n) => n } | println;
+    let s = ⟨7 | scaled;
+    ⟨handle s.amount { config(): resume => ⟨10 | resume, return(n) => n } | println;
+    ⟨handle s.amount { config(): resume => ⟨100 | resume, return(n) => n } | println;
 
     // Feeding a rowed form under a handler: the arm's throw fires at the
     // feed, in this extent, and lands in this handler.
-    (handle (mu i64 { k <= Validated { age: 21, out: k } | admit()⟩ }) {
+    (⟨handle (mu i64 { k <= ⟨Validated { age: 21, out: k } | admit()⟩ }) {
         throw(m) => 0 - 1,
         return(n) => n,
     } | println);
-    (handle (mu i64 { k <= Validated { age: 15, out: k } | admit()⟩ }) {
+    (⟨handle (mu i64 { k <= ⟨Validated { age: 15, out: k } | admit()⟩ }) {
         throw(m) => 0 - 1,
         return(n) => n,
     } | println);
-    0 | exit⟩
+    ⟨0 | exit⟩
 }

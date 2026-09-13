@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn a_program_that_reaches_no_module_loads_only_the_prelude() {
         assert_eq!(
-            loaded(r#"command main | (exit: i32) / {IO} { "hi" | println; 0 | exit⟩ }"#),
+            loaded(r#"command main | (exit: i32) / {IO} { ⟨"hi" | println; ⟨0 | exit⟩ }"#),
             ["prelude"]
         );
     }

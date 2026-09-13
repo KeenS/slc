@@ -4,8 +4,8 @@
 
 fn describe(out: String) <- (i64 | String) {
     select (i64 | String) {
-        ::0(n) => "number " + (n | int_to_str) | out⟩,
-        ::1(s) => "text " + s | out⟩,
+        ::0(n) => ⟨"number " + (⟨n | int_to_str) | out⟩,
+        ::1(s) => ⟨"text " + s | out⟩,
     }
 }
 
@@ -13,15 +13,15 @@ fn describe(out: String) <- (i64 | String) {
 // position counts along them.
 fn rank(out: String) <- (i64 | bool | String) {
     select (i64 | bool | String) {
-        ::0(n) => "first " + (n | int_to_str) | out⟩,
-        ::1(b) => (if b { "second, yes" } else { "second, no" }) | out⟩,
-        ::2(s) => "third " + s | out⟩,
+        ::0(n) => ⟨"first " + (⟨n | int_to_str) | out⟩,
+        ::1(b) => ⟨(if b { "second, yes" } else { "second, no" }) | out⟩,
+        ::2(s) => ⟨"third " + s | out⟩,
     }
 }
 
 fn show(x: (i64 | String)) -> String {
     match x {
-        ::0(n) => n | int_to_str,
+        ::0(n) => ⟨n | int_to_str,
         ::1(s) => s,
     }
 }
@@ -29,17 +29,17 @@ fn show(x: (i64 | String)) -> String {
 // A command offers its outcome as one value, for a bundle of exits to take:
 // the consumer of `(A | B)` is `(-A & -B)`, and the position picks the exit.
 command classify(n: i64) | (outcome: (i64 | String)) {
-    if n < 10 { ::0(n) | outcome⟩ } else { ::1("big") | outcome⟩ }
+    if n < 10 { ⟨::0(n) | outcome⟩ } else { ⟨::1("big") | outcome⟩ }
 }
 
 command main | (exit: i32) / {IO} {
-    mu String { s <= ::0(7) | (s | describe)⟩ } | println;
-    mu String { s <= ::1("hi") | (s | describe)⟩ } | println;
-    mu String { s <= ::1(true) | (s | rank)⟩ } | println;
-    mu String { s <= ::2("last") | (s | rank)⟩ } | println;
-    ::0(3) | show | println;
-    mu String {
-        s <= 42 | classify | (select i64 { n => "small" | s⟩ } & select String { t => t | s⟩ })⟩
+    ⟨mu String { s <= ⟨::0(7) | (⟨s | describe)⟩ } | println;
+    ⟨mu String { s <= ⟨::1("hi") | (⟨s | describe)⟩ } | println;
+    ⟨mu String { s <= ⟨::1(true) | (⟨s | rank)⟩ } | println;
+    ⟨mu String { s <= ⟨::2("last") | (⟨s | rank)⟩ } | println;
+    ⟨::0(3) | show | println;
+    ⟨mu String {
+        s <= ⟨42 | classify | (select i64 { n => ⟨"small" | s⟩ } & select String { t => ⟨t | s⟩ })⟩
     } | println;
-    0 | exit⟩
+    ⟨0 | exit⟩
 }

@@ -18,46 +18,46 @@
 command main | (exit: i32) / {IO} {
     let complain = select String {
         message => {
-            "cannot read: " + message | println;
-            1 | exit⟩
+            ⟨"cannot read: " + message | println;
+            ⟨1 | exit⟩
         },
     };
 
     // Whole-file reading. `k` is the continuation of the `let`, captured by
     // `mu` — the language's `call/cc` — so the program stays flat.
-    let source = mu { k <= "examples/hello.sl" | fs::read | (k & complain)⟩ };
-    source | print;
+    let source = mu { k <= ⟨"examples/hello.sl" | fs::read | (k & complain)⟩ };
+    ⟨source | print;
 
     // Line reading, through a file.
-    let file = mu { k <= "examples/hello.sl" | fs::open | (k & complain)⟩ };
+    let file = mu { k <= ⟨"examples/hello.sl" | fs::open | (k & complain)⟩ };
 
     // From here on, `exit` *is* "close the file, then leave": the arm's
     // `exit` is the outer one, and everything below sees only the composed
     // door. No path past this line can end the program with the file open.
     let exit = select i32 {
         status => {
-            file | fs::close;
-            status | exit⟩
+            ⟨file | fs::close;
+            ⟨status | exit⟩
         },
     };
 
     let first = mu { k <= {
-        file | fs::read_line | (k & select unit { end => { "empty file" | println; 1 | exit⟩ } })⟩
+        ⟨file | fs::read_line | (k & select unit { end => { ⟨"empty file" | println; ⟨1 | exit⟩ } })⟩
     } };
-    "first line: " + first | println;
+    ⟨"first line: " + first | println;
 
     // The failure path: exactly one of the two consumers runs, and this
     // file does not exist. Both consumers leave through the composed exit,
     // so the open file above is closed on these paths too.
-    "examples/missing.sl" | fs::open | (select File {
+    ⟨"examples/missing.sl" | fs::open | (select File {
             unexpected => {
-                "unexpectedly opened" | println;
-                1 | exit⟩
+                ⟨"unexpectedly opened" | println;
+                ⟨1 | exit⟩
             },
         } & select String {
             message => {
-                "cannot open: " + message | println;
-                0 | exit⟩
+                ⟨"cannot open: " + message | println;
+                ⟨0 | exit⟩
             },
         })⟩
 }

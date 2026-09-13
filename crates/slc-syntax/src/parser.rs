@@ -2456,7 +2456,7 @@ mod tests {
 
         // The produced type may be written in front; the binder then
         // consumes it — `mu i32 { k <= c }` gives `k` the type `-i32`.
-        let p = parse_str("fn f() -> i32 { mu i32 { k <= 42 | k⟩ } }");
+        let p = parse_str("fn f() -> i32 { mu i32 { k <= ⟨42 | k⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
         let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
@@ -2472,9 +2472,9 @@ mod tests {
     fn a_declaration_is_a_command_and_mu_is_the_expression() {
         // A declaration over parameters is a `command`; `mu` is the
         // expression capturing the ambient continuation.
-        let p = parse_str("command f | (k: -i32) { 1 | k⟩ }");
+        let p = parse_str("command f | (k: -i32) { ⟨1 | k⟩ }");
         assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
-        let p = parse_str("fn g() -> i32 { mu { k <= 1 | k⟩ } }");
+        let p = parse_str("fn g() -> i32 { mu { k <= ⟨1 | k⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
@@ -2507,8 +2507,8 @@ mod tests {
             "menu Stream { head: i32, tail: Stream }
              fn stream() -> Stream {
                  mu Stream {
-                     head: out <= 1 | out⟩,
-                     tail: head: out <= 2 | out⟩,
+                     head: out <= ⟨1 | out⟩,
+                     tail: head: out <= ⟨2 | out⟩,
                  }
              }",
         );
@@ -2533,7 +2533,7 @@ mod tests {
     #[test]
     fn mu_item_label_is_its_default_binder() {
         let p = parse_str(
-            "fn lazy() -> Lazy { mu Lazy { force <= 1 | force⟩ } }
+            "fn lazy() -> Lazy { mu Lazy { force <= ⟨1 | force⟩ } }
              menu Lazy { force: i32 }",
         );
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
@@ -2545,7 +2545,7 @@ mod tests {
                 if dtor == "force" && matches!(&**arg, Pattern::Ident(name) if name == "force")
         ));
 
-        let p = parse_str("fn captured() -> i32 { mu i32 { out <= 1 | out⟩ } }");
+        let p = parse_str("fn captured() -> i32 { mu i32 { out <= ⟨1 | out⟩ } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
         let Expr::Block(items) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&items[0].kind, Expr::Mu { .. }));
@@ -2560,7 +2560,7 @@ mod tests {
     #[test]
     fn a_mu_writes_only_the_parameter_groups_it_has() {
         // No values: the group is left out, not written empty.
-        let p = parse_str("command main | (exit: -i32) / {IO} { 0 | exit⟩ }");
+        let p = parse_str("command main | (exit: -i32) / {IO} { ⟨0 | exit⟩ }");
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
@@ -2675,7 +2675,7 @@ mod tests {
     #[test]
     fn parse_flow_binds_more_loosely_than_every_operator() {
         // `1 + 2 | k` sends the sum along, so the sum is one stage.
-        let p = parse_str("fn main() -> i32 { 1 + 2 | k⟩ }");
+        let p = parse_str("fn main() -> i32 { ⟨1 + 2 | k⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
         let Expr::Flow { stages, .. } = &exprs[0].kind else {
@@ -2691,7 +2691,7 @@ mod tests {
         // Composition is associative, so the chain is one flat list of
         // stages — where a consumer may stand is the checker's rule, not
         // the grammar's.
-        let p = parse_str("fn main() -> i32 { 1 | j | k⟩ }");
+        let p = parse_str("fn main() -> i32 { ⟨1 | j | k⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
         let Expr::Flow { stages, .. } = &exprs[0].kind else {
@@ -2758,7 +2758,7 @@ mod tests {
 
     #[test]
     fn parse_interaction() {
-        let p = parse_str("fn f() -> i32 { mu { k <= 1 | k⟩ } }");
+        let p = parse_str("fn f() -> i32 { mu { k <= ⟨1 | k⟩ } }");
         assert_eq!(p.decls.len(), 1);
     }
 

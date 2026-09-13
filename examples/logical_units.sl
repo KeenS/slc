@@ -21,7 +21,7 @@ fn top_value() -> (&) {
 
 // `(;)` is what a command is.
 command main | (exit: i32) -> (;) / {IO} {
-    unit_value() | println;
+    ⟨unit_value() | println;
     top_value();
-    0 | exit⟩
+    ⟨0 | exit⟩
 }

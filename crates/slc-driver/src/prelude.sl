@@ -35,7 +35,7 @@ trait Display {
 }
 
 impl Display for i64 {
-    fn fmt(self: i64) -> String { self | int_to_str }
+    fn fmt(self: i64) -> String { ⟨self | int_to_str }
 }
 
 impl Display for String {
@@ -46,4 +46,4 @@ impl Display for bool {
     fn fmt(self: bool) -> String { if self { "true" } else { "false" } }
 }
 
-fn to_string<T: Display>(x: T) -> String { x | fmt }
+fn to_string<T: Display>(x: T) -> String { ⟨x | fmt }

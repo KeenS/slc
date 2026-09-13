@@ -12,22 +12,22 @@
 mod fs {
     // The whole file, or why not.
     pub command read(path: String) | (ok: String & failed: String) / {IO} {
-        path | __read_file | (ok & failed)⟩
+        ⟨path | __read_file | (ok & failed)⟩
     }
 
     // Replace a file's contents, or say why not.
     pub command write(path: String, contents: String) | (ok: unit & failed: String) / {IO} {
-        (path, contents) | __write_file | (ok & failed)⟩
+        ⟨(path, contents) | __write_file | (ok & failed)⟩
     }
 
     // A handle to read line by line, or why not.
     pub command open(path: String) | (opened: File & failed: String) / {IO} {
-        path | __open_file | (opened & failed)⟩
+        ⟨path | __open_file | (opened & failed)⟩
     }
 
     // The next line, or the end of the file.
     pub command read_line(file: File) | (line: String & end: unit) / {IO} {
-        file | __read_line | (line & end)⟩
+        ⟨file | __read_line | (line & end)⟩
     }
 
     // Spend the handle: a later read through it fails. Every path closes
@@ -35,10 +35,10 @@ mod fs {
     // out — shadow `exit` where the handle comes into scope, as
     // `examples/file_io.sl` does.
     pub fn close(file: File) -> (,) / {IO} {
-        file | __close_file
+        ⟨file | __close_file
     }
 
     pub fn exists(path: String) -> bool / {IO} {
-        path | __file_exists
+        ⟨path | __file_exists
     }
 }

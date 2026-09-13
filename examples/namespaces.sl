@@ -29,7 +29,7 @@ mod geometry {
 
     pub fn area(s: Shape) -> i64 {
         match s {
-            Circle(r) => 3 * (r | squared),
+            Circle(r) => 3 * (⟨r | squared),
             Rect(w, h) => w * h,
         }
     }
@@ -42,7 +42,7 @@ mod geometry {
 mod physics {
     // A sibling module reaches another through its path.
     pub fn weight(s: geometry::Shape) -> i64 {
-        (s | geometry::area) * 10
+        (⟨s | geometry::area) * 10
     }
 }
 
@@ -50,10 +50,10 @@ mod physics {
 use geometry::area;
 
 command main | (exit: i32) / {IO} {
-    geometry::Shape::Circle(5) | area | println;
-    geometry::Shape::Rect(6, 7) | physics::weight | println;
+    ⟨geometry::Shape::Circle(5) | area | println;
+    ⟨geometry::Shape::Rect(6, 7) | physics::weight | println;
     match geometry::origin() {
-        geometry::Point { x, y } => x + y | println,
+        geometry::Point { x, y } => ⟨x + y | println,
     };
-    0 | exit⟩
+    ⟨0 | exit⟩
 }

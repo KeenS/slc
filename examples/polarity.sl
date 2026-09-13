@@ -28,9 +28,9 @@ enum Request {
 //     and the body cuts into it directly.
 fn describe(label: +i64, note: -String) -> (;) {
     if label > 0 {
-        "positive" | note⟩
+        ⟨"positive" | note⟩
     } else {
-        "not positive" | note⟩
+        ⟨"not positive" | note⟩
     }
 }
 
@@ -40,8 +40,8 @@ fn describe(label: +i64, note: -String) -> (;) {
 //     written here is positive while the thing produced is negative.
 fn config() <- Request {
     select Request {
-        Retries(k) => 3 | k⟩,
-        Name(k) => "slant" | k⟩,
+        Retries(k) => ⟨3 | k⟩,
+        Name(k) => ⟨"slant" | k⟩,
     }
 }
 
@@ -51,11 +51,11 @@ fn config() <- Request {
 command retries | (provider: -Request & answer: -i64) {
     // Consuming codata is the dual of consuming data: the provider is on the
     // consumer side of the cut, and the *positive* request drives it.
-    Request::Retries(answer) | provider⟩
+    ⟨Request::Retries(answer) | provider⟩
 }
 
 command main | (exit: -i32) / {IO} {
-    mu i64 { answer <= (,) | retries | (config & answer)⟩ } | println;
-    mu String { note <= (1, note) | describe } | println;
-    0 | exit⟩
+    ⟨mu i64 { answer <= ⟨(,) | retries | (config & answer)⟩ } | println;
+    ⟨mu String { note <= ⟨(1, note) | describe } | println;
+    ⟨0 | exit⟩
 }

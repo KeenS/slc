@@ -612,14 +612,13 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         // `λx. x | f | k`, so eta-expanding leaves every middle step an
         // ordinary application and the last one either an application or
         // the cut.
-        Expr::Flow { stages, into_consumer, .. } => {
-            // `⟩` is syntax; whether a function heads the chain is not, so
-            // the checker reports it. A chain a function heads denotes one
-            // that would take a value — `f | k⟩` is `λx. x | f | k⟩` — and
-            // eta-expanding leaves every middle step an application.
+        Expr::Flow { stages, from_value, into_consumer } => {
+            // Without `⟨` a function heads the chain, and the chain denotes
+            // one that would take a value — `f | k⟩` is `λx. ⟨x | f | k⟩` —
+            // so eta-expanding leaves every middle step an application.
             let shape =
                 FLOWS.with(|cell| cell.borrow().get(&e.span).copied()).unwrap_or(FlowShape {
-                    eta: false,
+                    eta: !*from_value,
                     cut: *into_consumer,
                     commuted_from: None,
                     row_stage: None,
@@ -1716,7 +1715,7 @@ fn lower_closed_flow(
     command: &Node<Expr>,
     continuations: &[String],
 ) -> Result<Option<Command>, LowerError> {
-    let Expr::Flow { stages, into_consumer: true, .. } = &command.kind else {
+    let Expr::Flow { stages, from_value: true, into_consumer: true } = &command.kind else {
         return Ok(None);
     };
     let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).copied()).is_none_or(|shape| {
@@ -2042,7 +2041,7 @@ mod tests {
         // `select` must lower to a genuine negative additive co-term — one
         // branch per variant, each cutting the arm value against the arm's
         // consumer — and not to an opaque builtin marker.
-        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => 0 | return⟩, Green => 1 | return⟩, Blue => 2 | return⟩ } }";
+        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => ⟨0 | return⟩, Green => ⟨1 | return⟩, Blue => ⟨2 | return⟩ } }";
         let out = lower_str(src);
         let k = out.iter().find(|(name, _)| name == "k").unwrap();
 
@@ -2075,7 +2074,7 @@ mod tests {
         // needs no label.
         let out = lower_str(
             "fn total(out: -i64) <- (+i64, +i64) {
-                 select (+i64, +i64) { (left, right) => (left + right) | out⟩ }
+                 select (+i64, +i64) { (left, right) => ⟨(left + right) | out⟩ }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
@@ -2096,7 +2095,7 @@ mod tests {
         // declaration, binding every field.
         let out = lower_str(
             "data R { value: i64, unit: String }
-             fn show(out: -String) <- R { select R { R { value, unit } => unit | out⟩ } }",
+             fn show(out: -String) <- R { select R { R { value, unit } => ⟨unit | out⟩ } }",
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
         let printed = format!("{}", show.1);
@@ -2113,7 +2112,7 @@ mod tests {
     #[test]
     fn lower_select_rejects_an_arm_that_is_not_a_shape() {
         // An arm covers one shape of the type; a literal is not one.
-        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => 0 | return⟩, Green => 1 | return⟩ } }";
+        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => ⟨0 | return⟩, Green => ⟨1 | return⟩ } }";
         let toks = crate::lexer::lex(src).unwrap();
         let prog = crate::parser::parse(toks).unwrap();
         assert!(
@@ -2149,7 +2148,7 @@ mod tests {
         // `v | k` is the command ⟨v ∥ k⟩. The μ binder that wraps it is never
         // referenced — a command has no result — and must not be the
         // consumer's own name, or the cut would send the value to itself.
-        let positive = lower_str("fn f(k: -i32) <- i32 { 1 | k⟩ }");
+        let positive = lower_str("fn f(k: -i32) <- i32 { ⟨1 | k⟩ }");
         assert_eq!(
             positive[0].1,
             Term::Lam(
@@ -2162,7 +2161,7 @@ mod tests {
         );
 
         // A consumer named `__cut` still receives the value.
-        let shadowed = lower_str("fn f(__cut: -i32) <- i32 { 1 | __cut⟩ }");
+        let shadowed = lower_str("fn f(__cut: -i32) <- i32 { ⟨1 | __cut⟩ }");
         assert_eq!(
             shadowed[0].1,
             Term::Lam(
@@ -2182,7 +2181,7 @@ mod tests {
     fn lower_flow_reads_its_brackets() {
         // The brackets say what a chain is, so lowering never guesses: the
         // same stages are a cut when closed and an application when not.
-        let cut = lower_str("fn f(ignored: +i32) -> i32 { 1 | pick(2)⟩ }");
+        let cut = lower_str("fn f(ignored: +i32) -> i32 { ⟨1 | pick(2)⟩ }");
         let Term::Lam(_, body) = &cut[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else {
             panic!("a cut is wrapped in a μ binder: {body}");
@@ -2194,7 +2193,7 @@ mod tests {
         assert!(format!("{consumer}").contains("pick"), "the consumer is evaluated: {consumer}");
         assert_eq!(value, &Term::Var("$int_1".into()));
 
-        let open = lower_str("fn f(ignored: +i32) -> i32 { 1 | pick(2) }");
+        let open = lower_str("fn f(ignored: +i32) -> i32 { ⟨1 | pick(2) }");
         let Term::Lam(_, body) = &open[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, _) = body.as_ref() else { panic!("an application: {body}") };
         assert_eq!(binder, "__call");

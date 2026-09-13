@@ -51,7 +51,7 @@ fn overshoot(s: Size) -> i64 {
 // binds every field at once.
 fn area_of(out: i64) <- Point {
     select Point {
-        Point { x, y } => (x * y) | out⟩,
+        Point { x, y } => ⟨(x * y) | out⟩,
     }
 }
 
@@ -59,7 +59,7 @@ fn area_of(out: i64) <- Point {
 // instead of travelling back through a return.
 fn reflect(out: Point) <- Point {
     select Point {
-        Point { x, y } => Point { x: y, y: x } | out⟩,
+        Point { x, y } => ⟨Point { x: y, y: x } | out⟩,
     }
 }
 
@@ -67,9 +67,9 @@ fn reflect(out: Point) <- Point {
 fn classify_to(out: Size) <- i64 {
     select i64 {
         area => if area > 100 {
-            Size::Big(area - 100) | out⟩
+            ⟨Size::Big(area - 100) | out⟩
         } else {
-            Size::Small | out⟩
+            ⟨Size::Small | out⟩
         },
     }
 }
@@ -77,31 +77,31 @@ fn classify_to(out: Size) <- i64 {
 // "Takes" an enum: one arm per variant; only the arriving variant runs.
 fn overshoot_of(out: i64) <- Size {
     select Size {
-        Small => 0 | out⟩,
-        Big(over) => over | out⟩,
+        Small => ⟨0 | out⟩,
+        Big(over) => ⟨over | out⟩,
     }
 }
 
 command main | (exit: i32) / {IO} {
     // Positive: data flows inward through the calls and back out.
-    let p = (Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
-    p.x | println;                                   // 10
-    p | classify | overshoot | println;                // 100 = 10 * 20 - 100
+    let p = ⟨(Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
+    ⟨p.x | println;                                   // 10
+    ⟨p | classify | overshoot | println;                // 100 = 10 * 20 - 100
 
     // Negative: the same computations, written in the order the value
     // travels. `mu` names the hole the answer comes back through.
-    (mu i64 { answer <= {
-        Point { x: 10, y: 20 } | (answer | area_of)⟩    // 200
+    (⟨mu i64 { answer <= {
+        ⟨Point { x: 10, y: 20 } | (⟨answer | area_of)⟩    // 200
     } } | println);
 
-    let r = mu Point { answer <= Point { x: 1, y: 2 } | (answer | reflect)⟩ };
-    r.x | println;                                   // 2
+    let r = mu Point { answer <= ⟨Point { x: 1, y: 2 } | (⟨answer | reflect)⟩ };
+    ⟨r.x | println;                                   // 2
 
     // `overshoot_of(answer)` is a consumer of `Size`, exactly what
     // `classify_to` wants: the enum passes between them without a name.
-    (mu i64 { answer <= {
-        150 | ((answer | overshoot_of) | classify_to)⟩     // 50
+    (⟨mu i64 { answer <= {
+        ⟨150 | (⟨(⟨answer | overshoot_of) | classify_to)⟩     // 50
     } } | println);
 
-    0 | exit⟩
+    ⟨0 | exit⟩
 }

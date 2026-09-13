@@ -17,21 +17,21 @@ mod list {
     pub fn length<T>(xs: List<T>) -> i64 {
         match xs {
             Nil => 0,
-            Cons(_, rest) => 1 + (rest | length),
+            Cons(_, rest) => 1 + (⟨rest | length),
         }
     }
 
     pub fn append<T>(xs: List<T>, ys: List<T>) -> List<T> {
         match xs {
             Nil => ys,
-            Cons(h, rest) => Cons(h, (rest, ys) | append),
+            Cons(h, rest) => Cons(h, ⟨(rest, ys) | append),
         }
     }
 
     pub fn map<A, B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E} {
         match xs {
             Nil => Nil,
-            Cons(h, rest) => Cons(h | f, (f, rest) | map),
+            Cons(h, rest) => Cons(⟨h | f, ⟨(f, rest) | map),
         }
     }
 
@@ -39,9 +39,9 @@ mod list {
     // the way the lookup builtins do.
     pub command nth<T>(xs: List<T>, i: i64) | (found: T & missing: String) {
         match xs {
-            Nil => "nothing at that index" | missing⟩,
+            Nil => ⟨"nothing at that index" | missing⟩,
             Cons(h, rest) => {
-                if i == 0 { h | found⟩ } else { (rest, i - 1) | nth | (found & missing)⟩ }
+                if i == 0 { ⟨h | found⟩ } else { ⟨(rest, i - 1) | nth | (found & missing)⟩ }
             },
         }
     }
@@ -49,12 +49,12 @@ mod list {
     fn fmt_items<T: Display>(xs: List<T>) -> String {
         match xs {
             Nil => "",
-            Cons(h, Nil) => h | fmt,
-            Cons(h, rest) => (h | fmt) + ", " + (rest | fmt_items),
+            Cons(h, Nil) => ⟨h | fmt,
+            Cons(h, rest) => (⟨h | fmt) + ", " + (⟨rest | fmt_items),
         }
     }
 
     impl<T: Display> Display for List<T> {
-        fn fmt(self: List<T>) -> String { "[" + (self | fmt_items) + "]" }
+        fn fmt(self: List<T>) -> String { "[" + (⟨self | fmt_items) + "]" }
     }
 }

@@ -548,6 +548,30 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## `⟨` is never left out
+
+A chain used to read its head as a value unless the head was a function, and
+`⟨` was needed only to send a function on as a value. Now `⟨` always marks
+what flows in, and a chain without it begins with a function, whatever its
+head is:
+
+```sl
+"hi" | println;             // old: an application
+⟨"hi" | println;            // new
+
+0 | exit⟩                   // old: a cut
+⟨0 | exit⟩                  // new
+
+(a, b) | f                  // old: an application of `f`
+⟨(a, b) | f                 // new
+
+f | k⟩                      // composition into a consumer, as before
+⟨f | k⟩                     // `f` itself sent to `k`, as before
+```
+
+A head that is not a function, written without `⟨`, is refused, pointing at
+the missing bracket.
+
 ## Nesting is significant
 
 A tuple, a sum, a menu of exits and a form value hold as many components as

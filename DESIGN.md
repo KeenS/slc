@@ -54,14 +54,14 @@ Everything moves left to right through one operator. `a | b` is **flow**,
 and what a step means follows from polarity — no other reading is
 available, so none has to be chosen:
 
-Every step is a function applied to what flows in, and **`⟩` closes the
-chain**: the stage before it consumes, so the chain delivers rather than
-returns.
+Every step is a function applied to what flows in. **`⟨` opens the chain**
+with a value — the head is what flows in — and **`⟩` closes it**: the stage
+before it consumes, so the chain delivers rather than returns.
 
 | form | what it is |
 |---|---|
-| `v \| f` | a value through a function — an application, and a value |
-| `v \| f \| k⟩` | **a cut** — a command, `⊥` |
+| `⟨v \| f` | a value through a function — an application, and a value |
+| `⟨v \| f \| k⟩` | **a cut** — a command, `⊥` |
 | `f \| g` | function composition — a function |
 | `f \| k⟩` | composition into a consumer — a consumer |
 
@@ -80,8 +80,8 @@ takes *the rest of the chain* as its continuation, which is why the two
 styles are written the same:
 
 ```sl
-shape | area    | label    | out⟩
-shape | area_of | label_of | out⟩
+⟨shape | area    | label    | out⟩
+⟨shape | area_of | label_of | out⟩
 ```
 
 `examples/two_styles.sl` is that program, twice.
@@ -105,18 +105,18 @@ first, so nothing that fits as written changes meaning. Inside a type
 constructor there is no one value to turn, so a tuple's component or a
 `List`'s argument still has to be written at its value's spelling.
 
-The head decides whether a chain applies or composes, and it needs no
-mark when it is not a function: `"hi" | println` can only be an
-application. Where the head *is* a function, the chain composes — and
-`⟨` says the one other thing it could mean, that the function is itself
-the value flowing in:
+**`⟨` is never left out.** A chain without it begins with a function,
+whatever its head is, and composes: `f | g` is a function, and `f | k⟩` a
+consumer. So a value must be marked to flow in — `⟨"hi" | println` applies,
+and `"hi" | println` is refused, since `"hi"` is not a function. A chain
+says what it is at both ends: `⟨` makes it an application, `⟩` a delivery,
+and the two together a cut. A function sent on as a value is marked the
+same way as any other value:
 
 ```sl
 f | k⟩          // compose f into k: a consumer
 ⟨f | k⟩         // send f itself to k: a cut
 ```
-
-That is the only place a `⟨` is needed, and the whole corpus has one.
 
 A chain is flat, because composition is associative and the syntax says
 so: `⟨v | f | g | k⟩` may be bracketed any way and is the same
@@ -126,20 +126,20 @@ since nothing flows out of one.
 
 Two operations look alike in most languages and are different here.
 
-**Application** is flow: `a | f` supplies an argument to a function and
+**Application** is flow: `⟨a | f` supplies an argument to a function and
 gets a result, and it is the *only* way to apply one — `f(a)` is refused,
 with the pipeline spelled out. Several arguments are the product they
-always were, written as one: `(a, b) | f`. So a call and a chain are not
+always were, written as one: `⟨(a, b) | f`. So a call and a chain are not
 two things to learn, and reading either goes left to right:
 
 ```sl
-21 | double | label | println          // apply, four times over
-(xs, 2) | index_or_zero                // several arguments, one product
+⟨21 | double | label | println          // apply, four times over
+⟨(xs, 2) | index_or_zero               // several arguments, one product
 ```
 
 **A stage supplies the whole group.** A declaration binds each parameter
 group as one argument, so what flows into a stage is all of its values or
-it is refused: `1 | add` of a two-parameter `add` is not a function waiting
+it is refused: `⟨1 | add` of a two-parameter `add` is not a function waiting
 for the second, and says so. (A callee's type nests by `⅋`'s associativity
 and presents its first parameter alone; the checker does not read it that
 way.) Builtins are the exception — the runtime accumulates their arguments
@@ -157,36 +157,36 @@ other call, and ends where control leaves it:
 ```sl
 command nth<T>(xs: List<T>, i: i64) | (found: T & missing: String)
 
-(xs, 2) | nth | (found & missing)⟩
+⟨(xs, 2) | nth | (found & missing)⟩
 ```
 
 The row travels whole, so a command that takes one may hand it on
-unopened — `command forward(…) | (row: (-T & -String)) { (xs, 2) | nth | row⟩ }`.
+unopened — `command forward(…) | (row: (-T & -String)) { ⟨(xs, 2) | nth | row⟩ }`.
 A negative function is *not* this case: it answers a consumer rather than
 `⊥`, so it composes on, and its exits are the rest of the chain
-(`shape | area_of | label_of | out⟩`).
+(`⟨shape | area_of | label_of | out⟩`).
 
-**A cut** `v | k⟩` sends the value `v` to the consumer `k`. It is the surface
+**A cut** `⟨v | k⟩` sends the value `v` to the consumer `k`. It is the surface
 spelling of the core's `⟨ v ∥ k ⟩`, and it is a *command*, not an expression
 that happens to return: control does not come back, so nothing after it in a
 block runs, and its type is `⊥`.
 
 ```sl
 command route(x: i32) | (k: i32) {
-    x | k⟩
+    ⟨x | k⟩
 }
 ```
 
-`|` binds more loosely than every operator, so `a + b | k⟩` sends the sum.
+`|` binds more loosely than every operator, so `⟨a + b | k⟩` sends the sum.
 The consumer may be any expression that produces one — a name, or a
 negative function applied to its row:
 
 ```sl
-Color::Blue | code | answer⟩     // `code` is a stage; `answer` closes
+⟨Color::Blue | code | answer⟩     // `code` is a stage; `answer` closes
 ```
 
 Because a cut has type `⊥`, a branch that ends in one constrains nothing: in
-`if c { pos + 1 } else { message | err }` the `if` has the type of the branch
+`if c { pos + 1 } else { ⟨message | err⟩ }` the `if` has the type of the branch
 that returns.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and
@@ -211,8 +211,8 @@ enum Status { Ok(i64), Failed(i64) }
 
 fn report(success: -i64, failure: -i64) <- Status {
     select Status {
-        Ok(code) => code | success⟩,
-        Failed(code) => code | failure⟩,
+        Ok(code) => ⟨code | success⟩,
+        Failed(code) => ⟨code | failure⟩,
     }
 }
 ```
@@ -254,7 +254,7 @@ what polarity buys:
 
 Consuming codata reverses a cut's usual sides: a provider is negative, so what
 consumes it is its dual — the positive request. In
-`Request::Retries(answer) | provider` the provider is the consumer and the
+`⟨Request::Retries(answer) | provider⟩` the provider is the consumer and the
 request is the value.
 
 `examples/polarity.sl` writes all four; `examples/polarity_error.sl` writes
@@ -309,7 +309,7 @@ required by its position:
 
 ```sl
 fn id<T>(value: T) -> T { value }
-fn consume<T>(ok: T) <- T { 0 | ok⟩ }
+fn consume<T>(ok: T) <- T { ⟨0 | ok⟩ }
 ```
 
 An explicit sign is a constraint, not a change of representation. `+T` denotes
@@ -358,7 +358,7 @@ is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
 command route(x: i32) | (k: i32) {
-    x | k⟩
+    ⟨x | k⟩
 }
 ```
 
@@ -405,9 +405,9 @@ without nesting the rest of the program inside it:
 
 ```sl
 let source = mu String { k <=
-    path | fs::read | (k & complain)⟩
+    ⟨path | fs::read | (k & complain)⟩
 };
-source | print;
+⟨source | print;
 ```
 
 `k` is the continuation of the `let`: what `fs::read` sends it becomes
@@ -419,9 +419,9 @@ that a caller inspects, it takes the continuations its outcomes belong to:
 
 ```sl
 command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match (input, pos) | at {
-        QUOTE => (input, pos) | parse_string | (ok & failed)⟩,
-        _ => "expected JSON value" | failed⟩,
+    match ⟨(input, pos) | at {
+        QUOTE => ⟨(input, pos) | parse_string | (ok & failed)⟩,
+        _ => ⟨"expected JSON value" | failed⟩,
     }
 }
 ```
@@ -473,9 +473,9 @@ negative additive:
 ```sl
 fn k(return: i32) <- Color {
     select Color {
-        Red => 0 | return⟩,
-        Green => 1 | return⟩,
-        Blue => 2 | return⟩,
+        Red => ⟨0 | return⟩,
+        Green => ⟨1 | return⟩,
+        Blue => ⟨2 | return⟩,
     }
 }
 ```
@@ -493,8 +493,8 @@ enum Reading { Measured(i64), Missing }
 
 fn report(value: -i64, absent: -i64) <- Reading {
     select Reading {
-        Measured(measurement) => measurement | value⟩,
-        Missing => -1 | absent⟩,
+        Measured(measurement) => ⟨measurement | value⟩,
+        Missing => ⟨-1 | absent⟩,
     }
 }
 ```
@@ -557,7 +557,7 @@ arrives at them:
 - A `mu` arm is `item: out <= c`: it binds the demand's continuation — its
   *return address*, carried the way a variant's payload is — and answers it
   with a command. The continuation can receive a direct answer with
-  `item <= value | item`, or route control through nested copatterns and
+  `item <= ⟨value | item⟩`, or route control through nested copatterns and
   multi-outcome builtins.
 
 - **`mu` answers demands** — it builds the μ family: a binder arm `mu { k <= c }` captures
@@ -581,8 +581,8 @@ arrives at them:
 ```sl
 fn config() -> Config {
     mu Config {
-        retries: out <= 3 | out⟩,
-        name: out <= "slant" | out⟩,
+        retries: out <= ⟨3 | out⟩,
+        name: out <= ⟨"slant" | out⟩,
     }
 }
 
@@ -736,7 +736,7 @@ data Reading { value: i64, unit: String }
 // dual(Reading) is `-i64 ⅋ -String`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        Reading { value, unit } => ((value | int_to_str) + unit) | out⟩,
+        Reading { value, unit } => ⟨((⟨value | int_to_str) + unit) | out⟩,
     }
 }
 ```
@@ -746,7 +746,7 @@ A bare product needs no declaration; its shape is written as the type:
 ```sl
 fn total(out: -i64) <- (+i64, +i64) {
     select (+i64, +i64) {
-        (left, right) => (left + right) | out⟩,
+        (left, right) => ⟨(left + right) | out⟩,
     }
 }
 ```
@@ -754,7 +754,7 @@ fn total(out: -i64) <- (+i64, +i64) {
 Either is consumed by the cut that supplies the whole product:
 
 ```sl
-Reading { value: 42, unit: "m" } | show | out⟩
+⟨Reading { value: 42, unit: "m" } | show | out⟩
 (2, 40) | total | out⟩
 ```
 
@@ -783,7 +783,7 @@ fn printer(out: -i64) -> Report {
     }
 }
 
-Report { value: 42, label: "answer" } | (k | printer)⟩
+⟨Report { value: 42, label: "answer" } | (⟨k | printer)⟩
 ```
 
 `form` needs nothing new in the core: a form value is the `co(μ̃[…])` that
@@ -805,7 +805,7 @@ it too, and the arm's pattern is a plain binder that names the whole value:
 ```sl
 fn show(out: -String) <- +i64 {
     select +i64 {
-        n => n | int_to_str | out⟩,
+        n => ⟨n | int_to_str | out⟩,
     }
 }
 ```
@@ -839,10 +839,10 @@ overloaded on its first argument's type — `x | show`, never `x.show()`:
 
 ```sl
 trait Show { fn show(self: Self) -> String; }
-impl Show for i64  { fn show(self: i64)  -> String { self | int_to_str } }
+impl Show for i64  { fn show(self: i64)  -> String { ⟨self | int_to_str } }
 impl Show for bool { fn show(self: bool) -> String { if self { "t" } else { "f" } } }
 
-fn labelled<T: Show>(x: T) -> String { "= " + (x | show) }
+fn labelled<T: Show>(x: T) -> String { "= " + (⟨x | show) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -876,12 +876,12 @@ effect Exn    { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
 
 command main | (exit: i32) {
-    let safe = handle (10, 0) | checked_div {
+    let safe = handle ⟨(10, 0) | checked_div {
         throw(message) => 0 - 1,           // never resumes: an exception
         return(n) => n,
     };
-    let scaled = handle x * ((,) | config) {
-        flip(): resume => (true | resume) + (false | resume),  // resumes twice
+    let scaled = handle x * (⟨(,) | config) {
+        flip(): resume => (⟨true | resume) + (⟨false | resume),  // resumes twice
         return(n) => n,
     };
     …
@@ -998,14 +998,14 @@ performing value collects them all before suspending. **Operations are
 positive, and need no negative form.** An operation that consumes rather
 than answers is already writable: `A → ⊥` *is* `-A`, so
 `fn drop(x: +i64) -> (;);` declares a consumer, and both `drop(42)` and the
-cut `42 | drop` perform it. Routing to a chosen outcome needs nothing new
+cut `⟨42 | drop` perform it. Routing to a chosen outcome needs nothing new
 either, now that consumers are values — an operation takes them as
 ordinary parameters, and the clause cuts into whichever it picks:
 
 ```sl
 effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
 …
-judge(n, ok, bad) => if n > 3 { "big" | ok⟩ } else { "small" | bad⟩ },
+judge(n, ok, bad) => if n > 3 { ⟨"big" | ok⟩ } else { ⟨"small" | bad⟩ },
 ```
 
 Demand-time effects are the latent rows above. Between the three, a
@@ -1026,7 +1026,7 @@ function returns a value or a consumer.
 
 A bound on a negative function is discharged by the **cut**, not by an
 argument: in `fn emit<T: Display>(out: -String) <- T`, nothing the call
-receives mentions `T`, and `42 | emit(s)` is what fixes it. So dictionary
+receives mentions `T`, and `⟨42 | emit(s)` is what fixes it. So dictionary
 solving waits until a declaration's body is fully checked — by then every
 cut has spoken — and the same deferral gives a trait a second method
 shape:
@@ -1039,8 +1039,8 @@ trait Deliver  { fn deliver(out: String) <- Self; }     // consumes Self
 A positive method takes `self: Self` and dispatches on what it receives.
 A negative method takes no `self` — a negative function's parameters are
 all continuations — so its `Self` is the type it *consumes*, and dispatch
-reads the value the cut sends: `42 | deliver(s)` finds the `i64` impl,
-`true | deliver(s)` the `bool` one. Both shapes resolve statically, and a
+reads the value the cut sends: `⟨42 | deliver(s)` finds the `i64` impl,
+`⟨true | deliver(s)` the `bool` one. Both shapes resolve statically, and a
 bound forwards through either.
 
 ### Polymorphism
@@ -1055,7 +1055,7 @@ afresh:
 
 ```sl
 let f = fn(x) { x };
-(1 | f) + 1 | println;       // a := +i64
+⟨(⟨1 | f) + 1 | println;       // a := +i64
 "s" | f | str_len | println; // a := +String
 ```
 
@@ -1115,7 +1115,7 @@ is the identity function.
 ```sl
 fn dne<T>(t: -(-T)) -> T { t }
 
-42 | dne   // 42: -(-i64) and +i64 are one type
+⟨42 | dne   // 42: -(-i64) and +i64 are one type
 ```
 
 One orientation rule remains, and it is load-bearing: **the left of `|` is
@@ -1158,21 +1158,21 @@ writes all four cells out, because the four cells are its subject.
 // `k` goes to a slot `fs::read` declares, so it is `-String`, and this
 // `let` binds a `+String`.
 let source = mu { k <=
-    "input.json" | fs::read | (k & complain)⟩
+    ⟨"input.json" | fs::read | (k & complain)⟩
 };
 
 // `Red` is a variant of exactly one enum, so the type is `Color`.
 fn code(return: i32) <- Color {
     select {
-        Red => 0 | return⟩,
-        Green => 1 | return⟩,
+        Red => ⟨0 | return⟩,
+        Green => ⟨1 | return⟩,
     }
 }
 
 // Nothing in the arm names a type, but `<- i64` did.
 fn twice(out: i64) <- i64 {
     select {
-        n => (n * 2) | out⟩,
+        n => ⟨(n * 2) | out⟩,
     }
 }
 ```
@@ -1194,8 +1194,8 @@ and exactly one continuation — the exit status:
 
 ```sl
 command main | (exit: i32) {
-    "Hello, Slant!" | println;
-    0 | exit⟩
+    ⟨"Hello, Slant!" | println;
+    ⟨0 | exit⟩
 }
 ```
 
@@ -1211,7 +1211,7 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 command main | (exit: i32) {
     let complain = select { message => { message | println; 1 | exit⟩ } };
-    "input.txt" | fs::read | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
+    ⟨"input.txt" | fs::read | (select { text => { text | print; 0 | exit⟩ } } & complain)⟩
 }
 ```
 
@@ -1275,7 +1275,7 @@ what neither neighbour can do — so `seq::filter` over an infinite source is a
 terminating program as long as something downstream stops asking:
 
 ```sl
-((odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take   // [1, 3, 5, 7]
+⟨(⟨(odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take   // [1, 3, 5, 7]
 ```
 
 Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
@@ -1295,7 +1295,7 @@ return position, and it makes the caller build the consumer before cutting
 into it rather than write the call every other call is written as. Two
 combinators had it and are gone: `then(f, k)`, because composing a function
 with a continuation is `f | k`, and `defaulting(fallback, k)`, because a row
-slot wants a consumer and `select String { m => fallback | k⟩ }` is the
+slot wants a consumer and `select String { m => ⟨fallback | k⟩ }` is the
 consumer — the combinator only hid the arm. The `<- A` form remains the
 natural spelling for a consumer transformer whose inputs are all
 continuations.
@@ -1318,8 +1318,8 @@ Every failure continuation receives a `+String` describing what happened, so
 it composes with an error consumer a program already has.
 
 ```sl
-"input.json" | fs::read | (
-    select String { source => source | parse_json | report⟩ }
+⟨"input.json" | fs::read | (
+    select String { source => ⟨source | parse_json | report⟩ }
     & complain
 )⟩
 ```
@@ -1348,8 +1348,8 @@ composing the close onto that door closes the file on every path by
 construction. Shadow `exit` where the handle comes into scope:
 
 ```sl
-let file = mu { k <= path | fs::open | (k & complain)⟩ };
-let exit = select i32 { status => { file | fs::close; status | exit⟩ } };
+let file = mu { k <= ⟨path | fs::open | (k & complain)⟩ };
+let exit = select i32 { status => { ⟨file | fs::close; ⟨status | exit⟩ } };
 ```
 
 The arm's `exit` is the outer one; everything after the shadow sees only the
@@ -1386,7 +1386,7 @@ A cut is well typed exactly when its two sides are dual. Which side is
 written negatively is not itself the question: `v | k` sends `v` to something
 that consumes it, and for a function that something is a call stack.
 
-An integer literal takes the integer type its port requires — `0 | exit`
+An integer literal takes the integer type its port requires — `⟨0 | exit⟩`
 sends an `i32` — and is `+i64` when nothing constrains it. Every other value
 must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
@@ -1441,8 +1441,8 @@ mod geometry {
 use geometry::area;
 
 command main | (exit: i32) {
-    geometry::Shape::Circle(5) | area | println;
-    0 | exit⟩
+    ⟨geometry::Shape::Circle(5) | area | println;
+    ⟨0 | exit⟩
 }
 ```
 
@@ -1700,19 +1700,19 @@ it stands in:
 ```sl
 // ¬¬A → A: give the refuter this call's continuation.
 fn dne(refuter: i64) -> i64 {
-    mu { k <= k | refuter⟩ }
+    mu { k <= ⟨k | refuter⟩ }
 }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
     mu { k <=
-        Choice::Refutes(select i64 { a => Choice::Holds(a) | k⟩ }) | k⟩
+        ⟨Choice::Refutes(select i64 { a => ⟨Choice::Holds(a) | k⟩ }) | k⟩
     }
 }
 ```
 
 `examples/classical.sl` runs both. The types above go through the shifts of
-§8 — `-(-i64)` *is* `+i64`: `dne` is the identity, and `42 | dne` is `42`.
+§8 — `-(-i64)` *is* `+i64`: `dne` is the identity, and `⟨42 | dne` is `42`.
 
 A captured continuation is a value with no expiry: the evaluator is an
 abstract machine whose continuation is an explicit frame stack, and `mu`
@@ -1728,9 +1728,9 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-let parsed = select +String { value => { "parsed: " + value | println; 0 | exit⟩ } };
-let failed = select +String { message => { "error: " + message | println; 1 | exit⟩ } };
-source | parse_json | (parsed & failed)⟩
+let parsed = select +String { value => { ⟨"parsed: " + value | println; ⟨0 | exit⟩ } };
+let failed = select +String { message => { ⟨"error: " + message | println; ⟨1 | exit⟩ } };
+⟨source | parse_json | (parsed & failed)⟩
 ```
 
 No result wrapper is needed, and nothing carries a success value alongside an

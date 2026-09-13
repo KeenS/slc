@@ -23,35 +23,35 @@ fn doubling(k: -i64) -> -i64 {
 // A two-exit command, written unary: one value, one menu of exits, each
 // component naming what reaches it.
 command classify(n: i64) | (found: i64 & missing: String) {
-    if n > 0 { n | found⟩ } else { "nothing there" | missing⟩ }
+    if n > 0 { ⟨n | found⟩ } else { ⟨"nothing there" | missing⟩ }
 }
 
 // A row is a value: this one takes the whole menu and hands it on.
 command forward(n: i64) | (row: (i64 & String)) {
-    n | classify | row⟩
+    ⟨n | classify | row⟩
 }
 
 command main | (exit: i32) / {IO} {
     // a value flowing through functions, awaiting a continuation
-    21 | double | println;
-    3 | double | incr | double | println;
+    ⟨21 | double | println;
+    ⟨3 | double | incr | double | println;
 
     // the cut — closed at both ends
-    (mu i64 { out <= 21 | double | out⟩ } | println);
+    (⟨mu i64 { out <= ⟨21 | double | out⟩ } | println);
 
     // the same chain, split: `double | k⟩` is a consumer on its own, so
     // feeding it is the same command
-    (mu i64 { out <= 5 | double | incr | out⟩ } | println);
-    (mu i64 { out <= 5 | (out | doubling)⟩ } | println);
+    (⟨mu i64 { out <= ⟨5 | double | incr | out⟩ } | println);
+    (⟨mu i64 { out <= ⟨5 | (⟨out | doubling)⟩ } | println);
 
     // plain composition: two functions make a function
     let quadruple = double | double;
-    5 | quadruple | println;
+    ⟨5 | quadruple | println;
 
     // a two-exit command: its exits spread, then bundled, then forwarded
-    (mu i64 { ok <= 7 | classify | (ok & select String { s => s | str_len | ok⟩ })⟩ } | println);
-    (mu i64 { ok <= 0 - 1 | classify | (ok & select String { s => s | str_len | ok⟩ })⟩ } | println);
-    (mu i64 { ok <= 0 - 1 | forward | (ok & select String { s => s | str_len | ok⟩ })⟩ } | println);
+    (⟨mu i64 { ok <= ⟨7 | classify | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
+    (⟨mu i64 { ok <= ⟨0 - 1 | classify | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
+    (⟨mu i64 { ok <= ⟨0 - 1 | forward | (ok & select String { s => ⟨s | str_len | ok⟩ })⟩ } | println);
 
-    0 | exit⟩
+    ⟨0 | exit⟩
 }
