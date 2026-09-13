@@ -166,9 +166,18 @@ delayed.
     prints `(,)` because it runs at once; it becomes a `let+`, rendered
     through `Display`.
   - Every type a program prints needs a `Display` impl. The prelude has them
-    for `i64`, `String` and `bool`, and `list` for `List`; the others the
-    examples and tests print, such as `(,)` in `examples/connectives.sl`, are
-    added.
+    for `i64`, `String` and `bool`, and `list` for `List`. The anonymous data
+    types get theirs in the prelude up to eight components — the unit `(,)`,
+    tuples from `(A, B)` to eight components, and choices from `(A | B)` to
+    eight alternatives — each bounded `<+A: Display, …>` and rendered as it
+    is written: `(1, a)`, `::1(right)`, `(,)`. Bundles and joints are
+    negative, and `println`'s parameter is positive, so they have none.
+  - An impl cannot be written for an anonymous type today:
+    `impl … for (A, B)`, `(A | B)` and `(,)` are all refused, "this type
+    cannot carry an impl in v1". An impl is keyed by its type's name —
+    `type_key` in `traits.rs`, and the checker's own for dispatch — and an
+    anonymous type has none. Keying one by its connective and width, a tuple
+    of two or a choice of three, comes first.
   - A `String` prints as `Display` renders it, unquoted, where the builtin
     quotes it today (`"Hello, Slant!"`). Expected outputs that carry the
     quotes — `examples/sums.sl`, `examples/io.sl` and others — change, and
