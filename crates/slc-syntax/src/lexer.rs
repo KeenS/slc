@@ -240,9 +240,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             '=' => TokenKind::Assign,
             '⟨' => TokenKind::CutOpen,
             '⟩' => TokenKind::CutClose,
-            '⊗' => TokenKind::Tensor,
-            '⅋' => TokenKind::Par,
-            '⊥' => TokenKind::Bot,
             other => {
                 return Err(LexError {
                     message: format!("unexpected character: {other}"),
@@ -329,11 +326,11 @@ mod tests {
     }
 
     #[test]
-    fn lex_unicode_operators() {
-        let toks = lex("⊗ ⅋ ⊥").unwrap();
-        assert_eq!(toks[0].kind, TokenKind::Tensor);
-        assert_eq!(toks[1].kind, TokenKind::Par);
-        assert_eq!(toks[2].kind, TokenKind::Bot);
+    fn the_connective_glyphs_are_not_surface_syntax() {
+        // The surface is ASCII: `,` `;` `|` `&` join types, and `(;)` is ⊥.
+        for glyph in ["⊗", "⅋", "⊥"] {
+            assert!(lex(glyph).is_err(), "{glyph} lexed");
+        }
     }
 
     #[test]

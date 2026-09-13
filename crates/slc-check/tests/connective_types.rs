@@ -43,11 +43,11 @@ fn check(source: &str) -> Result<(), Vec<slc_check::polarity::Diagnostic>> {
 fn explicit_connectives_parse_and_lower() {
     let cases: Vec<(&str, Type)> = vec![
         (
-            "fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }",
+            "fn f(p: (+i64, +i64)) -> i64 { 0 }",
             Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64))),
         ),
         (
-            "command f | (k: (-i64 ⅋ -i64)) { k(0) }",
+            "command f | (k: (-i64 ; -i64)) { k(0) }",
             Type::Par(Box::new(Type::Neg(Base::I64)), Box::new(Type::Neg(Base::I64))),
         ),
         (
@@ -56,7 +56,7 @@ fn explicit_connectives_parse_and_lower() {
         ),
         // `dual(A)` applies the involution: `dual(+i64)` is `-i64`.
         ("fn f(k: dual(+i64)) <- i64 { 0 }", Type::Neg(Base::I64)),
-        ("command f | (k: -⊥) { k(0) }", Type::Bottom),
+        ("command f | (k: -(;)) { k(0) }", Type::Bottom),
         // Negation is involutive: a double negation is the type itself.
         ("fn f(b: -i64) -> i64 { 0 }", Type::Neg(Base::I64)),
         ("fn f(r: -(-i64)) -> i64 { 0 }", Type::Pos(Base::I64)),
@@ -72,11 +72,33 @@ fn explicit_connectives_parse_and_lower() {
 }
 
 #[test]
+fn a_paren_joins_any_number_of_components_with_one_connective() {
+    let i64 = || Type::Pos(Base::I64);
+    let cases: Vec<(&str, Type)> = vec![
+        (
+            "fn f(p: (+i64, +i64, +i64)) -> i64 { 0 }",
+            Type::Tensor(Box::new(i64()), Box::new(Type::Tensor(Box::new(i64()), Box::new(i64())))),
+        ),
+        (
+            "fn f(p: (+i64 | +i64 | +i64)) -> i64 { 0 }",
+            Type::Sum(Box::new(i64()), Box::new(Type::Sum(Box::new(i64()), Box::new(i64())))),
+        ),
+        ("fn f(p: (;)) -> i64 { 0 }", Type::Bottom),
+        ("fn f(p: (,)) -> i64 { 0 }", Type::One),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(lower_type(&parameter_type(source)), Ok(expected), "{source}");
+    }
+    // Mixing connectives needs the grouping written out.
+    assert!(parse(lex("fn f(p: (+i64, +i64 | +i64)) -> i64 { 0 }").unwrap()).is_err());
+}
+
+#[test]
 fn a_function_into_bottom_is_a_consumer() {
     // `A → ⊥` and `-A` are one type, not two that convert: a function that
     // never returns is a consumer of its argument.
     assert_eq!(
-        lower_type(&parameter_type("command f | (k: (+i32 -> ⊥)) { 0 | k⟩ }")),
+        lower_type(&parameter_type("command f | (k: (+i32 -> (;))) { 0 | k⟩ }")),
         Ok(Type::Neg(Base::I32))
     );
     assert_eq!(
@@ -86,8 +108,8 @@ fn a_function_into_bottom_is_a_consumer() {
 
     // It is a consumer wherever one is wanted — and, a consumer being a
     // value, it may also arrive as a value parameter.
-    assert!(check("command f | (k: (+i32 -> ⊥)) { 0 | k⟩ }").is_ok());
-    assert!(check("command f(x: (+i32 -> ⊥)) | (k: -i32) { 0 | k⟩ }").is_ok());
+    assert!(check("command f | (k: (+i32 -> (;))) { 0 | k⟩ }").is_ok());
+    assert!(check("command f(x: (+i32 -> (;))) | (k: -i32) { 0 | k⟩ }").is_ok());
 
     // An ordinary function type is unaffected.
     assert_eq!(
@@ -98,7 +120,7 @@ fn a_function_into_bottom_is_a_consumer() {
 
 #[test]
 fn explicit_connectives_reach_inference() {
-    let out = declared("fn f(p: (+i64 ⊗ +i64)) -> bool { true }");
+    let out = declared("fn f(p: (+i64, +i64)) -> bool { true }");
     assert_eq!(
         out[0].ty,
         Type::arrow(
@@ -108,7 +130,7 @@ fn explicit_connectives_reach_inference() {
     );
 
     // A `command` ends in bottom, and its continuation keeps the par type.
-    let out = declared("command f | (k: (-i64 ⅋ -i64)) { k(0) }");
+    let out = declared("command f | (k: (-i64 ; -i64)) { k(0) }");
     assert_eq!(
         out[0].ty,
         // `A → ⊥` is `-A`, so a `command`'s type is the dual of its row.
@@ -119,18 +141,18 @@ fn explicit_connectives_reach_inference() {
 #[test]
 fn connective_polarity_is_enforced_by_position() {
     // A tensor is positive: it is a value parameter, not a continuation.
-    assert!(check("fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }").is_ok());
-    assert!(check("command f(p: (+i64 ⊗ +i64))  { p }").is_ok());
+    assert!(check("fn f(p: (+i64, +i64)) -> i64 { 0 }").is_ok());
+    assert!(check("command f(p: (+i64, +i64))  { p }").is_ok());
 
     // A par is negative: it serves as a continuation, and — a consumer
     // being a value — as a value parameter too.
-    assert!(check("command f | (k: (-i64 ⅋ -i64)) { k(0) }").is_ok());
-    assert!(check("command f(p: (-i64 ⅋ -i64)) | (k: -i32) { 0 | k⟩ }").is_ok());
+    assert!(check("command f | (k: (-i64 ; -i64)) { k(0) }").is_ok());
+    assert!(check("command f(p: (-i64 ; -i64)) | (k: -i32) { 0 | k⟩ }").is_ok());
 
     // Bottom is negative too.
     // A value parameter holds either side, ⊥ included — it is the same
     // type the prelude names `Bottom`.
-    assert!(check("command f(p: ⊥) | (k: -i32) { 0 | k⟩ }").is_ok());
+    assert!(check("command f(p: (;)) | (k: -i32) { 0 | k⟩ }").is_ok());
 }
 
 #[test]
@@ -156,7 +178,7 @@ fn duals_of_connectives_are_involutive() {
     let named = lower_type(&parameter_type("fn f(k: dual(i64)) <- i64 { 0 }")).unwrap();
     assert_eq!(named, Type::Neg(Base::I64));
 
-    let par = lower_type(&parameter_type("command f | (k: (-i64 ⅋ -i64)) { k(0) }")).unwrap();
+    let par = lower_type(&parameter_type("command f | (k: (-i64 ; -i64)) { k(0) }")).unwrap();
     assert_eq!(
         par.dual(),
         Type::Tensor(Box::new(Type::Pos(Base::I64)), Box::new(Type::Pos(Base::I64)))
@@ -167,7 +189,7 @@ fn duals_of_connectives_are_involutive() {
 fn a_connective_type_expression_keeps_its_spans() {
     // Type annotations carry spans, so a diagnostic about a connective type
     // can point at the source.
-    let program = parse(lex("fn f(p: (+i64 ⊗ +i64)) -> i64 { 0 }").unwrap()).unwrap();
+    let program = parse(lex("fn f(p: (+i64, +i64)) -> i64 { 0 }").unwrap()).unwrap();
     let Decl::Fn { params, .. } = &program.decls[0].kind else { panic!("expected fn") };
     let Some(TypeExpr::Tensor(left, right)) = &params[0].ty else { panic!("expected a tensor") };
     let left: &Node<TypeExpr> = left;

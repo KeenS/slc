@@ -181,7 +181,7 @@ fn select_over_an_atom_is_the_value_abstraction() {
 
     // One binder more, and it is the product consumer instead.
     let printed = lowered(
-        "fn show(out: -i64) <- (+i64 ⊗ +i64) { select (+i64 ⊗ +i64) { (a, b) => a | out⟩ } }",
+        "fn show(out: -i64) <- (+i64, +i64) { select (+i64, +i64) { (a, b) => a | out⟩ } }",
     );
     assert!(printed.contains("co(μ̃(a, b)."), "a product keeps its binder list: {printed}");
 }

@@ -317,6 +317,9 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::With(a, b) => {
             Ok(Type::With(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
         }
+        TypeExpr::Sum(a, b) => {
+            Ok(Type::Sum(Box::new(lower_type(&a.kind)?), Box::new(lower_type(&b.kind)?)))
+        }
         // `A → B` is `-A ⅋ B`, so a function is negative and `A → ⊥` is
         // `-A`: a function that never returns is a consumer of its argument.
         TypeExpr::Fun(a, b) => Ok(Type::arrow(lower_type(&a.kind)?, lower_type(&b.kind)?)),
@@ -2046,8 +2049,8 @@ mod tests {
         // A product has one shape, so its consumer binds every component and
         // needs no label.
         let out = lower_str(
-            "fn total(out: -i64) <- (+i64 ⊗ +i64) {
-                 select (+i64 ⊗ +i64) { (left, right) => (left + right) | out⟩ }
+            "fn total(out: -i64) <- (+i64, +i64) {
+                 select (+i64, +i64) { (left, right) => (left + right) | out⟩ }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };

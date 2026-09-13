@@ -57,8 +57,8 @@ fn total(out: -i64) -> Total {
 
 // A bare product needs no declaration either; its shape is written as the type.
 
-fn report_first(out: i64) <- (i64 ⊗ String) {
-    select (i64 ⊗ String) {
+fn report_first(out: i64) <- (i64, String) {
+    select (i64, String) {
         (count, label) => count | out⟩,
     }
 }
@@ -112,7 +112,7 @@ fn config() -> Config {
 // its dual, the consumer that accepts it. (`0` and `⊤`, the additive units,
 // have no variants to write and so no surface form.)
 
-fn done(k: -⊥) <- unit {
+fn done(k: -(;)) <- unit {
     (,) | k⟩
 }
 
@@ -137,7 +137,7 @@ command main | (exit: i32) / {IO} {
     config().name | println;
 
     // 1 and ⊥.
-    mu ⊥ { k <= (k | done) } | println;
+    mu (;) { k <= (k | done) } | println;
 
     0 | exit⟩
 }

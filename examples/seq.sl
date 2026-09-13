@@ -23,7 +23,7 @@ fn under_ten(n: i64) -> bool { n < 10 }
 
 // A step function is another way to write a stream: each step answers an
 // element and the seed the rest is built from.
-fn halving(n: i64) -> (i64 ⊗ i64) {
+fn halving(n: i64) -> (i64, i64) {
     (n, n / 2)
 }
 

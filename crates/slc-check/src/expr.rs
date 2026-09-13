@@ -595,7 +595,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 if actual != Type::Bottom && !matches!(actual, Type::Var(_)) {
                     diags.push(Diagnostic {
                         message: format!(
-                            "a `command` body must reach a continuation on every path (type `⊥`); \
+                            "a `command` body must reach a continuation on every path (type `(;)`); \
                              this one has type {actual}"
                         ),
                         span: body.span,
@@ -3045,12 +3045,12 @@ mod tests {
             check(
                 "data P { x: +i64, y: +i64 }
                  fn f(p: +P) -> i64 { p.x + p.y }
-                 fn g(t: (+i64 ⊗ (+i64 ⊗ +i64))) -> i64 { t.0 + t.2 }"
+                 fn g(t: (+i64, (+i64, +i64))) -> i64 { t.0 + t.2 }"
             )
             .is_ok()
         );
         // Out of range.
-        let diags = check("fn f(t: (+i64 ⊗ +i64)) -> i64 { t.5 }").unwrap_err();
+        let diags = check("fn f(t: (+i64, +i64)) -> i64 { t.5 }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("out of range")), "{diags:?}");
         // Unknown field.
         let diags = check("data P { x: +i64 } fn f(p: +P) -> i64 { p.y }").unwrap_err();
@@ -3915,7 +3915,7 @@ mod tests {
         assert!(
             check(
                 "fn deliver_i64(out: String) <- i64 { select i64 { n => n | int_to_str | out⟩ } }
-                 fn f() -> i64 { let p: ((i64 -> String) ⊗ i64) = (deliver_i64, 1); 0 }"
+                 fn f() -> i64 { let p: ((i64 -> String), i64) = (deliver_i64, 1); 0 }"
             )
             .is_err()
         );
@@ -4037,7 +4037,7 @@ mod tests {
     fn a_consumer_travels_bare() {
         // A continuation is a value: it passes as an ordinary argument and
         // sits in bindings without any box.
-        assert!(check("fn hold(k: -i64) -> ⊥ { 1 | k⟩ }").is_ok());
+        assert!(check("fn hold(k: -i64) -> (;) { 1 | k⟩ }").is_ok());
     }
 
     #[test]
@@ -4045,7 +4045,7 @@ mod tests {
         // A raw consumer is a value everywhere except the left of a cut:
         // there, involution would let any positive pass for a consumer of
         // consumers, and the machine only runs an oriented cut.
-        let diags = check("fn f(k: -i64, target: -i64) -> ⊥ { k | target⟩ }").unwrap_err();
+        let diags = check("fn f(k: -i64, target: -i64) -> (;) { k | target⟩ }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("the left of `|` is the value side")),
             "{diags:?}"

@@ -630,7 +630,7 @@ mod tests {
     fn a_parameter_binds_a_pattern_and_an_exit_binds_a_name() {
         assert!(
             check(
-                "fn skew((a, b): (+i64 ⊗ +i64), c: +i64) -> i64 { a * c - b }
+                "fn skew((a, b): (+i64, +i64), c: +i64) -> i64 { a * c - b }
                  command main | (exit: -i32) / {IO} { ((1, 2), 3) | skew | exit⟩ }"
             )
             .is_ok()

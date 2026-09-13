@@ -26,7 +26,7 @@ enum Request {
 // (2) NEGATIVE TYPE, ARGUMENT POSITION — `note` is a consumer received as
 //     a value: the parameter is `-String`, the caller passes `note`,
 //     and the body cuts into it directly.
-fn describe(label: +i64, note: -String) -> ⊥ {
+fn describe(label: +i64, note: -String) -> (;) {
     if label > 0 {
         "positive" | note⟩
     } else {

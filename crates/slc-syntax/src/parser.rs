@@ -555,8 +555,7 @@ impl Parser {
             && !matches!(ty, TypeExpr::Base(name) if name == "Bottom")
         {
             return Err(ParseError {
-                message: "a `command` returns `⊥` (`Bottom`); remove the arrow or use either unit spelling"
-                    .into(),
+                message: "a `command` returns `(;)`; remove the arrow or write `(;)`".into(),
                 span: t.span,
             });
         }
@@ -914,8 +913,8 @@ impl Parser {
 
     /// The sign a continuation position implies. It is supplied only where
     /// nothing was written and the shape itself does not carry one: a name,
-    /// an applied declaration, a product, unit. A signed type, and any shape
-    /// that is already a consumer — `⅋`, an arrow, `⊥`, a `dual` — says its
+    /// an applied declaration, a product, a sum, unit. A signed type, and any
+    /// shape that is already a consumer — `;`, an arrow, `(;)`, a `dual` — says its
     /// own polarity and is left exactly as written. An `&` is the one shape
     /// the position reaches into: a menu of exits written out is still a
     /// menu of exits, so each item is one.
@@ -924,7 +923,11 @@ impl Parser {
             Box::new(Node { span: node.span, kind: Parser::imply_negative(node.kind) })
         }
         match ty {
-            TypeExpr::Base(_) | TypeExpr::Apply(..) | TypeExpr::Tensor(..) | TypeExpr::Unit => {
+            TypeExpr::Base(_)
+            | TypeExpr::Apply(..)
+            | TypeExpr::Tensor(..)
+            | TypeExpr::Sum(..)
+            | TypeExpr::Unit => {
                 TypeExpr::Negative(Box::new(Node { span: Span { start: 0, end: 0 }, kind: ty }))
             }
             TypeExpr::With(a, b) => TypeExpr::With(bare(*a), bare(*b)),
@@ -1021,7 +1024,8 @@ impl Parser {
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // A paren holding only the separator is the nullary form:
-                // `(&)` is the empty menu, ⊤, and `(,)` the empty tuple.
+                // `(,)` the empty tuple, `(|)` the empty sum, `(&)` the empty
+                // menu, and `(;)` the unit of `;`, ⊥.
                 if self.eat(&TokenKind::Amp) {
                     self.expect(TokenKind::RParen, "`)` after `(&`")?;
                     return Ok(Node {
@@ -1034,6 +1038,20 @@ impl Parser {
                     return Ok(Node {
                         span: Span { start, end: self.span_end() },
                         kind: TypeExpr::Unit,
+                    });
+                }
+                if self.eat(&TokenKind::Pipe) {
+                    self.expect(TokenKind::RParen, "`)` after `(|`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: TypeExpr::Base("Empty".into()),
+                    });
+                }
+                if self.eat(&TokenKind::Semicolon) {
+                    self.expect(TokenKind::RParen, "`)` after `(;`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: TypeExpr::Bottom,
                     });
                 }
                 let left = self.parse_type()?;
@@ -1059,36 +1077,39 @@ impl Parser {
                             row,
                         )
                     }
-                } else if self.eat(&TokenKind::Tensor) {
-                    let right = self.parse_type()?;
+                } else if let Some(connective) = self.peek_kind().and_then(type_connective) {
+                    // One connective, any number of components, nested to
+                    // the right as the value is: `(A, B, C)` is `(A, (B, C))`.
+                    let mut items = vec![left];
+                    while let Some(next) = self.peek_kind().and_then(type_connective) {
+                        if next != connective {
+                            return Err(ParseError {
+                                message: "a parenthesised type joins its components with one \
+                                          connective; group the others: `(A, (B | C))`"
+                                    .into(),
+                                span: self
+                                    .peek()
+                                    .map(|t| t.span)
+                                    .unwrap_or(Span { start, end: start }),
+                            });
+                        }
+                        self.pos += 1;
+                        items.push(self.parse_type()?);
+                    }
                     self.expect(TokenKind::RParen, "`)`")?;
-                    TypeExpr::Tensor(
-                        Box::new(left),
-                        Box::new(Node {
-                            span: Span { start, end: self.span_end() },
-                            kind: right.kind,
-                        }),
-                    )
-                } else if self.eat(&TokenKind::Amp) {
-                    let right = self.parse_type()?;
-                    self.expect(TokenKind::RParen, "`)`")?;
-                    TypeExpr::With(
-                        Box::new(left),
-                        Box::new(Node {
-                            span: Span { start, end: self.span_end() },
-                            kind: right.kind,
-                        }),
-                    )
-                } else if self.eat(&TokenKind::Par) {
-                    let right = self.parse_type()?;
-                    self.expect(TokenKind::RParen, "`)`")?;
-                    TypeExpr::Par(
-                        Box::new(left),
-                        Box::new(Node {
-                            span: Span { start, end: self.span_end() },
-                            kind: right.kind,
-                        }),
-                    )
+                    let mut acc = items.pop().expect("a connective joins at least two components");
+                    while let Some(item) = items.pop() {
+                        let span = Span { start: item.span.start, end: acc.span.end };
+                        let (item, rest) = (Box::new(item), Box::new(acc));
+                        let kind = match connective {
+                            TokenKind::Comma => TypeExpr::Tensor(item, rest),
+                            TokenKind::Pipe => TypeExpr::Sum(item, rest),
+                            TokenKind::Amp => TypeExpr::With(item, rest),
+                            _ => TypeExpr::Par(item, rest),
+                        };
+                        acc = Node { span, kind };
+                    }
+                    acc.kind
                 } else if self.peek_kind() == Some(&TokenKind::Slash) {
                     // `(-A / {Exn})` — a latent row on the type itself: what
                     // consuming (or otherwise running) the value may perform.
@@ -1106,10 +1127,6 @@ impl Parser {
                 let inner = self.parse_type()?;
                 self.expect(TokenKind::RParen, "`)`")?;
                 TypeExpr::Dual(Box::new(inner))
-            }
-            Some(TokenKind::Bot) => {
-                self.pos += 1;
-                TypeExpr::Bottom
             }
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
@@ -1197,7 +1214,7 @@ impl Parser {
             let (op, prec) = match self.peek_kind() {
                 Some(TokenKind::Plus) => (BinOp::Add, 3),
                 Some(TokenKind::Minus) => (BinOp::Sub, 3),
-                Some(TokenKind::Star) | Some(TokenKind::Tensor) => (BinOp::Mul, 4),
+                Some(TokenKind::Star) => (BinOp::Mul, 4),
                 Some(TokenKind::Slash) => (BinOp::Div, 4),
                 Some(TokenKind::Percent) => (BinOp::Mod, 4),
                 Some(TokenKind::EqEq) => (BinOp::Eq, 2),
@@ -2184,6 +2201,17 @@ pub fn parse(tokens: Vec<Token>) -> Result<Program, Vec<ParseError>> {
     p.parse_program()
 }
 
+/// The connective a separator writes between the components of a
+/// parenthesised type: `,` a product, `|` a sum, `&` a menu, `;` a par.
+fn type_connective(kind: &TokenKind) -> Option<TokenKind> {
+    match kind {
+        TokenKind::Comma | TokenKind::Pipe | TokenKind::Amp | TokenKind::Semicolon => {
+            Some(kind.clone())
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2327,7 +2355,7 @@ mod tests {
 
     #[test]
     fn parse_command_bottom_annotation() {
-        let p = parse_str("command step(x: +i32) | (k: -i32) -> ⊥ { k(x) }");
+        let p = parse_str("command step(x: +i32) | (k: -i32) -> (;) { k(x) }");
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Command { return_type: Some(TypeExpr::Bottom), .. }
@@ -2344,7 +2372,7 @@ mod tests {
     fn parse_command_rejects_non_bottom_return() {
         let errors =
             parse(lex("command step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
-        assert!(errors[0].message.contains("a `command` returns `⊥`"), "got: {errors:?}");
+        assert!(errors[0].message.contains("a `command` returns `(;)`"), "got: {errors:?}");
     }
 
     #[test]
@@ -2577,7 +2605,7 @@ mod tests {
     #[test]
     fn parse_select_over_a_product() {
         // A product has one shape, so one arm, binding its components.
-        let p = parse_str("select (+i64 ⊗ +String) { (end, text) => end | done⟩ }");
+        let p = parse_str("select (+i64, +String) { (end, text) => end | done⟩ }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)

@@ -290,6 +290,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
             TypeExpr::Tensor(a, b)
             | TypeExpr::Par(a, b)
             | TypeExpr::With(a, b)
+            | TypeExpr::Sum(a, b)
             | TypeExpr::Fun(a, b) => {
                 ty(&a.kind, out);
                 ty(&b.kind, out);
@@ -736,6 +737,7 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
         TypeExpr::Tensor(a, b)
         | TypeExpr::Par(a, b)
         | TypeExpr::With(a, b)
+        | TypeExpr::Sum(a, b)
         | TypeExpr::Fun(a, b) => {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);

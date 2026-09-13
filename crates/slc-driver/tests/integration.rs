@@ -623,21 +623,21 @@ fn lookup_builtins_offer_both_outcomes() {
     let dir = std::env::temp_dir().join("slc_test_lookup_outcomes.sl");
     std::fs::write(
         &dir,
-        r#"fn report(message: +String, exit: -i32) -> ⊥ / {IO} {
+        r#"fn report(message: +String, exit: -i32) -> (;) / {IO} {
             println(message);
             1 | exit⟩
         }
 
         command main | (exit: -i32) / {IO} {
-            char_at("slant", 1, fn(second: +char) -> ⊥ {
+            char_at("slant", 1, fn(second: +char) -> (;) {
                 println(second);
-                char_at("slant", 9, fn(unexpected: +char) -> ⊥ {
+                char_at("slant", 9, fn(unexpected: +char) -> (;) {
                     (("unexpectedly found something", exit) | report)
-                }, fn(message: +String) -> ⊥ {
+                }, fn(message: +String) -> (;) {
                     println(message);
                     0 | exit⟩
                 })
-            }, fn(message: +String) -> ⊥ { ((message, exit) | report) })
+            }, fn(message: +String) -> (;) { ((message, exit) | report) })
         }"#,
     )
     .unwrap();
@@ -662,8 +662,8 @@ fn select_builds_the_consumer_of_a_product() {
             }
         }
 
-        fn total(out: -i64) <- (+i64 ⊗ +i64) {
-            select (+i64 ⊗ +i64) {
+        fn total(out: -i64) <- (+i64, +i64) {
+            select (+i64, +i64) {
                 (left, right) => (left + right) | out⟩,
             }
         }
@@ -977,7 +977,7 @@ fn a_multi_parameter_function_travels_as_a_value() {
     std::fs::write(
         &dir,
         r#"fn plus(a: i64, b: i64) -> i64 { a + b }
-        fn apply2(f: ((+i64 ⊗ +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
+        fn apply2(f: ((+i64, +i64) -> +i64), x: i64, y: i64) -> i64 { f(x, y) }
         command main | (exit: -i32) / {IO} {
             println(((1, 2) | plus));
             let g = plus;

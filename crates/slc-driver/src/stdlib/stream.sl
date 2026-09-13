@@ -47,7 +47,7 @@ mod stream {
     // *is* the element. Only the demanded arm runs, so the step runs once
     // per demand.
 
-    pub fn unfold<S, T>(step: (S -> (T ⊗ S)), seed: S) -> Stream<T> {
+    pub fn unfold<S, T>(step: (S -> (T, S)), seed: S) -> Stream<T> {
         mu Stream {
             head <= (seed | step).0 | head⟩,
             tail <= (step, (seed | step).1) | unfold | tail⟩,
@@ -61,7 +61,7 @@ mod stream {
         }
     }
 
-    pub fn zip<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A ⊗ B)> {
+    pub fn zip<A, B>(a: Stream<A>, b: Stream<B>) -> Stream<(A, B)> {
         mu Stream {
             head <= (a.head, b.head) | head⟩,
             tail <= (a.tail, b.tail) | zip | tail⟩,

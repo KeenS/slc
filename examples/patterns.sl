@@ -22,7 +22,7 @@ enum Wrapped {
 // The value group is a product of two, and its first leaf is itself a
 // product. `fn f((a, b): (…), c: …)` needs nothing new — the argument was
 // always one packed value, and this destructures it a level deeper.
-fn skew((a, b): (i64 ⊗ i64), c: i64) -> i64 {
+fn skew((a, b): (i64, i64), c: i64) -> i64 {
     a * c - b
 }
 
@@ -33,7 +33,7 @@ fn norm(Point { x, y }: Point) -> i64 {
 
 // A `command` does the same, and its exits stay names: control leaves
 // through a name, and a pattern has nowhere to leave through.
-command nearer((here, there): (Point ⊗ Point)) | (closer: Point) {
+command nearer((here, there): (Point, Point)) | (closer: Point) {
     if (here | norm) < (there | norm) { here | closer⟩ } else { there | closer⟩ }
 }
 

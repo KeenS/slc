@@ -42,7 +42,7 @@ command main | (exit: i32) / {IO} {
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `⅋` means.
-    let report = select (i64 ⊗ i64) { (left, right) => left + right | println };
+    let report = select (i64, i64) { (left, right) => left + right | println };
     (10, 7) | report⟩;
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this

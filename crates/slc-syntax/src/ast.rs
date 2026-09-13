@@ -244,6 +244,9 @@ pub enum TypeExpr {
     /// The additive conjunction, `(A & B)`: a menu of two items, written
     /// anonymously. A continuation row is one of these.
     With(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
+    /// The additive disjunction, `(A | B)`: an enum of two alternatives,
+    /// written anonymously.
+    Sum(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     Fun(Box<Node<TypeExpr>>, Box<Node<TypeExpr>>),
     /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
     Effectful(Box<Node<TypeExpr>>, EffectRow),
