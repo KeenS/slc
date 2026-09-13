@@ -98,13 +98,15 @@ delayed.
   still charges a delayed computation's row where it is written, which is
   right only while the computation runs inside the declaration and under the
   handlers where it is written: one written inside a `handle` and run outside
-  it performs its operation unhandled, a gap by-name evaluation opened. Decided: nothing is performed where a delayed computation is
-  written — its row moves onto its type, and each use performs it, so the
-  handler that must discharge it is the one around the use, the rule rowed
-  menus and returned consumers (`-> (-A / {..E})`) already follow. Only a
-  concrete row can ride on a type today, so until the rows-in-types upgrade
-  that "Effect tracking follows names" names, a computation in a by-name
-  position whose row is a variable is refused.
+  it performs its operation unhandled, a gap by-name evaluation opened.
+  Decided: nothing is performed where a delayed computation is written — its
+  row moves onto its type, and each use performs it, so the handler that must
+  discharge it is the one around the use, the rule rowed menus and returned
+  consumers (`-> (-A / {..E})`) already follow. Only a concrete row can ride
+  on a type today, so until the rows-in-types upgrade that "Effect tracking
+  follows names" names, a computation in a by-name position whose row is a
+  variable is refused.
+
 ### Surface simplifications
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
