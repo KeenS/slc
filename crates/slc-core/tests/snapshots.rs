@@ -43,14 +43,14 @@ fn snapshot_type_mismatch_diagnostic() {
     let mut gamma = TermContext::new();
     let mut delta = CoTermContext::new();
     gamma.insert("x".into(), pos_i32());
-    delta.insert("k".into(), Type::Neg(Base::Bool));
+    delta.insert("k".into(), Type::Neg(Base::Char));
     let command = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
     let error = infer_command(&command, &mut gamma, &mut delta).unwrap_err();
     assert_eq!(
         error,
-        TypeError::Mismatch { expected: Type::Neg(Base::I32), actual: Type::Neg(Base::Bool) }
+        TypeError::Mismatch { expected: Type::Neg(Base::I32), actual: Type::Neg(Base::Char) }
     );
-    assert_eq!(error.to_string(), "type mismatch: expected -i32, got -bool");
+    assert_eq!(error.to_string(), "type mismatch: expected -i32, got -char");
 }
 
 #[test]

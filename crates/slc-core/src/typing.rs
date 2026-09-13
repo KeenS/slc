@@ -633,10 +633,10 @@ mod tests {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
         g.insert("x".into(), pos_i32());
-        g.insert("y".into(), Type::Pos(Base::Bool));
+        g.insert("y".into(), Type::Pos(Base::Char));
         let t = Term::Tuple(vec![Term::Var("x".into()), Term::Var("y".into())]);
         let ty = infer_term(&t, &mut g, &mut d).unwrap();
-        assert_eq!(ty, Type::Tensor(vec![pos_i32(), Type::Pos(Base::Bool)]));
+        assert_eq!(ty, Type::Tensor(vec![pos_i32(), Type::Pos(Base::Char)]));
     }
 
     #[test]
@@ -655,9 +655,9 @@ mod tests {
         let a = u.fresh_var();
         let b = u.fresh_var();
         assert_eq!(u.unify(&a, &Type::Pos(Base::I32)).unwrap(), a);
-        assert_eq!(u.unify(&b, &Type::Pos(Base::Bool)).unwrap(), b);
+        assert_eq!(u.unify(&b, &Type::Pos(Base::Char)).unwrap(), b);
         assert_eq!(u.apply(&a), Type::Pos(Base::I32));
-        assert_eq!(u.apply(&b), Type::Pos(Base::Bool));
+        assert_eq!(u.apply(&b), Type::Pos(Base::Char));
     }
 
     #[test]
@@ -665,11 +665,11 @@ mod tests {
         let mut u = Unification::new();
         let a = u.fresh_var();
         let expected = Type::arrow(a.clone(), Type::Pos(Base::I32));
-        let actual = Type::arrow(Type::Pos(Base::Bool), Type::Pos(Base::I32));
+        let actual = Type::arrow(Type::Pos(Base::Char), Type::Pos(Base::I32));
         u.unify(&expected, &actual).unwrap();
         // `A -> B` is `(dual(A) ; B)`, and `dual` is semantic: the wrapped variable
         // meets `-bool` by becoming `+bool` — the argument itself.
-        assert_eq!(u.apply(&a), Type::Pos(Base::Bool));
+        assert_eq!(u.apply(&a), Type::Pos(Base::Char));
     }
 
     #[test]
@@ -719,7 +719,7 @@ mod tests {
         let mut g = TermContext::new();
         let mut d = CoTermContext::new();
         g.insert("x".into(), pos_i32());
-        d.insert("k".into(), Type::Neg(Base::Bool));
+        d.insert("k".into(), Type::Neg(Base::Char));
         let c = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
         assert!(matches!(infer_command(&c, &mut g, &mut d), Err(TypeError::Mismatch { .. })));
     }

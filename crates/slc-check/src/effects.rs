@@ -808,14 +808,14 @@ mod tests {
         // A stage is a call, so the effect follows it: `x | throw` is
         // charged exactly as `throw(x)` is.
         let diags = check(&format!(
-            "{EXN} fn risky(n: i64) -> i64 {{ match (⟨(n, 0) | __gt) {{ true => n, _ => ⟨\"no\" | throw }} }}
+            "{EXN} fn risky(n: i64) -> i64 {{ match (⟨(n, 0) | __gt) {{ True => n, _ => ⟨\"no\" | throw }} }}
              command main | (exit: -i32) / {{IO}} {{ ⟨0 | exit⟩ }}"
         ))
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`risky` performs `Exn`")), "{diags:?}");
         assert!(
             check(&format!(
-                "{EXN} fn risky(n: i64) -> i64 / {{Exn}} {{ match (⟨(n, 0) | __gt) {{ true => n, _ => ⟨\"no\" | throw }} }}
+                "{EXN} fn risky(n: i64) -> i64 / {{Exn}} {{ match (⟨(n, 0) | __gt) {{ True => n, _ => ⟨\"no\" | throw }} }}
                  command main | (exit: -i32) / {{IO}} {{ ⟨0 | exit⟩ }}"
             ))
             .is_ok()
@@ -855,8 +855,8 @@ mod tests {
     const FALLIBLE: &str = "menu Fallible / {Exn} { value: i64, doubled: i64 }
          fn checked(n: +i64) -> Fallible {
              mu Fallible {
-                 value <= ⟨(match (⟨(n, 0) | __ge) { true => n, _ => throw(\"neg\") }) | value⟩,
-                 doubled <= ⟨(match (⟨(n, 0) | __ge) { true => (⟨(n, 2) | __mul), _ => throw(\"neg\") }) | doubled⟩,
+                 value <= ⟨(match (⟨(n, 0) | __ge) { True => n, _ => throw(\"neg\") }) | value⟩,
+                 doubled <= ⟨(match (⟨(n, 0) | __ge) { True => (⟨(n, 2) | __mul), _ => throw(\"neg\") }) | doubled⟩,
              }
          }
 ";

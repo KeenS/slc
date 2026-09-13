@@ -361,7 +361,6 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
             "i64" => Ok(Type::Pos(Base::I64)),
             "u32" => Ok(Type::Pos(Base::U32)),
             "u64" => Ok(Type::Pos(Base::U64)),
-            "bool" => Ok(Type::Pos(Base::Bool)),
             "String" | "str" => Ok(Type::Pos(Base::Str)),
             "char" => Ok(Type::Pos(Base::Char)),
             "unit" => Ok(Type::Pos(Base::Unit)),
@@ -2242,8 +2241,8 @@ mod tests {
     fn lower_types() {
         let ty = lower_type(&TypeExpr::Base("i32".into())).unwrap();
         assert_eq!(ty, Type::Pos(Base::I32));
-        let ty = lower_type(&TypeExpr::Base("bool".into())).unwrap();
-        assert_eq!(ty, Type::Pos(Base::Bool));
+        let ty = lower_type(&TypeExpr::Base("char".into())).unwrap();
+        assert_eq!(ty, Type::Pos(Base::Char));
     }
 
     #[test]

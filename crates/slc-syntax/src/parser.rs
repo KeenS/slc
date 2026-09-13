@@ -1260,8 +1260,10 @@ impl Parser {
                     }
                     TypeExpr::Apply(s, args)
                 } else if s == "bool" {
-                    // `bool` is the prelude's `Bool`.
-                    TypeExpr::Base("Bool".into())
+                    return Err(ParseError {
+                        message: "there is no `bool`: the prelude's type is `Bool`".into(),
+                        span: Span { start, end: self.span_end() },
+                    });
                 } else {
                     TypeExpr::Base(s)
                 }
@@ -1602,15 +1604,15 @@ impl Parser {
                 self.pos += 1;
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Char(c) })
             }
-            // `true` and `false` are the prelude's `Bool` variants.
-            Some(TokenKind::Bool(b)) => {
-                self.pos += 1;
-                let variant = if b { "Bool::True" } else { "Bool::False" };
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::Ident(variant.into()),
-                })
-            }
+            // `true` and `false` are gone; the tokens stay only so that
+            // writing one says what replaced it.
+            Some(TokenKind::Bool(b)) => Err(ParseError {
+                message: format!(
+                    "there is no `{}`: the prelude's `Bool` has the variants `True` and `False`",
+                    if b { "true" } else { "false" }
+                ),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+            }),
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 let mut s = s;
@@ -2361,15 +2363,13 @@ impl Parser {
                 self.pos += 1;
                 Ok(Pattern::Rest)
             }
-            Some(TokenKind::Bool(b)) => {
-                self.pos += 1;
-                let variant = if b { "True" } else { "False" };
-                Ok(Pattern::Enum {
-                    name: "Bool".into(),
-                    variant: variant.into(),
-                    fields: Vec::new(),
-                })
-            }
+            Some(TokenKind::Bool(b)) => Err(ParseError {
+                message: format!(
+                    "there is no `{}`: the prelude's `Bool` has the variants `True` and `False`",
+                    if b { "true" } else { "false" }
+                ),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            }),
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // The nullary forms, as in expressions: `(,)` matches unit,
@@ -2954,6 +2954,18 @@ mod tests {
         assert_eq!(mode_of("let- x = 1; x"), LetMode::Delay);
         // A sign apart from the keyword begins the pattern.
         assert_eq!(mode_of("let -1 = 1; 0"), LetMode::Follow);
+    }
+
+    #[test]
+    fn the_builtin_boolean_spellings_are_refused() {
+        for (source, fragment) in [
+            ("fn f() -> Bool { true }", "there is no `true`"),
+            ("fn f(b: Bool) -> i64 { match b { false => 0, _ => 1 } }", "there is no `false`"),
+            ("fn f(b: bool) -> i64 { 0 }", "there is no `bool`"),
+        ] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains(fragment), "{source}: {errors:?}");
+        }
     }
 
     #[test]

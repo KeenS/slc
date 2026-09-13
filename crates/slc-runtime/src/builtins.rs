@@ -103,7 +103,7 @@ pub fn apply_builtin(
             };
             let r = r.ok_or_else(|| {
                 BuiltinError::TypeMismatch(format!(
-                    "{name} expects two matching integer, char, String, or bool arguments"
+                    "{name} expects two matching integer, char, String, or Bool arguments"
                 ))
             })?;
             Ok(crate::value::bool_value(r))

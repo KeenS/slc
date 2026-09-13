@@ -13,21 +13,21 @@ use slc_core::types::{Base, Type};
 
 fn types() -> Vec<Type> {
     let i32 = Type::Pos(Base::I32);
-    let bool = Type::Pos(Base::Bool);
+    let char_ = Type::Pos(Base::Char);
     let ni32 = Type::Neg(Base::I32);
-    let nbool = Type::Neg(Base::Bool);
+    let nchar = Type::Neg(Base::Char);
     vec![
         Type::ONE,
         Type::BOTTOM,
         i32.clone(),
-        bool.clone(),
+        char_.clone(),
         ni32.clone(),
-        nbool.clone(),
-        Type::Tensor(vec![i32.clone(), bool.clone()]),
-        Type::Par(vec![ni32.clone(), nbool.clone()]),
-        Type::Sum(vec![i32.clone(), bool.clone()]),
-        Type::With(vec![ni32.clone(), nbool]),
-        Type::arrow(i32, bool),
+        nchar.clone(),
+        Type::Tensor(vec![i32.clone(), char_.clone()]),
+        Type::Par(vec![ni32.clone(), nchar.clone()]),
+        Type::Sum(vec![i32.clone(), char_.clone()]),
+        Type::With(vec![ni32.clone(), nchar]),
+        Type::arrow(i32, char_),
     ]
 }
 

@@ -7,7 +7,6 @@ pub enum Base {
     I64,
     U32,
     U64,
-    Bool,
     Str,
     Char,
     Unit,
@@ -152,16 +151,14 @@ mod tests {
         vec![
             Type::Pos(Base::I32),
             Type::Neg(Base::I32),
-            Type::Pos(Base::Bool),
-            Type::Neg(Base::Bool),
             Type::Pos(Base::Char),
             Type::Neg(Base::Char),
             Type::ONE,
             Type::BOTTOM,
-            Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]),
-            Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]),
-            Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]),
-            Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]),
+            Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Char)]),
+            Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Char)]),
+            Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Char)]),
+            Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Char)]),
             Type::Named("Color".into(), Vec::new()),
         ]
     }
@@ -181,8 +178,8 @@ mod tests {
 
     #[test]
     fn dual_swaps_tensor_par() {
-        let t = Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]);
-        let expected = Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]);
+        let t = Type::Tensor(vec![Type::Pos(Base::I32), Type::Pos(Base::Char)]);
+        let expected = Type::Par(vec![Type::Neg(Base::I32), Type::Neg(Base::Char)]);
         assert_eq!(t.dual(), expected);
     }
 
@@ -194,8 +191,8 @@ mod tests {
 
     #[test]
     fn dual_swaps_additives() {
-        let t = Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Bool)]);
-        let expected = Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Bool)]);
+        let t = Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Char)]);
+        let expected = Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Char)]);
         assert_eq!(t.dual(), expected);
     }
 

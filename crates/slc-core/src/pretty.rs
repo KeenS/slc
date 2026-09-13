@@ -12,7 +12,6 @@ impl std::fmt::Display for Base {
             Base::I64 => write!(f, "i64"),
             Base::U32 => write!(f, "u32"),
             Base::U64 => write!(f, "u64"),
-            Base::Bool => write!(f, "bool"),
             Base::Str => write!(f, "String"),
             Base::Char => write!(f, "char"),
             Base::Unit => write!(f, "unit"),

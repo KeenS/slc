@@ -3822,7 +3822,7 @@ mod tests {
         // so an arm that ends in one leaves the `match` type to the other.
         let ok = check(
             "fn parse(input: +String, err: -String) -> i64 {
-                 match (⟨(str_len(input), 0) | __gt) { true => 1, _ => ⟨\"empty\" | err⟩ }
+                 match (⟨(str_len(input), 0) | __gt) { True => 1, _ => ⟨\"empty\" | err⟩ }
              }",
         );
         assert!(ok.is_ok(), "{ok:?}");
@@ -4376,7 +4376,7 @@ mod tests {
                      ⟨(nothing, 1) | or_else | println;
                      ⟨(nothing, \"s\") | or_else | println;
                      let alias = nothing;
-                     ⟨(alias, true) | or_else | println;
+                     ⟨(alias, True) | or_else | println;
                      ⟨0 | exit⟩
                  }"
             )
@@ -4632,7 +4632,7 @@ mod tests {
     fn a_bound_on_a_negative_function_is_discharged_by_the_cut() {
         let prelude = "trait Show { fn show(self: +Self) -> String; }
              impl Show for i64 { fn show(self: +i64) -> String { \"n\" } }
-             impl Show for bool { fn show(self: +bool) -> String { \"b\" } }
+             impl Show for Bool { fn show(self: +Bool) -> String { \"b\" } }
              fn emit<+T: Show>(out: -String) <- T { fn(x: T) { ⟨x | show | out⟩ } }\n";
         // Nothing the call receives mentions T; the cut fixes it, at two
         // different types in the same declaration.
@@ -4664,8 +4664,8 @@ mod tests {
              impl Deliver for i64 {
                  fn deliver(out: -String) <- i64 { fn(n: +i64) { ⟨\"i\" | out⟩ } }
              }
-             impl Deliver for bool {
-                 fn deliver(out: -String) <- bool { fn(b: +bool) { ⟨\"b\" | out⟩ } }
+             impl Deliver for Bool {
+                 fn deliver(out: -String) <- Bool { fn(b: +Bool) { ⟨\"b\" | out⟩ } }
              }\n";
         assert!(
             check(&format!(

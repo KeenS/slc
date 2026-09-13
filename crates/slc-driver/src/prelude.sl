@@ -50,7 +50,7 @@ impl Display for String {
 }
 
 impl Display for Bool {
-    fn fmt(self: Bool) -> String { match self { True => { "true" }, _ => { "false" } } }
+    fn fmt(self: Bool) -> String { match self { True => { "true" }, False => { "false" } } }
 }
 
 fn to_string<+T: Display>(x: T) -> String { ⟨x | fmt }
@@ -260,9 +260,9 @@ impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display, +F: Displa
 
 // ── Logic ────────────────────────────────────────────────────────────────
 //
-// There is no `!`: negation is an ordinary function a `bool` flows into,
-// `⟨b | not`. (The `_` arm stands for `false` until `bool` is declared.)
+// There is no `!`: negation is an ordinary function a `Bool` flows into,
+// `⟨b | not`.
 
 fn not(b: Bool) -> Bool {
-    match b { True => False, _ => True }
+    match b { True => False, False => True }
 }
