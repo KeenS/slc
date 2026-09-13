@@ -87,6 +87,35 @@ one defect.
 
 ## Next
 
+### Evaluation
+
+Settled first, before the infix operators become functions, since how an
+operand is delayed is part of that design.
+
+- **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
+  the choice between by-value and by-name, and it is settled for the
+  producer at every type today (`reduce.rs`). Settled by polarity instead, a
+  `⊥` item of a row would be a thunk, run by naming it, and a command that
+  picks one exit, such as this `choose`, would need no `fn(_)` wrappers:
+
+  ```sl
+  command choose(c: bool) | (then: (;) & otherwise: (;)) {
+      match c { true => then, false => otherwise }
+  }
+
+  mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
+  ```
+
+  Today the checker refuses this bundle, because an item that ends in a cut
+  would jump while the bundle is built (`DESIGN.md` §4); by name, each item
+  would be a thunk and the refusal would lift. Only negative positions would
+  change: delaying a positive
+  value without writing it would bring back the `↑` that §8 removed, so a
+  value-returning `choose` keeps its `mu`, `Lazy<T>` stays the spelling of a
+  delayed value, and a `bool` operand of `&&` is not reached. A by-name
+  continuation named twice runs twice, which is consistent with
+  continuations already being multi-shot.
+
 ### Surface simplifications
 
 Each entry removes a piece of syntax in favour of an ordinary declaration.
@@ -105,8 +134,9 @@ built on the built-in one.
     any integer width, with a literal adapting to the other side; `+` on
     `String`; comparison on numbers, `char`, `String` and `bool`. The
     builtins' signatures are `(i64, i64) -> i64` and the like, and a stage is
-    held to them, so `⟨("a", "b") | add` is refused. As functions they need
-    traits, the way `Display` works, or one name per type.
+    held to them, so `⟨("a", "b") | add` is refused. Decided: as functions
+    they are overloaded by traits, the way `Display` is — impls for each
+    integer width, and for `+` on `String`.
   - **Short-circuiting.** `&&` and `||` lower to a `match` on the left
     operand so their right operand runs only when needed. As functions (`and` and `or`
     are free names) the right operand has to arrive delayed. It is a `bool`,
@@ -122,16 +152,18 @@ built on the built-in one.
     This short-circuits: `⟨(false, rhs) | and` never forces a right operand
     that divides by zero, and `⟨(true, rhs) | and` does. The cost is a
     `mu Lazy { force <= ⟨e | force⟩ }` at every call. Delaying a positive
-    operand without writing it out is the `↑` that §8 removed.
+    operand without writing it out is the `↑` that §8 removed. Decided:
+    settle "Negative positions by name" first and design the delayed operand
+    from there — though a `bool` operand is positive, which that entry does
+    not reach as it stands.
   - **Nesting.** `a + b * c` becomes `⟨(b, c) | mul | x => (a, x) | add`.
     Binder stages keep it one chain, but every operator that took a computed
     operand becomes a stage and a binder.
   - **Precedence.** §3's rule that `|` binds more loosely than every
     operator, and operator precedence itself, have nothing left to order.
 
-  Prefix `!` is already gone: `not` is a prelude function. Prefix `-` and
-  postfix `a[i]` and `a[i..j]` are not infix either, and whether they go is
-  open. Migration touches every arithmetic and
+  Prefix `!` is already gone: `not` is a prelude function. Decided: prefix
+  `-` and postfix `a[i]` and `a[i..j]` become functions too. Migration touches every arithmetic and
   comparison in the stdlib, the examples, the docs and the Rust tests.
 
 - **`bool` is defined in the prelude.** The last of these, and possible
@@ -161,30 +193,6 @@ built on the built-in one.
     variants.
 
 ## Deferred, for discussion
-
-- **Negative positions by name.** The critical pair `⟨μα.c ∥ μ̃x.c'⟩` is
-  the choice between by-value and by-name, and it is settled for the
-  producer at every type today (`reduce.rs`). Settled by polarity instead, a
-  `⊥` item of a row would be a thunk, run by naming it, and a command that
-  picks one exit, such as this `choose`, would need no `fn(_)` wrappers:
-
-  ```sl
-  command choose(c: bool) | (then: (;) & otherwise: (;)) {
-      match c { true => then, false => otherwise }
-  }
-
-  mu i64 { r <= ⟨n > 0 | choose | ({ ⟨n | r⟩ } & { ⟨0 - n | r⟩ })⟩ }
-  ```
-
-  Today the checker refuses this bundle, because an item that ends in a cut
-  would jump while the bundle is built (`DESIGN.md` §4); by name, each item
-  would be a thunk and the refusal would lift. Only negative positions would
-  change: delaying a positive
-  value without writing it would bring back the `↑` that §8 removed, so a
-  value-returning `choose` keeps its `mu`, `Lazy<T>` stays the spelling of a
-  delayed value, and a `bool` operand of `&&` is not reached. A by-name
-  continuation named twice runs twice, which is consistent with
-  continuations already being multi-shot.
 
 - **File operations as their own effect, and handlers as values.** The
   `fs` module would declare an `Fs` effect, and a standard handler would
