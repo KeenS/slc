@@ -12,6 +12,22 @@
 // does no work the consumer does not ask for, which is what lets `filter`
 // run over an infinite source.
 
+use list::List::*;
+use stream::Stream;
+use stream::count_from;
+use stream::take;
+use stream::unfold;
+use stream::iterate;
+use stream::zip_stream;
+use stream::drop_stream;
+use seq::seq_of_list;
+use seq::list_of_seq;
+use seq::seq_of_stream;
+use seq::map_seq;
+use seq::filter_seq;
+use seq::take_seq;
+use seq::take_while;
+
 fn odd(n: i64) -> bool { n % 2 == 1 }
 fn double(n: i64) -> i64 { n * 2 }
 fn under_ten(n: i64) -> bool { n < 10 }

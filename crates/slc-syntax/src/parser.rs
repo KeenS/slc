@@ -672,12 +672,8 @@ impl Parser {
             }
             path.push(self.expect_ident("a path segment")?);
         }
-        if path.len() < 2 && imports == UseImports::Member {
-            return Err(ParseError {
-                message: "`use` takes a path with at least two segments, `module::name`".into(),
-                span: t.span,
-            });
-        }
+        // `use list;` names a module already reachable at the root; it is
+        // allowed, so a program can say what it draws on.
         let _ = self.eat(&TokenKind::Semicolon);
         Ok(Node { span: t.span, kind: Decl::Use { path, imports } })
     }

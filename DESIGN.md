@@ -1164,34 +1164,37 @@ program nests is bounded by memory rather than by the host's default stack.
 
 ## Standard library
 
-The library has two layers. The **prelude** is ordinary Slant source
-(`crates/slc-driver/src/prelude.sl`): the driver appends it to the program
-before parsing — the program's text comes first, so its spans and line
-numbers are untouched — and everything in it goes through the same checking
-and lowering as user code. A program's own declaration shadows a prelude
-name (per namespace: values and type declarations separately). Shadowing a
-prelude *type* strands the prelude functions that mention it — a program
-declaring its own `Stream` loses `take` — so shadow a type only to replace
-its whole family. Anything
-expressible in the language belongs here rather than in the runtime.
+The library has two layers, and both are ordinary Slant source that goes
+through the same pipeline as user code.
 
-The prelude defines the logical units `Unit`, `Bottom`, `Empty`, and `Top`;
-`min`, `max`, `abs`; the `List<T>` enum with `length`,
-`append`, `map`, and the outcome-offering `command nth`; **`Option<T>`**
-and **`Result<T, E>`** with `unwrap_or` — either/or outcomes are additive,
-so they are enums whose consumers are `select`s (a `form` would be the
-wrong connective: it wants every field at once); the negative side's
-**`Stream<T>`** — the coinductive mirror of `List`, with `repeat`,
-`count_from`, `iterate`, `unfold`, `map_stream`, `zip_stream`,
-`drop_stream`, and `take` bridging back to data, since an infinite
-structure cannot print whole and `fmt(take(s, n))` is the honest form —
-**`Seq<T>`**, the finite codata sequence that sits between the two (below),
-and **`Lazy<T>`**, the one-item menu that is a by-name thunk; the
-**`Display` trait** — `fn fmt(self: Self) -> String`, user-facing
-formatting as in Rust, with impls for `i64`, `String`, `bool`, and
-`List<T>` (elementwise, `[1, 2, 3]`), plus `to_string<T: Display>` — and
-one **tap**, `command traced(label, x) | (k)`, which logs what passes
-through and forwards it: `("answer", 42) | traced | out⟩`.
+**The prelude** (`crates/slc-driver/src/prelude.sl`) is what every program
+sees unasked: the logical units `Unit`, `Bottom`, `Empty`, `Top` — kept
+top-level because the checker recognises the first two as the multiplicative
+units by exact name — the `effect IO` the runtime handles, and the
+**`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
+as in Rust) with impls for `i64`, `String`, `bool` and `to_string<T:
+Display>`. A program's own declaration of a prelude name shadows it.
+
+**The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
+appended after the prelude, and nothing in it is in scope until named: a
+module is reached by its path, `list::length`, or a name is brought in bare
+with `use`. Each module marks what it offers `pub`; the rest is its own.
+
+| module | what it offers |
+|---|---|
+| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `option`, `result` | `Option<T>` with `unwrap_or`; `Result<T, E>`. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
+| `num` | `min`, `max`, `abs` |
+| `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map_stream`, `zip_stream`, `drop_stream`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `take(s, n)` is the honest form |
+| `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
+| `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
+| `trace` | one **tap**, `command traced(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::traced \| out⟩` |
+
+The program's text comes first in the combined source, so its spans and
+line numbers are untouched; a diagnostic inside the library names its unit,
+`list.sl:53:57`. Every unit is parsed and checked on every run, `use`d or
+not — fine at this size, and per-module loading is the upgrade when it
+stops being fine. `examples/stdlib.sl` draws on the second layer only.
 
 **`Seq<T>` is the one that pays for menus in ordinary code.** `List` is
 data and `Stream` is codata that never ends; a `Seq` is a menu whose single
@@ -1390,6 +1393,17 @@ reference is a qualified name, and the declaration it sits in carries the
 module it was written in. A reference reaches the longest declared prefix of
 the path it names, so `geometry::Shape::Circle` is refused when `Shape` is
 private, not only when some `Circle` is.
+
+The library's modules are declared in their own source units, appended
+after the program. Imports are scoped to the unit that wrote them: a
+library file's `use Enum::*;` pins names in that file only, and a program's
+imports never reach into the library. The root scope, though, is one scope
+over every unit, so a library unit imports names only inside its `mod` —
+at its top level a `use` may be a variant import, which is per-unit, and
+nothing else. A program's `mod` of a library module's name shadows it
+whole, as its `fn` shadows a prelude function. `use list;` — naming a
+module already reachable at the root — is allowed, so a program can say
+what it draws on.
 
 Modules exist only to resolution, which runs right after parsing: every
 declaration inside `mod m` is renamed `m::name`, every reference is rewritten

@@ -145,6 +145,14 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
+        (
+            "stdlib.sl",
+            Expected {
+                success: true,
+                stdout: &["3", "3", "0", "3", "\"[1, 2, 3]\"", "\"[3, 1, 2]\""],
+                stderr: &[],
+            },
+        ),
         ("hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
         (
             "json_parser.sl",

@@ -10,6 +10,10 @@
 // dual of a trait — a trait hands a value the functions it provides, an
 // effect hands a computation the answers it demands.
 
+use list::List;
+use list::List::*;
+use list::map;
+
 effect Exn { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
 effect Choose { fn flip() -> bool; }

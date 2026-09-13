@@ -402,6 +402,36 @@ fn resolve_rigid(
     }
 }
 
+/// A declared parameter's type named nothing the checker knows. Leaving the
+/// parameter unbound would surface later as "`xs` is not defined", pointing
+/// at every use instead of the one cause.
+fn unresolved_parameter_type(p: &slc_syntax::ast::Param, span: Span, diags: &mut Vec<Diagnostic>) {
+    if let Some(ty) = &p.ty {
+        diags.push(Diagnostic {
+            message: format!(
+                "the type of parameter {} names `{}`, which is not a declared type here; a \
+                 library type is `list::List`, or brought in with `use`",
+                p.describe(),
+                type_display(ty)
+            ),
+            span,
+        });
+    }
+}
+
+/// The name a written type leads with, for a message.
+fn type_display(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Base(name) => name.clone(),
+        TypeExpr::Apply(name, _) => format!("{name}<…>"),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            type_display(&inner.kind)
+        }
+        TypeExpr::Effectful(inner, _) => type_display(&inner.kind),
+        _ => "this type".into(),
+    }
+}
+
 /// Resolve a type written in *body* position: a lambda's annotation, a
 /// `let`'s, a `select`'s or `mu`'s. The enclosing declaration's type
 /// parameters come first, so `T` inside the body is the `T` the signature
@@ -485,8 +515,9 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
-                if let Some(ty) = p.ty.as_ref().and_then(&rigid) {
-                    bind_match_pattern(&p.pattern, &ty, enums, env);
+                match p.ty.as_ref().and_then(&rigid) {
+                    Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
+                    None => unresolved_parameter_type(p, d.span, diags),
                 }
             }
             // A negative function produces the consumer of what follows its
@@ -544,9 +575,9 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
-                if let Some(ty) = p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums))
-                {
-                    bind_match_pattern(&p.pattern, &ty, enums, env);
+                match p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums)) {
+                    Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
+                    None => unresolved_parameter_type(p, d.span, diags),
                 }
             }
             let body_type = check_expr(body, enums, env, diags);
@@ -1580,7 +1611,28 @@ fn check_expr_unapplied(
                 }
                 return None;
             }
-            let (declaration, payload) = enums.variant(name)?;
+            let Some((declaration, payload)) = enums.variant(name) else {
+                // A trait method named as a value is dispatched where it is
+                // applied, and a bounded function as a value would need its
+                // dictionaries packaged with it: both stay untyped here.
+                // Anything else is unknown, and the runtime is the wrong
+                // place to find that out.
+                if !env.traits.is_method(name) && !env.functions.contains_key(name) {
+                    diags.push(Diagnostic {
+                        message: match name.split_once("::") {
+                            Some((module, _)) => {
+                                format!("`{name}` is not defined; is `{module}` a module in scope?")
+                            }
+                            None => format!(
+                                "`{name}` is not defined here; a library name is reached by \
+                                 its module's path, or brought in with `use`"
+                            ),
+                        },
+                        span: e.span,
+                    });
+                }
+                return None;
+            };
             if !payload.is_empty() {
                 diags.push(Diagnostic {
                     message: format!(
@@ -2860,7 +2912,8 @@ mod tests {
         assert!(
             check(
                 "data Direction { left: i64, right: i64 }
-                 fn f() -> i64 { use_it(Direction { left: 1, right: 2 }) }"
+                 fn use_it(d: Direction) -> i64 { 0 }
+                 fn f() -> i64 { Direction { left: 1, right: 2 } | use_it }"
             )
             .is_ok()
         );

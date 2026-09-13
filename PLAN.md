@@ -62,97 +62,15 @@ feature is mid-flight; what remains open is below.
 
 ## Next
 
-- **A standard library beside the prelude.** Decided: the prelude keeps
-  only what every program needs unasked — `effect IO`, `Display` with
-  `fmt`/`to_string` and its `i64`/`String`/`bool` impls — and everything
-  else moves to stdlib modules a program must `use`: `List` and its
-  functions, `Option`, `Result`, `min`/`max`/`abs`, `Stream`, `Seq`,
-  `Lazy`, `traced`. Visibility is done (`pub`, private by default). The
-  language already reaches a module declared in the library unit from user
-  code, qualified or imported, so what remains is plumbing, two real gaps,
-  and the move itself.
-
-  *Several source units.*
-  - [ ] The driver appends a list of `(unit name, text)` — `prelude.sl`
-        then `stdlib/*.sl` — and records each boundary, instead of one
-        `PRELUDE` and one `prelude_from`. Spans are char offsets, so the
-        boundaries are too.
-  - [ ] Each stdlib file declares its module itself — `mod list { … }` at
-        the top of `stdlib/list.sl` — rather than the driver wrapping the
-        text, so no span shifts and the file reads as what it is.
-  - [ ] `resolve_program_split(program, prelude_from)` takes the boundary
-        list. `apply_variant_imports` keeps one table per unit
-        (`tables: [HashMap; 2]` becomes a `Vec`), so a stdlib file's
-        `use Enum::*` is scoped to that file.
-  - [ ] **The root scope is shared across units** (`collect_scope` runs
-        once over the combined declarations), so a top-level `use a::b;`
-        in a library unit would alias `b` in the program's root too. Either
-        the root scope's `aliases` become per-unit like the variant tables,
-        or a library unit may `use` only inside its `mod` — the second is
-        simpler and is how the files would be written anyway; enforce it.
-  - [ ] A program's `mod list` colliding with the stdlib's `mod list`:
-        decide (error, or the program's shadows) and test it. The prelude
-        already has a shadowing rule for top-level names; modules need the
-        same statement.
-
-  *Diagnostics name the unit.*
-  - [ ] `format_span` maps a span to `(unit, line, column)` from the
-        boundary list and prefixes the unit's name, so an error inside the
-        library no longer reports a line past the end of the program's file.
-        (Found the hard way: prelude errors read as example errors for
-        several minutes.)
-  - [ ] The resolver's errors, the checker's, and the runtime's `at …`
-        all go through the same mapping.
-
-  *`use` for a library.*
-  - [ ] `use list;` — importing a module itself — is a parse error ("at
-        least two segments"). Allow it, so `use list;` then `list::map`.
-  - [ ] `use list::*;` for a *module* — bring every `pub` member in — does
-        not exist; `Glob` is variant import only. Decide whether to add it
-        or keep imports explicit; the examples will say which reads better.
-  - [ ] Check a three-segment variant import, `use list::List::*;`, works
-        as written, since that is how every list-using program will start.
-
-  *The move.*
-  - [ ] Split `prelude.sl` into `prelude.sl` (logical units, `IO`,
-        `Display` and its scalar impls) and `stdlib/{list,option,result,
-        num,stream,seq,lazy,trace}.sl`, each a `pub`-marked `mod`.
-  - [ ] `impl<T: Display> Display for List<T>` moves with `List`: an impl
-        in a module for a trait outside it. Check the mangled impl name and
-        `dict_global_name` survive a `::` in the type key (variants already
-        carry `::`, so likely fine — verify).
-  - [ ] The logical units `Unit`, `Bottom`, `Empty`, `Top` **stay
-        top-level in the prelude**: `declarations.rs` recognises `data Unit
-        {}` and `form Bottom {}` as the multiplicative units by exact bare
-        name, so inside a module they would silently stop being aliases.
-        Either keep them where they are, or make the recognition
-        path-aware; the first is right unless something needs the second.
-  - [ ] The parser's `menu_items` table (for the one-arm `mu M { … }`
-        shorthand) is built from bare names before resolution — check `mu
-        Stream { … }` still parses when `Stream` is `stream::Stream`
-        reached through a `use`.
-  - [ ] `traced` performs `IO`; a stdlib module that prints declares
-        `/{IO}` — already true, keep it true.
-
-  *Corpus and docs.*
-  - [ ] Every example using `List`, `Cons`/`Nil`, `Option`, `Result`,
-        `min`/`max`/`abs`, `Stream`, `Seq`, `Lazy` or `traced` gains the
-        `use` it needs; outputs are unchanged, so `examples.rs`
-        expectations should not move.
-  - [ ] The Rust test snippets likewise (`integration.rs`, and the
-        check-crate tests that spell out `List::Cons`).
-  - [ ] `the_prelude_is_available_and_shadowable` in `integration.rs`
-        becomes two tests: the prelude is available unasked; a stdlib
-        module is not until `use`d.
-  - [ ] DESIGN §"Standard library" describes the two layers and what each
-        holds; §10 gets the per-unit scoping rule; MIGRATION shows the
-        `use` a program now writes.
-  - [ ] An example that uses a stdlib module and nothing else, so the
-        boundary is visible in the corpus.
-
-  *Accepted for now.* Every library unit is parsed and checked on every
-  run, `use`d or not. Fine at this size; per-module loading is the upgrade
-  when it stops being fine.
+- **Stdlib follow-ups.** The library is two layers and shipped; what the
+  breakdown left open:
+  - [ ] A module glob, `use list::*;` bringing every `pub` member in bare.
+        Decided against for now — imports are explicit, one name each, and
+        the examples read fine that way — but the corpus is small; revisit
+        if `use` blocks grow long.
+  - [ ] Every library unit is parsed and checked on every run, `use`d or
+        not. Fine at this size; per-module loading is the upgrade when it
+        stops being fine.
 
 ## Deferred, for discussion
 

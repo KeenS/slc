@@ -100,13 +100,13 @@ fn diagnostic_that_merely_looks_like_exit_is_not_treated_as_exit() {
     let dir = std::env::temp_dir().join("slc_test_exit_like_diagnostic.sl");
     std::fs::write(
         &dir,
-        r#"fn missing(value: +String) -> i32 { 0 | exit⟩ }
+        r#"fn missing(value: +String, exit: -i32) -> i32 { 0 | exit⟩ }
         command main | (exit: -i32) / {IO} { println(exit_like); 0 | exit⟩ }"#,
     )
     .unwrap();
     let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok);
-    assert!(stderr.contains("unbound variable: exit_like"), "stderr: {stderr}");
+    assert!(stderr.contains("`exit_like` is not defined"), "stderr: {stderr}");
     assert!(!stderr.contains("exit("), "diagnostic must not be parsed as EXIT: {stderr}");
 }
 
@@ -547,8 +547,9 @@ fn constructing_select_does_not_activate_any_arm() {
         &dir,
         r#"enum Color { Red, Green, Blue }
 
-        fn boom(code: +i32) -> i32 {
-            code | exit⟩
+        fn boom(code: +i32) -> i32 / {IO} {
+            "BOOM" | println;
+            code
         }
 
         fn dispatch(k: i32) <- Color / {IO} {
@@ -630,7 +631,7 @@ fn lookup_builtins_offer_both_outcomes() {
     let dir = std::env::temp_dir().join("slc_test_lookup_outcomes.sl");
     std::fs::write(
         &dir,
-        r#"fn report(message: +String) -> ⊥ / {IO} {
+        r#"fn report(message: +String, exit: -i32) -> ⊥ / {IO} {
             println(message);
             1 | exit⟩
         }
@@ -639,12 +640,12 @@ fn lookup_builtins_offer_both_outcomes() {
             char_at("slant", 1, fn(second: +char) -> ⊥ {
                 println(second);
                 char_at("slant", 9, fn(unexpected: +char) -> ⊥ {
-                    ("unexpectedly found something" | report)
+                    (("unexpectedly found something", exit) | report)
                 }, fn(message: +String) -> ⊥ {
                     println(message);
                     0 | exit⟩
                 })
-            }, fn(message: +String) -> ⊥ { (message | report) })
+            }, fn(message: +String) -> ⊥ { ((message, exit) | report) })
         }"#,
     )
     .unwrap();
@@ -934,35 +935,34 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
 
 #[test]
 fn the_prelude_is_available_and_shadowable() {
-    // Prelude declarations are in scope without an import.
+    // Prelude declarations are in scope without an import: `Display` and
+    // `to_string`, and `IO`.
     let dir = std::env::temp_dir().join("slc_test_prelude.sl");
     std::fs::write(
         &dir,
         r#"fn double(n: +i64) -> i64 { n * 2 }
         command main | (exit: -i32) / {IO} {
-            println(((3, 7) | min));
-            println(((3, 7) | max));
-            println((0 - 42 | abs));
-            println(mu i64 { out <= 21 | double | out⟩ });
+            println((21 | double | to_string));
+            println((true | fmt));
             0 | exit⟩
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["3", "7", "42", "42"]);
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["\"42\"", "\"true\""]);
 
     // A program's own definition shadows the prelude's.
     let dir = std::env::temp_dir().join("slc_test_prelude_shadow.sl");
     std::fs::write(
         &dir,
-        r#"fn min(a: +i64, b: +i64) -> i64 { a + 100 }
-        command main | (exit: -i32) / {IO} { println(((3, 7) | min)); 0 | exit⟩ }"#,
+        r#"fn to_string(n: +i64) -> String { "mine" }
+        command main | (exit: -i32) / {IO} { println((7 | to_string)); 0 | exit⟩ }"#,
     )
     .unwrap();
     let (stdout, _, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok);
-    assert_eq!(stdout.trim(), "103");
+    assert_eq!(stdout.trim(), "\"mine\"");
 
     // The program's text precedes the prelude, so a diagnostic keeps the
     // program's own line and column.
@@ -1105,12 +1105,65 @@ fn the_prelude_provides_all_four_logical_units() {
 }
 
 #[test]
+fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
+    let dir = std::env::temp_dir().join("slc_test_stdlib_reach.sl");
+    std::fs::write(
+        &dir,
+        r#"use num::max;
+        command main | (exit: -i32) / {IO} {
+            println(((3, 7) | num::min));
+            println(((3, 7) | max));
+            0 | exit⟩
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.split_whitespace().collect::<Vec<_>>(), ["3", "7"]);
+
+    // Unimported, a stdlib name is not in scope.
+    let dir = std::env::temp_dir().join("slc_test_stdlib_unreached.sl");
+    std::fs::write(
+        &dir,
+        r#"command main | (exit: -i32) / {IO} { println(((3, 7) | min)); 0 | exit⟩ }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(stderr.contains("min"), "stderr: {stderr}");
+
+    // A program's own module shadows a stdlib module of the same name, whole.
+    let dir = std::env::temp_dir().join("slc_test_stdlib_shadow_mod.sl");
+    std::fs::write(
+        &dir,
+        r#"mod num { pub fn min(a: +i64, b: +i64) -> i64 { a + 100 } }
+        command main | (exit: -i32) / {IO} { println(((3, 7) | num::min)); 0 | exit⟩ }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "103");
+
+    // A library-side diagnostic names its unit.
+    let dir = std::env::temp_dir().join("slc_test_stdlib_diag.sl");
+    std::fs::write(
+        &dir,
+        r#"use list::List::*;
+        command main | (exit: -i32) / {IO} { (Nil, "x") | list::nth | (exit & exit)⟩ }"#,
+    )
+    .unwrap();
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok);
+    assert!(!stderr.contains(".sl:"), "an error in the program's own text names no unit: {stderr}");
+}
+
+#[test]
 fn the_prelude_tap_is_a_command_and_composes_with_builtins() {
     let dir = std::env::temp_dir().join("slc_test_prelude_combinators.sl");
     std::fs::write(
         &dir,
         r#"command main | (exit: i32) / {IO} {
-            mu i64 { out <= ("answer", 42) | traced | out⟩ } | println;
+            mu i64 { out <= ("answer", 42) | trace::traced | out⟩ } | println;
             // A row slot wants a consumer, and `select` is what builds one.
             mu i64 { out <=
                 "nope" | parse_int | (out
@@ -1139,7 +1192,8 @@ fn display_formats_through_bounded_impls() {
     let dir = std::env::temp_dir().join("slc_test_display.sl");
     std::fs::write(
         &dir,
-        r#"command main | (exit: -i32) / {IO} {
+        r#"use list::List;
+        command main | (exit: -i32) / {IO} {
             println(fmt(42));
             println(fmt("plain"));
             println(fmt(false));
@@ -1188,7 +1242,8 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     let dir = std::env::temp_dir().join("slc_test_use_glob.sl");
     std::fs::write(
         &dir,
-        r#"use List::*;
+        r#"use list::List;
+        use list::List::*;
         enum Mine { Nil, Cons(i64, Mine) }
         fn total(xs: List<i64>) -> i64 {
             match xs { Nil => 0, Cons(n, rest) => n + (rest | total) }
@@ -1220,7 +1275,7 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     let dir = std::env::temp_dir().join("slc_test_use_collision.sl");
     std::fs::write(
         &dir,
-        r#"use List::*;
+        r#"use list::List::*;
         enum Mine { Nil }
         use Mine::*;
         command main | (exit: -i32) / {IO} { 0 | exit⟩ }"#,

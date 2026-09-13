@@ -10,7 +10,17 @@ enum RunOutcome {
 /// stdlib module, which a program reaches only through `use`. Every unit
 /// goes through the same pipeline as user code. See `prelude.sl` and
 /// `stdlib/` for what belongs where.
-const LIBRARY: &[(&str, &str)] = &[("prelude", include_str!("prelude.sl"))];
+const LIBRARY: &[(&str, &str)] = &[
+    ("prelude", include_str!("prelude.sl")),
+    ("num", include_str!("stdlib/num.sl")),
+    ("list", include_str!("stdlib/list.sl")),
+    ("option", include_str!("stdlib/option.sl")),
+    ("result", include_str!("stdlib/result.sl")),
+    ("lazy", include_str!("stdlib/lazy.sl")),
+    ("stream", include_str!("stdlib/stream.sl")),
+    ("seq", include_str!("stdlib/seq.sl")),
+    ("trace", include_str!("stdlib/trace.sl")),
+];
 
 /// The combined source and where each unit starts in it, so a span — a char
 /// offset into the whole — can be named by its unit, line, and column.

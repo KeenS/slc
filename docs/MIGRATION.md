@@ -548,6 +548,30 @@ This bites where it did not before because a pipeline stage now charges
 its effects at all: `x | throw` was silently free, and only the old call
 form `throw(x)` was counted.
 
+## The prelude shrank; the rest is a stdlib you `use`
+
+Only `IO` and `Display` (with `fmt`/`to_string`) stay in scope unasked.
+`List`, `Option`, `Result`, `min`/`max`/`abs`, `Stream`, `Seq`, `Lazy` and
+`traced` moved to stdlib modules, reached by path or brought in with `use`:
+
+```sl
+let xs = Cons(1, Cons(2, Nil));                      // old: in scope unasked
+xs | length | println;
+
+use list::List::*;                                   // new
+use list::length;
+let xs = Cons(1, Cons(2, Nil));
+xs | length | println;
+(3, 7) | num::min | println;                         // or by path, no import
+("answer", 42) | trace::traced | out⟩
+```
+
+A name that is neither local, declared, nor imported is now a checker
+error at the use — "`min` is not defined here" — rather than a runtime
+"unbound variable"; likewise a signature naming an unknown type, at the
+declaration. A program that needs `exit` inside a helper passes it in, as
+`main` does: it was never a global, and the checker now says so.
+
 ## A module's declarations are private unless `pub`
 
 A `mod` used to expose everything it declared. It now exposes what is

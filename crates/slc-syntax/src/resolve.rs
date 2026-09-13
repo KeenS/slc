@@ -569,7 +569,18 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             *trait_name = resolve_name(trait_name, stack);
             resolve_type(for_type, stack);
             for method in methods {
+                // A method is named by its trait, not by the module the impl
+                // sits in: `fmt` stays `fmt` inside `mod list`, or the
+                // elaboration would not know it implements `Display::fmt`.
+                let unqualified = match &method.kind {
+                    Decl::Fn { name, .. } | Decl::Command { name, .. } => name.clone(),
+                    _ => String::new(),
+                };
                 resolve_decl(&mut method.kind, stack, locals);
+                match &mut method.kind {
+                    Decl::Fn { name, .. } | Decl::Command { name, .. } => *name = unqualified,
+                    _ => {}
+                }
             }
         }
         Decl::Effect { name, operations, .. } => {
