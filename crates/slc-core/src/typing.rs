@@ -200,7 +200,18 @@ impl Unification {
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
             // `X` meets `dual(B)`.
             (Type::Dual(inner), other) | (other, Type::Dual(inner)) => {
-                self.unify(inner, &other.dual())?;
+                let flipped = other.dual();
+                // A declared type's dual stays wrapped, so flipping it makes no
+                // progress: `dual(X)` against `X` would ask the same question
+                // again forever. A type and its dual have opposite polarities,
+                // so unless a variable is waiting to take it, they do not meet.
+                if matches!(flipped, Type::Dual(_)) && !matches!(inner.as_ref(), Type::Var(_)) {
+                    return Err(TypeError::Mismatch {
+                        expected: expected.clone(),
+                        actual: actual.clone(),
+                    });
+                }
+                self.unify(inner, &flipped)?;
                 Ok(self.apply(&expected))
             }
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
@@ -473,6 +484,26 @@ pub fn infer_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_declared_type_does_not_meet_its_own_dual() {
+        // The dual of a declared type stays wrapped; unifying the two used to
+        // recurse without end.
+        let named = Type::Named("Color".into(), Vec::new());
+        let mut u = Unification::new();
+        assert!(matches!(
+            u.unify(&Type::Dual(Box::new(named.clone())), &named),
+            Err(TypeError::Mismatch { .. })
+        ));
+        assert!(matches!(
+            u.unify(&named, &Type::Dual(Box::new(named.clone()))),
+            Err(TypeError::Mismatch { .. })
+        ));
+        // A variable under the dual still takes the other side's dual.
+        let v = u.fresh_var();
+        u.unify(&Type::Dual(Box::new(v.clone())), &named).unwrap();
+        assert_eq!(u.apply(&v), Type::Dual(Box::new(named)));
+    }
     use crate::coterm::CoCaseBranch;
     use crate::types::Base;
 
