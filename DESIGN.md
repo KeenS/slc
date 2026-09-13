@@ -20,6 +20,10 @@ returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
 `let` against the consumer that the rest of the program becomes.
 `examples/two_styles.sl` writes one program both ways.
 
+Code in this document is of two kinds. A fragment marks what it leaves out
+with `…`. A complete program declares `main` and leaves nothing out, and the
+test suite compiles every one (`crates/slc-driver/tests/design_programs.rs`).
+
 ## 1. Design goals
 
 1. **Rust-like surface** — familiar `fn`, `command`, `let`, `match`, braces, type

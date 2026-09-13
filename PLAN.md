@@ -22,8 +22,8 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The open work is a set of surface
-simplifications that remove syntax in favour of ordinary declarations, a
-documentation pass, and one defect.
+simplifications that remove syntax in favour of ordinary declarations, and
+one defect.
 
 ## Known limits
 
@@ -86,13 +86,6 @@ documentation pass, and one defect.
   "`bool` is defined in the prelude".
 
 ## Next
-
-### Documentation
-
-- **`DESIGN.md`'s programs are checked.** Its `sl` blocks are not, so drift
-  in them goes unnoticed until someone reads them. Only two are complete
-  programs today and the rest are fragments, so checking them means either
-  marking the fragments or writing them whole.
 
 ### Surface simplifications
 
