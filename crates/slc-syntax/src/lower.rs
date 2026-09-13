@@ -2064,7 +2064,7 @@ mod tests {
         // needs no label.
         let out = lower_str(
             "fn total(out: -i64) <- (+i64, +i64) {
-                 select (+i64, +i64) { (left, right) => ⟨(left + right) | out⟩ }
+                 select (+i64, +i64) { (left, right) => ⟨(left, right) | __add | out⟩ }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };

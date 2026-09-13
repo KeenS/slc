@@ -629,7 +629,7 @@ mod tests {
                      let Point { x, y } = Point { x: 3, y: 4 };
                      let Only(n) = Only(5);
                      let _ = 6;
-                     ⟨a + b + x + y + n | exit⟩
+                     ⟨(a, b) | __add | z => (z, x) | __add | z => (z, y) | __add | z => (z, n) | __add | exit⟩
                  }"
             )
             .is_ok()
@@ -650,7 +650,7 @@ mod tests {
     fn a_parameter_binds_a_pattern_and_an_exit_binds_a_name() {
         assert!(
             check(
-                "fn skew((a, b): (+i64, +i64), c: +i64) -> i64 { a * c - b }
+                "fn skew((a, b): (+i64, +i64), c: +i64) -> i64 { (⟨(a, c) | __mul | x => (x, b) | __sub) }
                  command main | (exit: -i32) / {IO} { ⟨((1, 2), 3) | skew | exit⟩ }"
             )
             .is_ok()

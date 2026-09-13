@@ -3695,8 +3695,8 @@ mod tests {
         assert!(
             check(
                 "data P { x: +i64, y: +i64 }
-                 fn f(p: +P) -> i64 { p.x + p.y }
-                 fn g(t: (+i64, +i64, +i64)) -> i64 { t.0 + t.2 }
+                 fn f(p: +P) -> i64 { (⟨(p.x, p.y) | __add) }
+                 fn g(t: (+i64, +i64, +i64)) -> i64 { (⟨(t.0, t.2) | __add) }
                  fn h(t: (+i64, (+i64, +i64))) -> (+i64, +i64) { t.1 }"
             )
             .is_ok()
@@ -3939,7 +3939,7 @@ mod tests {
         // Without it, a function heads the chain and composes.
         assert!(
             check(
-                "fn double(n: i64) -> i64 { n * 2 }
+                "fn double(n: i64) -> i64 { (⟨(n, 2) | __mul) }
                  fn quadruple(n: i64) -> i64 { ⟨n | (double | double) }"
             )
             .is_ok()
@@ -3973,7 +3973,7 @@ mod tests {
         // so an arm that ends in one leaves the `match` type to the other.
         let ok = check(
             "fn parse(input: +String, err: -String) -> i64 {
-                 match str_len(input) > 0 { true => 1, _ => ⟨\"empty\" | err⟩ }
+                 match (⟨(str_len(input), 0) | __gt) { true => 1, _ => ⟨\"empty\" | err⟩ }
              }",
         );
         assert!(ok.is_ok(), "{ok:?}");
@@ -4074,24 +4074,24 @@ mod tests {
 
     #[test]
     fn arithmetic_type_mismatch_rejected() {
-        let diags = check("fn f(a: +i32, b: +i64) -> i64 { a + b }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("arithmetic operands")));
+        let diags = check("fn f(a: +i32, b: +i64) -> i64 { (⟨(a, b) | __add) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
     #[test]
     fn comparison_char_and_int_mismatch_rejected() {
-        let diags = check("fn f(a: +char, b: +i32) -> bool { a < b }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("comparison operands")));
+        let diags = check("fn f(a: +char, b: +i32) -> bool { (⟨(a, b) | __lt) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
     #[test]
     fn char_comparison_ok() {
-        assert!(check("fn f(a: +char, b: +char) -> bool { a < b }").is_ok());
+        assert!(check("fn f(a: +char, b: +char) -> bool { (⟨(a, b) | __lt) }").is_ok());
     }
 
     #[test]
     fn string_concat_ok() {
-        assert!(check(r#"fn f(a: +String, b: +String) -> String { a + b }"#).is_ok());
+        assert!(check(r#"fn f(a: +String, b: +String) -> String { (⟨(a, b) | __add) }"#).is_ok());
     }
 
     #[test]
@@ -4116,7 +4116,7 @@ mod tests {
                      match c { true => ⟨(,) | then⟩, _ => ⟨(,) | otherwise⟩ }
                  }
                  command main | (exit: -i32) {
-                     ⟨1 < 0 | choose | (fn(_) { ⟨0 | exit⟩ } & fn(_) { ⟨1 | exit⟩ })⟩
+                     ⟨(1, 0) | __lt | choose | (fn(_) { ⟨0 | exit⟩ } & fn(_) { ⟨1 | exit⟩ })⟩
                  }"
             )
             .is_ok()
@@ -4148,8 +4148,9 @@ mod tests {
 
     #[test]
     fn index_type_checked() {
-        let diags = check("fn f(s: +String, i: +bool) -> char { s[i] }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("index has type")));
+        let diags =
+            check("fn f(s: +String, i: +bool) -> char { (⟨(s, i) | __index) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
     }
 
     #[test]
@@ -4317,9 +4318,9 @@ mod tests {
         assert!(
             check(
                 "effect Ask { fn ask() -> i64; }
-                 fn u() -> i64 / {Ask} { ask() + 5 }
+                 fn u() -> i64 / {Ask} { (⟨(ask(), 5) | __add) }
                  command main | (exit: -i32) / {IO} {
-                     let r = handle u() { ask(): resume => 1000 + resume(7), return(n) => n };
+                     let r = handle u() { ask(): resume => (⟨(1000, resume(7)) | __add), return(n) => n };
                      ⟨r | println; ⟨0 | exit⟩
                  }"
             )
@@ -4336,7 +4337,7 @@ mod tests {
                  fn f() -> i64 / {C} { match c() { true => 1, _ => 2 } }
                  command main | (exit: -i32) / {IO} {
                      let r = handle f() {
-                         c(): resume => resume(true) + resume(false),
+                         c(): resume => (⟨(resume(true), resume(false)) | __add),
                          return(n) => n,
                      };
                      ⟨r | println; ⟨0 | exit⟩
@@ -4552,9 +4553,9 @@ mod tests {
         );
         // A use that fixes the type is enough.
         assert!(
-            check("fn f() -> i64 { let g = fn(x) { x + 1 }; ⟨1 | g }").is_ok(),
+            check("fn f() -> i64 { let g = fn(x) { (⟨(x, 1) | __add) }; ⟨1 | g }").is_ok(),
             "{:?}",
-            check("fn f() -> i64 { let g = fn(x) { x + 1 }; ⟨1 | g }")
+            check("fn f() -> i64 { let g = fn(x) { (⟨(x, 1) | __add) }; ⟨1 | g }")
         );
     }
 
@@ -4566,7 +4567,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let g = mu { k <= ⟨fn(x) { x } | k⟩ };
-                 ⟨g(1) + 1 | println;
+                 ⟨(g(1), 1) | __add | println;
                  ⟨str_len(g(\"s\")) | println;
                  ⟨0 | exit⟩
              }",
@@ -4580,7 +4581,7 @@ mod tests {
             "fn id<+T>(x: T) -> T { x }
              command main | (exit: -i32) / {IO} {
                  let h = id(fn(x) { x });
-                 ⟨h(1) + 1 | println;
+                 ⟨(h(1), 1) | __add | println;
                  ⟨str_len(h(\"s\")) | println;
                  ⟨0 | exit⟩
              }",
@@ -4597,8 +4598,8 @@ mod tests {
             check(
                 "command main | (exit: -i32) / {IO} {
                      let fresh = fn(u: (,)) { mu { k <= ⟨fn(x: i64) { x } | k⟩ } };
-                     ⟨fresh((,))(1) + 1 | println;
-                     ⟨fresh((,))(2) + 1 | println;
+                     ⟨(fresh((,))(1), 1) | __add | println;
+                     ⟨(fresh((,))(2), 1) | __add | println;
                      ⟨0 | exit⟩
                  }"
             )
@@ -4613,7 +4614,7 @@ mod tests {
         let diags = check(
             "command main | (exit: -i32) / {IO} {
                  let g = fn(x) { x };
-                 ⟨g(1) + str_len(g(1)) | println;
+                 ⟨(g(1), str_len(g(1))) | __add | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4626,7 +4627,7 @@ mod tests {
         // The body constrains the parameter, and the call site honors it.
         let diags = check(
             "command main | (exit: -i32) / {IO} {
-                 ⟨fn(x) { x + 1 }(\"not a number\") | println;
+                 ⟨fn(x) { (⟨(x, 1) | __add) }(\"not a number\") | println;
                  ⟨0 | exit⟩
              }",
         )
@@ -4641,7 +4642,7 @@ mod tests {
             check(
                 "fn id<+T>(x: T) -> T { x }
                  command main | (exit: -i32) / {IO} {
-                     ⟨(⟨42 | id) + 1 | println;
+                     ⟨((⟨42 | id), 1) | __add | println;
                      ⟨\"each call its own T\" | id | str_len | println;
                      ⟨0 | exit⟩
                  }"
@@ -4672,8 +4673,8 @@ mod tests {
     fn a_type_parameter_is_rigid_inside_the_body() {
         // `T` is whatever the caller chose, so the body may not treat it as
         // a number…
-        let diags = check("fn sneaky<+T>(x: T) -> T { x + 1 }").unwrap_err();
-        assert!(diags.iter().any(|d| d.message.contains("arithmetic operands")), "{diags:?}");
+        let diags = check("fn sneaky<+T>(x: T) -> T { (⟨(x, 1) | __add) }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("what flows in has type")), "{diags:?}");
 
         // …or hand back some other parameter's type.
         let diags = check("fn swap<+T, +U>(x: T, y: U) -> T { y }").unwrap_err();
@@ -4700,7 +4701,7 @@ mod tests {
         // A positive function likewise — and one named like a builtin, which
         // used to inherit every builtin exemption by name and slip past.
         let diags = check(
-            "fn add(a: i64, b: i64) -> i64 { a + b }
+            "fn add(a: i64, b: i64) -> i64 { (⟨(a, b) | __add) }
              command main | (exit: -i32) / {IO} { let inc = ⟨1 | __add; ⟨0 | exit⟩ }",
         )
         .unwrap_err();
@@ -4727,8 +4728,8 @@ mod tests {
         );
         assert!(
             check(
-                "fn plus_one(out: i64) <- i64 { select i64 { n => ⟨n + 1 | out⟩ } }
-                 fn double(n: i64) -> i64 { n * 2 }
+                "fn plus_one(out: i64) <- i64 { select i64 { n => ⟨(n, 1) | __add | out⟩ } }
+                 fn double(n: i64) -> i64 { (⟨(n, 2) | __mul) }
                  command main | (exit: -i32) / {IO} {
                      ⟨mu i64 { out <= ⟨20 | plus_one | double | out⟩ } | println; ⟨0 | exit⟩ }"
             )
@@ -4944,7 +4945,9 @@ mod tests {
     #[test]
     fn a_select_in_a_negative_fn_takes_the_type_it_consumes() {
         // Nothing in `n <= …` names a type, but the declaration already did.
-        assert!(check("fn twice(out: -i64) <- +i64 { select { n => ⟨(n * 2) | out⟩ } }").is_ok());
+        assert!(
+            check("fn twice(out: -i64) <- +i64 { select { n => ⟨(n, 2) | __mul | out⟩ } }").is_ok()
+        );
         let diags = check("fn twice(out: -String) <- +i64 { select { n => ⟨str_len(n) | out⟩ } }")
             .unwrap_err();
         assert!(
@@ -4972,13 +4975,13 @@ mod tests {
             "command main | (exit: -i32) / {IO} {
                  let complain = select { m => { ⟨m | println; 1 | exit⟩ } };
                  let text = mu { k <= __read_file(\"in\", k, complain) };
-                 ⟨text + 1 | println;
+                 ⟨(text, 1) | __add | println;
                  ⟨0 | exit⟩
              }",
         )
         .unwrap_err();
         assert!(
-            diags.iter().any(|d| d.message.contains("+String and +i64")),
+            diags.iter().any(|d| d.message.contains("(+String, +i64)")),
             "the inferred type should reach the use: {diags:?}"
         );
 

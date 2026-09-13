@@ -710,8 +710,10 @@ mod tests {
         assert!(diags.iter().any(|d| d.message.contains("`main` performs `Exn`")), "{diags:?}");
         // Handled at the call, the row is discharged and `main` stays pure.
         assert!(
-            check(&src("let r = handle app(risky, 1) { throw(m) => 0 - 1, return(n) => n };
-                 ⟨r | println"))
+            check(&src(
+                "let r = handle app(risky, 1) { throw(m) => (⟨(0, 1) | __sub), return(n) => n };
+                 ⟨r | println"
+            ))
             .is_ok()
         );
     }
@@ -851,10 +853,11 @@ mod tests {
     const FALLIBLE: &str = "menu Fallible / {Exn} { value: i64, doubled: i64 }
          fn checked(n: +i64) -> Fallible {
              mu Fallible {
-                 value <= ⟨(match n >= 0 { true => n, _ => throw(\"neg\") }) | value⟩,
-                 doubled <= ⟨(match n >= 0 { true => n * 2, _ => throw(\"neg\") }) | doubled⟩,
+                 value <= ⟨(match (⟨(n, 0) | __ge) { true => n, _ => throw(\"neg\") }) | value⟩,
+                 doubled <= ⟨(match (⟨(n, 0) | __ge) { true => (⟨(n, 2) | __mul), _ => throw(\"neg\") }) | doubled⟩,
              }
-         }\n";
+         }
+";
 
     #[test]
     fn a_rowed_menu_charges_demands_not_the_constructor() {
