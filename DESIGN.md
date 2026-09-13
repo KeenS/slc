@@ -684,12 +684,12 @@ its separator. Each anonymous type has a name of its own:
 | named | anonymous | its name | anonymous type | value | unit type | unit value |
 |---|---|---|---|---|---|---|
 | `data` | tuple | a tuple | `(T1, T2)` | `(v1, v2)` | `(,)` | `(,)` |
-| `enum` | choice | an alternative | `(T1 \| T2)` | `::0(v)`, `::1(v)` | `(\|)` | — |
+| `enum` | choice | a choice | `(T1 \| T2)` | `::0(v)`, `::1(v)` | `(\|)` | — |
 | `menu` | bundle | a bundle | `(T1 & T2)` | `(v1 & v2)` | `(&)` | `(&)` |
 | `form` | joint | a joint | `(T1 ; T2)` | `(k1 ; k2)` | `(;)` | — |
 
-A **tuple** gives every component; a **choice** holds one of its
-alternatives; a **bundle** offers every item and answers the one demanded;
+A **tuple** gives every component; a **choice** gives one, at its
+position; a **bundle** offers every item and answers the one demanded;
 a **joint** wants every component, one continuation each. The names follow
 the declarations they write anonymously, not their connectives' logical
 names, so a program's vocabulary is the one its code already uses.
@@ -697,18 +697,18 @@ names, so a program's vocabulary is the one its code already uses.
 The multiplicatives are `,` and `;`, the additives `&` and `|`: each dual
 pair is a pair of punctuation marks.
 
-- **Alternatives**, a choice's values, name their position, as `Enum::Variant(v)`
-  does with the name left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`.
-  Positions count from 0, as tuple projection `t.0` does, and an alternative
-  is built by its position alone, so it needs no choice known to build it. Its
-  payload meets the alternative at that position of the choice its context gives
+- **Choices** name their position, as `Enum::Variant(v)` does with the name
+  left out: `::0(v)`, `::1(v)`, and the pattern `::0(x)`. Positions count
+  from 0, as tuple projection `t.0` does, and a choice is built by its
+  position alone, so its type need not be known to build it. Its payload
+  meets the component at that position of the choice type its context gives
   — a return type, an annotation, a parameter or a cut — once the
-  declaration is checked. `(T1 | (T2 | T3))` has two alternatives, the second
+  declaration is checked. `(T1 | (T2 | T3))` has two positions, the second
   itself a choice, so a value of it is `::1(::0(v))`. A `select` over a
   choice answers each position exactly once; a `match` covers every one, or
   has an arm that matches anything. The consumer of a choice `(A | B)` is the
-  bundle `(-A & -B)`, so a bundle of exits consumes an alternative as it is:
-  the position picks the exit.
+  bundle `(-A & -B)`, so a bundle of exits consumes a choice as it is: the
+  position picks the exit.
 - **Joints** are built from one continuation per component: `(k1 ; k2)` is
   a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
   right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,
@@ -1679,7 +1679,7 @@ become λ binders.
 | `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
 | `μα. c` | local `mu` expression, a flow that closes against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `data` literals, `(A, B)` values |
-| `L(t)` | `enum` values and `data` values — a labelled product — and a sum's alternatives `::i(v)`, labelled `\|0` and `\|1` |
+| `L(t)` | `enum` values and `data` values — a labelled product — and choices `::i(v)`, labelled by their position `\|i` |
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
