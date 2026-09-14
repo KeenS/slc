@@ -120,7 +120,8 @@ pub enum Value {
     },
     /// A captured continuation: the machine's frame stack, reified. It can
     /// be reinstated any number of times, at any time — activating it
-    /// replaces the current stack, which is what makes the jump.
+    /// replaces the running stack down to the nearest handler prompt the two
+    /// hold in common, which is what makes the jump.
     Kont(crate::machine::Kont),
     /// A tuple: its components, in order.
     Tuple(Vec<Value>),

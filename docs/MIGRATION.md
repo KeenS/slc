@@ -1162,6 +1162,40 @@ are refused with the new ones.
 
 The core's own cut, `⟨ v ∥ k ⟩`, is unchanged.
 
+## A `mu` continuation is delimited by its handler
+
+A jump to a `mu` continuation used to replace the whole running stack. It
+now replaces it down to the nearest handler the jump and the capture have in
+common, so a clause that resumes more than once gets every answer back when
+the resumed code jumps to a continuation it captured earlier:
+
+```sl
+effect Choose { fn flip() -> Bool; }
+
+fn pick() -> String / {Choose} {
+    let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+    a
+}
+
+handle pick() {
+    flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+}
+// old: "H" — the first jump to `r` left the clause
+// new: "H T"
+```
+
+A jump from under a handler installed after the capture, by code that was
+handed the continuation, used to leave that handler silently; it is now a
+run-time error, "a continuation left the handler it was captured under".
+Return the continuation out of the `handle` and jump to it there, or pass
+the value out instead of jumping:
+
+```sl
+let r = handle (<k | use_inside) { … };    // old: a jump to `k` inside left the handler
+let r = handle use_inside() { … };         // new: `use_inside` returns; the jump is outside
+<r | k>
+```
+
 ## Removed constructs
 
 ### `spawn`

@@ -18,6 +18,9 @@ pub enum EvalError {
     NoReduction,
     /// The top-level exit continuation was activated.
     Exit(i32),
+    /// A `mu` continuation was jumped to under a handler whose prompt its
+    /// captured stack does not hold.
+    ForeignPrompt,
 }
 
 impl std::fmt::Display for EvalError {
@@ -28,6 +31,10 @@ impl std::fmt::Display for EvalError {
             EvalError::Diverged => write!(f, "evaluation diverged (fuel exhausted)"),
             EvalError::NoReduction => write!(f, "no applicable reduction"),
             EvalError::Exit(code) => write!(f, "exit({code})"),
+            EvalError::ForeignPrompt => write!(
+                f,
+                "a continuation left the handler it was captured under: it was jumped to under another"
+            ),
         }
     }
 }

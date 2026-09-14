@@ -14,9 +14,12 @@
 //! like any other:
 //!
 //! - `mu(k)` captures the frame stack into `Value::Kont`;
-//! - activating a `Kont` *replaces* the frame stack and delivers the value —
-//!   however deep the machine is, however long ago the capture returned,
-//!   however many times it has been used before.
+//! - activating a `Kont` *replaces* the frame stack down to the nearest
+//!   handler prompt the two stacks hold — the same installation, or a
+//!   resumption's copy of it — and delivers the value, however deep the
+//!   machine is, however long ago the capture returned, however many times
+//!   it has been used before. Meeting first a prompt the captured stack does
+//!   not hold is an error: the continuation belongs outside that handler.
 //!
 //! The stack is a persistent cons (`Kont`) with the top at the head, so a
 //! capture — `mu`, or a handler's `resume` — clones one `Rc`: O(1), no
@@ -63,8 +66,11 @@ pub enum Frame {
     /// The callee is evaluated; the argument is being computed.
     ApplyCallee(Value),
     /// A handler delimiter: the `return` clause, and the operation clauses
-    /// of one effect. Sits on the stack under the body it handles.
+    /// of one effect. Sits on the stack under the body it handles. `id` is
+    /// fresh for each installation and kept by a resumption's copy, so a
+    /// `mu` continuation captured under it recognizes the copy.
     Prompt {
+        id: u64,
         clauses: std::rc::Rc<std::collections::HashMap<String, Value>>,
         ret: Value,
     },
@@ -82,10 +88,23 @@ pub enum Frame {
 #[derive(Clone, Debug, Default)]
 pub struct Kont(Option<Rc<KontNode>>);
 
+/// A node knows how many frames lie at and below it, so a jump lines two
+/// stacks up without walking either to the bottom.
 #[derive(Debug)]
 struct KontNode {
     frame: Frame,
+    depth: usize,
     tail: Option<Rc<KontNode>>,
+}
+
+fn depth(link: &Option<Rc<KontNode>>) -> usize {
+    link.as_ref().map_or(0, |node| node.depth)
+}
+
+/// A fresh id for a prompt being installed.
+pub(crate) fn fresh_prompt_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Kont {
@@ -97,7 +116,61 @@ impl Kont {
     /// its own view — the push only extends this handle.
     pub(crate) fn push(&mut self, frame: Frame) {
         let tail = self.0.take();
-        self.0 = Some(Rc::new(KontNode { frame, tail }));
+        self.0 = Some(Rc::new(KontNode { frame, depth: depth(&tail) + 1, tail }));
+    }
+
+    /// Jump to `target`, a `mu` continuation: replace the running stack down
+    /// to the nearest prompt both stacks hold. The running stack is walked
+    /// from the top, and the first of these decides:
+    ///
+    /// - a frame `target` shares: the jump stays within one extent, and the
+    ///   running stack becomes `target`;
+    /// - a prompt `target` holds, itself or a resumption's copy of it:
+    ///   `target`'s frames above that prompt go on it;
+    /// - a prompt `target` does not hold: `target` was captured outside the
+    ///   handler running now, and the jump is refused;
+    /// - the bottom: `target` replaces the whole stack.
+    ///
+    /// A shared frame only shortens the walk — every frame below it is the
+    /// same on both stacks, its prompts included. The two stacks are lined up
+    /// by depth, so the walk costs the frames the jump removes.
+    fn jump(&mut self, target: &Kont) -> Result<(), EvalError> {
+        let mut ours = self.0.clone();
+        let mut theirs = target.0.clone();
+        while let Some(node) = ours {
+            while depth(&theirs) > node.depth {
+                theirs = theirs.and_then(|t| t.tail.clone());
+            }
+            if theirs.as_ref().is_some_and(|t| Rc::ptr_eq(t, &node)) {
+                break;
+            }
+            if let Frame::Prompt { id, .. } = &node.frame {
+                let above = target.frames_above_prompt(*id).ok_or(EvalError::ForeignPrompt)?;
+                *self = Kont(Some(node));
+                for frame in above.into_iter().rev() {
+                    self.push(frame);
+                }
+                return Ok(());
+            }
+            ours = node.tail.clone();
+        }
+        *self = target.clone();
+        Ok(())
+    }
+
+    /// The frames above the prompt `id` on this stack, top first, or `None`
+    /// when the stack holds no such prompt.
+    fn frames_above_prompt(&self, id: u64) -> Option<Vec<Frame>> {
+        let mut above = Vec::new();
+        let mut cursor = self.0.as_ref();
+        while let Some(node) = cursor {
+            if matches!(node.frame, Frame::Prompt { id: found, .. } if found == id) {
+                return Some(above);
+            }
+            above.push(node.frame.clone());
+            cursor = node.tail.as_ref();
+        }
+        None
     }
 
     /// Pop the top frame. A shared node is cloned out rather than unwrapped,
@@ -201,7 +274,11 @@ pub(crate) fn run_apply_under_io(
         .map(|(op, clause)| ((*op).to_string(), Value::Builtin((*clause).to_string())))
         .collect();
     let mut kont = Kont::empty();
-    kont.push(Frame::Prompt { clauses: Rc::new(clauses), ret: Value::Builtin("__io_done".into()) });
+    kont.push(Frame::Prompt {
+        id: fresh_prompt_id(),
+        clauses: Rc::new(clauses),
+        ret: Value::Builtin("__io_done".into()),
+    });
     run(State::Apply { callee, arg }, kont, fuel)
 }
 
@@ -544,9 +621,10 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
             bind_components(arity, arg, &mut branch_env)?;
             State::Command(body, branch_env)
         }
-        // The jump: reinstate the captured stack and deliver the value.
+        // The jump: reinstate the captured stack, down to the nearest prompt
+        // it shares with the running one, and deliver the value.
         Value::Kont(frames) => {
-            *kont = frames;
+            kont.jump(&frames)?;
             State::Return(arg)
         }
         // Performing an operation: find the nearest handler, capture the
@@ -667,7 +745,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
                 }
             }
         }
-        kont.push(Frame::Prompt { clauses: Rc::new(clauses), ret });
+        kont.push(Frame::Prompt { id: fresh_prompt_id(), clauses: Rc::new(clauses), ret });
         return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
     }
     if name == "__match_dispatch" {

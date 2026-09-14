@@ -21,9 +21,9 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The open work is delimited control — `mu`
-delimited by the nearest prompt, and `reset` — and then settling evaluation
-by polarity: delayed computations still need to carry their effects.
+No large feature is mid-flight. The open work is delimited control — `reset`
+— and then settling evaluation by polarity: delayed computations still need
+to carry their effects.
 
 ## Known limits
 
@@ -65,19 +65,6 @@ by polarity: delayed computations still need to carry their effects.
   `IO` section still gives the old reason, that an outcome needs a type the
   operation can name.
 
-- **A `mu` that performs escapes a resuming clause.** A `mu` captures the
-  whole continuation, past any handler's prompt. When its body performs an
-  operation, a clause that resumes more than once loses every resumption
-  after the first: the first jump to the `mu`'s continuation leaves the
-  clause instead of returning into it. Under
-  `flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add`,
-  `let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> }`
-  answers `"H"`; the same program without the `mu`, or with `flip()`
-  performed before it, answers `"H T"`. It is what kept `if` from becoming a
-  prelude command: a value-returning one needs a `mu` around a condition
-  that may perform, so `if` became a `match` instead. Fixed by "`mu` is
-  delimited by the nearest prompt".
-
 ### Of the implementation
 
 - **A run is capped at 1,000,000 machine steps.** The driver hands the
@@ -90,86 +77,17 @@ by polarity: delayed computations still need to carry their effects.
 ### Delimited control
 
 Decided: `mu`'s continuation stays abortive (a consumer, `-A`) and is
-delimited by the nearest delimiter —
-a handler or a `reset`; `reset e` is sugar for a handler with no clauses; and
+delimited by the nearest handler the jump shares with the capture
+(`DESIGN.md` §6); `reset e` is sugar for a handler with no clauses; and
 composable capture is deferred. The semantics follow Racket's `call/cc` (The
 Racket Reference, §10.4 "Continuations") and the reading of a delimiter as a
 dynamically rebound top-level continuation (Ariola, Herbelin and Sabry, "A
 type-theoretic foundation of delimited continuations", HOSC 2009; Downen and
 Ariola, "Delimited control and computational effects", JFP 2014).
 
-Resumptions already compose onto the running stack (`DESIGN.md`, "Effects
-and handlers"), which the jump rule below needs. The entries land in order:
-`reset` is only observable once `mu` stops at a delimiter.
-
-- **`mu` is delimited by the nearest prompt.**
-
-  The semantics:
-  - **Capture stays O(1).** `Value::Kont` still holds the whole stack, plus
-    the id of the nearest `Prompt` in it: its delimiter. Every `Prompt` gets
-    a fresh id when pushed, by `__handle` or for the runtime's `IO` prompt,
-    and a resumption's copy of a prompt keeps its id.
-  - **A jump `<v | k>` walks the current stack from the top** and stops at
-    the first of:
-    - (a) a frame `k`'s stack shares. It pushes `k`'s frames above that frame
-      and delivers `v`. This is a jump within one extent, as today.
-    - (b) a `Prompt` whose id is `k`'s delimiter. It pushes `k`'s frames
-      above that delimiter and delivers `v`. This is the multi-shot case,
-      where a resumption's frames are copies.
-    - (c) any other `Prompt`. This is a run-time error: a continuation
-      captured under one handler was used under another.
-  - **Rule (a) keeps a clause's cut working.** A clause may cut into a
-    continuation it was handed as an operation argument, the way
-    `judge(n, ok, bad)` routes its outcomes in `DESIGN.md`. The clause runs
-    below its prompt, and the frames below are shared.
-  - **Rule (c) is scoped resumptions applied to `mu`** (Xie et al., "Effect
-    handlers, evidently", ICFP 2020). It keeps answer types out of the type
-    system. A static check is later work.
-  - **Exits are unaffected.** `exit` is the runtime's `EXIT` builtin, not a
-    captured continuation, so leaving a program from inside a handler still
-    works. Only `mu` builds a `Value::Kont`.
-
-  What changes for programs:
-  - The H/T example under "A `mu` that performs escapes a resuming clause"
-    answers `"H T"`.
-  - A `mu` continuation used to jump out of a handler's extent, from a place
-    that shares no frame with it, now fails by rule (c).
-  - The `handle (mu i64 { out <= … })` idioms in `examples/effects.sl` and
-    `examples/latent_effects.sl` keep their outputs. The cut into `out`
-    happens in the handled extent or in a resumed slice.
-
-  1. **Tests first:**
-     - the H/T program answers `"H T"`;
-     - a clause that cuts into a `mu` continuation it was passed as an
-       operation argument;
-     - a `mu` continuation jumped to from inside a handler installed after
-       its capture reports the rule (c) error;
-     - the existing examples cover the `handle (mu …)` idioms.
-  2. **`KontNode` gains its depth.** The first shared frame is then found by
-     walking both stacks to equal depth and then in lockstep, so a jump costs
-     the frames it removes, not the stack's depth.
-  3. **`Frame::Prompt` gains `id: u64`,** assigned from a machine-wide
-     counter at push. `Value::Kont` records its delimiter's id; `Node::Mu`
-     reads the nearest prompt, which at top level is the runtime's `IO`
-     prompt.
-  4. **`Value::Kont` activation implements (a)–(c),** and `EvalError` gains
-     the variant for (c), with a message saying the continuation left the
-     handler it was captured under.
-  5. **Update `Value`'s equality, display and `type_of`** for the new shape.
-  6. **Docs.**
-     - `DESIGN.md` §6: `mu` captures up to its delimiter, the jump rule, and
-       the error.
-     - §11: the paragraph "Activating `k` *reinstates* that stack".
-     - The effects section: the note that a clause may still cut into
-       continuations it is handed.
-     - `MIGRATION.md`: a section for the changed jump.
-     - This file: remove the known limit "A `mu` that performs escapes a
-       resuming clause". Whether `if` can now be a prelude command goes to
-       the effects discussion.
-
-- **`reset e` delimits without handling.** Needs "`mu` is delimited by the
-  nearest prompt". `reset e` is a handler with no clauses: it answers no
-  operation, so every operation passes through it, and its value is `e`'s.
+- **`reset e` delimits without handling.** `reset e` is a handler with no
+  clauses: it answers no operation, so every operation passes through it,
+  and its value is `e`'s.
   `handle e { }` already runs this way — lowering gives a missing `return`
   clause the identity (`crates/slc-syntax/src/lower.rs`, `Expr::Handle`) —
   so `reset` is surface syntax only.

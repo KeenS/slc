@@ -551,6 +551,34 @@ command, or sending an outcome to one of them. One continuation per outcome
 *is* the outcome type — see §11. A helper that only computes
 with values — `at` above — stays an ordinary positive `fn`.
 
+A handler delimits `mu`. `k` holds the whole rest of the program, but a
+jump to it replaces the running continuation only down to the nearest
+handler the two have in common — the handler `k` was captured under, or the
+copy of it a `resume` reinstated. So a clause that resumes twice gets both
+answers back, even when the resumed code jumps to a `k` captured before it
+performed:
+
+```sl
+effect Choose { fn flip() -> Bool; }
+
+fn pick() -> String / {Choose} {
+    let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+    a
+}
+
+// "H T": each resumption's jump to `r` lands in that resumption.
+handle pick() {
+    flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+}
+```
+
+A jump made under a handler `k` was not captured under — one installed after
+the capture, around code that was handed `k` — is an error at run time: "a
+continuation left the handler it was captured under". The runtime's `IO`
+handler sits under every program (§8, "`IO`"), so a `mu` anywhere in `main`
+is delimited by it; `exit` is not a captured continuation, and leaves from
+anywhere.
+
 ## 7. Additive data
 
 ### Positive additive construction
@@ -1154,6 +1182,9 @@ effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
 judge(n, ok, bad) => match (<(n, 3) | gt) { True => <"big" | ok>, False => <"small" | bad> },
 ```
 
+The clause runs below its handler, on the frames the continuations it is
+handed were captured on, so its cut is an ordinary jump (§6).
+
 Demand-time effects are the latent rows above. Between the three, a
 `<- T` operation form would add spelling, not power, so the grammar keeps
 operations to `-> T`.
@@ -1738,8 +1769,9 @@ The evaluator is an abstract machine in the shape the calculus suggests: a
 state is what is being evaluated together with an explicit stack of frames —
 the continuation, held as data rather than as host stack. A cut pushes the
 co-term side as a frame; `μ` captures the stack into a value; a captured
-continuation is activated by reinstating its stack, which is why it outlives
-its `mu` and can be used more than once. `select` branches stay unevaluated
+continuation is activated by reinstating its stack, down to the nearest
+handler it shares with the running one, which is why it outlives its `mu`
+and can be used more than once. `select` branches stay unevaluated
 until activation chooses one, and a fuel bound turns divergence into an
 error.
 
@@ -1766,6 +1798,14 @@ slice's frames, not the stack's depth. A cut into a co-variable that only
 forwards — one nothing binds, or one holding the very stack running now —
 pushes no frame, so a loop whose body ends in such a cut runs in constant
 space, and so does a handler that resumes in tail position around it.
+
+A handler's prompt carries an id, fresh at each installation and kept by a
+resumption's copy. A jump walks the running stack from the top: at the first
+frame the captured stack shares, the captured stack replaces it; at the
+first prompt, the captured frames above that prompt go on it, or, when the
+captured stack holds no prompt with its id, the jump is the error of §6.
+Every frame records the depth beneath it, so the two stacks are lined up
+without walking either to the bottom.
 
 ### Printed form
 
@@ -1888,7 +1928,8 @@ fn lem() -> Choice {
 A captured continuation is a value with no expiry: the evaluator is an
 abstract machine whose continuation is an explicit frame stack, and `mu`
 captures by reifying it. Activating `k` *reinstates* that stack — after the
-`mu` has answered, from however deep, as many times as it is reached — so
+`mu` has answered, from however deep, as many times as it is reached, down
+to the nearest handler the two stacks share (§6) — so
 taking `lem()`'s offer re-enters the very `match` that already received
 `Refutes`, which this time holds.
 

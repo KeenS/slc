@@ -1935,3 +1935,94 @@ fn a_continuation_captured_in_resumed_code_continues_past_the_handler() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["captured", "42"]);
 }
+
+#[test]
+fn a_mu_whose_body_performs_returns_into_every_resumption() {
+    // `r` is captured under the handler, so jumping to it from a resumed copy
+    // of that handler's extent lands in the copy: each resumption answers.
+    let dir = std::env::temp_dir().join("slc_test_mu_under_resuming_clause.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Choose { fn flip() -> Bool; }
+
+        fn pick() -> String / {Choose} {
+            let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+            a
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let all = handle pick() {
+                flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+                return(s) => s,
+            };
+            <all | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "H T\n");
+}
+
+#[test]
+fn a_clause_cuts_into_a_continuation_it_is_handed() {
+    // The clause runs below its prompt, on frames `k` shares, so the cut is a
+    // jump within one extent.
+    let dir = std::env::temp_dir().join("slc_test_clause_cuts_handed_continuation.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Judge { fn judge(n: i64, ok: -String, bad: -String) -> (;); }
+
+        command main | (exit: -i32) / {IO} {
+            let verdict = handle (mu String { k <= <(5, k, k) | judge> }) {
+                judge(n, ok, bad) => match (<(n, 3) | gt) { True => <"big" | ok>, False => <"small" | bad> },
+                return(s) => s,
+            };
+            <verdict | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "big\n");
+}
+
+#[test]
+fn a_continuation_jumped_to_under_a_later_handler_is_an_error() {
+    // `k` is captured outside any handler of the program's own; `use_inside`
+    // jumps to it from under a handler installed afterwards, a prompt `k`'s
+    // stack does not hold.
+    let dir = std::env::temp_dir().join("slc_test_continuation_under_later_handler.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Reader { fn config() -> i64; }
+
+        fn use_inside(k: -i64) -> i64 / {Reader} {
+            <config() | k>
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let chosen = mu (i64 | -i64) { out <=
+                <(mu i64 { k <= <::1(k) | out> }) | x => ::0(x) | out>
+            };
+            match chosen {
+                ::0(n) => { <n | println; <0 | exit> },
+                ::1(k) => {
+                    let r = handle (<k | use_inside) {
+                        config(): resume => <7 | resume,
+                        return(v) => v,
+                    };
+                    <r | println;
+                    <1 | exit>
+                },
+            }
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "stdout: {stdout}");
+    assert!(stdout.is_empty(), "stdout: {stdout}");
+    assert!(stderr.contains("left the handler it was captured under"), "stderr: {stderr}");
+}
