@@ -1271,10 +1271,8 @@ The commands keep their shapes. A handler of the program's own answers the
 operations, `fs::read_file` and its siblings, each with a sum of its outcomes:
 
 ```sl
-use fs::read_file;
-
 fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-    handle <(,) | program { read_file(path): resume => <::0("canned") | resume }
+    handle <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
 }
 ```
 

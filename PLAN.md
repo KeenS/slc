@@ -54,19 +54,6 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 4. A handler clause may name its operation by path
-
-`fs::read_file(path): resume => …` does not parse, so a handler outside the
-module that declares the effect needs `use fs::read_file;` first, while rows
-already take paths (`{fs::Fs}`).
-
-1. **Tests first:** a handler for `fs::Fs` written with `fs::read_file(…)`
-   clauses and no `use` answers the operation.
-2. **The parser.** A clause's operation name is a path, as a row's effect is
-   (`parse_effect_row`); resolution already qualifies clause names.
-3. **Docs.** `DESIGN.md`'s file-system example and `MIGRATION.md`'s section
-   "File operations are an effect" drop the `use`.
-
 ### 5. A computation is handed to a handler without a dummy parameter
 
 Installing a handler function reads `<(fn(u: (,)) { … }) | fs::real`, and a

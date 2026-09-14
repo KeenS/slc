@@ -1191,14 +1191,13 @@ one of the program's own. A handler is an ordinary function taking the
 computation it handles —
 
 ```sl
-use fs::read_file;
-
 fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-    handle <(,) | program { read_file(path): resume => <::0("canned") | resume }
+    handle <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
 }
 ```
 
-— so `fs` exports `real` as a function, and a test installs its own. An
+— so `fs` exports `real` as a function, and a test installs its own. A
+clause names its operation as a row names its effect, by path. An
 operation answers with its outcome as a sum, `read_file(path) -> (String |
 String)`, which the command then offers to its continuations: a clause runs
 below its handler, so the continuations are activated by the command, under

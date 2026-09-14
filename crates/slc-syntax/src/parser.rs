@@ -1878,7 +1878,13 @@ impl Parser {
                         self.expect(TokenKind::FatArrow, "`=>` in a return clause")?;
                         ret = Some((binder, Box::new(self.parse_expr()?)));
                     } else {
-                        let op = self.expect_ident("an operation name")?;
+                        // An operation is named as its effect is, by its
+                        // path when it is a module's: `fs::read_file`.
+                        let mut op = self.expect_ident("an operation name")?;
+                        while self.eat(&TokenKind::ColonColon) {
+                            op.push_str("::");
+                            op.push_str(&self.expect_ident("an operation name after `::`")?);
+                        }
                         self.expect(TokenKind::LParen, "`(` after the operation")?;
                         let mut params = Vec::new();
                         if !self.eat(&TokenKind::RParen) {

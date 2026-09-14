@@ -1190,6 +1190,29 @@ fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
 }
 
 #[test]
+fn a_handler_clause_names_its_operation_by_path() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_fs_clause_path.sl",
+        r#"fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+            handle <(,) | program {
+                fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let text = <(fn(u: (,)) {
+                mu String { k <= <"nowhere.txt" | fs::read | (k & select String { m => <"failed" | k> })> }
+            }) | canned;
+            <text | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "canned nowhere.txt\n");
+}
+
+#[test]
 fn a_file_operation_needs_a_handler_around_it() {
     let (_, stderr, ok) = run_sl_with(
         &[],
