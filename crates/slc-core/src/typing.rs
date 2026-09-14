@@ -137,6 +137,7 @@ impl Unification {
             Type::Named(name, args) => {
                 Type::Named(name.clone(), args.iter().map(|a| self.apply(a)).collect())
             }
+            Type::Rowed(t, row) => Type::Rowed(Box::new(self.apply(t)), row.clone()),
             atom => atom.clone(),
         }
     }
@@ -149,7 +150,7 @@ impl Unification {
             Type::Tensor(xs) | Type::Par(xs) | Type::With(xs) | Type::Sum(xs) => {
                 xs.iter().any(|x| self.occurs(var, x))
             }
-            Type::Dual(t) => self.occurs(var, t),
+            Type::Dual(t) | Type::Rowed(t, _) => self.occurs(var, t),
             Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
             _ => false,
         }
@@ -195,6 +196,13 @@ impl Unification {
                 if xs.is_empty() =>
             {
                 Ok(Type::BOTTOM)
+            }
+            // Rows fit by inclusion where a value meets its slot, and the
+            // checker records that; unification itself asks for one row on
+            // both sides.
+            (Type::Rowed(a, row_a), Type::Rowed(b, row_b)) if row_a == row_b => {
+                let inner = self.unify(a, b)?;
+                Ok(Type::Rowed(Box::new(inner), row_a.clone()))
             }
             (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
@@ -282,7 +290,7 @@ pub fn contains_var(ty: &Type) -> bool {
             xs.iter().any(contains_var)
         }
 
-        Type::Dual(t) => contains_var(t),
+        Type::Dual(t) | Type::Rowed(t, _) => contains_var(t),
         Type::Named(_, args) => args.iter().any(contains_var),
         _ => false,
     }

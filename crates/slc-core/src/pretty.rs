@@ -3,7 +3,7 @@
 use crate::command::Command;
 use crate::coterm::CoTerm;
 use crate::term::Term;
-use crate::types::{Base, Type};
+use crate::types::{Base, Row, Type};
 
 impl std::fmt::Display for Base {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -54,7 +54,26 @@ impl std::fmt::Display for Type {
                 }
                 Ok(())
             }
+            // A row prints inside the parentheses of the type it is on, as
+            // the surface writes it: `(i64 -> i64 / {Exn})`.
+            Type::Rowed(t, row) => {
+                let inner = t.to_string();
+                match inner.strip_prefix('(').and_then(|body| body.strip_suffix(')')) {
+                    Some(body) => write!(f, "({body} / {row})"),
+                    None => write!(f, "({inner} / {row})"),
+                }
+            }
         }
+    }
+}
+
+impl std::fmt::Display for Row {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts: Vec<String> = self.effects.iter().cloned().collect();
+        if let Some(tail) = self.tail {
+            parts.push(format!("..?{tail}"));
+        }
+        write!(f, "{{{}}}", parts.join(", "))
     }
 }
 

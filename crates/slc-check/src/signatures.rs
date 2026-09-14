@@ -316,6 +316,7 @@ fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) ->
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| freshen(a, seen, uni)).collect())
         }
+        Type::Rowed(t, row) => Type::Rowed(Box::new(freshen(t, seen, uni)), row.clone()),
         atom => atom.clone(),
     }
 }

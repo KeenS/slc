@@ -15,6 +15,22 @@ pub enum Base {
     File,
 }
 
+/// What running a value performs: effects by name, and at most one row
+/// variable standing for the rest. A negative type without a row performs
+/// nothing (`docs/design-notes/rows-in-types.md`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Row {
+    pub effects: std::collections::BTreeSet<String>,
+    pub tail: Option<usize>,
+}
+
+impl Row {
+    /// Performs nothing: no effect, and no variable that could stand for one.
+    pub fn is_empty(&self) -> bool {
+        self.effects.is_empty() && self.tail.is_none()
+    }
+}
+
 /// A type in the λ̄μμ̃ calculus, with explicit positive/negative polarity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
@@ -45,6 +61,12 @@ pub enum Type {
     /// are opaque to core unification; declaration-specific fields and
     /// variants are checked by the surface checker.
     Named(String, Vec<Type>),
+    /// A negative type together with what running a value of it performs:
+    /// calling a function, feeding a consumer, demanding an item. Never
+    /// built with the empty row, which is the type alone. Its dual keeps the
+    /// row, so `dual` stays an involution; a positive one means nothing of
+    /// its own.
+    Rowed(Box<Type>, Row),
 }
 
 impl Type {
@@ -71,8 +93,14 @@ impl Type {
             Type::Named(name, own) => {
                 Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
             }
+            Type::Rowed(t, row) => Type::Rowed(Box::new(t.instantiate(args)), row.clone()),
             atom => atom.clone(),
         }
+    }
+
+    /// `ty`, performing `row` when it runs. The empty row is `ty` itself.
+    pub fn rowed(ty: Type, row: Row) -> Type {
+        if row.is_empty() { ty } else { Type::Rowed(Box::new(ty), row) }
     }
 
     /// A function type: `A -> B` is `(dual(A) ; B)`, so its dual is
@@ -110,6 +138,7 @@ impl Type {
                 Type::Dual(Box::new(Type::Named(name.clone(), args.clone())))
             }
             Type::Param(i) => Type::Dual(Box::new(Type::Param(*i))),
+            Type::Rowed(t, row) => Type::Rowed(Box::new(t.dual()), row.clone()),
         }
     }
 
@@ -118,6 +147,7 @@ impl Type {
         match self {
             // The dual of a negative type is positive.
             Type::Dual(inner) => inner.is_negative(),
+            Type::Rowed(inner, _) => inner.is_positive(),
             other => matches!(
                 other,
                 Type::Var(_)
@@ -135,6 +165,7 @@ impl Type {
         match self {
             // The dual of a positive type is negative.
             Type::Dual(inner) => inner.is_positive(),
+            Type::Rowed(inner, _) => inner.is_negative(),
             other => matches!(
                 other,
                 Type::Var(_) | Type::Param(_) | Type::Neg(_) | Type::Par(..) | Type::With(..)
@@ -194,6 +225,53 @@ mod tests {
         let t = Type::Sum(vec![Type::Pos(Base::I32), Type::Pos(Base::Char)]);
         let expected = Type::With(vec![Type::Neg(Base::I32), Type::Neg(Base::Char)]);
         assert_eq!(t.dual(), expected);
+    }
+
+    fn exn() -> Row {
+        Row { effects: ["Exn".to_string()].into_iter().collect(), tail: None }
+    }
+
+    #[test]
+    fn a_row_rides_through_dual() {
+        let function = Type::rowed(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64)), exn());
+        let consumer = Type::rowed(Type::Neg(Base::Str), exn());
+        for t in [function, consumer] {
+            assert_eq!(t.dual().dual(), t, "dual(dual({t:?})) != {t:?}");
+            assert!(matches!(t.dual(), Type::Rowed(_, ref row) if *row == exn()), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn the_empty_row_is_no_wrapper() {
+        assert_eq!(Type::rowed(Type::Neg(Base::I64), Row::default()), Type::Neg(Base::I64));
+    }
+
+    #[test]
+    fn a_rowed_type_has_the_polarity_beneath() {
+        let consumer = Type::rowed(Type::Neg(Base::I64), exn());
+        assert!(consumer.is_negative() && !consumer.is_positive());
+        assert!(consumer.dual().is_positive() && !consumer.dual().is_negative());
+    }
+
+    #[test]
+    fn rows_unify_only_when_equal() {
+        let mut uni = crate::typing::Unification::new();
+        let var = uni.fresh_var();
+        let with_exn = Type::rowed(Type::arrow(var.clone(), Type::Pos(Base::I64)), exn());
+        let expected = Type::rowed(Type::arrow(Type::Pos(Base::Str), Type::Pos(Base::I64)), exn());
+        assert!(uni.unify(&expected, &with_exn).is_ok());
+        assert_eq!(uni.apply(&var), Type::Pos(Base::Str));
+        let io = Row { effects: ["IO".to_string()].into_iter().collect(), tail: None };
+        let with_io = Type::rowed(Type::Neg(Base::I64), io);
+        assert!(uni.unify(&Type::rowed(Type::Neg(Base::I64), exn()), &with_io).is_err());
+    }
+
+    #[test]
+    fn a_row_prints_as_the_surface_writes_it() {
+        let function = Type::rowed(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64)), exn());
+        assert_eq!(function.to_string(), "(+i64 -> +i64 / {Exn})");
+        let open = Row { effects: exn().effects, tail: Some(3) };
+        assert_eq!(Type::rowed(Type::Neg(Base::Str), open).to_string(), "(-String / {Exn, ..?3})");
     }
 
     #[test]
