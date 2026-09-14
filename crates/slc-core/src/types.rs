@@ -253,17 +253,69 @@ mod tests {
         assert!(consumer.dual().is_positive() && !consumer.dual().is_negative());
     }
 
+    fn io() -> Row {
+        Row { effects: ["IO".to_string()].into_iter().collect(), tail: None }
+    }
+
     #[test]
-    fn rows_unify_only_when_equal() {
-        let mut uni = crate::typing::Unification::new();
+    fn a_value_meeting_its_slot_records_that_its_row_fits() {
+        use crate::typing::{RowAtom, RowConstraint, Unification};
+        let mut uni = Unification::new();
         let var = uni.fresh_var();
-        let with_exn = Type::rowed(Type::arrow(var.clone(), Type::Pos(Base::I64)), exn());
-        let expected = Type::rowed(Type::arrow(Type::Pos(Base::Str), Type::Pos(Base::I64)), exn());
-        assert!(uni.unify(&expected, &with_exn).is_ok());
+        let value = Type::rowed(Type::arrow(var.clone(), Type::Pos(Base::I64)), io());
+        let slot = Type::rowed(Type::arrow(Type::Pos(Base::Str), Type::Pos(Base::I64)), exn());
+        assert!(uni.unify(&slot, &value).is_ok(), "rows do not stop unification");
         assert_eq!(uni.apply(&var), Type::Pos(Base::Str));
-        let io = Row { effects: ["IO".to_string()].into_iter().collect(), tail: None };
-        let with_io = Type::rowed(Type::Neg(Base::I64), io);
-        assert!(uni.unify(&Type::rowed(Type::Neg(Base::I64), exn()), &with_io).is_err());
+        assert_eq!(uni.row_constraints(), [RowConstraint { sub: io(), sup: exn() }]);
+        let failures = uni.solve_rows(uni.row_constraints());
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].atom, RowAtom::Effect("IO".into()));
+    }
+
+    #[test]
+    fn a_pure_value_fits_any_slot_and_a_row_fits_no_pure_one() {
+        let mut uni = crate::typing::Unification::new();
+        let pure = Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64));
+        let rowed = Type::rowed(pure.clone(), exn());
+        assert!(uni.unify(&rowed, &pure).is_ok());
+        assert!(uni.solve_rows(uni.row_constraints()).is_empty());
+        assert!(uni.unify(&pure, &rowed).is_ok());
+        assert_eq!(uni.solve_rows(uni.row_constraints()).len(), 1);
+    }
+
+    #[test]
+    fn a_flexible_row_grows_to_what_flows_into_it_and_a_rigid_one_stays_itself() {
+        use crate::typing::{RowAtom, RowConstraint, Unification};
+        let mut uni = Unification::new();
+        let body = uni.fresh_row();
+        let declared = uni.fresh_rigid_row();
+        let open = |tail| Row { effects: Default::default(), tail: Some(tail) };
+        // What the body performs flows into its row, and the body's row must
+        // fit inside `{IO, ..E}`.
+        let constraints = vec![
+            RowConstraint { sub: exn(), sup: open(body) },
+            RowConstraint { sub: open(declared), sup: open(body) },
+            RowConstraint { sub: open(body), sup: Row { tail: Some(declared), ..io() } },
+        ];
+        let failures = uni.solve_rows(&constraints);
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert_eq!(failures[0].atom, RowAtom::Effect("Exn".into()));
+        // Handled, `Exn` no longer reaches the declaration's row.
+        let handled = vec![
+            RowConstraint { sub: exn(), sup: Row { tail: Some(body), ..exn() } },
+            RowConstraint { sub: open(declared), sup: open(body) },
+            RowConstraint { sub: open(body), sup: Row { tail: Some(declared), ..io() } },
+        ];
+        assert!(uni.solve_rows(&handled).is_empty());
+    }
+
+    #[test]
+    fn a_nested_row_must_be_the_same_on_both_sides() {
+        let mut uni = crate::typing::Unification::new();
+        let pure = Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64));
+        let list = |f: Type| Type::Named("List".into(), vec![f]);
+        assert!(uni.unify(&list(Type::rowed(pure.clone(), exn())), &list(pure)).is_ok());
+        assert_eq!(uni.solve_rows(uni.row_constraints()).len(), 1, "{:?}", uni.row_constraints());
     }
 
     #[test]

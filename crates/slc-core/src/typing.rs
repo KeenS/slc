@@ -3,7 +3,7 @@
 use crate::command::Command;
 use crate::coterm::CoTerm;
 use crate::term::Term;
-use crate::types::Type;
+use crate::types::{Row, Type};
 use std::collections::HashMap;
 
 /// Term context: `Γ`
@@ -84,7 +84,8 @@ impl std::fmt::Display for TypeError {
     }
 }
 
-/// A unification state for type variables.
+/// A unification state for type variables, and the row constraints met on
+/// the way.
 #[derive(Debug, Clone, Default)]
 pub struct Unification {
     /// Rigid variables: type parameters seen from inside their own body.
@@ -93,6 +94,36 @@ pub struct Unification {
     rigid: std::collections::HashSet<usize>,
     substitutions: HashMap<usize, Type>,
     next_var: usize,
+    /// Rigid row variables: a declaration's own `E`, seen from its body.
+    rigid_rows: std::collections::HashSet<usize>,
+    next_row: usize,
+    /// Every "this row fits inside that one" recorded so far, in order.
+    row_constraints: Vec<RowConstraint>,
+}
+
+/// One row fitting inside another: what a value performs, inside what its
+/// slot allows (`docs/design-notes/rows-in-types.md`, "Subeffecting").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowConstraint {
+    pub sub: Row,
+    pub sup: Row,
+}
+
+/// What a solved row holds: an effect, or a rigid row variable standing for
+/// whatever its declaration's caller chose.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RowAtom {
+    Effect(String),
+    Rigid(usize),
+}
+
+/// A constraint no choice of rows satisfies: the atom its smaller side holds
+/// that its larger side does not allow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowFailure {
+    /// The position of the constraint, in the order it was recorded.
+    pub constraint: usize,
+    pub atom: RowAtom,
 }
 
 impl Unification {
@@ -118,6 +149,89 @@ impl Unification {
         self.next_var += 1;
         self.rigid.insert(v);
         Type::Var(v)
+    }
+
+    /// A flexible row variable: what some body performs, solved from below.
+    pub fn fresh_row(&mut self) -> usize {
+        let v = self.next_row;
+        self.next_row += 1;
+        v
+    }
+
+    /// A rigid row variable: a declaration's row parameter, from its body.
+    pub fn fresh_rigid_row(&mut self) -> usize {
+        let v = self.fresh_row();
+        self.rigid_rows.insert(v);
+        v
+    }
+
+    pub fn is_rigid_row(&self, var: usize) -> bool {
+        self.rigid_rows.contains(&var)
+    }
+
+    /// Record that `sub` fits inside `sup`. Nothing is checked until the
+    /// constraints are solved.
+    pub fn constrain_row(&mut self, sub: Row, sup: Row) {
+        if !sub.is_empty() {
+            self.row_constraints.push(RowConstraint { sub, sup });
+        }
+    }
+
+    /// The row constraints recorded so far, in order.
+    pub fn row_constraints(&self) -> &[RowConstraint] {
+        &self.row_constraints
+    }
+
+    /// Solve `constraints`: every flexible row variable takes the least row
+    /// its lower bounds give it, and each constraint whose larger side is
+    /// concrete or rigid is checked against that. What does not fit is
+    /// returned, one failure per atom, in the constraints' order.
+    pub fn solve_rows(&self, constraints: &[RowConstraint]) -> Vec<RowFailure> {
+        let mut solved: HashMap<usize, std::collections::BTreeSet<RowAtom>> = HashMap::new();
+        let atoms = |row: &Row, solved: &HashMap<usize, std::collections::BTreeSet<RowAtom>>| {
+            let mut out: std::collections::BTreeSet<RowAtom> =
+                row.effects.iter().cloned().map(RowAtom::Effect).collect();
+            match row.tail {
+                Some(tail) if self.is_rigid_row(tail) => {
+                    out.insert(RowAtom::Rigid(tail));
+                }
+                Some(tail) => out.extend(solved.get(&tail).into_iter().flatten().cloned()),
+                None => {}
+            }
+            out
+        };
+        loop {
+            let mut changed = false;
+            for constraint in constraints {
+                let Some(tail) = constraint.sup.tail.filter(|t| !self.is_rigid_row(*t)) else {
+                    continue;
+                };
+                let grown: Vec<RowAtom> = atoms(&constraint.sub, &solved)
+                    .into_iter()
+                    .filter(|atom| !matches!(atom, RowAtom::Effect(e) if constraint.sup.effects.contains(e)))
+                    .collect();
+                let entry = solved.entry(tail).or_default();
+                for atom in grown {
+                    changed |= entry.insert(atom);
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut failures = Vec::new();
+        for (index, constraint) in constraints.iter().enumerate() {
+            if constraint.sup.tail.is_some_and(|t| !self.is_rigid_row(t)) {
+                continue;
+            }
+            let allowed = atoms(&constraint.sup, &solved);
+            for atom in atoms(&constraint.sub, &solved) {
+                if !allowed.contains(&atom) {
+                    failures.push(RowFailure { constraint: index, atom });
+                }
+            }
+        }
+        failures
     }
 
     pub fn apply(&self, ty: &Type) -> Type {
@@ -164,7 +278,27 @@ impl Unification {
         Ok(())
     }
 
+    /// Unify what a slot expects with the value that meets it. Where both
+    /// carry rows, the value's row must fit inside the slot's, which is
+    /// recorded for the solver; a row nested inside a component must be the
+    /// same row on both sides.
     pub fn unify(&mut self, expected: &Type, actual: &Type) -> Result<Type, TypeError> {
+        self.unify_in(expected, actual, false)
+    }
+
+    fn fit_rows(&mut self, expected: &Row, actual: &Row, nested: bool) {
+        self.constrain_row(actual.clone(), expected.clone());
+        if nested {
+            self.constrain_row(expected.clone(), actual.clone());
+        }
+    }
+
+    fn unify_in(
+        &mut self,
+        expected: &Type,
+        actual: &Type,
+        nested: bool,
+    ) -> Result<Type, TypeError> {
         let expected = self.apply(expected);
         let actual = self.apply(actual);
         match (&expected, &actual) {
@@ -197,14 +331,27 @@ impl Unification {
             {
                 Ok(Type::BOTTOM)
             }
-            // Rows fit by inclusion where a value meets its slot, and the
-            // checker records that; unification itself asks for one row on
-            // both sides.
-            (Type::Rowed(a, row_a), Type::Rowed(b, row_b)) if row_a == row_b => {
-                let inner = self.unify(a, b)?;
-                Ok(Type::Rowed(Box::new(inner), row_a.clone()))
+            // A row is compared, not unified: the value's must fit inside the
+            // slot's. A type without one performs nothing.
+            (Type::Rowed(a, row_a), Type::Rowed(b, row_b)) => {
+                let (row_a, row_b) = (row_a.clone(), row_b.clone());
+                self.unify_in(a, b, nested)?;
+                self.fit_rows(&row_a, &row_b, nested);
+                Ok(self.apply(&expected))
             }
-            (Type::Dual(a), Type::Dual(b)) => self.unify(a, b),
+            (Type::Rowed(a, row_a), other) => {
+                let row_a = row_a.clone();
+                self.unify_in(a, other, nested)?;
+                self.fit_rows(&row_a, &Row::default(), nested);
+                Ok(self.apply(&expected))
+            }
+            (other, Type::Rowed(b, row_b)) => {
+                let row_b = row_b.clone();
+                self.unify_in(other, b, nested)?;
+                self.fit_rows(&Row::default(), &row_b, nested);
+                Ok(self.apply(&expected))
+            }
+            (Type::Dual(a), Type::Dual(b)) => self.unify_in(a, b, nested),
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
             // `X` meets `dual(B)`.
             (Type::Dual(inner), other) | (other, Type::Dual(inner)) => {
@@ -219,14 +366,14 @@ impl Unification {
                         actual: actual.clone(),
                     });
                 }
-                self.unify(inner, &flipped)?;
+                self.unify_in(inner, &flipped, nested)?;
                 Ok(self.apply(&expected))
             }
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
                 let args = xs
                     .iter()
                     .zip(ys)
-                    .map(|(x, y)| self.unify(x, y))
+                    .map(|(x, y)| self.unify_in(x, y, true))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Named(a.clone(), args))
             }
@@ -241,7 +388,7 @@ impl Unification {
                 let components = xs
                     .iter()
                     .zip(ys)
-                    .map(|(x, y)| self.unify(x, y))
+                    .map(|(x, y)| self.unify_in(x, y, true))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(match &expected {
                     Type::Tensor(_) => Type::Tensor(components),
