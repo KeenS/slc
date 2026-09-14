@@ -2,7 +2,7 @@
 //! builtins alike, with template variables instantiated afresh per call.
 
 use crate::declarations::Declarations;
-use slc_core::types::{Base, Type};
+use slc_core::types::{Base, Row, Type};
 use slc_core::typing::Unification;
 use slc_syntax::ast::{Decl, Program, TypeExpr};
 use std::collections::HashMap;
@@ -14,6 +14,10 @@ pub struct FunctionSignature {
     /// declaration's continuation row.
     pub continuations: Vec<bool>,
     pub result: Option<Type>,
+    /// What a call performs: the declared row, an operation's effect, or the
+    /// `IO` a file primitive reaches. A row variable is a template, by the
+    /// position of its type parameter, instantiated afresh at every call.
+    pub row: Row,
     /// Trait bounds, as (type-parameter variable index, trait name): the
     /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
     /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
@@ -161,6 +165,9 @@ pub(crate) fn function_types(
             (
                 builtin.name.to_string(),
                 FunctionSignature {
+                    row: crate::effects::builtin_effect(builtin.name)
+                        .map(|effect| Row { effects: [effect.to_string()].into(), tail: None })
+                        .unwrap_or_default(),
                     params: builtin.params,
                     continuations: builtin.continuations,
                     result: builtin.result,
@@ -200,6 +207,7 @@ pub(crate) fn function_types(
                 type_params,
                 type_param_signs,
                 bounds,
+                effects,
                 ..
             } => {
                 let mut next_template = 0;
@@ -219,6 +227,9 @@ pub(crate) fn function_types(
                 out.insert(
                     name.clone(),
                     FunctionSignature {
+                        row: crate::declarations::written_row(effects, |tail| {
+                            type_params.iter().position(|p| p == tail)
+                        }),
                         params: resolved,
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
@@ -235,6 +246,7 @@ pub(crate) fn function_types(
                 type_params,
                 type_param_signs,
                 bounds,
+                effects,
                 ..
             } => {
                 let mut next_template = 0;
@@ -248,6 +260,9 @@ pub(crate) fn function_types(
                 out.insert(
                     name.clone(),
                     FunctionSignature {
+                        row: crate::declarations::written_row(effects, |tail| {
+                            type_params.iter().position(|p| p == tail)
+                        }),
                         params,
                         continuations,
                         result: Some(Type::BOTTOM),
@@ -257,7 +272,7 @@ pub(crate) fn function_types(
                     },
                 );
             }
-            Decl::Effect { operations, .. } => {
+            Decl::Effect { name: effect, operations, .. } => {
                 for op in operations {
                     let mut next_template = 0;
                     let params = op
@@ -270,6 +285,7 @@ pub(crate) fn function_types(
                     out.insert(
                         op.name.clone(),
                         FunctionSignature {
+                            row: Row { effects: [effect.clone()].into(), tail: None },
                             params,
                             continuations: op.params.iter().map(|_| false).collect(),
                             result: Some(result),
@@ -294,10 +310,12 @@ pub(crate) fn instantiate(
     uni: &mut Unification,
 ) -> (FunctionSignature, HashMap<usize, Type>) {
     let mut seen: HashMap<usize, Type> = HashMap::new();
+    let mut rows: HashMap<usize, usize> = HashMap::new();
     let fresh = FunctionSignature {
-        params: signature.params.iter().map(|ty| freshen(ty, &mut seen, uni)).collect(),
+        params: signature.params.iter().map(|ty| freshen(ty, &mut seen, &mut rows, uni)).collect(),
         continuations: signature.continuations.clone(),
-        result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, uni)),
+        result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, &mut rows, uni)),
+        row: freshen_row(&signature.row, &mut rows, uni),
         bounds: signature.bounds.clone(),
         signs: signature.signs.clone(),
         builtin: signature.builtin,
@@ -305,18 +323,35 @@ pub(crate) fn instantiate(
     (fresh, seen)
 }
 
-fn freshen(ty: &Type, seen: &mut HashMap<usize, Type>, uni: &mut Unification) -> Type {
+fn freshen(
+    ty: &Type,
+    seen: &mut HashMap<usize, Type>,
+    rows: &mut HashMap<usize, usize>,
+    uni: &mut Unification,
+) -> Type {
+    let mut each = |items: &[Type]| -> Vec<Type> {
+        items.iter().map(|x| freshen(x, seen, rows, uni)).collect()
+    };
     match ty {
         Type::Var(v) => seen.entry(*v).or_insert_with(|| uni.fresh_var()).clone(),
-        Type::Tensor(items) => Type::Tensor(items.iter().map(|x| freshen(x, seen, uni)).collect()),
-        Type::Par(items) => Type::Par(items.iter().map(|x| freshen(x, seen, uni)).collect()),
-        Type::With(items) => Type::With(items.iter().map(|x| freshen(x, seen, uni)).collect()),
-        Type::Sum(items) => Type::Sum(items.iter().map(|x| freshen(x, seen, uni)).collect()),
-        Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, uni))),
-        Type::Named(name, args) => {
-            Type::Named(name.clone(), args.iter().map(|a| freshen(a, seen, uni)).collect())
+        Type::Tensor(items) => Type::Tensor(each(items)),
+        Type::Par(items) => Type::Par(each(items)),
+        Type::With(items) => Type::With(each(items)),
+        Type::Sum(items) => Type::Sum(each(items)),
+        Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, rows, uni))),
+        Type::Named(name, args) => Type::Named(name.clone(), each(args)),
+        Type::Rowed(t, row) => {
+            Type::Rowed(Box::new(freshen(t, seen, rows, uni)), freshen_row(row, rows, uni))
         }
-        Type::Rowed(t, row) => Type::Rowed(Box::new(freshen(t, seen, uni)), row.clone()),
         atom => atom.clone(),
+    }
+}
+
+/// A signature's row with its template row variable instantiated: one
+/// template, one fresh row variable per call.
+fn freshen_row(row: &Row, rows: &mut HashMap<usize, usize>, uni: &mut Unification) -> Row {
+    Row {
+        effects: row.effects.clone(),
+        tail: row.tail.map(|template| *rows.entry(template).or_insert_with(|| uni.fresh_row())),
     }
 }

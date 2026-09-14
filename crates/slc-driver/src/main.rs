@@ -256,14 +256,14 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
     // Type, polarity, and exhaustiveness checking. Checking also
     // resolves each monomorphic trait-method call to its impl, for static
     // dispatch in lowering.
-    let resolved =
-        slc_check::expr::check_program_resolving(&program, &traits).map_err(|diags| {
-            diags
-                .iter()
-                .map(|d| format!("type: {} (at {})", d.message, format_span(d.span)))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+    let (resolved, row_diagnostics) = slc_check::expr::check_program_with_rows(&program, &traits)
+        .map_err(|diags| {
+        diags
+            .iter()
+            .map(|d| format!("type: {} (at {})", d.message, format_span(d.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })?;
     slc_check::polarity::check_program(&program).map_err(|diags| {
         diags
             .iter()
@@ -279,13 +279,25 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    slc_check::effects::check_effects(&program, &resolved.delays).map_err(|diags| {
-        diags
-            .iter()
-            .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    // Rows in types are checked beside the effect pass until they replace it;
+    // `SLC_ROWS` reports their verdict instead, for comparing the two.
+    if std::env::var_os("SLC_ROWS").is_some() {
+        if !row_diagnostics.is_empty() {
+            return Err(row_diagnostics
+                .iter()
+                .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+    } else {
+        slc_check::effects::check_effects(&program, &resolved.delays).map_err(|diags| {
+            diags
+                .iter()
+                .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
+    }
 
     let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
         .map_err(|e| format!("lowering: {e}"))?;

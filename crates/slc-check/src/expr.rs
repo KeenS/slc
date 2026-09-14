@@ -31,6 +31,17 @@ pub fn check_program_resolving(
     p: &Program,
     traits: &TraitInfo,
 ) -> Result<slc_syntax::lower::DispatchInfo, Vec<Diagnostic>> {
+    check_program_with_rows(p, traits).map(|(dispatch, _)| dispatch)
+}
+
+/// Check the program, and hand back beside what lowering needs what the
+/// rows in its types refuse (`docs/design-notes/rows-in-types.md`). Until
+/// the rows replace the effect pass, the driver reports them only when
+/// `SLC_ROWS` is set.
+pub fn check_program_with_rows(
+    p: &Program,
+    traits: &TraitInfo,
+) -> Result<(slc_syntax::lower::DispatchInfo, Vec<Diagnostic>), Vec<Diagnostic>> {
     let constants = constant_types(p);
     let enums = enum_types(p);
     let functions = function_types(p, &enums);
@@ -43,7 +54,11 @@ pub fn check_program_resolving(
     }
     resolve_pending_injections(&mut env, &mut diags);
     resolve_pending_pars(&mut env, &mut diags);
-    if diags.is_empty() { Ok(std::mem::take(&mut env.dispatch)) } else { Err(diags) }
+    if diags.is_empty() {
+        Ok((std::mem::take(&mut env.dispatch), std::mem::take(&mut env.row_diagnostics)))
+    } else {
+        Err(diags)
+    }
 }
 
 /// The type key a resolved type dispatches on — matching the runtime's key
@@ -400,7 +415,10 @@ fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Opt
             Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
         }
         T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
-        T::Effectful(inner, _) => resolve_with_self(&inner.kind, self_ty, enums),
+        T::Effectful(inner, row) => Some(Type::rowed(
+            resolve_with_self(&inner.kind, self_ty, enums)?,
+            crate::declarations::written_row(row, |_| None),
+        )),
         _ => enums.resolve(ty),
     }
 }
@@ -485,6 +503,107 @@ fn exit_row(types: impl IntoIterator<Item = Type>) -> Type {
     }
 }
 
+/// A declaration's row variables sit among its rigid type variables under
+/// `..E`, a name no type has, as a row carried on the unit.
+fn rigid_row_key(name: &str) -> String {
+    format!("..{name}")
+}
+
+/// The rigid row variable a written `..E` stands for, in a body.
+fn rigid_row(rigid_vars: &HashMap<&str, Type>, name: &str) -> Option<usize> {
+    match rigid_vars.get(rigid_row_key(name).as_str()) {
+        Some(Type::Rowed(_, carrier)) => carrier.tail,
+        _ => None,
+    }
+}
+
+/// A type without its row, and the row: what running a value of it performs.
+fn unrowed(ty: Type) -> (Type, slc_core::types::Row) {
+    match ty {
+        Type::Rowed(inner, row) => (*inner, row),
+        other => (other, slc_core::types::Row::default()),
+    }
+}
+
+/// An exit accepts any row. A command runs the exits it is handed before
+/// control goes anywhere else, so what a consumer handed to one performs is
+/// charged where it is handed over — and so is what each exit of a bundle
+/// performs.
+fn open_exit(ty: Type, env: &mut Env) -> Type {
+    let (bare, row) = unrowed(env.uni.apply(&ty));
+    env.perform(row);
+    match bare {
+        Type::With(items) => {
+            Type::With(items.into_iter().map(|item| open_exit(item, env)).collect())
+        }
+        other => other,
+    }
+}
+
+/// Check what a declaration's body performs against the row it writes, and
+/// solve the row constraints it recorded from `from` on, keeping what does
+/// not fit as the rows' diagnostics.
+fn close_declaration_rows(
+    env: &mut Env,
+    body_row: usize,
+    declared: slc_core::types::Row,
+    from: usize,
+    name: &str,
+    span: Span,
+) {
+    let body = slc_core::types::Row { effects: Default::default(), tail: Some(body_row) };
+    env.constrain_row_for(
+        body,
+        declared,
+        crate::env::RowOrigin::Declaration { name: name.to_string(), span },
+    );
+    let constraints = env.uni.row_constraints()[from..].to_vec();
+    for failure in env.uni.solve_rows(&constraints) {
+        let performs = match &failure.atom {
+            slc_core::typing::RowAtom::Effect(effect) => format!("`{effect}`"),
+            slc_core::typing::RowAtom::Rigid(var) => {
+                let written = env.row_names.get(var).cloned().unwrap_or_else(|| format!("?{var}"));
+                format!("the row `..{written}`")
+            }
+        };
+        let (message, at) = match (env.row_origins.get(&(from + failure.constraint)), &failure.atom)
+        {
+            (
+                Some(crate::env::RowOrigin::Declaration { name, span }),
+                slc_core::typing::RowAtom::Effect(effect),
+            ) => (
+                format!(
+                    "`{name}` performs `{effect}` but does not declare it; add `/ {{{effect}}}` \
+                     to its type, or handle it"
+                ),
+                *span,
+            ),
+            (Some(crate::env::RowOrigin::Declaration { name, span }), _) => (
+                format!(
+                    "`{name}` performs {performs} of a parameter but does not declare it; add \
+                     it to its row"
+                ),
+                *span,
+            ),
+            (Some(crate::env::RowOrigin::Latent { decl, span }), _) => (
+                format!("this arm performs {performs}, which `{decl}` does not declare latent"),
+                *span,
+            ),
+            (None, _) => (
+                format!(
+                    "`{name}` hands on a value that performs {performs} where the type it meets \
+                     does not allow it"
+                ),
+                span,
+            ),
+        };
+        let diagnostic = Diagnostic { message, span: at };
+        if !env.row_diagnostics.contains(&diagnostic) {
+            env.row_diagnostics.push(diagnostic);
+        }
+    }
+}
+
 fn resolve_rigid(
     ty: &TypeExpr,
     rigid_vars: &HashMap<&str, Type>,
@@ -505,9 +624,12 @@ fn resolve_rigid(
             resolve_rigid(&a.kind, rigid_vars, enums)?,
             resolve_rigid(&b.kind, rigid_vars, enums)?,
         )),
-        // The effect row is the effect checker's concern; the type is the
-        // arrow underneath.
-        T::Effectful(inner, _) => resolve_rigid(&inner.kind, rigid_vars, enums),
+        // The effect row rides on the type it is written on; a row variable
+        // is the declaration's own, rigid in its body.
+        T::Effectful(inner, row) => Some(Type::rowed(
+            resolve_rigid(&inner.kind, rigid_vars, enums)?,
+            crate::declarations::written_row(row, |tail| rigid_row(rigid_vars, tail)),
+        )),
         T::Tensor(items) => Some(Type::Tensor(rigid_components(items, rigid_vars, enums)?)),
         T::Par(items) => Some(Type::Par(rigid_components(items, rigid_vars, enums)?)),
         T::With(items) => Some(Type::With(rigid_components(items, rigid_vars, enums)?)),
@@ -924,13 +1046,22 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             type_params,
             type_param_signs,
             bounds,
+            effects,
             ..
         } => {
             env.push();
             // A type parameter is rigid inside the body: `T` is some type the
-            // caller chose, not a licence to treat the value as any type.
-            let rigid_vars: HashMap<&str, Type> =
+            // caller chose, not a licence to treat the value as any type. A
+            // row variable, the parameter with no sign, is rigid there too.
+            let row_keys = row_parameter_keys(type_params, type_param_signs, env);
+            let mut rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
+            for (key, carrier) in &row_keys {
+                rigid_vars.insert(key.as_str(), carrier.clone());
+            }
+            let rows_from = env.uni.row_constraints().len();
+            let body_row = env.uni.fresh_row();
+            let outer_row = env.current_row.replace(body_row);
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
@@ -957,30 +1088,53 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // The body produces what the declaration promises: the return
             // type for `->`, its consumer for `<-`. A body that ends in a
             // cut produces nothing and promises nothing.
+            let declared_row =
+                crate::declarations::written_row(effects, |tail| rigid_row(&rigid_vars, tail));
             let promised = match polarity {
                 slc_syntax::ast::FunctionPolarity::Positive => declared,
-                slc_syntax::ast::FunctionPolarity::Negative => declared.map(|ty| ty.dual()),
+                // A negative function's row is performed on its watch: by
+                // feeding the consumer it produces.
+                slc_syntax::ast::FunctionPolarity::Negative => {
+                    declared.map(|ty| Type::rowed(ty.dual(), declared_row.clone()))
+                }
             };
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
                 && actual != &Type::BOTTOM
-                && !fits_turning(env, promised, actual, tail_node(body))
             {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "the body of `{name}` has type {actual}; the declaration says {promised}"
-                    ),
-                    span: body.span,
-                });
+                // What the value handed back performs when it runs must fit
+                // the row the promised type carries. Where that type carries
+                // none, the declaration answers for it, as the effect pass
+                // charges a returned literal: a `mu Stream` built by `map`
+                // performs `f`'s row, and `map` declares it.
+                let (promised_bare, promised_row) = unrowed(env.uni.apply(promised));
+                let (actual_bare, actual_row) = unrowed(env.uni.apply(actual));
+                if promised_row.is_empty() {
+                    env.perform(actual_row);
+                } else {
+                    env.uni.constrain_row(actual_row, promised_row);
+                }
+                if !fits_turning(env, &promised_bare, &actual_bare, tail_node(body)) {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "the body of `{name}` has type {actual}; the declaration says \
+                             {promised}"
+                        ),
+                        span: body.span,
+                    });
+                }
             }
             // Pending dispatch and injections are resolved once the promise has
             // been unified too: a return type may be all that says which sum
             // `::1(v)` belongs to.
             resolve_pending_dicts(env, diags);
+            env.current_row = outer_row;
+            close_declaration_rows(env, body_row, declared_row, rows_from, name, d.span);
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
         }
         Decl::Command {
+            name,
             value_params,
             continuation_params,
             body,
@@ -988,6 +1142,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             type_params,
             type_param_signs,
             bounds,
+            effects,
             ..
         } => {
             if let Some(return_type) = return_type
@@ -997,8 +1152,15 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     .push(Diagnostic { message: "a `command` returns `(;)`".into(), span: d.span });
             }
             env.push();
-            let rigid_vars: HashMap<&str, Type> =
+            let row_keys = row_parameter_keys(type_params, type_param_signs, env);
+            let mut rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
+            for (key, carrier) in &row_keys {
+                rigid_vars.insert(key.as_str(), carrier.clone());
+            }
+            let rows_from = env.uni.row_constraints().len();
+            let body_row = env.uni.fresh_row();
+            let outer_row = env.current_row.replace(body_row);
             let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
@@ -1027,6 +1189,23 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 }
             }
             resolve_pending_dicts(env, diags);
+            env.current_row = outer_row;
+            let declared =
+                crate::declarations::written_row(effects, |tail| rigid_row(&rigid_vars, tail));
+            // `main` is the root, and the runtime handles one effect: `IO`
+            // is what may reach it, and everything else is handled before.
+            if name == "main"
+                && (declared.effects.iter().any(|effect| effect != crate::effects::IO)
+                    || declared.tail.is_some())
+            {
+                env.row_diagnostics.push(Diagnostic {
+                    message: "`main` is the root: the runtime handles `IO`, so its row is `{IO}` \
+                              or empty and every other effect is handled before it"
+                        .into(),
+                    span: d.span,
+                });
+            }
+            close_declaration_rows(env, body_row, declared, rows_from, name, d.span);
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
@@ -1070,6 +1249,63 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
         }
         _ => {}
     }
+}
+
+/// A declaration's row variables — its type parameters that declare no
+/// sign — each as a fresh rigid row variable under its `..E` key, carried on
+/// the unit. The names are kept for diagnostics.
+fn row_parameter_keys(
+    type_params: &[String],
+    type_param_signs: &[(String, ParamPolarity)],
+    env: &mut Env,
+) -> Vec<(String, Type)> {
+    type_params
+        .iter()
+        .filter(|param| type_param_signs.iter().all(|(signed, _)| signed != *param))
+        .map(|param| {
+            let var = env.uni.fresh_rigid_row();
+            env.row_names.insert(var, param.clone());
+            let carrier = slc_core::types::Row { effects: Default::default(), tail: Some(var) };
+            (rigid_row_key(param), Type::Rowed(Box::new(Type::ONE), carrier))
+        })
+        .collect()
+}
+
+/// A computation in a by-name position, checked in a row of its own. A
+/// negative one is delayed, so what it performs rides on its type; a
+/// positive one is computed where it stands, so that is where it performs;
+/// one whose polarity is not known yet does both.
+fn check_by_name(
+    item: &Node<Expr>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    if is_value_form(&item.kind, enums) {
+        return check_expr(item, enums, env, diags);
+    }
+    let own = env.uni.fresh_row();
+    let outer = env.current_row.replace(own);
+    let actual = check_expr(item, enums, env, diags);
+    env.current_row = outer;
+    actual.map(|actual| carry_row(actual, own, env))
+}
+
+/// What a computation checked in row `own` produced: delayed when it is known
+/// to be negative, carrying `own` on its type. Otherwise it performs here —
+/// computed, when positive; and while its polarity is not known, where the
+/// effect pass has always charged it, since a row on an unsolved variable
+/// would stand in the way of solving it.
+fn carry_row(actual: Type, own: usize, env: &mut Env) -> Type {
+    let runs = slc_core::types::Row { effects: Default::default(), tail: Some(own) };
+    let applied = env.uni.apply(&actual);
+    if !(applied.is_negative() && !applied.is_positive()) {
+        env.perform(runs);
+        return actual;
+    }
+    let (inner, carried) = unrowed(applied);
+    env.uni.constrain_row(carried, runs.clone());
+    Type::Rowed(Box::new(inner), runs)
 }
 
 /// The value restriction: a `let` of a syntactic value ran nothing, so no
@@ -1397,7 +1633,8 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
 /// returns tells lowering how to turn the value. Both halves must be known:
 /// the swap is oriented by their polarities.
 fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<slc_syntax::lower::Swap> {
-    let (Type::Par(wanted), Type::Par(given)) = (env.uni.apply(expected), env.uni.apply(actual))
+    let (Type::Par(wanted), Type::Par(given)) =
+        (unrowed(env.uni.apply(expected)).0, unrowed(env.uni.apply(actual)).0)
     else {
         return None;
     };
@@ -1443,7 +1680,9 @@ fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr
 /// Whether `commute` would succeed, without committing — for the probes that
 /// decide which arm a stage takes.
 fn commutes(uni: &slc_core::typing::Unification, expected: &Type, actual: &Type) -> bool {
-    let (Type::Par(wanted), Type::Par(given)) = (uni.apply(expected), uni.apply(actual)) else {
+    let (Type::Par(wanted), Type::Par(given)) =
+        (unrowed(uni.apply(expected)).0, unrowed(uni.apply(actual)).0)
+    else {
         return false;
     };
     let ([want_left, want_right], [left, right]) = (wanted.as_slice(), given.as_slice()) else {
@@ -1517,6 +1756,7 @@ fn check_call_arguments(
             }
             let row = (signature.params.len() > values)
                 .then(|| exit_row(signature.params[values..].iter().cloned()));
+            let actual = actual.map(|actual| open_exit(actual, env));
             if let (Some(row), Some(actual)) = (row, &actual)
                 && !fits(env, &row, actual, &arg.kind)
             {
@@ -1559,6 +1799,7 @@ fn check_call_arguments(
         let Some(actual) = actual else {
             continue;
         };
+        let actual = if in_row { open_exit(actual, env) } else { actual };
         // `Type::ONE` is this checker's "not determined" placeholder — an
         // unannotated `let` binding, for instance. A mismatch is only
         // reported for an argument whose type is actually known.
@@ -1612,7 +1853,16 @@ fn check_let_binding(
     env: &mut Env,
     diags: &mut Vec<Diagnostic>,
 ) -> Type {
+    // A computation that may be delayed is checked in a row of its own, so
+    // what it performs can ride on the name instead of happening here.
+    let computes = mode != slc_syntax::ast::LetMode::Now && !is_value_form(&value.kind, enums);
+    let own_row = computes.then(|| env.uni.fresh_row());
+    let outer_row = env.current_row;
+    if let Some(own) = own_row {
+        env.current_row = Some(own);
+    }
     let actual = check_expr(value, enums, env, diags);
+    env.current_row = outer_row;
     let annotation = ty.as_ref().and_then(|ty| resolve_in_body(ty, env, enums));
     if let Some(written) = ty
         && annotation.is_none()
@@ -1644,6 +1894,17 @@ fn check_let_binding(
     // A binder the checker cannot type is a variable its uses will solve,
     // never a wildcard.
     let bound = annotation.or(actual).unwrap_or_else(|| env.uni.fresh_var());
+    let bound = match own_row {
+        // `let-` delays whatever it binds.
+        Some(own) if mode == slc_syntax::ast::LetMode::Delay => {
+            let runs = slc_core::types::Row { effects: Default::default(), tail: Some(own) };
+            let (inner, carried) = unrowed(env.uni.apply(&bound));
+            env.uni.constrain_row(carried, runs.clone());
+            Type::Rowed(Box::new(inner), runs)
+        }
+        Some(own) => carry_row(bound, own, env),
+        None => bound,
+    };
     // A plain `let` of a computation follows its type: a negative one is
     // delayed, a positive one computed here. A value ran nothing either way.
     if mode == slc_syntax::ast::LetMode::Follow && !is_value_form(&value.kind, enums) {
@@ -2287,10 +2548,16 @@ fn check_expr_unapplied(
                     // Its parameters pack into the one product a call
                     // passes; a function with none is its result already,
                     // since naming it is how it is used.
+                    // Naming a function with no parameters calls it, so it
+                    // performs its row; any other carries it on its type.
                     let ty = if signature.params.is_empty() {
+                        env.perform(signature.row);
                         result
                     } else {
-                        Type::arrow(packed_group(signature.params), result)
+                        Type::rowed(
+                            Type::arrow(packed_group(signature.params), result),
+                            signature.row,
+                        )
                     };
                     return Some(ty);
                 }
@@ -2351,13 +2618,19 @@ fn check_expr_unapplied(
                 env.pending_params.push((e.span, param.clone(), param_ty.clone()));
             }
             env.define(param, param_ty.clone());
+            // A lambda performs nothing where it is written: its body's row is
+            // the row of the function it is.
+            let body_row = env.uni.fresh_row();
+            let outer_row = env.current_row.replace(body_row);
             let result = check_expr(body, enums, env, diags);
+            env.current_row = outer_row;
             env.pop();
             // A lambda is a function value, and its result is what the body
             // produces. A body that ends in a cut produces nothing, and
             // `(A -> (;))` is `-A`, so such a lambda simply *is* a consumer.
             let result = result.unwrap_or_else(|| env.uni.fresh_var());
-            Some(Type::arrow(param_ty, result))
+            let runs = slc_core::types::Row { effects: Default::default(), tail: Some(body_row) };
+            Some(Type::Rowed(Box::new(Type::arrow(param_ty, result)), runs))
         }
         Expr::Call { callee, args } => {
             // An argument is a by-name position — a builtin's excepted, which
@@ -2424,8 +2697,8 @@ fn check_expr_unapplied(
             }
             if let Expr::Ident(name) = &callee.kind
                 && let Some(ty) = env.lookup(name)
-                && (matches!(ty, Type::Neg(_) | Type::Dual(_))
-                    || matches!(ty, Type::Par(ref parts) if parts.is_empty()))
+                && (matches!(unrowed(ty.clone()).0, Type::Neg(_) | Type::Dual(_))
+                    || matches!(unrowed(ty.clone()).0, Type::Par(ref parts) if parts.is_empty()))
             {
                 diags.push(Diagnostic {
                     message: format!(
@@ -2454,6 +2727,7 @@ fn check_expr_unapplied(
                 && let Some(signature) = env.functions.get(name)
             {
                 let (signature, seen) = instantiate(signature, &mut env.uni);
+                env.perform(signature.row.clone());
                 if signature.builtin {
                     for ((arg, param), is_continuation) in
                         args.iter().zip(signature.params.iter()).zip(&signature.continuations)
@@ -2524,7 +2798,12 @@ fn check_expr_unapplied(
             // A local callee: a closure, or a binder whose type its uses
             // decide. `A -> B` is `(dual(A) ; B)`, so application peels a `;`, and
             // an unknown callee becomes one.
-            let callee_ty = callee_ty.map(|ty| env.uni.apply(&ty));
+            // Calling it performs what its type says running it does.
+            let callee_ty = callee_ty.map(|ty| {
+                let (ty, row) = unrowed(env.uni.apply(&ty));
+                env.perform(row);
+                ty
+            });
             match callee_ty {
                 Some(Type::Par(parts)) if parts.len() == 2 => {
                     let (argument_dual, result) = (parts[0].clone(), parts[1].clone());
@@ -2746,8 +3025,26 @@ fn check_expr_unapplied(
             let type_args = written_args.unwrap_or_else(|| fresh_args(enums, &menu, env, e.span));
             let rows: Vec<(&slc_syntax::ast::Pattern, &Node<Expr>)> =
                 arms.iter().map(|arm| (&arm.pattern, &arm.command)).collect();
+            // The arms run per demand. Over a menu that declares a latent row
+            // they must fit inside it; otherwise what they perform is the row
+            // of the menu value.
+            let arms_row = env.uni.fresh_row();
+            let outer_row = env.current_row.replace(arms_row);
             check_comatch_arms(&menu, &type_args, rows, enums, env, diags);
-            Some(Type::Dual(Box::new(Type::Named(menu, type_args))))
+            env.current_row = outer_row;
+            let runs = slc_core::types::Row { effects: Default::default(), tail: Some(arms_row) };
+            let menu_ty = Type::Dual(Box::new(Type::Named(menu.clone(), type_args)));
+            match enums.latent_rows.get(&menu).cloned() {
+                Some(latent) => {
+                    env.constrain_row_for(
+                        runs,
+                        latent,
+                        crate::env::RowOrigin::Latent { decl: menu, span: e.span },
+                    );
+                    Some(menu_ty)
+                }
+                None => Some(Type::Rowed(Box::new(menu_ty), runs)),
+            }
         }
         Expr::Select { ty, arms } => {
             // `select T { p => c, … }` builds the consumer of T. Each arm
@@ -2805,6 +3102,21 @@ fn check_expr_unapplied(
                 && enums.is_form(form)
             {
                 let demand = Type::Named(form.clone(), Vec::new());
+                // A form with a latent row runs its arms when fed: they fit
+                // inside that row, and perform nothing where it is written.
+                let latent = enums.latent_rows.get(form).cloned();
+                let arms_row = latent.as_ref().map(|_| env.uni.fresh_row());
+                let outer_row = env.current_row;
+                if let (Some(latent), Some(arms_row)) = (latent, arms_row) {
+                    env.current_row = Some(arms_row);
+                    let runs =
+                        slc_core::types::Row { effects: Default::default(), tail: Some(arms_row) };
+                    env.constrain_row_for(
+                        runs,
+                        latent,
+                        crate::env::RowOrigin::Latent { decl: form.clone(), span: e.span },
+                    );
+                }
                 for arm in arms {
                     env.push();
                     bind_select_arm(&demand, &arm.pattern, enums, env, e.span, diags);
@@ -2822,6 +3134,7 @@ fn check_expr_unapplied(
                     }
                     env.pop();
                 }
+                env.current_row = outer_row;
                 return Some(resolved);
             }
             // An unsolved variable is not yet anything — a generic `<- T`
@@ -2900,7 +3213,9 @@ fn check_expr_unapplied(
         }
         Expr::Project { base, key } => {
             let base_ty = check_expr(base, enums, env, diags)?;
-            let base_ty = env.uni.apply(&base_ty);
+            // Demanding an item runs the menu: it performs the menu's row.
+            let (base_ty, base_row) = unrowed(env.uni.apply(&base_ty));
+            env.perform(base_row);
             match key {
                 // `base.i` — the i-th component along the tensor spine.
                 slc_syntax::ast::ProjKey::Index(i) => {
@@ -2940,6 +3255,9 @@ fn check_expr_unapplied(
                         && enums.is_menu(menu)
                     {
                         let label = format!("{menu}::{name}");
+                        if let Some(latent) = enums.latent_rows.get(menu) {
+                            env.perform(latent.clone());
+                        }
                         let args = scrutinee_args(&base_ty).to_vec();
                         return match enums.variant(&label) {
                             Some((_, payload)) => {
@@ -3023,8 +3341,24 @@ fn check_expr_unapplied(
             // The body runs under the handler; its normal value feeds the
             // return clause, whose body is the handle's type. (Effect rows
             // are not yet checked — see PLAN.)
+            // The body performs into a row of its own. The handler answers
+            // the effects of the operations its clauses name, and the rest
+            // reaches the body around it; the clauses run below the prompt.
+            let body_row = env.uni.fresh_row();
+            let outer_row = env.current_row.replace(body_row);
             let body_ty =
                 check_expr(body, enums, env, diags).unwrap_or_else(|| env.uni.fresh_var());
+            env.current_row = outer_row;
+            if let Some(outer) = outer_row {
+                let handled = clauses
+                    .iter()
+                    .filter_map(|clause| enums.op_effects.get(&clause.op).cloned())
+                    .collect();
+                env.uni.constrain_row(
+                    slc_core::types::Row { effects: Default::default(), tail: Some(body_row) },
+                    slc_core::types::Row { effects: handled, tail: Some(outer) },
+                );
+            }
             for clause in clauses {
                 env.push();
                 for p in &clause.params {
@@ -3081,15 +3415,18 @@ fn check_expr_unapplied(
         Expr::Bundle(items) => {
             note_by_name(items, enums, env);
             let types =
-                items.iter().map(|item| check_expr(item, enums, env, diags)).collect::<Vec<_>>();
-            types.into_iter().collect::<Option<Vec<_>>>().map(Type::With)
+                items.iter().map(|item| check_by_name(item, enums, env, diags)).collect::<Vec<_>>();
+            types
+                .into_iter()
+                .collect::<Option<Vec<_>>>()
+                .map(|types| open_exit(Type::With(types), env))
         }
         Expr::Pair(items) if items.is_empty() => Some(Type::ONE),
         Expr::Pair(items) => {
             note_by_name(items, enums, env);
             items
                 .iter()
-                .map(|item| check_expr(item, enums, env, diags))
+                .map(|item| check_by_name(item, enums, env, diags))
                 .collect::<Option<Vec<_>>>()
                 .map(packed_group)
         }
@@ -3131,7 +3468,7 @@ fn check_expr_unapplied(
             // one is refused, pointing at the missing `<`.
             let opens = !from_value;
             if opens && let Some(head) = types.first().and_then(|ty| ty.as_ref()) {
-                match head {
+                match &unrowed(head.clone()).0 {
                     Type::Par(parts) if !parts.is_empty() => {}
                     Type::Var(_) => {
                         let function = Type::Par(vec![env.uni.fresh_var(), env.uni.fresh_var()]);
@@ -3185,6 +3522,7 @@ fn check_expr_unapplied(
                     && signature.result.as_ref() == Some(&Type::BOTTOM)
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
+                    env.perform(signature.row.clone());
                     let split = signature.continuations.iter().filter(|c| !**c).count();
                     let values = packed_group(signature.params[..split].iter().cloned());
                     let row = exit_row(signature.params[split..].iter().cloned());
@@ -3197,7 +3535,8 @@ fn check_expr_unapplied(
                             span: stages[index].span,
                         });
                     }
-                    if let Some(exits) = types[index + 1].as_ref()
+                    let exits = types[index + 1].clone().map(|exits| open_exit(exits, env));
+                    if let Some(exits) = exits.as_ref()
                         && !fits(env, &row, exits, &stages[index + 1].kind)
                     {
                         let row = env.uni.apply(&row);
@@ -3257,6 +3596,7 @@ fn check_expr_unapplied(
                     }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
+                    env.perform(signature.row.clone());
                     let packed = packed_group(signature.params.iter().cloned());
                     // A tuple written in place is checked component by
                     // component, so an integer literal still takes the
@@ -3328,10 +3668,11 @@ fn check_expr_unapplied(
                     // right end, so one arriving from the left is the
                     // mistake. A function and codata are negative *values*
                     // and flow in like any other.
-                    if acc.is_negative()
-                        && !matches!(acc, Type::Par(ref parts) if !parts.is_empty())
-                        && !contains_var(&acc)
-                        && !enums.is_negative_value(&acc)
+                    let bare = unrowed(acc.clone()).0;
+                    if bare.is_negative()
+                        && !matches!(bare, Type::Par(ref parts) if !parts.is_empty())
+                        && !contains_var(&bare)
+                        && !enums.is_negative_value(&bare)
                     {
                         diags.push(Diagnostic {
                             message: format!(
@@ -3341,6 +3682,16 @@ fn check_expr_unapplied(
                             span: stages[index].span,
                         });
                         return Some(Type::BOTTOM);
+                    }
+                    // Feeding the consumer runs it: it performs its row, and a
+                    // form's declared latent row.
+                    let (consumer, consumer_row) = unrowed(env.uni.apply(ty));
+                    env.perform(consumer_row);
+                    if let Type::Dual(inner) = &consumer
+                        && let Type::Named(form, _) = inner.as_ref()
+                        && let Some(latent) = enums.latent_rows.get(form)
+                    {
+                        env.perform(latent.clone());
                     }
                     let expects = ty.dual();
                     // The `(;)`/`(,)` corner: `-(;)` resolves to `(,)`, so the
@@ -3437,10 +3788,13 @@ fn check_expr_unapplied(
                     diags.push(Diagnostic { message, span: stages[index].span });
                     return None;
                 }
+                // Applying the stage runs it: it performs its row.
+                let (ty, stage_row) = unrowed(env.uni.apply(ty));
+                env.perform(stage_row);
                 let left = env.uni.fresh_var();
                 let right = env.uni.fresh_var();
                 let par = Type::Par(vec![left.clone(), right.clone()]);
-                if env.uni.unify(ty, &par).is_err() {
+                if env.uni.unify(&ty, &par).is_err() {
                     diags.push(Diagnostic {
                         message: format!(
                             "a step composes, so this stage is a function; it has type {ty}. \

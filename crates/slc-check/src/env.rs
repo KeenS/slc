@@ -68,6 +68,17 @@ pub(crate) struct PendingMethod {
     pub(crate) self_ty: Type,
 }
 
+/// Why a row constraint with a concrete or rigid bound was recorded, for the
+/// diagnostic when it does not hold. A constraint without one was recorded
+/// where a value met its slot.
+#[derive(Debug, Clone)]
+pub(crate) enum RowOrigin {
+    /// A declaration's body against the row it writes.
+    Declaration { name: String, span: slc_syntax::token::Span },
+    /// A menu or form arm against the latent row its declaration writes.
+    Latent { decl: String, span: slc_syntax::token::Span },
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Env<'a> {
     pub(crate) constants: &'a HashMap<String, Type>,
@@ -135,6 +146,15 @@ pub(crate) struct Env<'a> {
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
     pub(crate) dispatch: slc_syntax::lower::DispatchInfo,
+    /// The row variable of the body being checked: what running it performs.
+    /// `None` outside every body.
+    pub(crate) current_row: Option<usize>,
+    /// Row constraint position → why it was recorded.
+    pub(crate) row_origins: HashMap<usize, RowOrigin>,
+    /// Rigid row variable → the name its declaration writes, `E` for `..E`.
+    pub(crate) row_names: HashMap<usize, String>,
+    /// What the solved rows refuse, one diagnostic each.
+    pub(crate) row_diagnostics: Vec<crate::Diagnostic>,
 }
 
 impl<'a> Env<'a> {
@@ -164,6 +184,32 @@ impl<'a> Env<'a> {
             pending_injections: Vec::new(),
             pending_pars: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
+            current_row: None,
+            row_origins: HashMap::new(),
+            row_names: HashMap::new(),
+            row_diagnostics: Vec::new(),
+        }
+    }
+
+    /// What running `row` performs happens here, in the body being checked.
+    pub(crate) fn perform(&mut self, row: slc_core::types::Row) {
+        if let Some(current) = self.current_row {
+            let here = slc_core::types::Row { effects: Default::default(), tail: Some(current) };
+            self.uni.constrain_row(row, here);
+        }
+    }
+
+    /// Record that `sub` fits inside `sup`, and why, for its diagnostic.
+    pub(crate) fn constrain_row_for(
+        &mut self,
+        sub: slc_core::types::Row,
+        sup: slc_core::types::Row,
+        origin: RowOrigin,
+    ) {
+        let index = self.uni.row_constraints().len();
+        self.uni.constrain_row(sub, sup);
+        if self.uni.row_constraints().len() > index {
+            self.row_origins.insert(index, origin);
         }
     }
 

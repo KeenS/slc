@@ -2,10 +2,19 @@
 //! variant carries, the fields of each `data` — and how a written type
 //! resolves against them.
 
-use slc_core::types::Type;
-use slc_syntax::ast::{Decl, ParamPolarity, Program, TypeExpr};
+use slc_core::types::{Row, Type};
+use slc_syntax::ast::{Decl, EffectRow, ParamPolarity, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use std::collections::HashMap;
+
+/// A written row as a type carries it: its effects, and its row variable
+/// wherever `tail` can say which one the name stands for.
+pub(crate) fn written_row(row: &EffectRow, tail: impl Fn(&str) -> Option<usize>) -> Row {
+    Row {
+        effects: row.effects.iter().cloned().collect(),
+        tail: row.tails.first().and_then(|name| tail(name)),
+    }
+}
 
 /// What the checker knows about the program's type declarations: the variants
 /// of each `enum`, the payload each variant carries, and the fields of each
@@ -38,6 +47,11 @@ pub struct Declarations {
     /// Declaration name → each type parameter and the polarity it declares,
     /// in order; `None` where it declares none.
     param_signs: HashMap<String, Vec<(String, Option<ParamPolarity>)>>,
+    /// Operation name → the effect that declares it.
+    pub(crate) op_effects: HashMap<String, String>,
+    /// Menu or form name → the latent row it declares: what demanding an
+    /// item, or feeding the form, performs.
+    pub(crate) latent_rows: HashMap<String, Row>,
 }
 
 impl Declarations {
@@ -100,9 +114,12 @@ impl Declarations {
             // `dual(A)` applies the involution; only a declaration's name
             // stays wrapped, because it is opaque to the core.
             TypeExpr::Dual(inner) => resolve(&inner.kind)?.dual(),
-            // The effect row is the effect checker's concern; the type is
-            // the arrow underneath.
-            TypeExpr::Effectful(inner, _) => resolve(&inner.kind)?,
+            // The effect row rides on the type it is written on; a row
+            // variable is one of the declaration's parameters, by position.
+            TypeExpr::Effectful(inner, row) => Type::rowed(
+                resolve(&inner.kind)?,
+                written_row(row, |tail| params.get(tail).copied()),
+            ),
             other => return lower_type(other).ok(),
         };
         Some(resolved)
@@ -219,6 +236,16 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         }
         if let Decl::Menu { name, .. } = &d.kind {
             enums.menus.insert(name.clone());
+        }
+        if let Decl::Effect { name, operations, .. } = &d.kind {
+            for op in operations {
+                enums.op_effects.insert(op.name.clone(), name.clone());
+            }
+        }
+        if let Decl::Menu { name, effects, .. } | Decl::Form { name, effects, .. } = &d.kind
+            && !effects.effects.is_empty()
+        {
+            enums.latent_rows.insert(name.clone(), written_row(effects, |_| None));
         }
         if let Decl::Form { name, .. } = &d.kind {
             enums.forms.insert(name.clone());
