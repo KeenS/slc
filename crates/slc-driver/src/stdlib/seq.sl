@@ -9,6 +9,11 @@
 //
 //     ((odd, 1 | stream::count_from | seq::of_stream) | seq::filter, 4) | seq::take
 //
+// A `Seq` carries a row, `Seq<T, ..E>`: what demanding its steps performs.
+// Building one performs nothing, so `seq::map` with an effectful function
+// answers at once, and the effects happen where the steps are demanded.
+// `Seq<T>` is a sequence whose steps perform nothing.
+//
 // There is no `impl Display for Seq`: showing one is `seq::to_list`, or
 // `seq::take` first if it may not end.
 //
@@ -19,13 +24,13 @@ mod seq {
     use list::List::*;
     use stream::Stream;
 
-    pub enum Step<+T> {
+    pub enum Step<+T, E> {
         Done,
-        Yield(T, Seq<T>),
+        Yield(T, Seq<T, ..E>),
     }
 
-    pub menu Seq<+T> {
-        next: Step<T>,
+    pub menu Seq<+T, E> / {..E} {
+        next: Step<T, ..E>,
     }
 
     pub fn of_list<+T>(xs: list::List<T>) -> Seq<T> {
@@ -39,7 +44,7 @@ mod seq {
 
     // The bridge back to data, as `stream::take` is for `Stream`. A `Seq`
     // that never answers `Done` does not come back; `take` it first.
-    pub fn to_list<+T>(s: Seq<T>) -> list::List<T> {
+    pub fn to_list<+T, E>(s: Seq<T, ..E>) -> list::List<T> / {..E} {
         match s.next {
             Step::Done => Nil,
             Step::Yield(h, rest) => Cons(h, <rest | to_list),
@@ -53,38 +58,30 @@ mod seq {
         }
     }
 
-    pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E} {
+    pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E> {
         mu Seq {
             next <= match s.next {
                 Step::Done => <Step::Done | next>,
-                // The rest is built with `let+` before it is stored: `Yield`'s
-                // payload is declared without a row, and though building a
-                // `Seq` performs nothing, the call's row says `..E`.
-                Step::Yield(h, rest) => {
-                    let+ tail = <(f, rest) | map;
-                    <Step::Yield(<h | f, tail) | next>
-                },
+                Step::Yield(h, rest) => <Step::Yield(<h | f, <(f, rest) | map) | next>,
             },
         }
     }
 
     // A dropped element is not a step of the result, so the arm demands
     // the rest itself rather than answering — the loop lives in the demand.
-    pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T>) -> Seq<T> / {..E} {
+    pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T, ..E>) -> Seq<T, ..E> {
         mu Seq {
             next <= match s.next {
                 Step::Done => <Step::Done | next>,
-                Step::Yield(h, rest) => match <h | keep { True => {
-                    let+ tail = <(keep, rest) | filter;
-                    <Step::Yield(h, tail) | next>
-                }, _ => {
-                    <(<(keep, rest) | filter).next | next>
-                } },
+                Step::Yield(h, rest) => match <h | keep {
+                    True => <Step::Yield(h, <(keep, rest) | filter) | next>,
+                    _ => <(<(keep, rest) | filter).next | next>,
+                },
             },
         }
     }
 
-    pub fn take<+T>(s: Seq<T>, n: i64) -> Seq<T> {
+    pub fn take<+T, E>(s: Seq<T, ..E>, n: i64) -> Seq<T, ..E> {
         mu Seq {
             next <= match (<(n, 0) | le) { True => {
                 <Step::Done | next>
@@ -100,14 +97,12 @@ mod seq {
     // The other bridge: a stream, cut where a value stops passing. The
     // result can end, so it is a `Seq` — the type says what the function
     // does.
-    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
+    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T, ..E> {
         mu Seq {
-            next <= match <s.head | keep { True => {
-                let+ tail = <(keep, s.tail) | take_while;
-                <Step::Yield(s.head, tail) | next>
-            }, _ => {
-                <Step::Done | next>
-            } },
+            next <= match <s.head | keep {
+                True => <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>,
+                _ => <Step::Done | next>,
+            },
         }
     }
 }

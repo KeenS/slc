@@ -385,6 +385,8 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         // The effect row is the effect checker's concern; the core type is
         // the arrow underneath.
         TypeExpr::Effectful(inner, _) => lower_type(&inner.kind),
+        // A row argument is the effect checker's alone.
+        TypeExpr::Row(_) => Ok(Type::ONE),
         // `dual(A)` applies the involution rather than wrapping a node, so
         // `dual(+i64)` is `-i64` and `dual(dual(A))` is `A`. Only a
         // declaration's name stays wrapped: it is opaque to the core.

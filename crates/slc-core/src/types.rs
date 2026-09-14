@@ -93,7 +93,22 @@ impl Type {
             Type::Named(name, own) => {
                 Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
             }
-            Type::Rowed(t, row) => Type::Rowed(Box::new(t.instantiate(args)), row.clone()),
+            Type::Rowed(t, row) => {
+                // A declaration's row variable is a parameter by position:
+                // where that argument is a row — carried on the unit, or the
+                // empty one — the row takes its place.
+                let row = match row.tail.and_then(|position| args.get(position)) {
+                    Some(Type::Rowed(unit, given)) if **unit == Type::ONE => Row {
+                        effects: row.effects.iter().chain(&given.effects).cloned().collect(),
+                        tail: given.tail,
+                    },
+                    Some(unit) if *unit == Type::ONE => {
+                        Row { effects: row.effects.clone(), tail: None }
+                    }
+                    _ => row.clone(),
+                };
+                Type::rowed(t.instantiate(args), row)
+            }
             atom => atom.clone(),
         }
     }

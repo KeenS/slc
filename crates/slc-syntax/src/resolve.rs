@@ -287,6 +287,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
             }
             TypeExpr::Positive(i) | TypeExpr::Negative(i) | TypeExpr::Dual(i) => ty(&i.kind, out),
             TypeExpr::Effectful(i, _) => ty(&i.kind, out),
+            TypeExpr::Row(_) => {}
             TypeExpr::Tensor(items)
             | TypeExpr::Par(items)
             | TypeExpr::With(items)
@@ -770,6 +771,7 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
             resolve_type(&mut inner.kind, stack);
             resolve_row(row, stack);
         }
+        TypeExpr::Row(row) => resolve_row(row, stack),
     }
 }
 

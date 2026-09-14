@@ -54,32 +54,8 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 7. A menu or form declaration takes a row variable
-
-Moved up from "Deferred": the stdlib's lazy codata hit its stop condition.
-`seq::map` declared `-> (Seq<B> / {..E})`, storing `<(f, rest) | map` directly,
-is refused — "`map` hands on a value that performs the row `..E` where the
-type it meets does not allow it" — because `Step::Yield(T, Seq<T>)` declares
-its payload without a row, and `seq::to_list(s: Seq<T>)` takes a pure one.
-Building the rowed rest without storing it is accepted, so the payload is the
-blocker, and a per-use row on the type is not enough.
-
-Proposed: a declaration names a row parameter as it names a type parameter —
-`menu Seq<+T, E> / {..E}`, `enum Step<+T, E> { Done, Yield(T, Seq<T, E>) }` —
-and each use instantiates it. How a use writes the argument (`Seq<T, ..E>`,
-`Seq<T, {IO}>`) is decided in this step.
-
-1. **Tests first:** `seq::map` storing its rest directly is accepted; a `Seq`
-   built by `seq::map` with an effectful function and demanded under a
-   handler is accepted, and demanded outside one is refused;
-   `examples/seq.sl` and the stdlib tests keep their output.
-2. **The checker.** A declaration records its row parameters beside its type
-   parameters; a use instantiates them fresh, and a menu's latent row is its
-   row argument.
-3. **The stdlib.** `seq::map`, `filter` and `take_while` store their rest
-   directly and `let+` goes; `to_list` and `take` forward the row.
-4. **Docs.** `DESIGN.md`'s declarations and stdlib sections, the comments in
-   `seq.sl` and `fs.sl`, and `MIGRATION.md`.
+Nothing is queued. The next entries come from "Deferred" below, once one is
+chosen.
 
 ## Deferred, for discussion
 

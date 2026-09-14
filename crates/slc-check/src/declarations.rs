@@ -52,6 +52,9 @@ pub struct Declarations {
     /// Menu or form name → the latent row it declares: what demanding an
     /// item, or feeding the form, performs.
     pub(crate) latent_rows: HashMap<String, Row>,
+    /// Menu or form name → the position of the row parameter its own row
+    /// names, `menu Seq<+T, E> / {..E}`: its latent row is that argument.
+    latent_row_params: HashMap<String, usize>,
 }
 
 impl Declarations {
@@ -85,15 +88,23 @@ impl Declarations {
             // A declaration applied to arguments; the argument count must
             // match the declaration's.
             TypeExpr::Apply(name, args) => {
-                if self.arities.get(name) != Some(&args.len()) {
-                    return None;
-                }
                 let args = args.iter().map(|a| resolve(&a.kind)).collect::<Option<Vec<_>>>()?;
+                let args = self.complete_args(name, args)?;
                 if self.is_negative_decl(name) {
                     Type::Dual(Box::new(Type::Named(name.clone(), args)))
                 } else {
                     Type::Named(name.clone(), args)
                 }
+            }
+            // A row argument, carried on the unit. Its row variable is one of
+            // the declaration's parameters, by position, as on a written
+            // effect row, and `instantiate` puts each use's row in its place;
+            // a row variable nothing here names does not resolve.
+            TypeExpr::Row(row) => {
+                if row.tails.iter().any(|tail| !params.contains_key(tail)) {
+                    return None;
+                }
+                Type::rowed(Type::ONE, written_row(row, |tail| params.get(tail).copied()))
             }
             TypeExpr::Positive(inner) => resolve(&inner.kind)?,
             TypeExpr::Negative(inner) if !inner.kind.is_bottom() => resolve(&inner.kind)?.dual(),
@@ -163,6 +174,34 @@ impl Declarations {
     /// A declaration's type parameters and the polarity each declares.
     pub(crate) fn param_signs(&self, name: &str) -> &[(String, Option<ParamPolarity>)] {
         self.param_signs.get(name).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Whether a declaration's parameter at `index` is a row: one declared
+    /// without a sign, as a function's row parameters are.
+    pub(crate) fn is_row_param(&self, name: &str, index: usize) -> bool {
+        self.param_signs(name).get(index).is_some_and(|(_, sign)| sign.is_none())
+    }
+
+    /// A declaration's arguments as written, with row arguments left out at
+    /// the end taken as the empty row: `Seq<i64>` is `Seq<i64, {}>`. Any other
+    /// count than the declaration's is no type.
+    pub(crate) fn complete_args(&self, name: &str, mut args: Vec<Type>) -> Option<Vec<Type>> {
+        let arity = *self.arities.get(name)?;
+        if args.len() > arity {
+            return None;
+        }
+        while args.len() < arity {
+            if !self.is_row_param(name, args.len()) {
+                return None;
+            }
+            args.push(Type::ONE);
+        }
+        Some(args)
+    }
+
+    /// The position of the row parameter a menu's or form's own row names.
+    pub(crate) fn latent_row_param(&self, name: &str) -> Option<usize> {
+        self.latent_row_params.get(name).copied()
     }
 
     /// Whether a bare name is a variant of more than one enum — in which
@@ -246,6 +285,16 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             && !effects.effects.is_empty()
         {
             enums.latent_rows.insert(name.clone(), written_row(effects, |_| None));
+        }
+        // A row variable in a menu's or form's own row is one of its row
+        // parameters, instantiated at each use.
+        if let Decl::Menu { name, effects, type_params, type_param_signs, .. }
+        | Decl::Form { name, effects, type_params, type_param_signs, .. } = &d.kind
+            && let Some(tail) = effects.tails.first()
+            && let Some(index) = type_params.iter().position(|param| param == tail)
+            && type_param_signs.iter().all(|(signed, _)| signed != tail)
+        {
+            enums.latent_row_params.insert(name.clone(), index);
         }
         if let Decl::Form { name, .. } = &d.kind {
             enums.forms.insert(name.clone());

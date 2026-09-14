@@ -126,7 +126,17 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
         while cursor < tokens.len() && tokens[cursor].kind != TokenKind::LBrace {
             cursor += 1;
         }
-        if cursor == tokens.len() {
+        // A declared row, `menu Seq<+T, E> / {..E} { … }`, comes before the
+        // items: its braces are not the item list's.
+        if cursor > 0 && tokens[cursor - 1].kind == TokenKind::Slash {
+            while cursor < tokens.len() && tokens[cursor].kind != TokenKind::RBrace {
+                cursor += 1;
+            }
+            while cursor < tokens.len() && tokens[cursor].kind != TokenKind::LBrace {
+                cursor += 1;
+            }
+        }
+        if cursor >= tokens.len() {
             break;
         }
         cursor += 1;
@@ -136,8 +146,11 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
         while cursor < tokens.len() {
             match &tokens[cursor].kind {
                 TokenKind::RBrace if depth == 0 => break,
-                TokenKind::LParen | TokenKind::LBracket => depth += 1,
-                TokenKind::RParen | TokenKind::RBracket => depth = depth.saturating_sub(1),
+                // A row argument's braces, `Step<T, {IO}>`, nest like parentheses.
+                TokenKind::LParen | TokenKind::LBracket | TokenKind::LBrace => depth += 1,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace => {
+                    depth = depth.saturating_sub(1)
+                }
                 TokenKind::Comma if depth == 0 => at_item_start = true,
                 TokenKind::Ident(item)
                     if at_item_start
@@ -540,6 +553,12 @@ impl Parser {
             return Ok(EffectRow::default());
         }
         self.expect(TokenKind::LBrace, "`{` after `/` in an effect row")?;
+        self.parse_row_body()
+    }
+
+    /// A row's contents after its `{`, through the `}`: its effects, named by
+    /// path, and its `..E` tails.
+    fn parse_row_body(&mut self) -> Result<EffectRow, ParseError> {
         let mut row = EffectRow::default();
         if self.eat(&TokenKind::RBrace) {
             return Ok(row);
@@ -1259,6 +1278,23 @@ impl Parser {
                             let inner = self.parse_type()?;
                             let span = Span { start: sign_start + 1, end: inner.span.end };
                             args.push(Node { kind: TypeExpr::Negative(Box::new(inner)), span });
+                        } else if matches!(
+                            self.peek_kind(),
+                            Some(TokenKind::DotDot | TokenKind::LBrace)
+                        ) {
+                            // A row argument: `..E`, or a row written out,
+                            // `{IO, ..E}`.
+                            let row_start = self.span_start();
+                            let row = if self.eat(&TokenKind::DotDot) {
+                                let mut row = EffectRow::default();
+                                row.tails.push(self.expect_ident("a row variable after `..`")?);
+                                row
+                            } else {
+                                self.pos += 1;
+                                self.parse_row_body()?
+                            };
+                            let span = Span { start: row_start, end: self.span_end() };
+                            args.push(Node { kind: TypeExpr::Row(row), span });
                         } else {
                             args.push(self.parse_type()?);
                         }

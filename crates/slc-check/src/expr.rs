@@ -52,16 +52,17 @@ pub fn check_program_with_rows(
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
     }
-    // A menu's or form's latent row stays concrete: a row variable on a
-    // declaration is later work (`PLAN.md`, "Row variables on declarations").
+    // A row variable in a menu's or form's own row is one of its row
+    // parameters: declared, without a sign, beside its type parameters.
     for d in &p.decls {
         if let Decl::Menu { name, effects, .. } | Decl::Form { name, effects, .. } = &d.kind
-            && !effects.tails.is_empty()
+            && let Some(tail) = effects.tails.first()
+            && enums.latent_row_param(name).is_none()
         {
             env.row_diagnostics.push(Diagnostic {
                 message: format!(
-                    "`{name}` declares a row variable; a declaration's latent row is concrete \
-                     (row variables on declarations are not yet supported)"
+                    "`..{tail}` in `{name}`'s row is not one of its row parameters; declare it \
+                     without a sign: `{name}<{tail}>`"
                 ),
                 span: d.span,
             });
@@ -563,6 +564,37 @@ fn rigid_row(rigid_vars: &HashMap<&str, Type>, name: &str) -> Option<usize> {
     }
 }
 
+/// What demanding a menu's item, or feeding a form, performs at this use: the
+/// row it declares, with its row parameter's argument among `args` in the
+/// parameter's place. `None` for a declaration that declares no row.
+fn latent_row(
+    enums: &Declarations,
+    name: &str,
+    args: &[Type],
+    env: &mut Env,
+) -> Option<slc_core::types::Row> {
+    let concrete = enums.latent_rows.get(name).cloned();
+    let Some(index) = enums.latent_row_param(name) else { return concrete };
+    let argument = args.get(index).map(|arg| env.uni.apply(arg)).unwrap_or(Type::ONE);
+    let (bare, given) = unrowed(argument);
+    let given = match bare {
+        // Not known yet: it stands for a row of its own.
+        Type::Var(_) => {
+            let fresh = slc_core::types::Row {
+                effects: Default::default(),
+                tail: Some(env.uni.fresh_row()),
+            };
+            let _ = env.uni.unify(&bare, &Type::Rowed(Box::new(Type::ONE), fresh.clone()));
+            fresh
+        }
+        _ => given,
+    };
+    let mut latent = concrete.unwrap_or_default();
+    latent.effects.extend(given.effects);
+    latent.tail = latent.tail.or(given.tail);
+    Some(latent)
+}
+
 /// Whether `ty` is the sum of an alternative `::i(v)` still waiting for its
 /// context to name it: an unknown that would fit anything it meets.
 fn is_pending_injection(env: &Env, ty: &Type) -> bool {
@@ -729,11 +761,23 @@ fn resolve_rigid(
         T::Par(items) => Some(Type::Par(rigid_components(items, rigid_vars, enums)?)),
         T::With(items) => Some(Type::With(rigid_components(items, rigid_vars, enums)?)),
         T::Sum(items) => Some(Type::Sum(rigid_components(items, rigid_vars, enums)?)),
+        // A row argument; its row variable is the declaration's own, rigid in
+        // its body.
+        T::Row(row) => {
+            if row.tails.iter().any(|tail| rigid_row(rigid_vars, tail).is_none()) {
+                return None;
+            }
+            Some(Type::rowed(
+                Type::ONE,
+                crate::declarations::written_row(row, |tail| rigid_row(rigid_vars, tail)),
+            ))
+        }
         T::Apply(name, args) => {
             let args = args
                 .iter()
                 .map(|a| resolve_rigid(&a.kind, rigid_vars, enums))
                 .collect::<Option<Vec<_>>>()?;
+            let args = enums.complete_args(name, args)?;
             if enums.is_negative_decl(name) {
                 Some(Type::Dual(Box::new(Type::Named(name.clone(), args))))
             } else if enums.declares(name) {
@@ -859,6 +903,7 @@ fn type_display(ty: &TypeExpr) -> String {
             type_display(&inner.kind)
         }
         TypeExpr::Effectful(inner, _) => type_display(&inner.kind),
+        TypeExpr::Row(_) => "a row".to_string(),
         _ => "this type".into(),
     }
 }
@@ -1641,7 +1686,20 @@ fn dict_for(
 /// Fresh unification variables for a declaration's type parameters, ready
 /// to instantiate its stored field and payload types at one use.
 fn fresh_args(enums: &Declarations, name: &str, env: &mut Env, span: Span) -> Vec<Type> {
-    let args: Vec<Type> = (0..enums.arity(name)).map(|_| env.uni.fresh_var()).collect();
+    // A row parameter's argument is a row of its own, which the use says.
+    let args: Vec<Type> = (0..enums.arity(name))
+        .map(|index| {
+            if enums.is_row_param(name, index) {
+                let row = slc_core::types::Row {
+                    effects: Default::default(),
+                    tail: Some(env.uni.fresh_row()),
+                };
+                Type::Rowed(Box::new(Type::ONE), row)
+            } else {
+                env.uni.fresh_var()
+            }
+        })
+        .collect();
     // What each is solved to must suit the polarity its parameter declares.
     for ((param, sign), ty) in enums.param_signs(name).iter().zip(&args) {
         if let Some(sign) = sign {
@@ -3274,8 +3332,9 @@ fn check_expr_unapplied(
             check_comatch_arms(&menu, &type_args, rows, enums, env, diags);
             env.current_row = outer_row;
             let runs = slc_core::types::Row { effects: Default::default(), tail: Some(arms_row) };
+            let latent = latent_row(enums, &menu, &type_args, env);
             let menu_ty = Type::Dual(Box::new(Type::Named(menu.clone(), type_args)));
-            match enums.latent_rows.get(&menu).cloned() {
+            match latent {
                 Some(latent) => {
                     env.constrain_row_for(
                         runs,
@@ -3339,13 +3398,13 @@ fn check_expr_unapplied(
             // value itself: it consumes the record its fields describe, so
             // the arm binds that record's components.
             if let Type::Dual(inner) = &resolved
-                && let Type::Named(form, _) = inner.as_ref()
+                && let Type::Named(form, form_args) = inner.as_ref()
                 && enums.is_form(form)
             {
                 let demand = Type::Named(form.clone(), Vec::new());
                 // A form with a latent row runs its arms when fed: they fit
                 // inside that row, and perform nothing where it is written.
-                let latent = enums.latent_rows.get(form).cloned();
+                let latent = latent_row(enums, form, form_args, env);
                 let arms_row = latent.as_ref().map(|_| env.uni.fresh_row());
                 let outer_row = env.current_row;
                 if let (Some(latent), Some(arms_row)) = (latent, arms_row) {
@@ -3492,12 +3551,12 @@ fn check_expr_unapplied(
                     // the item's, and lowering cuts the menu against the
                     // request.
                     if let Type::Dual(inner) = &base_ty
-                        && let Type::Named(menu, _) = inner.as_ref()
+                        && let Type::Named(menu, menu_args) = inner.as_ref()
                         && enums.is_menu(menu)
                     {
                         let label = format!("{menu}::{name}");
-                        if let Some(latent) = enums.latent_rows.get(menu) {
-                            env.perform(latent.clone());
+                        if let Some(latent) = latent_row(enums, menu, menu_args, env) {
+                            env.perform(latent);
                         }
                         let args = scrutinee_args(&base_ty).to_vec();
                         return match enums.variant(&label) {
@@ -4012,10 +4071,10 @@ fn check_expr_unapplied(
                     let (consumer, consumer_row) = unrowed(env.uni.apply(ty));
                     env.perform(consumer_row);
                     if let Type::Dual(inner) = &consumer
-                        && let Type::Named(form, _) = inner.as_ref()
-                        && let Some(latent) = enums.latent_rows.get(form)
+                        && let Type::Named(form, form_args) = inner.as_ref()
+                        && let Some(latent) = latent_row(enums, form, form_args, env)
                     {
-                        env.perform(latent.clone());
+                        env.perform(latent);
                     }
                     // A function closed with `>` is the slip of writing
                     // `<v | resume>` for `<v | resume`: a function applied by

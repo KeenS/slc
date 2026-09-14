@@ -1247,8 +1247,16 @@ says the returned consumer performs `..E` when *fed*, not that the call
 performs anything — a returned `fn`/`select` literal is checked against
 that latent row, the cut it is eventually fed at incurs it, and a `handle`
 around the mere construction discharges nothing, because nothing fired.
-Latent rows on declarations are concrete in this version: a row variable
-on a menu or form declaration is refused.
+A menu or form declaration may also take a **row parameter**, declared
+without a sign beside its type parameters and named by its own row:
+`menu Seq<+T, E> / {..E} { next: Step<T, ..E> }`. Each use gives the row as
+an argument — `Seq<i64, ..E>`, `Seq<i64, {IO}>` — and a row argument left
+out at the end is the empty row, so `Seq<i64>` performs nothing. Building
+one performs nothing either; a demand incurs that use's row, and a `mu`
+over it checks its arms against it. A value whose demands perform less fits
+where more is allowed, so a row argument is fitted one way rather than made
+equal. A row variable in a declaration's row that is not one of its row
+parameters is refused.
 
 **Rows are part of types.** A row rides on the type of the value that
 performs it when run — a function, a consumer, a menu or form, a delayed
@@ -1561,8 +1569,8 @@ item answers *whether* there is more, so the recursion lives in the codata
 and the branching in the data:
 
 ```sl
-enum Step<+T> { Done, Yield(T, Seq<T>) }
-menu Seq<+T> { next: Step<T> }
+enum Step<+T, E> { Done, Yield(T, Seq<T, ..E>) }
+menu Seq<+T, E> / {..E} { next: Step<T, ..E> }
 ```
 
 It is produced a step at a time and only as far as it is demanded, which is
@@ -1576,7 +1584,10 @@ terminating program as long as something downstream stops asking:
 Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
 `seq::map`, `seq::filter`, `seq::take`, and `seq::take_while`, which cuts a stream
 where a value stops passing and therefore answers a `Seq` — the type saying
-what the function does. `examples/seq.sl` runs all of it. There is no
+what the function does. `examples/seq.sl` runs all of it. A `Seq` carries
+the row its steps perform when demanded, `Seq<T, ..E>`, so `seq::map` with an
+effectful function answers at once and its effects happen where the steps are
+demanded — under whatever handler is around `seq::to_list`. There is no
 `impl Display for Seq`, for the reason `Stream` has none: showing one is
 `seq::to_list`, or `seq::take` first if it may not end.
 

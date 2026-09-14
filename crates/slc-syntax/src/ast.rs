@@ -231,6 +231,9 @@ pub enum TypeExpr {
     /// A function type carrying an effect row: `(A -> B / {Exn, ..E})`.
     Effectful(Box<Node<TypeExpr>>, EffectRow),
     Dual(Box<Node<TypeExpr>>),
+    /// A row given as a declaration's argument, `..E` or `{IO, ..E}`: the
+    /// `..E` of `Seq<T, ..E>`.
+    Row(EffectRow),
 }
 
 impl TypeExpr {

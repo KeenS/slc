@@ -274,11 +274,11 @@ fn a_returned_literal_beyond_the_latent_row_is_rejected() {
 }
 
 #[test]
-fn a_declarations_latent_row_is_concrete() {
+fn a_declarations_row_variable_is_one_of_its_row_parameters() {
     refused(
-        "concrete",
-        &[EXN, "menu Bad<E> / {..E} { value: i64 }\n", MAIN].concat(),
-        &["latent row is concrete"],
+        "undeclared_row",
+        &[EXN, "menu Bad / {..E} { value: i64 }\n", MAIN].concat(),
+        &["is not one of its row parameters"],
     );
 }
 

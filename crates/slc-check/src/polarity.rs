@@ -260,6 +260,7 @@ fn check_applications(
             recurse(&from.kind, diags);
             recurse(&to.kind, diags);
         }
+        TypeExpr::Row(_) => {}
     }
 }
 
@@ -298,6 +299,8 @@ fn written_polarity(
         TypeExpr::Par(_) | TypeExpr::With(_) | TypeExpr::Fun(..) | TypeExpr::Effectful(..) => {
             Some(ParamPolarity::Negative)
         }
+        // A row is no type, and has no polarity.
+        TypeExpr::Row(_) => None,
     }
 }
 
@@ -325,6 +328,7 @@ fn collect_rows<'a>(ty: &'a TypeExpr, rows: &mut Vec<&'a EffectRow>) {
             rows.push(row);
             collect_rows(&inner.kind, rows);
         }
+        TypeExpr::Row(row) => rows.push(row),
     }
 }
 

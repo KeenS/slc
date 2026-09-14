@@ -373,7 +373,16 @@ impl Unification {
                 let args = xs
                     .iter()
                     .zip(ys)
-                    .map(|(x, y)| self.unify_in(x, y, true))
+                    .map(|(x, y)| {
+                        // A row argument, carried on the unit, says what
+                        // demanding the value performs: one that performs
+                        // less fits where more is allowed, so it is fitted
+                        // one way, not made equal.
+                        let row_argument = [x, y].into_iter().any(
+                            |t| matches!(self.apply(t), Type::Rowed(unit, _) if *unit == Type::ONE),
+                        );
+                        self.unify_in(x, y, !row_argument)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Named(a.clone(), args))
             }

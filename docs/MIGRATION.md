@@ -1330,6 +1330,23 @@ A command's exit parameter that writes a row, `program: ((;) / {E})`, now
 takes what the exit handed to it performs, where it used to be charged at
 the call; and a `handle` whose body is `(;)` runs it.
 
+## A menu or form takes a row parameter
+
+A row variable on a menu or form declaration was refused. It is now one of
+the declaration's row parameters, declared without a sign, and each use
+gives its row: `Seq<T, ..E>`, or `Seq<T>` for none. The stdlib's `Seq` takes
+one, so a sequence built with an effectful function performs where its steps
+are demanded, and `seq::map`, `filter` and `take_while` no longer build their
+rest with `let+`:
+
+```sl
+fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E}      // old
+fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E>    // new
+```
+
+A function that demands a sequence's steps forwards its row:
+`seq::to_list(s: Seq<T, ..E>) -> List<T> / {..E}`.
+
 ## Removed constructs
 
 ### `spawn`
