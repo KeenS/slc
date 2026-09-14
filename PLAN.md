@@ -82,44 +82,36 @@ upgrade "Effect tracking follows names" names. What does not change is the
 surface: rows are written where they are today, `/ {E, ..R}` after an
 arrow and on menus and forms.
 
-The core has no arrow type — `A -> B` is `(-A ; B)` — so a row attaches to
-the negative type that runs: a function, a consumer, a menu or a form. The
-first step settles the representation before anything is ported.
+The design is settled in `docs/design-notes/rows-in-types.md`, reviewed: a
+`Type::Rowed(Box<Type>, Row)` wrapper on the negative type that runs; rows fit
+by inclusion constraints solved per declaration; nested rows unify as equal;
+every body — a declaration, a lambda, a `handle` body, an arm — has a current
+row that each performing point adds to.
 
-1. **Design note.** `docs/design-notes/rows-in-types.md` settles:
-   - the representation, a row on `Type::Par` and `Type::With` against a
-     `Type::Rowed(Box<Type>, Row)` wrapper, by which one keeps `dual` an
-     involution and `;` commutative;
-   - row unification: effect labels as a set with an optional tail variable
-     (Rémy-style), and how a tail variable unifies with a concrete row;
-   - where a row is instantiated and generalized, beside a declaration's
-     type variables;
-   - what `handle` does to a row: remove the handled effect's label, and
-     leave a tail alone.
-   The note is reviewed before step 2.
-2. **Tests first.** One checker test for each gap "Effect tracking follows
-   names" lists — a lambda's effects charged where it runs, a higher-order
-   global passed as a value forwarding its row, a function laundered through
-   a `let` still charging its row, and a row variable instantiated at a later
-   stage of a chain — plus the whole of `effects.rs`'s existing test module,
-   which must keep passing unchanged.
-3. **Types carry rows.** `crates/slc-core/src/types.rs` and unification
-   (`slc_core::typing::Unification`) gain rows; `display` prints them in the
-   surface spelling; `dual` and the commutation of `;` keep them.
-4. **The type checker infers rows.** Signatures lower their written rows
-   into types (`crates/slc-check/src/signatures.rs`); a call, a stage, a cut
-   and a demand add the callee's row to the declaration's; `handle` removes
-   what it handles; each declaration's inferred row is checked against its
-   written one.
-5. **The name-following pass is retired.** `effects.rs` keeps only what
-   types cannot say, if anything, and its diagnostics move to the type
-   checker with the same messages. The refusals of a stored delayed
-   computation that performs, and of a delayed row with a variable
-   (`DESIGN.md` §4, "When a `let` computes"), are lifted.
-6. **Docs.** `DESIGN.md`'s effects section describes rows as part of types;
-   this file removes the known limit "Effect tracking follows names";
-   `MIGRATION.md` gains a section only for programs whose meaning or
-   acceptance changes.
+1. **The type.** `Type::Rowed` and `Row` in `crates/slc-core/src/types.rs`,
+   with `apply`, `occurs`, `unify`, `dual`, `instantiate`, `freshen`
+   (`crates/slc-check/src/signatures.rs`) and display. No row is built yet,
+   so nothing changes and the existing suite is the test.
+2. **Tests first.** One test for each gap "Effect tracking follows names"
+   lists — a lambda's effects charged where it runs, a higher-order global
+   passed as a value forwarding its row, a function laundered through a `let`
+   still charging its row, a row variable instantiated at a later stage of a
+   chain — and for the lifted refusals of a stored delayed computation and a
+   delayed row variable. They are marked `#[ignore]` until step 4.
+3. **Rows in signatures, checked beside the effect pass.** Written rows are
+   kept (`signature_type`, `resolve_with_self`, `resolve_rigid`); the checker
+   records inclusion constraints at the points the note lists and solves them
+   per declaration. Its verdict is compared with `effects.rs` over every
+   program in the suite, and differences are either fixed or listed as the
+   intended changes of the note's "Consequences".
+4. **The switch.** The solver's diagnostics replace the effect pass's, with
+   the same messages; the refusals of stored and row-variable delayed
+   computations go; `effects.rs` is deleted, or keeps only what types cannot
+   say. Step 2's tests are un-ignored.
+5. **Docs.** `DESIGN.md`'s effects section describes rows as part of types,
+   and §4 loses the two refusals; this file removes the known limit "Effect
+   tracking follows names"; `MIGRATION.md` gains a section for the programs
+   whose acceptance changes.
 
 ### 2. File operations are an effect, and handlers are values
 
@@ -239,6 +231,17 @@ evaluator.
    polarity; this file removes that gap from the known limit's list.
 
 ## Deferred, for discussion
+
+- **Row variables on declarations.** A menu or form declaration keeps a
+  concrete row after "Rows live in types": `menu Seq<+T, E> / {..E}` would
+  instantiate its row like a type parameter at each use. Revisit when a
+  per-use row on the type, `(Seq<B> / {..E})`, is not enough.
+
+- **The stdlib's lazy codata carries its rows on the returned type.** Once
+  rows live in types, `seq::map`, `filter` and `take_while` can declare
+  `-> (Seq<B> / {..E})` instead of a call row, since building a `Seq`
+  performs nothing, and their bodies lose the `let+` that "Delayed
+  computations carry their effects" required.
 
 - **Composable capture.** A continuation that returns to where it was
   captured — `shift`'s `k : A -> R` — would be a function rather than a
