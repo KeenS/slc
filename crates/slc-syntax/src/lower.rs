@@ -601,20 +601,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // in that far is its values, and the closing stage its menu of
             // exits. That is a call, not a cut — a partially applied
             // command is a closure, whatever its type says.
-            if let Some(at) = shape.row_stage.map(|i| i + usize::from(shape.eta)) {
-                let row = lowered.pop().expect("a row stage has a closing menu");
-                let callee = lowered.remove(at);
-                let mut values = lowered.remove(0);
-                for stage in lowered {
-                    values = call_curried(stage, vec![values]);
-                }
-                let term = call_curried(callee, vec![values, row]);
-                return Ok(if shape.eta {
-                    Term::Lam(FLOW_ARGUMENT.into(), Box::new(term))
-                } else {
-                    term
-                });
-            }
             // Every step folds left. A stage read the other way round builds
             // a consumer from the continuation of its step, and what flowed in
             // that far is fed to it; any other stage is applied.
@@ -628,18 +614,35 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 Some((_, swap)) => swap_adapter(acc, *swap),
                 None => acc,
             };
-            let last = shape.cut.then(|| lowered.pop().expect("a closed flow has a consumer"));
-            let mut steps = lowered.into_iter().enumerate();
-            let (first, mut acc) = steps.next().expect("a flow has a first stage");
-            acc = turn(first, acc);
-            for (at, stage) in steps {
-                acc = if commuted.contains(&at) {
-                    turned_step(stage, acc, at)
+            let fold = |steps: Vec<Term>| {
+                let mut steps = steps.into_iter().enumerate();
+                let (first, mut acc) = steps.next().expect("a flow has a first stage");
+                acc = turn(first, acc);
+                for (at, stage) in steps {
+                    acc = if commuted.contains(&at) {
+                        turned_step(stage, acc, at)
+                    } else {
+                        call_curried(stage, vec![acc])
+                    };
+                    acc = turn(at, acc);
+                }
+                acc
+            };
+            if let Some(at) = shape.row_stage.map(|i| i + usize::from(shape.eta)) {
+                let row = lowered.pop().expect("a row stage has a closing menu");
+                let callee = lowered.remove(at);
+                // The stages before the command fold as any chain's do; the
+                // command is the last step and closes on its menu.
+                let values = fold(lowered);
+                let term = call_curried(callee, vec![values, row]);
+                return Ok(if shape.eta {
+                    Term::Lam(FLOW_ARGUMENT.into(), Box::new(term))
                 } else {
-                    call_curried(stage, vec![acc])
-                };
-                acc = turn(at, acc);
+                    term
+                });
             }
+            let last = shape.cut.then(|| lowered.pop().expect("a closed flow has a consumer"));
+            let acc = fold(lowered);
             let term = match last {
                 None => acc,
                 Some(last) => {

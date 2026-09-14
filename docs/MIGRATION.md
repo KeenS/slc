@@ -1326,7 +1326,7 @@ let status = <(fn(u: (,)) {                                       // old
 })>
 ```
 
-A command's exit parameter that writes a row, `program: ((;) / {E})`, now
+A command's exit parameter that writes a row, `program: ((;) / {..E})`, now
 takes what the exit handed to it performs, where it used to be charged at
 the call; and a `handle` whose body is `(;)` runs it.
 

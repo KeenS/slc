@@ -47,6 +47,7 @@ pub fn check_program_with_rows(
     let functions = function_types(p, &enums);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions, traits);
+    env.uni.set_negative_decls(enums.menus.iter().chain(enums.forms.iter()).cloned());
     check_declared_types(p, &enums, &mut diags);
     check_trait_signatures(traits, &enums, &mut env, &mut diags);
     for d in &p.decls {
@@ -637,13 +638,43 @@ fn argument_origin(
 /// An exit accepts any row. A command runs the exits it is handed before
 /// control goes anywhere else, so what a consumer handed to one performs is
 /// charged where it is handed over — and so is what each exit of a bundle
-/// performs.
+/// performs, once the bundle is handed over or fed.
 fn open_exit(ty: Type, env: &mut Env) -> Type {
     let (bare, row) = unrowed(env.uni.apply(&ty));
     env.perform(row);
     match bare {
         Type::With(items) => {
             Type::With(items.into_iter().map(|item| open_exit(item, env)).collect())
+        }
+        other => other,
+    }
+}
+
+/// `open_exit`, except at an exit whose declared parameter writes a row: that
+/// parameter takes what the exit performs, so the exit keeps its row. The
+/// declared exits are matched item by item through a bundle.
+fn open_exits(exits: Type, declared: Option<&Type>, env: &mut Env) -> Type {
+    let declared = declared.map(|declared| env.uni.apply(declared));
+    if matches!(declared, Some(Type::Rowed(..))) {
+        return exits;
+    }
+    let (bare, row) = unrowed(env.uni.apply(&exits));
+    env.perform(row);
+    match bare {
+        Type::With(items) => {
+            let declared = match &declared {
+                Some(Type::With(items_declared)) if items_declared.len() == items.len() => {
+                    items_declared.iter().map(Some).collect()
+                }
+                _ => vec![None; items.len()],
+            };
+            Type::With(
+                items
+                    .into_iter()
+                    .zip(declared)
+                    .map(|(item, declared)| open_exits(item, declared, env))
+                    .collect(),
+            )
         }
         other => other,
     }
@@ -773,6 +804,9 @@ fn resolve_rigid(
             ))
         }
         T::Apply(name, args) => {
+            if !enums.args_match_kinds(name, args) {
+                return None;
+            }
             let args = args
                 .iter()
                 .map(|a| resolve_rigid(&a.kind, rigid_vars, enums))
@@ -793,36 +827,48 @@ fn resolve_rigid(
 /// A declared parameter's type named nothing the checker knows. Leaving the
 /// parameter unbound would surface later as "`xs` is not defined", pointing
 /// at every use instead of the one cause.
-fn unresolved_parameter_type(p: &slc_syntax::ast::Param, span: Span, diags: &mut Vec<Diagnostic>) {
+fn unresolved_parameter_type(
+    p: &slc_syntax::ast::Param,
+    span: Span,
+    enums: &Declarations,
+    diags: &mut Vec<Diagnostic>,
+) {
     if let Some(ty) = &p.ty {
-        diags.push(Diagnostic {
-            message: format!(
-                "the type of parameter {} names `{}`, which is not a declared type here; a \
-                 library type is `list::List`, or brought in with `use`",
-                p.describe(),
-                type_display(ty)
-            ),
-            span,
-        });
+        unresolved_type(&format!("the type of parameter {}", p.describe()), ty, span, enums, diags);
     }
 }
 
 /// A written type that names nothing declared — refused, rather than left to
 /// stand for any type at all. `what` says where it is written: "the return
 /// type of `f`", "the type of field `x` of `D`".
-fn unresolved_type(what: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    diags.push(Diagnostic {
-        message: format!(
+fn unresolved_type(
+    what: &str,
+    ty: &TypeExpr,
+    span: Span,
+    enums: &Declarations,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // A row parameter given a type, or a type parameter a row, is the
+    // likelier slip, and is named as such.
+    let message = match enums.row_kind_mismatch(ty) {
+        Some(mismatch) => format!("{what} {mismatch}"),
+        None => format!(
             "{what} names `{}`, which is not a declared type here; a library type is \
              `list::List`, or brought in with `use`",
             type_display(ty)
         ),
-        span,
-    });
+    };
+    diags.push(Diagnostic { message, span });
 }
 
-fn unresolved_return_type(owner: &str, ty: &TypeExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    unresolved_type(&format!("the return type of {owner}"), ty, span, diags);
+fn unresolved_return_type(
+    owner: &str,
+    ty: &TypeExpr,
+    span: Span,
+    enums: &Declarations,
+    diags: &mut Vec<Diagnostic>,
+) {
+    unresolved_type(&format!("the return type of {owner}"), ty, span, enums, diags);
 }
 
 /// What a type declaration's fields, payloads and items name must exist.
@@ -841,7 +887,7 @@ fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagn
                 for (field, ty) in fields {
                     if enums.resolve_in(ty, &params).is_none() {
                         let what = format!("the type of field `{field}` of `{name}`");
-                        unresolved_type(&what, ty, d.span, diags);
+                        unresolved_type(&what, ty, d.span, enums, diags);
                     }
                 }
             }
@@ -850,7 +896,7 @@ fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagn
                 for (item, ty) in items {
                     if enums.resolve_in(ty, &params).is_none() {
                         let what = format!("the type of item `{item}` of `{name}`");
-                        unresolved_type(&what, ty, d.span, diags);
+                        unresolved_type(&what, ty, d.span, enums, diags);
                     }
                 }
             }
@@ -860,7 +906,7 @@ fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagn
                     for (index, ty) in payload.iter().enumerate() {
                         if enums.resolve_in(ty, &params).is_none() {
                             let what = format!("payload {index} of `{name}::{variant}`");
-                            unresolved_type(&what, ty, d.span, diags);
+                            unresolved_type(&what, ty, d.span, enums, diags);
                         }
                     }
                 }
@@ -888,7 +934,13 @@ fn check_trait_signatures(
             if let Some(written) = &method.return_type
                 && resolve_rigid(written, &rigid_self, enums).is_none()
             {
-                unresolved_return_type(&format!("method `{}`", method.name), written, span, diags);
+                unresolved_return_type(
+                    &format!("method `{}`", method.name),
+                    written,
+                    span,
+                    enums,
+                    diags,
+                );
             }
         }
     }
@@ -1289,7 +1341,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             for p in params {
                 match p.ty.as_ref().and_then(&rigid) {
                     Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
-                    None => unresolved_parameter_type(p, d.span, diags),
+                    None => unresolved_parameter_type(p, d.span, enums, diags),
                 }
             }
             // A negative function produces the consumer of what follows its
@@ -1299,7 +1351,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             if let Some(written) = return_type
                 && declared.is_none()
             {
-                unresolved_return_type(&format!("`{name}`"), written, d.span, diags);
+                unresolved_return_type(&format!("`{name}`"), written, d.span, enums, diags);
             }
             env.consumed = (*polarity == slc_syntax::ast::FunctionPolarity::Negative)
                 .then(|| declared.clone())
@@ -1387,7 +1439,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             for p in value_params.iter().chain(continuation_params.iter()) {
                 match p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums)) {
                     Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
-                    None => unresolved_parameter_type(p, d.span, diags),
+                    None => unresolved_parameter_type(p, d.span, enums, diags),
                 }
             }
             let body_type = check_expr(body, enums, env, diags);
@@ -1398,7 +1450,11 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // not constrained — the core is classical. A body whose type the
             // checker cannot pin down is left alone.
             if let Some(actual) = body_type {
-                let actual = env.uni.apply(&actual);
+                // A `(;)` name standing as the body runs, and performs its row.
+                let (actual, row) = unrowed(env.uni.apply(&actual));
+                if actual == Type::BOTTOM {
+                    env.perform(row);
+                }
                 if actual != Type::BOTTOM && !matches!(actual, Type::Var(_)) {
                     diags.push(Diagnostic {
                         message: format!(
@@ -1463,6 +1519,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                         &format!("operation `{}`", op.name),
                         written,
                         d.span,
+                        enums,
                         diags,
                     );
                 }
@@ -2162,7 +2219,7 @@ fn check_let_binding(
             Some(name) => format!("the annotation of `let {name}`"),
             None => "the annotation of this `let`".into(),
         };
-        unresolved_type(&what, written, value.span, diags);
+        unresolved_type(&what, written, value.span, enums, diags);
     }
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
         && !fits_turning(env, annotation, &actual, value)
@@ -2905,7 +2962,7 @@ fn check_expr_unapplied(
             if let Some(written) = return_type
                 && resolve_in_body(written, env, enums).is_none()
             {
-                unresolved_return_type("this lambda", written, e.span, diags);
+                unresolved_return_type("this lambda", written, e.span, enums, diags);
             }
             env.push();
             let param_ty = param_type
@@ -3747,10 +3804,10 @@ fn check_expr_unapplied(
             note_by_name(items, enums, env);
             let types =
                 items.iter().map(|item| check_by_name(item, enums, env, diags)).collect::<Vec<_>>();
-            types
-                .into_iter()
-                .collect::<Option<Vec<_>>>()
-                .map(|types| open_exit(Type::With(types), env))
+            // Each item keeps its row: a bundle is charged where it is
+            // handed over or fed, and a command taking one may take an
+            // item's row on a parameter that writes it.
+            types.into_iter().collect::<Option<Vec<_>>>().map(Type::With)
         }
         Expr::Pair(items) if items.is_empty() => Some(Type::ONE),
         Expr::Pair(items) => {
@@ -3871,12 +3928,35 @@ fn check_expr_unapplied(
                     // performs, as a handler taking a program does: it runs
                     // the exit under something of its own. Any other exit
                     // is charged where it is handed over.
-                    let takes_rows = matches!(env.uni.apply(&row), Type::Rowed(..));
-                    let exits = types[index + 1]
-                        .clone()
-                        .map(|exits| if takes_rows { exits } else { open_exit(exits, env) });
+                    let exits =
+                        types[index + 1].clone().map(|exits| open_exits(exits, Some(&row), env));
+                    // Each exit of a bundle meets its declared exit as a
+                    // value meets a slot: its row inside the declared one,
+                    // not equal to it.
+                    let menu_fits = |env: &mut Env, exits: &Type| {
+                        let written = match &stages[index + 1].kind {
+                            Expr::Bundle(items) => Some(items),
+                            _ => None,
+                        };
+                        match (env.uni.apply(&row), env.uni.apply(exits)) {
+                            (Type::With(declared), Type::With(items))
+                                if declared.len() == items.len() =>
+                            {
+                                declared.iter().zip(&items).enumerate().all(
+                                    |(position, (declared, item))| {
+                                        let shape = written
+                                            .and_then(|items| items.get(position))
+                                            .map(|item| &item.kind)
+                                            .unwrap_or(&stages[index + 1].kind);
+                                        fits(env, declared, item, shape)
+                                    },
+                                )
+                            }
+                            _ => fits(env, &row, exits, &stages[index + 1].kind),
+                        }
+                    };
                     if let Some(exits) = exits.as_ref()
-                        && !fits(env, &row, exits, &stages[index + 1].kind)
+                        && !menu_fits(env, exits)
                     {
                         let row = env.uni.apply(&row);
                         diags.push(Diagnostic {
@@ -4066,10 +4146,10 @@ fn check_expr_unapplied(
                         });
                         return Some(Type::BOTTOM);
                     }
-                    // Feeding the consumer runs it: it performs its row, and a
-                    // form's declared latent row.
-                    let (consumer, consumer_row) = unrowed(env.uni.apply(ty));
-                    env.perform(consumer_row);
+                    // Feeding the consumer runs it: it performs its row — a
+                    // bundle's, item by item — and a form's declared latent
+                    // row.
+                    let consumer = open_exit(env.uni.apply(ty), env);
                     if let Type::Dual(inner) = &consumer
                         && let Type::Named(form, form_args) = inner.as_ref()
                         && let Some(latent) = latent_row(enums, form, form_args, env)
@@ -4080,8 +4160,18 @@ fn check_expr_unapplied(
                     // `<v | resume>` for `<v | resume`: a function applied by
                     // a cut takes its argument and a continuation together,
                     // and the mismatch that makes says nothing of the `>`.
+                    // A consumer of a pair holding a continuation, `k: (A, -B)`,
+                    // has a function's type too, `(-A ; B)`; a pair flowing
+                    // in is then a pair meeting a pair, not a function
+                    // closed with `>`.
+                    let pair_flows_in = matches!(
+                        unrowed(env.uni.apply(&acc)).0,
+                        Type::Tensor(items) if items.len() == 2
+                    );
                     let function = match (&stages[index].kind, &consumer) {
-                        (Expr::Ident(name), Type::Par(parts)) if parts.len() == 2 => {
+                        (Expr::Ident(name), Type::Par(parts))
+                            if parts.len() == 2 && !pair_flows_in =>
+                        {
                             let result = &parts[1];
                             let returns = if contains_var(result) {
                                 type_polarity(result, env) != Some(ParamPolarity::Negative)
@@ -4108,7 +4198,7 @@ fn check_expr_unapplied(
                         acc = Type::BOTTOM;
                         continue;
                     }
-                    let expects = ty.dual();
+                    let expects = consumer.dual();
                     // The `(;)`/`(,)` corner: `-(;)` resolves to `(,)`, so the
                     // idiomatic `<(,) | k>` is unit meeting unit.
                     let units = acc == Type::ONE && ty == &Type::ONE;

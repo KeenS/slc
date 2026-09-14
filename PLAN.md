@@ -59,6 +59,37 @@ chosen.
 
 ## Deferred, for discussion
 
+- **A returned consumer's row is charged to the declaration, not the value.**
+  `fn mk(exit: -i32) -> -i64 / {Tick}` absorbs what the returned `select`
+  performs into the call's row (`crates/slc-check/src/expr.rs`, the
+  declaration-return charge; `docs/design-notes/rows-in-types.md`), so a
+  `handle` around the call discharges nothing and the consumer fires later
+  unhandled: `let k = handle (<exit | mk) { tick(): … }; <5 | k>` runs
+  `tick` with no handler. The sound spelling is `-> (-i64 / {Tick})`. Decide
+  whether to refuse the rowless promise ("the returned value performs
+  `Tick`; write `-> (-i64 / {Tick})`") or keep the charge for values that are
+  run before the call returns (a rowless menu built by a function). Refusing
+  is the recommendation.
+
+- **A handler clause's parameter count is not checked.** A clause takes
+  parameter *i* from the operation's signature and gives any extra one a
+  fresh variable (`Expr::Handle` in `crates/slc-check/src/expr.rs`);
+  `fs::write_file(p): resume => …` types `p` as `String` while the runtime
+  binds the `(path, contents)` tuple, and `read_file(a, b)` aborts at run
+  time. Decide whether a nullary operation's clause may still write one
+  ignored binder, `config(u)`, then refuse every other count by name:
+  "`write_file` takes 2 parameters, and this clause binds 1".
+
+- **A handler naming one operation discharges the whole effect.** The
+  handled set is the effects of the operations the clauses name
+  (`Expr::Handle`), so a mock answering only `fs::read_file` type-checks a
+  program that calls `fs::write` and aborts with "no handler for operation
+  fs::write_file" — against DESIGN's "a well-typed program performs no
+  operation the runtime cannot answer". Either a handler must name every
+  operation of each effect it handles (a clause per operation, or a
+  forwarding default), or the row tracks operations rather than effects.
+  The first is the smaller change.
+
 - **Value-producing `select` arms.** A `select` arm is a command, so a
   handler clause routing a primitive's outcomes back captures its own result
   with `mu { out <= … <(<v | resume) | out> … }`, as `fs::real` does four

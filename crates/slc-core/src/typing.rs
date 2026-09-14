@@ -99,6 +99,9 @@ pub struct Unification {
     next_row: usize,
     /// Every "this row fits inside that one" recorded so far, in order.
     row_constraints: Vec<RowConstraint>,
+    /// The negative declarations — menus and forms — whose bare name is the
+    /// positive type of their demands, and whose dual is the value.
+    negative_decls: std::collections::HashSet<String>,
 }
 
 /// One row fitting inside another: what a value performs, inside what its
@@ -167,6 +170,12 @@ impl Unification {
 
     pub fn is_rigid_row(&self, var: usize) -> bool {
         self.rigid_rows.contains(&var)
+    }
+
+    /// Name the negative declarations, so a row argument on one is fitted
+    /// the way its position asks (see `unify_in`).
+    pub fn set_negative_decls(&mut self, names: impl IntoIterator<Item = String>) {
+        self.negative_decls = names.into_iter().collect();
     }
 
     /// Record that `sub` fits inside `sup`. Nothing is checked until the
@@ -283,7 +292,7 @@ impl Unification {
     /// recorded for the solver; a row nested inside a component must be the
     /// same row on both sides.
     pub fn unify(&mut self, expected: &Type, actual: &Type) -> Result<Type, TypeError> {
-        self.unify_in(expected, actual, false)
+        self.unify_in(expected, actual, false, false)
     }
 
     fn fit_rows(&mut self, expected: &Row, actual: &Row, nested: bool) {
@@ -293,11 +302,15 @@ impl Unification {
         }
     }
 
+    /// `flipped` says the two types sit under an odd number of `dual`s: what
+    /// was the value's side is the slot's there, which is what decides which
+    /// way a row argument is fitted.
     fn unify_in(
         &mut self,
         expected: &Type,
         actual: &Type,
         nested: bool,
+        flipped: bool,
     ) -> Result<Type, TypeError> {
         let expected = self.apply(expected);
         let actual = self.apply(actual);
@@ -335,53 +348,68 @@ impl Unification {
             // slot's. A type without one performs nothing.
             (Type::Rowed(a, row_a), Type::Rowed(b, row_b)) => {
                 let (row_a, row_b) = (row_a.clone(), row_b.clone());
-                self.unify_in(a, b, nested)?;
+                self.unify_in(a, b, nested, flipped)?;
                 self.fit_rows(&row_a, &row_b, nested);
                 Ok(self.apply(&expected))
             }
             (Type::Rowed(a, row_a), other) => {
                 let row_a = row_a.clone();
-                self.unify_in(a, other, nested)?;
+                self.unify_in(a, other, nested, flipped)?;
                 self.fit_rows(&row_a, &Row::default(), nested);
                 Ok(self.apply(&expected))
             }
             (other, Type::Rowed(b, row_b)) => {
                 let row_b = row_b.clone();
-                self.unify_in(other, b, nested)?;
+                self.unify_in(other, b, nested, flipped)?;
                 self.fit_rows(&Row::default(), &row_b, nested);
                 Ok(self.apply(&expected))
             }
-            (Type::Dual(a), Type::Dual(b)) => self.unify_in(a, b, nested),
+            (Type::Dual(a), Type::Dual(b)) => self.unify_in(a, b, nested, !flipped),
             // `dual` is semantic, not structural: `dual(X)` meets `B` when
-            // `X` meets `dual(B)`.
+            // `X` meets `dual(B)`. Each side keeps its side.
             (Type::Dual(inner), other) | (other, Type::Dual(inner)) => {
-                let flipped = other.dual();
+                let turned = other.dual();
                 // A declared type's dual stays wrapped, so flipping it makes no
                 // progress: `dual(X)` against `X` would ask the same question
                 // again forever. A type and its dual have opposite polarities,
                 // so unless a variable is waiting to take it, they do not meet.
-                if matches!(flipped, Type::Dual(_)) && !matches!(inner.as_ref(), Type::Var(_)) {
+                if matches!(turned, Type::Dual(_)) && !matches!(inner.as_ref(), Type::Var(_)) {
                     return Err(TypeError::Mismatch {
                         expected: expected.clone(),
                         actual: actual.clone(),
                     });
                 }
-                self.unify_in(inner, &flipped, nested)?;
+                if matches!(expected, Type::Dual(_)) {
+                    self.unify_in(inner, &turned, nested, !flipped)?;
+                } else {
+                    self.unify_in(&turned, inner, nested, !flipped)?;
+                }
                 Ok(self.apply(&expected))
             }
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
+                // A row argument, carried on the unit, says what running the
+                // value performs: one that performs less fits where more is
+                // allowed, so it is fitted one way, not made equal. Which way
+                // is the position's. The bare name of a menu or form is its
+                // demand, and the dual of a data or enum name its consumer:
+                // there the slot's row must fit inside the value's, since the
+                // value must take everything the slot could be given.
+                let covariant = self.negative_decls.contains(a) == flipped;
+                // The arguments sit at the value's side when the position is
+                // covariant, whatever `dual`s stand around the name.
+                let inside = !covariant;
                 let args = xs
                     .iter()
                     .zip(ys)
                     .map(|(x, y)| {
-                        // A row argument, carried on the unit, says what
-                        // demanding the value performs: one that performs
-                        // less fits where more is allowed, so it is fitted
-                        // one way, not made equal.
                         let row_argument = [x, y].into_iter().any(
                             |t| matches!(self.apply(t), Type::Rowed(unit, _) if *unit == Type::ONE),
                         );
-                        self.unify_in(x, y, !row_argument)
+                        match (row_argument, covariant) {
+                            (false, _) => self.unify_in(x, y, true, inside),
+                            (true, true) => self.unify_in(x, y, false, inside),
+                            (true, false) => self.unify_in(y, x, false, inside),
+                        }
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Type::Named(a.clone(), args))
@@ -397,7 +425,7 @@ impl Unification {
                 let components = xs
                     .iter()
                     .zip(ys)
-                    .map(|(x, y)| self.unify_in(x, y, true))
+                    .map(|(x, y)| self.unify_in(x, y, true, flipped))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(match &expected {
                     Type::Tensor(_) => Type::Tensor(components),

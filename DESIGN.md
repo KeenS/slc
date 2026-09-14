@@ -602,7 +602,7 @@ fn pick() -> String / {Choose} {
     a
 }
 
-// "H T": each resumption's jump to `r` lands in that resumption.
+// "H T": `r` is the `let`'s own continuation, and each resumption has its own.
 handle pick() {
     flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
@@ -1255,7 +1255,13 @@ out at the end is the empty row, so `Seq<i64>` performs nothing. Building
 one performs nothing either; a demand incurs that use's row, and a `mu`
 over it checks its arms against it. A value whose demands perform less fits
 where more is allowed, so a row argument is fitted one way rather than made
-equal. A row variable in a declaration's row that is not one of its row
+equal — the way its position asks. On the value, `Seq<T, ..E>` itself, the
+value's row fits inside the slot's; where the position is what *takes* the
+value — a function's parameter, `(Seq<T, {Tick}> -> i64)`, or the demand
+a menu's bare name is — the slot's row fits inside the value's, since the
+function must accept everything the slot could be given. A row parameter's
+argument is a row, `..E` or `{IO}`; a type there is refused, naming the
+parameter. A row variable in a declaration's row that is not one of its row
 parameters is refused.
 
 **Rows are part of types.** A row rides on the type of the value that
@@ -1270,7 +1276,8 @@ where `/ {Exn}` is allowed, and a function that performs `Exn` does not fit
 a parameter declared as a pure arrow. Two places are exceptions. An exit —
 a command's continuation parameter, or a bundle of them — accepts any row,
 charged where it is handed over, since the command runs it before control
-goes anywhere else. And a declaration that hands back a value whose row its
+goes anywhere else; only an exit parameter that writes a row takes the row
+of the exit it is handed, item by item through a bundle. And a declaration that hands back a value whose row its
 promised type does not carry answers for that row itself, which is how a
 rowless menu or form built by a function is accounted for: its arms are
 charged to the declaration that built it.

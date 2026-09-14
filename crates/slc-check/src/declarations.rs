@@ -88,6 +88,9 @@ impl Declarations {
             // A declaration applied to arguments; the argument count must
             // match the declaration's.
             TypeExpr::Apply(name, args) => {
+                if !self.args_match_kinds(name, args) {
+                    return None;
+                }
                 let args = args.iter().map(|a| resolve(&a.kind)).collect::<Option<Vec<_>>>()?;
                 let args = self.complete_args(name, args)?;
                 if self.is_negative_decl(name) {
@@ -180,6 +183,65 @@ impl Declarations {
     /// without a sign, as a function's row parameters are.
     pub(crate) fn is_row_param(&self, name: &str, index: usize) -> bool {
         self.param_signs(name).get(index).is_some_and(|(_, sign)| sign.is_none())
+    }
+
+    /// Whether each written argument is of its parameter's kind: a row for a
+    /// row parameter, a type for a type parameter. A type in a row's slot
+    /// would stand for the row as an unknown nothing constrains.
+    pub(crate) fn args_match_kinds(
+        &self,
+        name: &str,
+        args: &[slc_syntax::ast::Node<TypeExpr>],
+    ) -> bool {
+        args.iter().enumerate().all(|(index, arg)| {
+            self.is_row_param(name, index) == matches!(arg.kind, TypeExpr::Row(_))
+        })
+    }
+
+    /// The first argument of the wrong kind in a written type, at any depth,
+    /// described: what the declaration declares there, and what to write.
+    pub(crate) fn row_kind_mismatch(&self, ty: &TypeExpr) -> Option<String> {
+        let inner = |items: &[slc_syntax::ast::Node<TypeExpr>]| {
+            items.iter().find_map(|item| self.row_kind_mismatch(&item.kind))
+        };
+        match ty {
+            TypeExpr::Apply(name, args) => {
+                for (index, arg) in args.iter().enumerate() {
+                    let is_row = matches!(arg.kind, TypeExpr::Row(_));
+                    let (param, sign) = self.param_signs(name).get(index)?;
+                    if sign.is_none() == is_row {
+                        continue;
+                    }
+                    return Some(if is_row {
+                        let mark = sign.map(|s| s.mark().to_string()).unwrap_or_default();
+                        format!(
+                            "gives `{name}` a row as argument {}, and `{name}` declares \
+                             `<{mark}{param}>` there: write a type",
+                            index + 1
+                        )
+                    } else {
+                        format!(
+                            "gives `{name}` a type as argument {}, and `{name}` declares the row \
+                             parameter `{param}` there: write a row, `..E` or `{{IO}}`",
+                            index + 1
+                        )
+                    });
+                }
+                inner(args)
+            }
+            TypeExpr::Tensor(items)
+            | TypeExpr::Par(items)
+            | TypeExpr::With(items)
+            | TypeExpr::Sum(items) => inner(items),
+            TypeExpr::Positive(i)
+            | TypeExpr::Negative(i)
+            | TypeExpr::Dual(i)
+            | TypeExpr::Effectful(i, _) => self.row_kind_mismatch(&i.kind),
+            TypeExpr::Fun(a, b) => {
+                self.row_kind_mismatch(&a.kind).or_else(|| self.row_kind_mismatch(&b.kind))
+            }
+            TypeExpr::Base(_) | TypeExpr::Row(_) => None,
+        }
     }
 
     /// A declaration's arguments as written, with row arguments left out at
