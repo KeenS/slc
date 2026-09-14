@@ -54,50 +54,6 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 5. A computation is handed to a handler without a dummy parameter
-
-Installing a handler function reads `<(fn(u: (,)) { … }) | fs::real`, and a
-body that ends in a cut cannot be passed at all: `(,) -> (;)` is `(;)`, so
-file work that leaves through continuations has to return a status through
-`mu i32 { done <= … }` (`examples/file_io.sl`).
-
-Proposed: `fn { … }` is a lambda of no parameters, sugar for `fn(_: (,))`;
-and `fs` gains `real_command`, a handler for a program that ends in a cut,
-`program: ((;) / {Fs, ..E})`, run under the same clauses.
-
-1. **Tests first:** `<(fn { <"a.txt" | shout }) | with_fake_fs` runs as the
-   `fn(u: (,))` form does; a file program ending in `<0 | exit>` runs under
-   `fs::real_command` with no status continuation.
-2. **The parser and lowering.** `fn {` parses as a lambda whose parameter is
-   `_` of type `(,)`.
-3. **The stdlib.** `fs::real_command`, sharing its clauses with `fs::real`.
-4. **Docs and examples.** `DESIGN.md`'s `IO` section and §9's program,
-   `MIGRATION.md`'s file-system section, and `examples/file_io.sl`, which
-   loses its `done` continuation.
-
-### 6. A `select` arm may produce a value
-
-A `select` arm must be a command, so a handler clause that routes a
-primitive's outcomes back has to capture its own result with
-`mu { out <= … <(<v | resume) | out> … }`; `fs::real` repeats that four times.
-
-Proposed: a `select` arm may be an expression, whose value is delivered to
-the continuation of the `select`'s activation — `select String { t =>
-<::0(t) | resume }` — the way a `match` arm's value is the `match`'s.
-
-1. **Tests first:** a `select` whose arms produce values, activated by a
-   cut, hands each arm's value to what follows the cut; a command arm keeps
-   its meaning; `fs::real` rewritten without `mu { out <= … }` passes the
-   file tests.
-2. **The checker.** A `select`'s type records its arms' result: a consumer of
-   `A` producing `B` is `(A -> B)`, and an all-command `select` stays
-   `-A`. Decide in this step whether that type is the function type itself —
-   which makes a value-producing `select` a function — and write the
-   decision into `DESIGN.md` §7.
-3. **Lowering.** A value-producing arm lowers to its value delivered to the
-   activation's continuation.
-4. **Docs and stdlib.** `DESIGN.md` §7, `MIGRATION.md`, and `fs.sl`.
-
 ### 7. The stdlib's lazy codata carries its rows on the returned type
 
 `seq::map`, `filter` and `take_while` build their rest with `let+` before
@@ -129,7 +85,29 @@ passed back to the position. `examples/sums.sl` keeps a `mu` for it.
    with the stage's consumed type before the pending injection is resolved.
 3. **Docs.** `DESIGN.md`'s sums section, and `examples/sums.sl`.
 
+### 9. A clause naming no operation of the effect is refused
+
+`handle f() { nope(): resume => … }` and `fs::nope(path): resume => …` are
+accepted, and the clause is ignored: the second reports only that the
+handler "performs `fs::Fs` but does not declare it". A misspelt operation,
+more likely now that clauses take paths, should say so.
+
+1. **Tests first:** a clause naming an operation that no effect declares is
+   refused with a message naming it; a clause for a declared operation keeps
+   its meaning.
+2. **The checker.** Where clauses are typed from the op signature, a clause
+   whose name resolves to no operation reports "`nope` is not an operation
+   of any effect".
+3. **Docs.** `DESIGN.md`'s "Diagnostics" section, if the message is new.
+
 ## Deferred, for discussion
+
+- **Value-producing `select` arms.** A `select` arm is a command, so a
+  handler clause routing a primitive's outcomes back captures its own result
+  with `mu { out <= … <(<v | resume) | out> … }`, as `fs::real` does four
+  times. Letting an arm be an expression would make a value-producing
+  `select` a consumer of `A` producing `B` — a function `(A -> B)`, or a type
+  of its own. Revisit when more code than `fs::real` needs it.
 
 - **Handler values.** A handler is an ordinary function today, taking the
   computation it handles (`fs::real`). A first-class `handler { … }` that a

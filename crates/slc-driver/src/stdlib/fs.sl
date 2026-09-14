@@ -85,4 +85,35 @@ mod fs {
             file_exists(path): resume => <(<path | __file_exists) | resume,
         }
     }
+
+    // The same file system, for a program that leaves through continuations
+    // of its own: `fn { …; <0 | exit> }` has type `(;)`, so it is handed to a
+    // command as its exit, `<(,) | fs::real_command | (fn { … })>`. The
+    // clauses are `real`'s; `real` cannot run through this command, since its
+    // own continuation was captured outside the handler.
+    pub command real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
+        handle program {
+            // The primitive offers its outcome to one of two consumers; each
+            // resumes with that outcome, and hands what the resumed program
+            // produces to `out`, the clause's own continuation.
+            read_file(path): resume => mu { out <= <path | __read_file | (
+                select String { text => <(<::0(text) | resume) | out> }
+                & select String { why => <(<::1(why) | resume) | out> }
+            )> },
+            write_file(path, contents): resume => mu { out <= <(path, contents) | __write_file | (
+                select unit { done => <(<::0(done) | resume) | out> }
+                & select String { why => <(<::1(why) | resume) | out> }
+            )> },
+            open_file(path): resume => mu { out <= <path | __open_file | (
+                select File { file => <(<::0(file) | resume) | out> }
+                & select String { why => <(<::1(why) | resume) | out> }
+            )> },
+            read_line_of(file): resume => mu { out <= <file | __read_line | (
+                select String { line => <(<::0(line) | resume) | out> }
+                & select unit { end => <(<::1(end) | resume) | out> }
+            )> },
+            close_file(file): resume => <(<file | __close_file) | resume,
+            file_exists(path): resume => <(<path | __file_exists) | resume,
+        }
+    }
 }

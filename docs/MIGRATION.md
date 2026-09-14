@@ -1260,10 +1260,9 @@ command main | (exit: i32) / {IO} {                               // old
 }
 
 command main | (exit: i32) / {IO} {                               // new
-    let status = <(fn(u: (,)) {
-        mu i32 { done <= <"input.txt" | fs::read | (select String { t => { <t | print; <0 | done> } } & complain)> }
-    }) | fs::real;
-    <status | exit>
+    <(,) | fs::real_command | (fn {
+        <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+    })>
 }
 ```
 
@@ -1309,6 +1308,27 @@ fn feed<-T>(x: T) -> (,) { (,) }
 let f = fn(x) { <x | keep };            // old: "polarity is not known"; new: accepted
 let g = fn(x) { <x | keep; <x | feed }; // new: "no type is both positive and negative"
 ```
+
+## A computation takes no dummy parameter, and a program ending in a cut is handled
+
+Nothing that compiled changes meaning. `fn { … }` is `fn(_: (,)) { … }`, and
+`fs::real_command` runs a program that leaves through continuations of its
+own, so file work no longer returns a status through `mu i32 { done <= … }`:
+
+```sl
+let status = <(fn(u: (,)) {                                       // old
+    mu i32 { done <= <"input.txt" | fs::read | (select String { t => { <t | print; <0 | done> } } & complain)> }
+}) | fs::real;
+<status | exit>
+
+<(,) | fs::real_command | (fn {                                   // new
+    <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+})>
+```
+
+A command's exit parameter that writes a row, `program: ((;) / {E})`, now
+takes what the exit handed to it performs, where it used to be charged at
+the call; and a `handle` whose body is `(;)` runs it.
 
 ## Removed constructs
 

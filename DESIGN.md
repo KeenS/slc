@@ -1203,6 +1203,27 @@ String)`, which the command then offers to its continuations: a clause runs
 below its handler, so the continuations are activated by the command, under
 the handler, not by the clause (`docs/design-notes/file-system-effect.md`).
 
+The computation is written `fn { … }`, a lambda of no parameters: it is
+`fn(_: (,)) { … }`. One that leaves through continuations of its own — a
+program ending in `<0 | exit>` — has type `(;)`, a consumer, so it is not a
+value to flow in; it is handed to a *command* as its exit, and
+`fs::real_command` is `fs::real` for such a program:
+
+```sl
+command main | (exit: i32) / {IO} {
+    let complain = select String { message => { <message | println; <1 | exit> } };
+    <(,) | fs::real_command | (fn {
+        <"input.txt" | fs::read | (select String { text => { <text | print; <0 | exit> } } & complain)>
+    })>
+}
+```
+
+Two rules make that work. An exit is charged where it is handed over, since
+a command runs it before control goes anywhere else — except at an exit
+parameter that writes a row, `program: ((;) / {Fs, ..E})`, which takes what
+the exit performs, as a function parameter does. And a `handle` whose body
+is `(;)` runs it as a command, under the handler.
+
 **Latent rows are the dual of effects.** A function's row fires at
 application, because a function is a suspended producer: the work runs
 before the value exists. Codata is the mirror — a menu answers per demand,
@@ -1327,7 +1348,7 @@ about anything that happened; a computation may have captured its
 continuation, and generalizing that is the classical unsoundness (the
 Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
-per-use behaviour is wanted, write it: `fn(u: (,)) { mu { k <= … } }` is a
+per-use behaviour is wanted, write it: `fn { mu { k <= … } }` is a
 value, and visibly re-runs its capture at each use.
 `examples/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
@@ -1474,12 +1495,9 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 command main | (exit: i32) / {IO} {
     let complain = select String { message => { <message | println; <1 | exit> } };
-    let status = <(fn(u: (,)) {
-        mu i32 { done <=
-            <"input.txt" | fs::read | (select String { text => { <text | print; <0 | done> } } & complain)>
-        }
-    }) | fs::real;
-    <status | exit>
+    <(,) | fs::real_command | (fn {
+        <"input.txt" | fs::read | (select String { text => { <text | print; <0 | exit> } } & complain)>
+    })>
 }
 ```
 

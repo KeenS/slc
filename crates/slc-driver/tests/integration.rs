@@ -1190,6 +1190,72 @@ fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
 }
 
 #[test]
+fn a_computation_is_handed_to_a_handler_as_fn_braces() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_fn_braces.sl",
+        r#"fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+            handle <(,) | program { fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume }
+        }
+
+        fn shout(path: String) -> String / {fs::Fs} {
+            mu String { k <= <path | fs::read | (select String { t => <(t, "!") | add | k> } & select String { m => <"failed" | k> })> }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            // `fn { … }` is `fn(u: (,)) { … }`.
+            let braces = <(fn { <"a.txt" | shout }) | canned;
+            let unit = <(fn(u: (,)) { <"a.txt" | shout }) | canned;
+            <braces | println;
+            <unit | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "canned a.txt!\ncanned a.txt!\n");
+}
+
+#[test]
+fn a_program_ending_in_a_cut_is_handed_to_a_command_handler() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_command_handler.sl",
+        r#"// The program leaves through `exit`, so it is `(;)`: a command's exit.
+        command canned<E> | (program: ((;) / {fs::Fs, ..E})) / {..E} {
+            handle program { fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            <(,) | canned | (fn {
+                let text = mu { k <= <"x.txt" | fs::read | (k & select String { m => <1 | exit> })> };
+                <text | println;
+                <0 | exit>
+            })>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "canned x.txt\n");
+}
+
+#[test]
+fn a_program_ending_in_a_cut_runs_under_real_command() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_real_command.sl",
+        r#"command main | (exit: -i32) / {IO} {
+            <(,) | fs::real_command | (fn {
+                <"surely/not/here.txt" | fs::read | (
+                    select String { text => <1 | exit> }
+                    & select String { why => { <"cannot read" | println; <0 | exit> } }
+                )>
+            })>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "cannot read\n");
+}
+
+#[test]
 fn a_handler_clause_names_its_operation_by_path() {
     let (stdout, stderr, ok) = run_sl_with(
         &[],

@@ -1066,7 +1066,9 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
     }
     for span in std::mem::take(&mut env.pending_names) {
-        if env.expr_types.get(&span).is_some_and(|ty| env.uni.apply(ty) == Type::BOTTOM) {
+        // What running it performs rides on its type, and it runs all the same.
+        if env.expr_types.get(&span).is_some_and(|ty| unrowed(env.uni.apply(ty)).0 == Type::BOTTOM)
+        {
             env.dispatch.runs.insert(span);
         }
     }
@@ -3578,6 +3580,16 @@ fn check_expr_unapplied(
             let outer_row = env.current_row.replace(body_row);
             let body_ty =
                 check_expr(body, enums, env, diags).unwrap_or_else(|| env.uni.fresh_var());
+            // A body of type `(;)` stands as a command: a program handed in
+            // as an exit runs here, under the handler, so what it performs is
+            // the body's to perform, and the handle is a command too.
+            let body_ty = match unrowed(env.uni.apply(&body_ty)) {
+                (ty, row) if ty == Type::BOTTOM => {
+                    env.perform(row);
+                    Type::BOTTOM
+                }
+                _ => body_ty,
+            };
             env.current_row = outer_row;
             if let Some(outer) = outer_row {
                 let handled = clauses
@@ -3779,7 +3791,14 @@ fn check_expr_unapplied(
                             span: stages[index].span,
                         });
                     }
-                    let exits = types[index + 1].clone().map(|exits| open_exit(exits, env));
+                    // An exit parameter that writes a row takes what the exit
+                    // performs, as a handler taking a program does: it runs
+                    // the exit under something of its own. Any other exit
+                    // is charged where it is handed over.
+                    let takes_rows = matches!(env.uni.apply(&row), Type::Rowed(..));
+                    let exits = types[index + 1]
+                        .clone()
+                        .map(|exits| if takes_rows { exits } else { open_exit(exits, env) });
                     if let Some(exits) = exits.as_ref()
                         && !fits(env, &row, exits, &stages[index + 1].kind)
                     {

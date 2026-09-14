@@ -316,8 +316,11 @@ impl Parser {
                 })
             }
             Some(TokenKind::Fn) => {
-                // fn( — lambda expression, not declaration
-                if self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::LParen) {
+                // fn( or fn { — lambda expression, not declaration
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                    Some(TokenKind::LParen | TokenKind::LBrace)
+                ) {
                     let e = self.parse_expr()?;
                     Ok(Node {
                         span: e.span,
@@ -1835,6 +1838,20 @@ impl Parser {
             }
             Some(TokenKind::Fn) => {
                 self.pos += 1;
+                // `fn { body }` takes nothing — the computation a handler
+                // runs — and is `fn(_: (,)) { body }`.
+                if self.peek_kind() == Some(&TokenKind::LBrace) {
+                    let body = self.parse_block()?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: Expr::Lambda {
+                            param: "_".into(),
+                            param_type: Some(TypeExpr::Tensor(Vec::new())),
+                            return_type: None,
+                            body: Box::new(body),
+                        },
+                    });
+                }
                 // fn(x: T) -> R { body }
                 self.expect(TokenKind::LParen, "`(`")?;
                 let param = self.expect_ident("parameter name")?;

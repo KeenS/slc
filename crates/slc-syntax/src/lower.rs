@@ -787,8 +787,12 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             };
             entries.push(Term::Tuple(vec![Term::Var("$str_\"return\"".into()), ret_closure]));
             let encoded = Term::Tuple(entries);
-            let body_thunk =
-                Term::Lam("__handle_thunk".into(), Box::new(lower_expr(body, continuations)?));
+            // The body stands as a command when it is one: a program of type
+            // `(;)` handed in by name runs under the handler.
+            let body_thunk = Term::Lam(
+                "__handle_thunk".into(),
+                Box::new(lower_in_command_position(body, continuations)?),
+            );
             // The clause tree is wrapped so the runtime's argument collection,
             // which flattens pairs, passes it as one value.
             Ok(call_curried(
