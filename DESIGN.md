@@ -579,6 +579,22 @@ handler sits under every program (§8, "`IO`"), so a `mu` anywhere in `main`
 is delimited by it; `exit` is not a captured continuation, and leaves from
 anywhere.
 
+`reset e` delimits without handling. It is a handler with no clauses: it
+answers no operation, so what `e` performs reaches the handlers around it,
+and its value is `e`'s. What it adds is the boundary — a jump from inside it
+to a continuation captured outside it is refused — so code run under `reset`
+cannot leave through a continuation it was handed:
+
+```sl
+fn escape(k: -i64) -> i64 { <5 | k> }
+
+mu i64 { out <= <(<out | escape) | out> }          // 5
+mu i64 { out <= <(reset <out | escape) | out> }    // refused: the jump would leave the `reset`
+```
+
+A resumption whose slice crosses a `reset` carries a copy of it, as it does a
+handler, so a continuation captured under the `reset` lands on the copy.
+
 ## 7. Additive data
 
 ### Positive additive construction

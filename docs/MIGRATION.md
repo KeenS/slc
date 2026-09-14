@@ -1196,6 +1196,16 @@ let r = handle use_inside() { … };         // new: `use_inside` returns; the j
 <r | k>
 ```
 
+## `reset` is a reserved word
+
+`reset e` delimits a computation without handling it (`DESIGN.md` §6), so
+`reset` no longer names a variable, a function, a field or an operation:
+
+```sl
+let reset = 0;           // old
+let reset_count = 0;     // new
+```
+
 ## Removed constructs
 
 ### `spawn`

@@ -1842,6 +1842,16 @@ impl Parser {
                     kind: Expr::Lambda { param, param_type, return_type, body: Box::new(body) },
                 })
             }
+            // `reset e`: a handler with no clauses. It answers no operation
+            // and its value is `e`'s, so all it does is delimit.
+            Some(TokenKind::Reset) => {
+                self.pos += 1;
+                let body = self.parse_expr()?;
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::Handle { body: Box::new(body), clauses: Vec::new(), ret: None },
+                })
+            }
             Some(TokenKind::Handle) => {
                 self.pos += 1;
                 let body = self.parse_scrutinee()?;

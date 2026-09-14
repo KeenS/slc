@@ -21,9 +21,8 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The open work is delimited control — `reset`
-— and then settling evaluation by polarity: delayed computations still need
-to carry their effects.
+No large feature is mid-flight. The open work is settling evaluation by
+polarity: delayed computations still need to carry their effects.
 
 ## Known limits
 
@@ -73,36 +72,6 @@ to carry their effects.
   exhausted)". Tests that exercise long loops have to fit inside it.
 
 ## Next
-
-### Delimited control
-
-Decided: `mu`'s continuation stays abortive (a consumer, `-A`) and is
-delimited by the nearest handler the jump shares with the capture
-(`DESIGN.md` §6); `reset e` is sugar for a handler with no clauses; and
-composable capture is deferred. The semantics follow Racket's `call/cc` (The
-Racket Reference, §10.4 "Continuations") and the reading of a delimiter as a
-dynamically rebound top-level continuation (Ariola, Herbelin and Sabry, "A
-type-theoretic foundation of delimited continuations", HOSC 2009; Downen and
-Ariola, "Delimited control and computational effects", JFP 2014).
-
-- **`reset e` delimits without handling.** `reset e` is a handler with no
-  clauses: it answers no operation, so every operation passes through it,
-  and its value is `e`'s.
-  `handle e { }` already runs this way — lowering gives a missing `return`
-  clause the identity (`crates/slc-syntax/src/lower.rs`, `Expr::Handle`) —
-  so `reset` is surface syntax only.
-
-  1. **Lexer and parser.** `reset` becomes a keyword; no program, test or
-     document uses the word today. `reset e` parses `e` as a full expression
-     and builds `Expr::Handle { body, clauses: vec![], ret: None }`.
-  2. **Checker.** Confirm that a clauseless `handle` types as its body and
-     passes its row through unchanged, and add tests if either is missing.
-  3. **Tests:**
-     - a `mu` inside `reset` aborts only as far as the `reset`;
-     - an operation performed inside `reset` reaches the handler outside it;
-     - a resumption whose slice crosses a `reset` reinstates it.
-  4. **Docs.** `DESIGN.md` §6 gains `reset`. `MIGRATION.md` notes the new
-     reserved word.
 
 ### Evaluation
 
@@ -166,7 +135,8 @@ Ariola, "Delimited control and computational effects", JFP 2014).
 - **Composable capture.** A continuation that returns to where it was
   captured — `shift`'s `k : A -> R` — would be a function rather than a
   consumer, and would bring answer types into the checker, which the
-  abortive design in "Delimited control" keeps out. Revisit when a program
+  abortive, handler-delimited `mu` of `DESIGN.md` §6 keeps out — and it is
+  what would give `reset` a use beyond refusing jumps. Revisit when a program
   needs one. The typing is worked out in Kobori, Kameyama and Kiselyov,
   "Answer-type modification without tears" (WoC 2015), and Materzok and
   Biernacki, "Subtyping delimited continuations" (ICFP 2011).

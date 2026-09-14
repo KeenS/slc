@@ -2026,3 +2026,85 @@ fn a_continuation_jumped_to_under_a_later_handler_is_an_error() {
     assert!(stdout.is_empty(), "stdout: {stdout}");
     assert!(stderr.contains("left the handler it was captured under"), "stderr: {stderr}");
 }
+
+#[test]
+fn a_continuation_captured_outside_a_reset_cannot_be_jumped_to_inside_it() {
+    // Without the `reset`, the jump to `out` answers 5; with it, the jump
+    // would leave the `reset`, which is refused.
+    let program = |body: &str| {
+        format!(
+            r#"fn escape(k: -i64) -> i64 {{ <5 | k> }}
+
+            command main | (exit: -i32) / {{IO}} {{
+                let n = mu i64 {{ out <= <({body}) | out> }};
+                <n | println;
+                <0 | exit>
+            }}"#
+        )
+    };
+    let free = std::env::temp_dir().join("slc_test_jump_without_reset.sl");
+    std::fs::write(&free, program("<out | escape")).unwrap();
+    let (stdout, stderr, ok) = run_sl(free.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "5\n");
+
+    let barred = std::env::temp_dir().join("slc_test_jump_out_of_reset.sl");
+    std::fs::write(&barred, program("reset <out | escape")).unwrap();
+    let (stdout, stderr, ok) = run_sl(barred.to_str().unwrap());
+    assert!(!ok, "stdout: {stdout}");
+    assert!(stderr.contains("left the handler it was captured under"), "stderr: {stderr}");
+}
+
+#[test]
+fn an_operation_performed_inside_a_reset_reaches_the_handler_outside_it() {
+    let dir = std::env::temp_dir().join("slc_test_operation_through_reset.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Reader { fn config() -> i64; }
+
+        fn read_twice() -> i64 / {Reader} { <(config(), config()) | add }
+
+        command main | (exit: -i32) / {IO} {
+            let n = handle (reset read_twice()) {
+                config(): resume => <21 | resume,
+            };
+            <n | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "42\n");
+}
+
+#[test]
+fn a_resumption_whose_slice_crosses_a_reset_reinstates_it() {
+    // `r` is captured under the `reset`, and `flip` is answered outside it,
+    // so each resumption carries a copy of the `reset`: the jump to `r` lands
+    // on that copy, and both answers come back.
+    let dir = std::env::temp_dir().join("slc_test_resumption_crosses_reset.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Choose { fn flip() -> Bool; }
+
+        fn pick() -> String / {Choose} {
+            reset {
+                let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+                a
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let all = handle pick() {
+                flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+            };
+            <all | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "H T\n");
+}
