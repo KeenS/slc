@@ -1206,6 +1206,30 @@ let reset = 0;           // old
 let reset_count = 0;     // new
 ```
 
+## A delayed computation performs where it is used
+
+A computation in a by-name position used to be charged where it was written,
+so a handler around the writing seemed to answer it even when it ran after
+that handler had returned, and the run failed with "no handler for
+operation". Its effects are now charged at each use, under the handlers
+there. A program that relied on the handler around the writing runs the
+computation there with `let+`:
+
+```sl
+let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // old: failed at run time
+let g = handle { let+ f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // new
+```
+
+A delayed computation stored in a tuple, a bundle, a variant or a record, or
+one whose row is a variable, is refused when it performs anything; compute it
+first with `let+`. That includes lazy recursion through a function whose row
+is a variable:
+
+```sl
+Step::Yield(h, <(f, rest) | map)                                       // old
+{ let+ tail = <(f, rest) | map; <Step::Yield(<h | f, tail) | next> }  // new
+```
+
 ## Removed constructs
 
 ### `spawn`

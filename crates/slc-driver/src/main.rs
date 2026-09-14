@@ -279,7 +279,7 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    slc_check::effects::check_effects(&program).map_err(|diags| {
+    slc_check::effects::check_effects(&program, &resolved.delays).map_err(|diags| {
         diags
             .iter()
             .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))

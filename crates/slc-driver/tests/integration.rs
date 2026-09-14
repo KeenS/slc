@@ -217,6 +217,104 @@ command main | (exit: -i32) / {IO} {
     <0 | exit>
 }"#;
 
+const DELAYED_DECLS: &str = r#"effect Exn { fn throw(m: String) -> i64; }
+
+fn make() -> (i64 -> i64) / {Exn} {
+    <"made" | throw;
+    fn(n: i64) { <(n, 1) | add }
+}
+
+fn apply5(f: (i64 -> i64)) -> i64 { <5 | f }
+
+enum Held { Holds((i64 -> i64)) }
+"#;
+
+fn delayed_program(body: &str) -> String {
+    format!("{DELAYED_DECLS}\ncommand main | (exit: -i32) / {{IO}} {{\n{body}\n<0 | exit>\n}}\n")
+}
+
+#[test]
+fn a_delayed_computation_performs_under_the_handler_around_its_use() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_delayed_accepted.sl",
+        &delayed_program(
+            r#"// Handled around the use.
+            let- f = make();
+            let a = handle <5 | f { throw(m) => -1, };
+            <a | println;
+            // Run with `let+` under the handler where it is written.
+            let g = handle { let+ made = make(); made } { throw(m) => fn(n: i64) { 0 }, };
+            <5 | g | println;
+            // Handed to a callee, which runs it inside the call.
+            let b = handle <f | apply5 { throw(m) => -2, };
+            <b | println;
+            let c = handle <make() | apply5 { throw(m) => -3, };
+            <c | println;"#,
+        ),
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["-1", "0", "-2", "-3"]);
+}
+
+#[test]
+fn a_delayed_computation_that_escapes_its_handler_is_refused() {
+    let refused = [
+        // Written under the handler, returned out of it, used outside.
+        (
+            "let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 }, };\n<5 | g | println;",
+            "`main` performs `Exn`",
+        ),
+        // Handed to a callee outside any handler.
+        ("let- f = make();\n<f | apply5 | println;", "`main` performs `Exn`"),
+        // Stored where its uses cannot be followed.
+        ("let t = (make(), 1);\n<t.1 | println;", "stored where its uses cannot be tracked"),
+        (
+            "let- f = make();\nlet t = (f, 1);\n<t.1 | println;",
+            "stored where its uses cannot be tracked",
+        ),
+        ("let h = Held::Holds(make());\n<0 | println;", "stored where its uses cannot be tracked"),
+    ];
+    for (index, (body, expected)) in refused.iter().enumerate() {
+        let (stdout, stderr, ok) = run_sl_with(
+            &[],
+            &format!("slc_test_delayed_refused_{index}.sl"),
+            &delayed_program(body),
+        );
+        assert!(!ok, "{body}: stdout {stdout}");
+        assert!(stderr.contains(expected), "{body}: {stderr}");
+    }
+}
+
+#[test]
+fn a_declaration_returning_a_delayed_computation_performs_its_row() {
+    let source = format!(
+        "{DELAYED_DECLS}
+        fn later() -> (i64 -> i64) {{ let- f = make(); f }}
+
+        command main | (exit: -i32) / {{IO}} {{ <0 | exit> }}"
+    );
+    let (_, stderr, ok) = run_sl_with(&[], "slc_test_delayed_returned.sl", &source);
+    assert!(!ok);
+    assert!(stderr.contains("`later` performs `Exn`"), "{stderr}");
+}
+
+#[test]
+fn a_delayed_computation_whose_row_is_a_variable_is_refused() {
+    let source = format!(
+        "{DELAYED_DECLS}
+        fn wrap<E>(k: ((,) -> (i64 -> i64) / {{..E}})) -> i64 / {{..E}} {{
+            let- f = <(,) | k;
+            <5 | f
+        }}
+
+        command main | (exit: -i32) / {{IO}} {{ <0 | exit> }}"
+    );
+    let (_, stderr, ok) = run_sl_with(&[], "slc_test_delayed_row_variable.sl", &source);
+    assert!(!ok);
+    assert!(stderr.contains("`let+`") && stderr.contains("..E"), "{stderr}");
+}
+
 #[test]
 fn a_run_has_no_step_cap_by_default() {
     let (stdout, stderr, ok) = run_sl_with(&[], "slc_test_long_loop.sl", LONG_LOOP);
@@ -1785,21 +1883,35 @@ fn a_plain_let_follows_the_polarity_of_its_type() {
 }
 
 #[test]
-fn a_tuple_component_of_negative_type_runs_at_each_use() {
-    let dir = std::env::temp_dir().join("slc_test_by_name_component.sl");
-    std::fs::write(
-        &dir,
+fn a_tuple_component_that_performs_when_it_runs_is_computed_with_let_plus() {
+    // A tuple component of negative type is delayed, and a stored computation
+    // that performs is refused: where it runs cannot be followed.
+    let (_, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_by_name_component_refused.sl",
         r#"command main | (exit: -i32) / {IO} {
             let pair = (1, { <"made" | println; fn(s: String) { <s | println } });
+            <"a" | pair.1;
+            <0 | exit>
+        }"#,
+    );
+    assert!(!ok);
+    assert!(stderr.contains("stored where its uses cannot be tracked"), "{stderr}");
+
+    // Computed first with `let+`, it runs once, here.
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_by_name_component.sl",
+        r#"command main | (exit: -i32) / {IO} {
+            let+ shout = { <"made" | println; fn(s: String) { <s | println } };
+            let pair = (1, shout);
             <"a" | pair.1;
             <"b" | pair.1;
             <0 | exit>
         }"#,
-    )
-    .unwrap();
-    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    );
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b"]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "b"]);
 }
 
 #[test]

@@ -467,6 +467,26 @@ binding is may be known only once the declaration's unification has
 finished, so it is settled then, and a computation whose polarity is still
 unknown is refused, asking for an annotation, `let+` or `let-`.
 
+Effects follow the same rule. A delayed computation performs nothing where it
+is written: what it performs happens at each use, under the handlers around
+that use, so a `let-` written inside a `handle` and used after the `handle`
+has returned answers to the handlers outside it. `let+` is how a computation
+performs under the handler where it is written. An argument, and what flows
+into a chain, hand the computation to a callee, which runs it inside the
+call. A tuple component, a bundle item, a variant's payload and a record
+field store it instead, and where it then runs cannot be followed by name
+(§8, "Effects and handlers"), so a stored computation that
+performs anything is refused, and so is a delayed computation whose row is a
+variable: compute it first with `let+` and store what it made.
+
+```sl
+let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
+<5 | g | println;              // refused: `make` performs `Exn` here, unhandled
+
+let+ f = make();               // performs here, under the handler in scope
+let pair = (1, f);             // and stores what it made
+```
+
 ## 5. `command`: consumer abstraction
 
 A `command` declaration is the form that takes **both** values and
@@ -1183,7 +1203,9 @@ its name: a lambda's body is charged to the declaration that wrote it, a
 higher-order global passed on as a value contributes its concrete row but
 no further forwarding, and a function laundered through a `let` binding is
 not tracked — though a `let` of a call whose result carries a latent row
-keeps that row on the name.
+keeps that row on the name, and so does a `let` that delays a computation:
+each use of the name performs what the computation does (§4, "When a `let`
+computes").
 
 An operation may take several parameters; since calls are curried, the
 performing value collects them all before suspending. **Operations are

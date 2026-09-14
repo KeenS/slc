@@ -22,9 +22,9 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": effects first — delayed computations, rows
-in types, and the file system as an effect that rows in types unblocks —
-and then the checker's remaining gaps.
+limits, in the order of "Next": effects first — rows in types, and the
+file system as an effect that rows in types unblocks — and then the
+checker's remaining gaps.
 
 ## Known limits
 
@@ -75,69 +75,7 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo test --workspace`
 before it is committed.
 
-### 1. Delayed computations carry their effects
-
-Negative positions are by name (`DESIGN.md` §4, "When a `let` computes"), but
-the effect checker still charges a delayed computation's row where it is
-written, which is right only while the computation runs inside the
-declaration and under the handlers where it is written: one written inside a
-`handle` and run outside it performs its operation unhandled, a gap by-name
-evaluation opened.
-
-Decided: nothing is performed where a delayed computation is written — its
-row moves onto its value, and each use performs it, so the handler that must
-discharge it is the one around the use, the rule rowed menus and returned
-consumers (`-> (-A / {..E})`) already follow. Only a concrete row can ride on
-a value today, so until "Rows live in types" a computation in a by-name
-position whose row has a variable is refused.
-
-What the passes have to work with: the type checker settles which spans are
-delayed and records them in `dispatch.delays`
-(`crates/slc-syntax/src/lower.rs`, the `DELAYS` table lowering reads through
-`delay_if_delayed`); the effect checker (`crates/slc-check/src/effects.rs`)
-runs after it in the driver but walks names without that table.
-
-1. **Tests first,** in `crates/slc-check/src/effects.rs` for diagnostics and
-   `crates/slc-driver/tests/integration.rs` for runs:
-   - `let- f = { <"x" | throw; fn(n: i64) { n } }` written inside a `handle`
-     for `throw` and demanded outside it is refused: the demand performs
-     `Exn` unhandled;
-   - the same binding written outside and demanded inside the handler is
-     accepted, and the handler answers at run time;
-   - `let+` of the same computation inside the handler is charged there,
-     as today;
-   - a delayed computation whose row is `{..E}` is refused, and the message
-     suggests `let+`;
-   - each by-name position is covered: a `let`, what flows into a chain, a
-     parenthesised argument, a tuple component and a bundle item.
-2. **The effect checker learns which spans are delayed.**
-   `check_effects(&program)` becomes `check_effects(&program, &delays)`,
-   and the driver passes the table the type checker produced.
-3. **A delayed span charges nothing where it is written.** In `collect`, the
-   row of a delayed expression is gathered into its own `Row` instead of
-   `out`, and becomes the latent row of what holds it:
-   - a `let` binder records it in `ctx.locals`, which `charge_cut` already
-     reads, and a call or projection on that name charges it too
-     (`row_of_name`, `Expr::Project`);
-   - a delayed argument is checked against its parameter's declared latent
-     row where there is one, the way `charge_call` treats a rowed function
-     argument, and is charged at the call where there is none, since the
-     callee runs it inside the call;
-   - a delayed tuple component or bundle item is charged where the tuple or
-     bundle is taken apart or consumed; where names cannot follow it, it is
-     charged where it is written, and the test for that position says so.
-4. **The refusal.** A delayed row with a tail is reported at the delayed
-   span, naming the variable and suggesting `let+` or an annotation.
-5. **Docs.**
-   - `DESIGN.md` §4 "When a `let` computes": a delayed computation's
-     effects happen at each use, under the handlers there.
-   - The effects section: delayed computations join menus and returned
-     consumers as values that carry a row.
-   - `MIGRATION.md`: a program that relied on a handler around the binding
-     now puts the handler around the use or writes `let+`.
-   - Run every example; any whose output changes gets its handler moved.
-
-### 2. Rows live in types
+### 1. Rows live in types
 
 Decided: rows move from the name-following pass into inferred types, the
 upgrade "Effect tracking follows names" names. What does not change is the
@@ -175,14 +113,15 @@ first step settles the representation before anything is ported.
    written one.
 5. **The name-following pass is retired.** `effects.rs` keeps only what
    types cannot say, if anything, and its diagnostics move to the type
-   checker with the same messages. "Delayed computations carry their
-   effects" loses its refusal of row variables.
+   checker with the same messages. The refusals of a stored delayed
+   computation that performs, and of a delayed row with a variable
+   (`DESIGN.md` §4, "When a `let` computes"), are lifted.
 6. **Docs.** `DESIGN.md`'s effects section describes rows as part of types;
    this file removes the known limit "Effect tracking follows names";
    `MIGRATION.md` gains a section only for programs whose meaning or
    acceptance changes.
 
-### 3. File operations are an effect, and handlers are values
+### 2. File operations are an effect, and handlers are values
 
 Needs "Rows live in types". The `fs` module would declare an `Fs` effect,
 and a standard handler would answer it by performing `IO`. A program that
@@ -233,7 +172,7 @@ is a value, and `with h handle c` installs it.
    removes the known limit "The file operations perform `IO` without an
    operation".
 
-### 4. `;` commutes through structures and stages
+### 3. `;` commutes through structures and stages
 
 The known limit "`;` commutes only where one value meets one declared type"
 has two halves, and a third gap of the same family turned up beside it.
@@ -274,7 +213,7 @@ declaration, so the spelling still has to match, and the diagnostic says so.
 5. **Docs.** `DESIGN.md`'s account of `;` gains structures and stages; this
    file narrows the known limit to type constructors, or removes it.
 
-### 5. Type variables carry a polarity
+### 4. Type variables carry a polarity
 
 The known limit "Soundness is enforced by inference, argued informally"
 names four gaps; this entry closes one. A generic parameter already states

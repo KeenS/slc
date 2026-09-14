@@ -32,10 +32,21 @@
 //! higher-order global passed on as a value contributes its concrete row
 //! but no further forwarding, and a function laundered through a `let`
 //! binding is not tracked.
+//!
+//! A computation in a by-name position — the ones the type checker delays —
+//! performs nothing where it is written. A `let` that delays one gives its
+//! row to the name, and each use of the name — a call, a cut, an argument —
+//! performs it there, under the handlers around that use; a declaration, a
+//! block or a handler that hands the name back hands the row on with it. A
+//! tuple, a bundle, a variant, a record or an alternative that stores one
+//! cannot be followed by name, so a stored computation that performs
+//! anything is refused, as is a delayed row with a variable, until rows live
+//! in types.
 
 use crate::Diagnostic;
-use slc_syntax::ast::{Decl, EffectRow, Expr, Node, Program, TypeExpr};
-use std::collections::{BTreeSet, HashMap};
+use slc_syntax::ast::{Decl, EffectRow, Expr, LetMode, Node, Program, TypeExpr};
+use slc_syntax::token::Span;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// A row as a set: concrete effects, and the row variables of the
 /// declaration in whose scope this row is read.
@@ -137,6 +148,15 @@ struct Ctx<'a> {
     /// built by a call and bound before being fed. Scoped by hand in the
     /// `Let` arm.
     locals: HashMap<String, Row>,
+    /// The spans the type checker delayed: computations in by-name positions,
+    /// which run where their result is demanded.
+    delays: &'a HashSet<Span>,
+    /// Every variant constructor, bare and qualified: a call to one stores
+    /// its payload rather than running it.
+    variants: &'a HashSet<String>,
+    /// `let`-bound names holding a delayed computation → the row each run of
+    /// it performs. Scoped by hand in the `Let` arm, as `locals` is.
+    delayed: HashMap<String, Row>,
     diags: &'a mut Vec<Diagnostic>,
 }
 
@@ -150,13 +170,25 @@ fn type_head(ty: &TypeExpr) -> Option<&str> {
     }
 }
 
-pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
+/// Check every declaration's effects against its row. `delays` holds the
+/// spans the type checker delayed, whose effects happen where they are used.
+pub fn check_effects(p: &Program, delays: &HashSet<Span>) -> Result<(), Vec<Diagnostic>> {
     let mut op_effect: HashMap<String, String> = HashMap::new();
+    let mut variants: HashSet<String> = HashSet::new();
     for d in &p.decls {
-        if let Decl::Effect { name, operations, .. } = &d.kind {
-            for op in operations {
-                op_effect.insert(op.name.clone(), name.clone());
+        match &d.kind {
+            Decl::Effect { name, operations, .. } => {
+                for op in operations {
+                    op_effect.insert(op.name.clone(), name.clone());
+                }
             }
+            Decl::Enum { name, variants: declared, .. } => {
+                for (variant, _) in declared {
+                    variants.insert(format!("{name}::{variant}"));
+                    variants.insert(variant.clone());
+                }
+            }
+            _ => {}
         }
     }
 
@@ -244,6 +276,9 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
             latent_decls: &latent_decls,
             latent_items: &latent_items,
             locals: HashMap::new(),
+            delays,
+            variants: &variants,
+            delayed: HashMap::new(),
             diags: &mut diags,
         };
         // A declaration whose result carries a latent row may end in the
@@ -273,6 +308,14 @@ pub fn check_effects(p: &Program) -> Result<(), Vec<Diagnostic>> {
                 });
             }
         }
+
+        // A delayed computation the body hands back runs wherever the caller
+        // uses it. Unless the result's latent row admits it, the declaration
+        // answers for it.
+        let mut escaping = delayed_of_value(body, &ctx);
+        escaping.effects.retain(|e| !interface.latent.effects.contains(e));
+        escaping.tails.retain(|t| !interface.latent.tails.contains(t));
+        incurred.extend(&escaping);
 
         let allowed = &interface.row;
         for effect in &incurred.effects {
@@ -338,6 +381,19 @@ fn charge_call(name: &str, args: &[Node<Expr>], ctx: &mut Ctx, out: &mut Row) {
     let name = &name.to_string();
     if let Some(effect) = builtin_effect(name) {
         out.effects.insert(effect.to_string());
+        return;
+    }
+    // A delayed computation handed to a callee runs inside the call.
+    for arg in args {
+        if let Expr::Ident(passed) = &arg.kind
+            && let Some(row) = ctx.delayed.get(passed)
+        {
+            out.extend(&row.clone());
+        }
+    }
+    // A name holding a delayed computation runs it when it is called.
+    if let Some(row) = ctx.delayed.get(name) {
+        out.extend(&row.clone());
         return;
     }
     if let Some(effect) = ctx.op_effect.get(name) {
@@ -425,6 +481,15 @@ pub(crate) const IO: &str = "IO";
 /// The effects an expression may incur, gathered into `out`.
 fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
     match &e.kind {
+        // A variant stores its payload; it runs nothing.
+        Expr::Call { callee, args }
+            if matches!(&callee.kind, Expr::Ident(name)
+                if ctx.variants.contains(name) && !ctx.interfaces.contains_key(name)) =>
+        {
+            for arg in args {
+                store(arg, ctx, out);
+            }
+        }
         Expr::Call { callee, args } => {
             if let Expr::Ident(name) = &callee.kind {
                 charge_call(name, args, ctx, out);
@@ -507,29 +572,104 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
                     charge_call(name, args, ctx, out);
                 }
             }
-            for stage in stages {
-                collect(stage, ctx, out);
+            // What flows into the first applied stage is its arguments, and a
+            // closing bundle is the exits the chain hands over: the callee
+            // runs what they hold inside the call. Anywhere else a tuple or a
+            // bundle stores what it holds.
+            for (index, stage) in stages.iter().enumerate() {
+                match &stage.kind {
+                    Expr::Pair(items) if index == 0 && applied > 1 => {
+                        for item in items {
+                            collect(item, ctx, out);
+                        }
+                    }
+                    Expr::Bundle(items) if index + 1 == stages.len() && *into_consumer => {
+                        for item in items {
+                            collect(item, ctx, out);
+                        }
+                    }
+                    _ => collect(stage, ctx, out),
+                }
             }
         }
         // A `let` remembers the latent row of what it binds, so a consumer
         // built by a call and fed later is still charged at its cut.
-        Expr::Let { pattern, value, body, .. } => {
-            collect(value, ctx, out);
+        Expr::Let { pattern, value, body, mode, .. } => {
+            // A delayed computation performs nothing here: what it performs is
+            // the row of the name, charged wherever the name is used. So is a
+            // delayed computation the value hands back without running it —
+            // unless `let+` runs it here.
+            let delays = match mode {
+                LetMode::Delay => true,
+                LetMode::Now => false,
+                LetMode::Follow => ctx.delays.contains(&value.span),
+            };
+            let mut runs = Row::default();
+            if delays {
+                collect(value, ctx, &mut runs);
+            } else {
+                collect(value, ctx, out);
+            }
+            let handed_back = delayed_of_value(value, ctx);
+            if *mode == LetMode::Now {
+                out.extend(&handed_back);
+            } else {
+                runs.extend(&handed_back);
+            }
+            if !runs.tails.is_empty() {
+                ctx.diags.push(Diagnostic {
+                    message: format!(
+                        "this `let` delays a computation that performs {}, and a row variable \
+                         cannot yet ride on the name it binds: write `let+` to run it here",
+                        describe(&runs)
+                    ),
+                    span: value.span,
+                });
+                runs.tails.clear();
+            }
             // A block-level `let` has no body of its own — its siblings
             // follow it — so the binding stays for the rest of the walk. A
             // destructuring binder names parts of the value, not the value,
             // so nothing it binds carries the whole thing's latent row.
-            if let Some(name) = pattern.binder_name() {
-                let latent = latent_of_value(value, ctx);
-                if latent.effects.is_empty() && latent.tails.is_empty() {
-                    ctx.locals.remove(name);
-                } else {
-                    ctx.locals.insert(name.to_string(), latent);
+            match pattern.binder_name() {
+                Some(name) => {
+                    let latent = latent_of_value(value, ctx);
+                    if latent.effects.is_empty() && latent.tails.is_empty() {
+                        ctx.locals.remove(name);
+                    } else {
+                        ctx.locals.insert(name.to_string(), latent);
+                    }
+                    if runs.effects.is_empty() {
+                        ctx.delayed.remove(name);
+                    } else {
+                        ctx.delayed.insert(name.to_string(), runs);
+                    }
                 }
+                None => out.extend(&runs),
             }
             if let Some(body) = body {
                 collect(body, ctx, out);
             }
+        }
+        // A tuple, a bundle, a record and an alternative store what they
+        // hold; a delayed computation among them runs wherever the structure
+        // is taken apart, which names cannot follow.
+        Expr::Pair(items) | Expr::Bundle(items) => {
+            for item in items {
+                store(item, ctx, out);
+            }
+        }
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                store(value, ctx, out);
+            }
+        }
+        Expr::Inject { value, .. } => store(value, ctx, out),
+        // A `fn` is charged where it is written, and so is a delayed
+        // computation it hands back.
+        Expr::Lambda { body, .. } => {
+            collect(body, ctx, out);
+            out.extend(&delayed_of_value(body, ctx));
         }
         other => {
             for child in other.children() {
@@ -543,6 +683,15 @@ fn collect(e: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
 /// built by a call incurs the callee's latent result row, its variables
 /// instantiated from the call.
 fn charge_cut(value: &Node<Expr>, consumer: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
+    // A delayed computation cut into a consumer is handed on unrun, where
+    // names cannot follow it, so it is charged here.
+    out.extend(&delayed_of_value(value, ctx));
+    // A consumer held delayed runs when it is fed.
+    if let Expr::Ident(k) = &consumer.kind
+        && let Some(row) = ctx.delayed.get(k)
+    {
+        out.extend(&row.clone());
+    }
     if let Expr::Data { name, .. } = &value.kind
         && let Some(row) = ctx.latent_decls.get(name)
     {
@@ -623,6 +772,58 @@ fn latent_of_value(e: &Node<Expr>, ctx: &Ctx) -> Row {
     }
 }
 
+/// The row a delayed computation held by the value of `e` performs when it
+/// runs: a name bound to one, or a block or a handler handing one back. A
+/// handler discharges only what runs inside it, and a delayed computation
+/// handed out has not run.
+fn delayed_of_value(e: &Node<Expr>, ctx: &Ctx) -> Row {
+    match &e.kind {
+        Expr::Ident(name) => ctx.delayed.get(name).cloned().unwrap_or_default(),
+        Expr::Handle { body, .. } => delayed_of_value(body, ctx),
+        Expr::Block(exprs) => exprs.last().map(|e| delayed_of_value(e, ctx)).unwrap_or_default(),
+        Expr::Let { body: Some(body), .. } => delayed_of_value(body, ctx),
+        _ => Row::default(),
+    }
+}
+
+/// Collect an expression a structure stores. What it holds delayed runs
+/// wherever the structure is taken apart, which names cannot follow, so a
+/// stored computation that performs anything is refused.
+fn store(item: &Node<Expr>, ctx: &mut Ctx, out: &mut Row) {
+    let mut held = Row::default();
+    if ctx.delays.contains(&item.span) {
+        collect(item, ctx, &mut held);
+    } else {
+        collect(item, ctx, out);
+    }
+    held.extend(&delayed_of_value(item, ctx));
+    if !held.effects.is_empty() || !held.tails.is_empty() {
+        ctx.diags.push(Diagnostic {
+            message: format!(
+                "this delayed computation performs {} when it runs, and it is stored where its \
+                 uses cannot be tracked: run it first with `let+` and store what it makes",
+                describe(&held)
+            ),
+            span: item.span,
+        });
+    }
+}
+
+/// A row as a diagnostic names it: `` `Exn` ``, or `` `Exn` and `..E` ``.
+fn describe(row: &Row) -> String {
+    let names: Vec<String> = row
+        .effects
+        .iter()
+        .map(|e| format!("`{e}`"))
+        .chain(row.tails.iter().map(|t| format!("`..{t}`")))
+        .collect();
+    match names.as_slice() {
+        [] => "nothing".into(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 /// Check the arms of a suspended literal over a rowed declaration: each
 /// arm's effects must fit the declaration's latent row.
 fn check_arms_against_latent(
@@ -661,9 +862,11 @@ mod tests {
     use slc_syntax::parser::parse;
 
     fn check(src: &str) -> Result<(), Vec<Diagnostic>> {
-        // The prelude's `Bool`, which these checks do not load.
+        // The prelude's `Bool`, which these checks do not load. Nothing is
+        // type-checked here, so nothing is known to be delayed; the driver's
+        // tests cover delayed computations.
         let src = &format!("{src}\nenum Bool {{ False, True }}\n");
-        check_effects(&parse(lex(src).unwrap()).unwrap())
+        check_effects(&parse(lex(src).unwrap()).unwrap(), &HashSet::new())
     }
 
     const EXN: &str = "effect Exn { fn throw(m: +String) -> i64; }\n";

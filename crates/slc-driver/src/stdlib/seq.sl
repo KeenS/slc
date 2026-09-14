@@ -57,7 +57,13 @@ mod seq {
         mu Seq {
             next <= match s.next {
                 Step::Done => <Step::Done | next>,
-                Step::Yield(h, rest) => <Step::Yield(<h | f, <(f, rest) | map) | next>,
+                // The rest is built with `let+` before it is stored: a stored
+                // computation may not perform anything, and though building a
+                // `Seq` performs nothing, the call's row says `..E`.
+                Step::Yield(h, rest) => {
+                    let+ tail = <(f, rest) | map;
+                    <Step::Yield(<h | f, tail) | next>
+                },
             },
         }
     }
@@ -69,7 +75,8 @@ mod seq {
             next <= match s.next {
                 Step::Done => <Step::Done | next>,
                 Step::Yield(h, rest) => match <h | keep { True => {
-                    <Step::Yield(h, <(keep, rest) | filter) | next>
+                    let+ tail = <(keep, rest) | filter;
+                    <Step::Yield(h, tail) | next>
                 }, _ => {
                     <(<(keep, rest) | filter).next | next>
                 } },
@@ -96,7 +103,8 @@ mod seq {
     pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T> / {..E} {
         mu Seq {
             next <= match <s.head | keep { True => {
-                <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>
+                let+ tail = <(keep, s.tail) | take_while;
+                <Step::Yield(s.head, tail) | next>
             }, _ => {
                 <Step::Done | next>
             } },
