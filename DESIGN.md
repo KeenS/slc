@@ -1698,6 +1698,12 @@ include `line:column` positions and source excerpts.
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
 
+Some slips get a message of their own rather than the mismatch they cause. A
+function closed with `>` — `<42 | resume>` in a handler's clause, where
+`<42 | resume` was meant — is reported as a function applied by leaving the
+`>` off, instead of as a value meeting the argument-and-continuation pair a
+function takes by a cut.
+
 ## 10. Modules
 
 A `mod` is a named scope of declarations, `::` reaches into it, and `use`

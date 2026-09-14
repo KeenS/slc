@@ -3972,6 +3972,42 @@ fn check_expr_unapplied(
                     {
                         env.perform(latent.clone());
                     }
+                    // A function closed with `>` is the slip of writing
+                    // `<v | resume>` for `<v | resume`: a function applied by
+                    // a cut takes its argument and a continuation together,
+                    // and the mismatch that makes says nothing of the `>`.
+                    let function = match (&stages[index].kind, &consumer) {
+                        (Expr::Ident(name), Type::Par(parts)) if parts.len() == 2 => {
+                            let result = &parts[1];
+                            let returns = if contains_var(result) {
+                                type_polarity(result, env) != Some(ParamPolarity::Negative)
+                            } else {
+                                result.is_positive()
+                            };
+                            returns.then_some(name)
+                        }
+                        _ => None,
+                    };
+                    let closed_function = |name: &str| Diagnostic {
+                        message: format!(
+                            "`{name}` is a function, and `>` delivers to a consumer; apply it \
+                             by leaving the `>` off: `<… | {name}`"
+                        ),
+                        span: stages[index].span,
+                    };
+                    // An alternative flowing in would take the function's
+                    // pair as its sum, and be reported for that instead.
+                    if let Some(name) = function
+                        && let Type::Var(_) = env.uni.apply(&acc)
+                        && env
+                            .pending_injections
+                            .iter()
+                            .any(|pending| env.uni.apply(&pending.sum) == env.uni.apply(&acc))
+                    {
+                        diags.push(closed_function(name));
+                        acc = Type::BOTTOM;
+                        continue;
+                    }
                     let expects = ty.dual();
                     // The `(;)`/`(,)` corner: `-(;)` resolves to `(,)`, so the
                     // idiomatic `<(,) | k>` is unit meeting unit.
@@ -3983,6 +4019,9 @@ fn check_expr_unapplied(
                         env.uni = before;
                         match commute(env, &expects, &acc) {
                             Some(turned) => swap = Some(turned),
+                            None if let Some(name) = function => {
+                                diags.push(closed_function(name));
+                            }
                             None => {
                                 let expects = env.uni.apply(&expects);
                                 diags.push(Diagnostic {

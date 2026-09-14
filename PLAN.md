@@ -54,35 +54,6 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 1. A missing `return` clause is the identity, and says so
-
-`handle e { … }` without `return` already gives its body's value
-(`crates/slc-syntax/src/lower.rs`, `Expr::Handle`), but `DESIGN.md` never says
-so, and the examples write `return(n) => n` in nearly every handler.
-
-1. **Tests first:** a handler without `return` answers its body's value, and a
-   test in `crates/slc-check` shows its type is the body's.
-2. **Docs.** `DESIGN.md`'s effects section states the default.
-3. **Examples.** Drop every identity `return` clause from `examples/`, the
-   stdlib and `DESIGN.md`'s programs; each example's output is unchanged
-   (compare against a snapshot taken first).
-
-### 2. A misplaced `>` after `resume` is diagnosed
-
-`<v | resume>` cuts `v` into `resume` as if it were a consumer, and the
-checker reports "`::0` is an alternative of a sum, and it is used as
-(…, dual(?…))", or a mismatch against a tuple, rather than the `>`.
-
-1. **Tests first:** `<::0(x) | resume>` and `<42 | resume>` in a clause are
-   refused with a message that names `resume`, says it is a function, and
-   shows `<v | resume` without `>`.
-2. **The checker.** In the flow arm's closing-consumer branch, when the
-   closing stage is a name whose type is a function (a `Par` of a consumer
-   and a result, not `(;)`), report that instead of the mismatch. It applies
-   to any function closed with `>`, not only `resume`.
-3. **Docs.** `MIGRATION.md` needs nothing; `DESIGN.md`'s "Diagnostics"
-   section lists the case.
-
 ### 3. A chain may stand as a tuple component without parentheses
 
 `<(<p | read_text), "!") | add` is a parse error — "`<` sends a value into a
