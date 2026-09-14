@@ -21,9 +21,11 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The sweep of the known limits has landed;
-"Next" holds the inconveniences writing programs against it turned up, each
-small, cheapest first.
+No large feature is mid-flight. The sweep of the known limits and the
+ergonomics it turned up have landed; "Next" holds what a review of that
+work raised — two soundness gaps and a missing check, small — and then the
+three larger features that were waiting on a program to need them, each
+with a proposal to confirm first.
 
 ## Known limits
 
@@ -54,62 +56,173 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-Nothing is queued. The next entries come from "Deferred" below, once one is
-chosen.
+### A handler clause binds as many parameters as its operation takes
+
+A clause takes parameter *i* from the operation's signature and gives any
+extra one a fresh variable (`Expr::Handle`, `crates/slc-check/src/expr.rs`,
+"A clause takes what its operation is performed with"); a missing one goes
+unnoticed. `fs::write_file(p): resume => …` types `p` as `String` while the
+runtime binds the `(path, contents)` tuple (`bind_names` in
+`crates/slc-syntax/src/lower.rs`, `Expr::Handle`), and `read_file(a, b)`
+aborts at run time with "a consumer of 2 components received …".
+
+Proposed: a clause binds exactly the operation's parameters, and a nullary
+operation's clause is written `config()`, never `config(u)` — the runtime's
+ignored unit binder is lowering's business, not the program's.
+
+1. **Tests first:** `write_file(p)`, `read_file(a, b)` and `config(u)` are
+   refused with "`write_file` takes 2 parameters, and this clause binds 1";
+   the clauses in `fs.sl`, `examples/*.sl` and the tests keep their meaning.
+2. **The checker.** In `Expr::Handle`, compare `clause.params.len()` with
+   `signature.params.len()` before typing them.
+3. **Docs.** `DESIGN.md`'s "Diagnostics" list gains the case.
+
+### A returned value's row is the promise's, never the declaration's
+
+`fn mk(exit: -i32) -> -i64 / {Tick}` absorbs what the returned `select`
+performs into the call's row (`check_decl`, `Decl::Fn`: "Where that type
+carries none, the declaration answers for it"; `docs/design-notes/rows-in-types.md`
+§3), so a `handle` around the call discharges nothing and the consumer fires
+later, unhandled: `let k = handle (<exit | mk) { tick(): … }; <5 | k>` runs
+`tick` with no handler.
+
+Proposed: refuse it. A returned negative value whose promised type carries
+no row must perform nothing; the sound spelling is `-> (-i64 / {Tick})`, and
+the diagnostic says so. A rowless `menu` or `form` built by a function
+carries its arms' row on its value too (`Type::Rowed(menu_ty, runs)` in the
+`mu` arm), so nothing needs the old charge; `stream::map`'s `-> Stream<B> /
+{..E}` becomes `-> Stream<B, ..E>` with a row parameter on `Stream`, as
+`Seq` has.
+
+1. **Tests first:** the program above is refused with "the value `mk` hands
+   back performs `Tick`, and its type `-i64` carries no row; write
+   `-> (-i64 / {Tick})`"; the same declaration with the row on the type runs
+   under the handler; `examples/latent_effects.sl` and the stdlib keep their
+   output.
+2. **The stdlib.** `menu Stream<+T, E> / {..E}`; `stream::map`, `iterate`,
+   `unfold`, `zip`, `drop` declare their rows on the type.
+3. **The checker.** Replace `env.perform(actual_row)` in the rowless-promise
+   branch with the diagnostic; drop the "declaration answers for it" prose
+   from `rows-in-types.md` §3 and `DESIGN.md`'s "Rows are part of types"
+   (its second exception).
+4. **Docs.** `MIGRATION.md`: the row moves from the arrow to the type.
+
+### A handler names every operation of each effect it handles
+
+The handled set is the effects of the operations the clauses name
+(`Expr::Handle`, `let handled = clauses …`), so a mock answering only
+`fs::read_file` type-checks a program that calls `fs::write` and aborts with
+"no handler for operation fs::write_file" (`split_at_handler`,
+`crates/slc-runtime/src/machine.rs`) — against `DESIGN.md`'s "a well-typed
+program performs no operation the runtime cannot answer".
+
+Proposed: an effect is handled whole. A handler that names some operations
+of an effect names them all, or ends with a forwarding clause `_ => forward`
+that re-performs any other operation of that effect to the handler outside
+and resumes — which keeps a tap on one operation cheap. Rows keep tracking
+effects, not operations.
+
+1. **Tests first:** `handle p { fs::read_file(path): resume => … }` where
+   `p` performs `fs::Fs` is refused with "`fs::Fs` has 6 operations, and this
+   handler answers `read_file` alone; answer the rest, or add
+   `_ => forward`"; with `_ => forward` the program runs and `fs::write` goes
+   to the disk under `fs::real_command` outside; a handler naming every
+   operation needs no clause.
+2. **The parser.** A last clause `_ => forward` on a handle.
+3. **The checker.** Per effect named by a clause, the missing operations are
+   an error unless the handler forwards; a forwarding handler's body row
+   keeps that effect (it is not discharged), so the outer handler is
+   required by the row.
+4. **Lowering and the runtime.** A forwarding handler's prompt carries no
+   entry for the unnamed operations, so `split_at_handler` walks past it to
+   the outer handler as it does today; the resumption crossing it carries a
+   copy, as any prompt does. So the runtime needs nothing; lowering ignores
+   the `forward` clause after the checker has used it.
+5. **Docs.** `DESIGN.md`'s effects section and the "Diagnostics" list;
+   `docs/design-notes/file-system-effect.md` "Consequences".
+
+### A `select` arm may produce a value
+
+A `select` arm is a command, so a handler clause routing a primitive's
+outcomes back captures its own result with `mu { out <= … <(<v | resume) |
+out> … }`, as `fs::real` and `fs::real_command` do four times each.
+
+Proposed: an arm may be an expression, and its value is delivered to the
+continuation of the cut that activates the `select` — the way a `match`
+arm's value is the `match`'s. A `select T { p => v }` whose arms produce `B`
+then has the type `(T -> B)`: it *is* a function, and flows through `|` like
+one, so `<::0(t) | select (i64 | String) { … } | println` composes. Arms
+that are all commands keep the type `-T`; a `select` mixing the two is
+refused.
+
+1. **Tests first:** `<::0(3) | select (i64 | String) { ::0(n) => <n | fmt,
+   ::1(s) => s } | println` prints `3`; a mixed `select` is refused with "this
+   arm is a command, and the arm before it produces a value"; `fs::real`
+   rewritten as `read_file(path): resume => <path | __read_file | (select
+   String { text => <::0(text) | resume } & select String { why => <::1(why)
+   | resume })` passes the file tests.
+2. **The checker.** `Expr::Select`: the arms' result types unify; `Some(B)`
+   for a value, `(;)` for a command; the whole is `Type::arrow(T, B)`.
+3. **Lowering.** `Expr::Select` in `crates/slc-syntax/src/lower.rs`: a
+   value-producing `select` lowers to `λx. μk. ⟨x ∥ select-consumer⟩` with
+   each arm's value cut into `k` — the shape a `match` already lowers to.
+4. **Docs and stdlib.** `DESIGN.md` §7 ("Negative additive construction"),
+   `MIGRATION.md`; `fs.sl` loses its `mu { out <= … }`.
+
+### Handler values
+
+A handler is an ordinary function today, taking the computation it handles
+(`fs::real`, `fs::real_command`). A program that stores a handler, chooses
+one at run time, or composes two needs the handler as data.
+
+Proposed, to confirm before any step: `handler [Effect] { clauses }` is an
+expression of type `Handler<A, B, {E}, {F}>` — it turns a computation
+producing `A` under `{E, ..F}` into one producing `B` under `{F, ..}` (the
+`return` clause maps `A` to `B`; without one, `A` is `B`); `with h handle c`
+installs it, and is what `handle c { … }` desugars to. Lowering already
+builds the clause tree as a value (`Expr::Handle` in `lower.rs`, the
+`__clauses` tag), so the runtime has the representation; what is new is the
+type and the two syntaxes.
+
+1. **Tests first:** `let h = handler Reader { config(): resume => <10 |
+   resume }; with h handle (<7 | scaled)` prints `70`; a handler stored in a
+   list and chosen by index; `with h handle c` where `h`'s effect is not in
+   `c`'s row is refused; composing two handlers by nesting `with`.
+2. **The parser.** `handler`, `with … handle …`; `handle c { … }` parses as
+   before and desugars in the checker or lowering.
+3. **The checker.** The type, its four arguments, and `with`: the body's row
+   minus `{E}` fits the outer row; the clauses check as today.
+4. **Lowering.** `handler { … }` is the clause tree; `with h handle c` is
+   `__handle(h, thunk c)`. The runtime needs nothing.
+5. **Docs.** `DESIGN.md`'s effects section; `docs/design-notes/file-system-effect.md`
+   "Proposal" item 1 is superseded and says so.
+
+### Composable capture
+
+A continuation that returns to where it was captured — `shift`'s `k : A ->
+R` — is a function, not a consumer, and brings answer types into the
+checker, which the abortive, handler-delimited `mu` of `DESIGN.md` §6 keeps
+out. It is what would give `reset` a use beyond refusing jumps.
+
+Proposed, to confirm before any step: no new primitive. A resumption is
+already a function value (`Value::Resume`, composed onto the running stack
+by `append`, `crates/slc-runtime/src/machine.rs`), so `shift` is a
+one-operation effect handled by `reset`: `effect Shift<+A, +R> { fn shift(f:
+((A -> R) -> R)) -> A; }` in the stdlib, with `reset` handling it by `shift(f):
+resume => <resume | f`. The answer type `R` is the handler's body type, so
+the checker's existing handle typing carries it and no answer-type
+modification is needed; what is refused is a `shift` whose `R` differs from
+the enclosing `reset`'s, which the row's type arguments express.
+
+1. **Tests first:** `reset (<(fn(k) { <(<1 | k), (<2 | k)) | add }) | shift |
+   x => (x, 10) | mul)` prints `30` (two returns through one continuation);
+   a `shift` outside any `reset` is refused by the row; the answer type is
+   the `reset`'s.
+2. **The stdlib.** `control::Shift`, `control::reset`.
+3. **Docs.** `DESIGN.md` §6 gains a paragraph, and "No shifts" is checked
+   against it — the polarity shifts it refuses are unrelated.
 
 ## Deferred, for discussion
 
-- **A returned consumer's row is charged to the declaration, not the value.**
-  `fn mk(exit: -i32) -> -i64 / {Tick}` absorbs what the returned `select`
-  performs into the call's row (`crates/slc-check/src/expr.rs`, the
-  declaration-return charge; `docs/design-notes/rows-in-types.md`), so a
-  `handle` around the call discharges nothing and the consumer fires later
-  unhandled: `let k = handle (<exit | mk) { tick(): … }; <5 | k>` runs
-  `tick` with no handler. The sound spelling is `-> (-i64 / {Tick})`. Decide
-  whether to refuse the rowless promise ("the returned value performs
-  `Tick`; write `-> (-i64 / {Tick})`") or keep the charge for values that are
-  run before the call returns (a rowless menu built by a function). Refusing
-  is the recommendation.
-
-- **A handler clause's parameter count is not checked.** A clause takes
-  parameter *i* from the operation's signature and gives any extra one a
-  fresh variable (`Expr::Handle` in `crates/slc-check/src/expr.rs`);
-  `fs::write_file(p): resume => …` types `p` as `String` while the runtime
-  binds the `(path, contents)` tuple, and `read_file(a, b)` aborts at run
-  time. Decide whether a nullary operation's clause may still write one
-  ignored binder, `config(u)`, then refuse every other count by name:
-  "`write_file` takes 2 parameters, and this clause binds 1".
-
-- **A handler naming one operation discharges the whole effect.** The
-  handled set is the effects of the operations the clauses name
-  (`Expr::Handle`), so a mock answering only `fs::read_file` type-checks a
-  program that calls `fs::write` and aborts with "no handler for operation
-  fs::write_file" — against DESIGN's "a well-typed program performs no
-  operation the runtime cannot answer". Either a handler must name every
-  operation of each effect it handles (a clause per operation, or a
-  forwarding default), or the row tracks operations rather than effects.
-  The first is the smaller change.
-
-- **Value-producing `select` arms.** A `select` arm is a command, so a
-  handler clause routing a primitive's outcomes back captures its own result
-  with `mu { out <= … <(<v | resume) | out> … }`, as `fs::real` does four
-  times. Letting an arm be an expression would make a value-producing
-  `select` a consumer of `A` producing `B` — a function `(A -> B)`, or a type
-  of its own. Revisit when more code than `fs::real` needs it.
-
-- **Handler values.** A handler is an ordinary function today, taking the
-  computation it handles (`fs::real`). A first-class `handler { … }` that a
-  program stores, chooses between or composes, installed with
-  `with h handle c`, needs a type for its handled effects, its input and
-  output types and its clauses' row. Revisit when a program needs a handler
-  as data rather than as a function
-  (`docs/design-notes/file-system-effect.md`).
-
-- **Composable capture.** A continuation that returns to where it was
-  captured — `shift`'s `k : A -> R` — would be a function rather than a
-  consumer, and would bring answer types into the checker, which the
-  abortive, handler-delimited `mu` of `DESIGN.md` §6 keeps out — and it is
-  what would give `reset` a use beyond refusing jumps. Revisit when a program
-  needs one. The typing is worked out in Kobori, Kameyama and Kiselyov,
-  "Answer-type modification without tears" (WoC 2015), and Materzok and
-  Biernacki, "Subtyping delimited continuations" (ICFP 2011).
+Nothing. Each open question above is an entry marked "Proposed", confirmed
+before its change.
