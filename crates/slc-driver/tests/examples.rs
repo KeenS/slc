@@ -193,6 +193,24 @@ fn repository_example_suite_has_expected_results() {
         ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
         ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
+            "delimited.sl",
+            Expected {
+                success: true,
+                // Each resumption's jump lands in that resumption, with or
+                // without a `reset` in between.
+                stdout: &["H T\nH T\nbig\nnegative, stopping early\n42\n"],
+                stderr: &[],
+            },
+        ),
+        (
+            "delimited_error.sl",
+            Expected {
+                success: false,
+                stdout: &["5\n"],
+                stderr: &["left the handler it was captured under"],
+            },
+        ),
+        (
             "form.sl",
             Expected { success: true, stdout: &["answer", "42", "relabelled!", "7"], stderr: &[] },
         ),

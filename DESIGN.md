@@ -594,6 +594,8 @@ mu i64 { out <= <(reset <out | escape) | out> }    // refused: the jump would le
 
 A resumption whose slice crosses a `reset` carries a copy of it, as it does a
 handler, so a continuation captured under the `reset` lands on the copy.
+`examples/delimited.sl` runs all of it; `examples/delimited_error.sl` is the
+refused jump.
 
 ## 7. Additive data
 
