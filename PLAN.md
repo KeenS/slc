@@ -54,36 +54,32 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 7. The stdlib's lazy codata carries its rows on the returned type
+### 7. A menu or form declaration takes a row variable
 
-`seq::map`, `filter` and `take_while` build their rest with `let+` before
-storing it in `Step::Yield`, because the payload is declared without a row;
-and building a `Seq` performs nothing, yet their signatures charge `/ {..E}`
-at the call.
+Moved up from "Deferred": the stdlib's lazy codata hit its stop condition.
+`seq::map` declared `-> (Seq<B> / {..E})`, storing `<(f, rest) | map` directly,
+is refused — "`map` hands on a value that performs the row `..E` where the
+type it meets does not allow it" — because `Step::Yield(T, Seq<T>)` declares
+its payload without a row, and `seq::to_list(s: Seq<T>)` takes a pure one.
+Building the rowed rest without storing it is accepted, so the payload is the
+blocker, and a per-use row on the type is not enough.
 
-1. **Tests first:** `examples/seq.sl` and the stdlib tests keep their output;
-   a `Seq` built by `seq::map` with an effectful function and demanded under
-   a handler is accepted, and demanded outside one is refused.
-2. **The stdlib.** The functions declare `-> (Seq<B> / {..E})`, the bodies
-   store `<(f, rest) | map` directly, and `let+` goes. If `Step::Yield`'s
-   payload must carry the row, this step needs "Row variables on
-   declarations" (Deferred) first — then stop, and move that entry here.
-3. **Docs.** `DESIGN.md`'s stdlib section; the comment in `fs.sl`'s and
-   `seq.sl`'s bodies.
+Proposed: a declaration names a row parameter as it names a type parameter —
+`menu Seq<+T, E> / {..E}`, `enum Step<+T, E> { Done, Yield(T, Seq<T, E>) }` —
+and each use instantiates it. How a use writes the argument (`Seq<T, ..E>`,
+`Seq<T, {IO}>`) is decided in this step.
 
-### 8. An alternative's sum is read through a consumer function
-
-`<::0(7) | describe | println` with `fn describe(out: String) <- (i64 |
-String)` is refused — "`::0` is an alternative of a sum, and it is used as
--String" — because the stage reads the other way round and the sum is not
-passed back to the position. `examples/sums.sl` keeps a `mu` for it.
-
-1. **Tests first:** that chain prints `number 7`, and `sums.sl` drops its
-   `mu`s; `<42 | classify | …` with a command keeps its meaning.
-2. **The checker.** In the flow arm, when the first stage is an injection and
-   the next stage is read the other way round, unify the injection's sum
-   with the stage's consumed type before the pending injection is resolved.
-3. **Docs.** `DESIGN.md`'s sums section, and `examples/sums.sl`.
+1. **Tests first:** `seq::map` storing its rest directly is accepted; a `Seq`
+   built by `seq::map` with an effectful function and demanded under a
+   handler is accepted, and demanded outside one is refused;
+   `examples/seq.sl` and the stdlib tests keep their output.
+2. **The checker.** A declaration records its row parameters beside its type
+   parameters; a use instantiates them fresh, and a menu's latent row is its
+   row argument.
+3. **The stdlib.** `seq::map`, `filter` and `take_while` store their rest
+   directly and `let+` goes; `to_list` and `take` forward the row.
+4. **Docs.** `DESIGN.md`'s declarations and stdlib sections, the comments in
+   `seq.sl` and `fs.sl`, and `MIGRATION.md`.
 
 ### 9. A clause naming no operation of the effect is refused
 
@@ -116,11 +112,6 @@ more likely now that clauses take paths, should say so.
   output types and its clauses' row. Revisit when a program needs a handler
   as data rather than as a function
   (`docs/design-notes/file-system-effect.md`).
-
-- **Row variables on declarations.** A menu or form declaration keeps a
-  concrete row: `menu Seq<+T, E> / {..E}` would
-  instantiate its row like a type parameter at each use. Revisit when a
-  per-use row on the type, `(Seq<B> / {..E})`, is not enough.
 
 - **Composable capture.** A continuation that returns to where it was
   captured — `shift`'s `k : A -> R` — would be a function rather than a

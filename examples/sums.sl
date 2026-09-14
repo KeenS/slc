@@ -32,11 +32,13 @@ command classify(n: i64) | (outcome: (i64 | String)) {
     match (<(n, 10) | lt) { True => <::0(n) | outcome>, False => <::1("big") | outcome> }
 }
 
+// An alternative flows into a function consuming its sum, and the chain
+// carries on with what that function hands its continuation.
 command main | (exit: i32) / {IO} {
-    <mu String { s <= <::0(7) | (<s | describe)> } | println;
-    <mu String { s <= <::1("hi") | (<s | describe)> } | println;
-    <mu String { s <= <::1(True) | (<s | rank)> } | println;
-    <mu String { s <= <::2("last") | (<s | rank)> } | println;
+    <::0(7) | describe | println;
+    <::1("hi") | describe | println;
+    <::1(True) | rank | println;
+    <::2("last") | rank | println;
     <::0(3) | show | println;
     <mu String {
         s <= <42 | classify | (select i64 { n => <"small" | s> } & select String { t => <t | s> })>

@@ -913,7 +913,10 @@ pair is a pair of punctuation marks.
   choice answers each position exactly once; a `match` covers every one, or
   has an arm that matches anything. The consumer of a choice `(A | B)` is the
   bundle `(-A & -B)`, so a bundle of exits consumes a choice as it is: the
-  position picks the exit.
+  position picks the exit. And a choice flows into a function that consumes
+  it: `<::0(7) | describe | println`, with `describe(out: String) <- (i64 |
+  String)`, reads `describe` the way round that takes a choice, and the chain
+  carries on with the `String` it hands on.
 - **Joints** are built from one continuation per component: `(k1 ; k2)` is
   a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
   right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,

@@ -563,6 +563,14 @@ fn rigid_row(rigid_vars: &HashMap<&str, Type>, name: &str) -> Option<usize> {
     }
 }
 
+/// Whether `ty` is the sum of an alternative `::i(v)` still waiting for its
+/// context to name it: an unknown that would fit anything it meets.
+fn is_pending_injection(env: &Env, ty: &Type) -> bool {
+    let ty = env.uni.apply(ty);
+    matches!(ty, Type::Var(_))
+        && env.pending_injections.iter().any(|pending| env.uni.apply(&pending.sum) == ty)
+}
+
 /// A type without its row, and the row: what running a value of it performs.
 fn unrowed(ty: Type) -> (Type, slc_core::types::Row) {
     match ty {
@@ -3851,11 +3859,20 @@ fn check_expr_unapplied(
                         // No parameters is the empty product: `(,) | f` is
                         // how a nullary declaration is called.
                         let packed = packed_group(fresh.params.iter().cloned());
+                        // An alternative whose sum is not known yet fits any
+                        // parameter; where only the other reading takes a
+                        // sum, the general arm reads it that way.
+                        let reads_back = is_pending_injection(env, &acc)
+                            && sum_alternatives(&probe.apply(&packed)).is_none()
+                            && fresh.result.as_ref().is_some_and(|result| {
+                                sum_alternatives(&probe.apply(&result.dual())).is_some()
+                            });
                         let piecewise = fits_piecewise(&probe, &fresh.params, &acc, shape);
                         let probe = Env { uni: probe, ..env.clone() };
-                        piecewise
-                            || would_fit(&probe, &packed, &acc, Some(shape))
-                            || commutes(&probe.uni, &packed, &acc)
+                        !reads_back
+                            && (piecewise
+                                || would_fit(&probe, &packed, &acc, Some(shape))
+                                || commutes(&probe.uni, &packed, &acc))
                     }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
@@ -4017,11 +4034,7 @@ fn check_expr_unapplied(
                     // An alternative flowing in would take the function's
                     // pair as its sum, and be reported for that instead.
                     if let Some(name) = function
-                        && let Type::Var(_) = env.uni.apply(&acc)
-                        && env
-                            .pending_injections
-                            .iter()
-                            .any(|pending| env.uni.apply(&pending.sum) == env.uni.apply(&acc))
+                        && is_pending_injection(env, &acc)
                     {
                         diags.push(closed_function(name));
                         acc = Type::BOTTOM;
@@ -4181,7 +4194,15 @@ fn check_expr_unapplied(
                 }
                 let (left, right) = (env.uni.apply(&left), env.uni.apply(&right));
                 let forward = left.dual();
-                if fits(env, &forward, &acc, shape) {
+                // An alternative flowing in has a sum only its context names,
+                // so the unknown would fit the forward reading's argument
+                // whatever it is. Where only the mirrored reading takes a sum —
+                // `<::0(7) | describe` with `describe(out: String) <- (i64 |
+                // String)` — that is the reading the alternative meets.
+                let mirrored_first = is_pending_injection(env, &acc)
+                    && sum_alternatives(&env.uni.apply(&forward)).is_none()
+                    && sum_alternatives(&env.uni.apply(&right.dual())).is_some();
+                if !mirrored_first && fits(env, &forward, &acc, shape) {
                     acc = env.uni.apply(&right);
                 } else {
                     let mirrored = right.dual();
