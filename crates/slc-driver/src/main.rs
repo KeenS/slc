@@ -136,19 +136,39 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let file = match args.iter().position(|a| a == "run") {
-        Some(i) if args.len() > i + 1 => PathBuf::from(&args[i + 1]),
-        _ => {
-            eprintln!("usage: slc run <file.sl>");
-            return ExitCode::FAILURE;
+    let usage = || {
+        eprintln!("usage: slc run [--fuel N] <file.sl>");
+        ExitCode::FAILURE
+    };
+    let Some(run_at) = args.iter().position(|a| a == "run") else {
+        return usage();
+    };
+    // A run is bounded only by memory unless `--fuel N` caps its machine
+    // steps, for a test or a program that might diverge.
+    let mut fuel = usize::MAX;
+    let mut file = None;
+    let mut rest = args[run_at + 1..].iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--fuel" {
+            match rest.next().and_then(|n| n.parse().ok()) {
+                Some(n) => fuel = n,
+                None => return usage(),
+            }
+        } else if file.is_none() {
+            file = Some(PathBuf::from(arg));
+        } else {
+            return usage();
         }
+    }
+    let Some(file) = file else {
+        return usage();
     };
 
     // A continuation-passing program nests as deeply as its control flow,
     // and the evaluator walks the tree on the host stack, so give it room.
     let outcome = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || run_file(&file))
+        .spawn(move || run_file(&file, fuel))
         .expect("failed to start the evaluator")
         .join()
         .unwrap_or_else(|_| Err("evaluation ran out of stack".into()));
@@ -192,7 +212,7 @@ fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Pro
     program
 }
 
-fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
+fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
     let _compile_guard = compile_span.enter();
     let source = std::fs::read_to_string(path)
@@ -285,16 +305,20 @@ fn run_file(path: &PathBuf) -> Result<RunOutcome, String> {
     let eval_span = slc_core::span!("eval");
     let _eval_guard = eval_span.enter();
 
-    slc_runtime::chunk::with_chunk(chunk, || run_program(&program, &traits, &roots, main_root))
+    slc_runtime::chunk::with_chunk(chunk, || {
+        run_program(&program, &traits, &roots, main_root, fuel)
+    })
 }
 
 /// Run a compiled program: install its globals, then run `main` through its
-/// exit continuation. Runs with the program's chunk already installed.
+/// exit continuation. Runs with the program's chunk already installed. The
+/// globals' setup and the run share one budget of `fuel` machine steps.
 fn run_program(
     program: &slc_syntax::ast::Program,
     traits: &slc_syntax::traits::TraitInfo,
     roots: &[(String, slc_runtime::chunk::NodeId)],
     main_root: slc_runtime::chunk::NodeId,
+    mut fuel: usize,
 ) -> Result<RunOutcome, String> {
     let mut env = slc_runtime::value::Env::new();
     slc_runtime::value::install_stdlib(&mut env);
@@ -329,7 +353,6 @@ fn run_program(
         if name == "main" {
             continue;
         }
-        let mut fuel = 1_000_000;
         let v =
             slc_runtime::eval::run_node(*root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
         env.define_global(name, v);
@@ -371,7 +394,6 @@ fn run_program(
     // the program, and the cut that reaches it is what ends it. `main` is a
     // command like any other, so it takes both groups — the empty value
     // group first, as the unit, then the menu of exits.
-    let mut fuel = 1_000_000;
     let entry =
         slc_runtime::eval::run_node(main_root, &mut env, &mut fuel).map_err(|e| e.to_string())?;
     let entry = slc_runtime::eval::apply_value(entry, slc_runtime::value::Value::Unit, &mut fuel)

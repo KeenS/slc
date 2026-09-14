@@ -22,9 +22,9 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": the step cap first, then effects — delayed
-computations, rows in types, and the file system as an effect that rows in
-types unblocks — and then the checker's remaining gaps.
+limits, in the order of "Next": effects first — delayed computations, rows
+in types, and the file system as an effect that rows in types unblocks —
+and then the checker's remaining gaps.
 
 ## Known limits
 
@@ -68,14 +68,6 @@ types unblocks — and then the checker's remaining gaps.
   operation can name. Addressed by "File operations are an effect, and
   handlers are values".
 
-### Of the implementation
-
-- **A run is capped at 1,000,000 machine steps.** The driver hands the
-  machine that much fuel (`crates/slc-driver/src/main.rs`), so a plain loop
-  of about 20,000 iterations stops with "evaluation diverged (fuel
-  exhausted)". Tests that exercise long loops have to fit inside it.
-  Addressed by "A run has no step cap unless one is asked for".
-
 ## Next
 
 The entries land in this order. Each runs its tests first, then the change,
@@ -83,33 +75,7 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo test --workspace`
 before it is committed.
 
-### 1. A run has no step cap unless one is asked for
-
-Decided: the cap was a guard against runaway evaluation from before tail
-cuts ran in constant space (`DESIGN.md` §11). Now a loop is bounded only by
-memory, so `slc run` gives no cap, and `slc run --fuel N file.sl` keeps one
-for tests and for bounding a run that might diverge. The runtime keeps
-counting steps: no cap is `usize::MAX` fuel.
-
-1. **Tests first,** in `crates/slc-driver/tests/integration.rs`:
-   - a tail-recursive loop of 100,000 iterations prints its answer;
-   - a tail-resuming handler around 100,000 operations prints its answer;
-   - `slc run --fuel 1000` on a loop stops with "evaluation diverged (fuel
-     exhausted)" and a failing status;
-   - `slc run --fuel` without a number, and `--fuel x`, report usage.
-2. **The driver.** `main.rs` parses `run [--fuel N] <file.sl>`; the three
-   `let mut fuel = 1_000_000;` sites — global initializers, `main`'s root,
-   and the entry — take the one budget, so global initialization and the
-   run share it. The usage line names the flag.
-3. **Docs.**
-   - `DESIGN.md` §11 "Execution": "a fuel bound turns divergence into an
-     error" becomes the opt-in flag.
-   - The driver's usage line is the flag's only other documentation; no
-     document describes `slc run` today.
-   - This file: remove the known limit "A run is capped at 1,000,000 machine
-     steps".
-
-### 2. Delayed computations carry their effects
+### 1. Delayed computations carry their effects
 
 Negative positions are by name (`DESIGN.md` §4, "When a `let` computes"), but
 the effect checker still charges a delayed computation's row where it is
@@ -171,7 +137,7 @@ runs after it in the driver but walks names without that table.
      now puts the handler around the use or writes `let+`.
    - Run every example; any whose output changes gets its handler moved.
 
-### 3. Rows live in types
+### 2. Rows live in types
 
 Decided: rows move from the name-following pass into inferred types, the
 upgrade "Effect tracking follows names" names. What does not change is the
@@ -216,7 +182,7 @@ first step settles the representation before anything is ported.
    `MIGRATION.md` gains a section only for programs whose meaning or
    acceptance changes.
 
-### 4. File operations are an effect, and handlers are values
+### 3. File operations are an effect, and handlers are values
 
 Needs "Rows live in types". The `fs` module would declare an `Fs` effect,
 and a standard handler would answer it by performing `IO`. A program that
@@ -267,7 +233,7 @@ is a value, and `with h handle c` installs it.
    removes the known limit "The file operations perform `IO` without an
    operation".
 
-### 5. `;` commutes through structures and stages
+### 4. `;` commutes through structures and stages
 
 The known limit "`;` commutes only where one value meets one declared type"
 has two halves, and a third gap of the same family turned up beside it.
@@ -308,7 +274,7 @@ declaration, so the spelling still has to match, and the diagnostic says so.
 5. **Docs.** `DESIGN.md`'s account of `;` gains structures and stages; this
    file narrows the known limit to type constructors, or removes it.
 
-### 6. Type variables carry a polarity
+### 5. Type variables carry a polarity
 
 The known limit "Soundness is enforced by inference, argued informally"
 names four gaps; this entry closes one. A generic parameter already states

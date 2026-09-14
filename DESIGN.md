@@ -1790,8 +1790,8 @@ co-term side as a frame; `μ` captures the stack into a value; a captured
 continuation is activated by reinstating its stack, down to the nearest
 handler it shares with the running one, which is why it outlives its `mu`
 and can be used more than once. `select` branches stay unevaluated
-until activation chooses one, and a fuel bound turns divergence into an
-error.
+until activation chooses one. A run is bounded only by memory; `slc run
+--fuel N` caps it at `N` machine steps, turning divergence into an error.
 
 The machine does not walk the named core. The whole program is compiled,
 once, into a single flat instruction stream — a `Chunk`, one vector of nodes

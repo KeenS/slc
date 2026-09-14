@@ -189,6 +189,81 @@ fn no_input_file() {
     assert!(!out.status.success());
 }
 
+fn run_sl_with(args: &[&str], name: &str, source: &str) -> (String, String, bool) {
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, source).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_slc"))
+        .arg("run")
+        .args(args)
+        .arg(&path)
+        .output()
+        .expect("failed to run slc");
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+        out.status.success(),
+    )
+}
+
+const LONG_LOOP: &str = r#"fn count(n: i64, acc: i64) -> i64 {
+    match (<(n, 0) | eq) {
+        True => acc,
+        False => <((<(n, 1) | sub), (<(acc, 1) | add)) | count,
+    }
+}
+
+command main | (exit: -i32) / {IO} {
+    <(100000, 0) | count | println;
+    <0 | exit>
+}"#;
+
+#[test]
+fn a_run_has_no_step_cap_by_default() {
+    let (stdout, stderr, ok) = run_sl_with(&[], "slc_test_long_loop.sl", LONG_LOOP);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "100000\n");
+}
+
+#[test]
+fn a_tail_resuming_handler_runs_as_long_as_the_program_does() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_long_handled_loop.sl",
+        r#"effect Tick { fn tick() -> (,); }
+
+        fn spin(n: i64) -> i64 / {Tick} {
+            match (<(n, 0) | eq) {
+                True => 0,
+                False => { tick(); <(n, 1) | sub | spin },
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let r = handle (<100000 | spin) { tick(): resume => <(,) | resume, };
+            <r | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "0\n");
+}
+
+#[test]
+fn fuel_caps_the_machine_steps_of_a_run() {
+    let (stdout, stderr, ok) = run_sl_with(&["--fuel", "1000"], "slc_test_fuel_cap.sl", LONG_LOOP);
+    assert!(!ok, "stdout: {stdout}");
+    assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "stderr: {stderr}");
+}
+
+#[test]
+fn fuel_without_a_number_reports_usage() {
+    for args in [&["--fuel"][..], &["--fuel", "x"][..]] {
+        let (_, stderr, ok) = run_sl_with(args, "slc_test_fuel_usage.sl", LONG_LOOP);
+        assert!(!ok, "{args:?}");
+        assert!(stderr.contains("usage: slc run [--fuel N] <file.sl>"), "{args:?}: {stderr}");
+    }
+}
+
 #[test]
 fn builtin_add() {
     let dir = std::env::temp_dir().join("slc_test_add.sl");
