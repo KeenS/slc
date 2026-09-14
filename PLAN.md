@@ -21,8 +21,10 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The open work is settling evaluation by
-polarity: delayed computations still need to carry their effects.
+No large feature is mid-flight. The open work is delimited control —
+resumptions composed in place, `mu` delimited by the nearest prompt, and
+`reset` — and then settling evaluation by polarity: delayed computations
+still need to carry their effects.
 
 ## Known limits
 
@@ -69,16 +71,177 @@ polarity: delayed computations still need to carry their effects.
   operation, a clause that resumes more than once loses every resumption
   after the first: the first jump to the `mu`'s continuation leaves the
   clause instead of returning into it. Under
-  `flip(): resume => (<true | resume) + " " + (<false | resume)`,
-  `let a = mu String { r <= <(match flip() { true => "H", _ => "T" }) | r> }`
+  `flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add`,
+  `let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> }`
   answers `"H"`; the same program without the `mu`, or with `flip()`
-  performed before it, answers `"H T"`. Stopping a `mu`'s capture at the
-  nearest prompt would change what `mu` means under a handler, so this is a
-  design question, set aside for now. It is what kept `if` from becoming a
+  performed before it, answers `"H T"`. It is what kept `if` from becoming a
   prelude command: a value-returning one needs a `mu` around a condition
-  that may perform, so `if` became a `match` instead.
+  that may perform, so `if` became a `match` instead. Fixed by "`mu` is
+  delimited by the nearest prompt".
+
+### Of the implementation
+
+- **A run is capped at 1,000,000 machine steps.** The driver hands the
+  machine that much fuel (`crates/slc-driver/src/main.rs`), so a plain loop
+  of about 20,000 iterations stops with "evaluation diverged (fuel
+  exhausted)". Tests that exercise long loops have to fit inside it.
+
+### Defects
+
+Found on 2026-09-14 at 7f7fec2, while surveying how effects meet
+continuations. Each is fixed by "Resumptions compose in place".
+
+- **An operation performed after `resume` finds no handler outside the
+  resumed slice.** A `Reader` handler `config(): resume => <10 | resume`
+  around a function that does `let x = config(); <x | println; x` fails
+  with `no handler for operation 'write_line'`: the runtime's `IO` prompt,
+  like any handler further out, is not on the stack the resumed code runs
+  on.
+- **Resumptions nest, so long effectful loops exhaust memory.** A loop that
+  performs `tick()` once per iteration under `tick(): resume => <(,) | resume`
+  takes 0.41 s for 1,000 iterations against 0.12 s without the handler, and
+  at 20,000 iterations allocates past a 4 GB cap in about ten seconds, where
+  the same loop without the handler only reaches the step limit.
 
 ## Next
+
+### Delimited control
+
+Decided: resumptions compose onto the running stack; `mu`'s continuation
+stays abortive (a consumer, `-A`) and is delimited by the nearest delimiter —
+a handler or a `reset`; `reset e` is sugar for a handler with no clauses; and
+composable capture is deferred. The semantics follow Racket's `call/cc` (The
+Racket Reference, §10.4 "Continuations") and the reading of a delimiter as a
+dynamically rebound top-level continuation (Ariola, Herbelin and Sabry, "A
+type-theoretic foundation of delimited continuations", HOSC 2009; Downen and
+Ariola, "Delimited control and computational effects", JFP 2014).
+
+The entries land in order: the jump rule of the second needs the one real
+stack the first provides, and the third is only observable once `mu` stops
+at a delimiter.
+
+- **Resumptions compose in place.** `Value::Resume(frames)` runs the
+  captured slice in a nested machine,
+  `run(State::Return(arg), frames, fuel)` (`crates/slc-runtime/src/machine.rs`),
+  and waits for it. That is the cause of both entries under "Defects", and of
+  a third problem that follows from the same code: a `mu` inside resumed code
+  captures the nested machine's stack, which ends at the handler's prompt, so
+  jumping to it later would end the program there. `resume` is the only place
+  a program re-enters the machine; `run_term`, `run_command`, `run_apply` and
+  `run_apply_under_io` serve only the driver and tests.
+
+  1. **Tests first**, in `crates/slc-driver/tests/integration.rs`, each
+     failing today:
+     - the `Reader` program under "Defects" prints `10` twice;
+     - the `tick()` loop completes at the largest iteration count that fits
+       the step budget with the handler installed. Find that count by
+       probing before writing the test. If no count both fits the budget and
+       fails today, test in `crates/slc-runtime` instead that a resumption
+       does not start a nested run;
+     - a `mu` captured inside resumed code, jumped to after the `handle` has
+       returned, continues with the program after the `handle`. Construct
+       this program and confirm it fails before relying on it.
+  2. **`Kont::append(&mut self, slice: &Kont)`** pushes a slice's frames
+     bottom-up, and `Value::Resume(frames)` becomes `kont.append(&frames)`
+     followed by `State::Return(arg)`. The slice ends in the handler's
+     `Prompt`, so the value it produces meets the `return` clause and then
+     the frames beneath it — the clause's pending work, such as the
+     `add | x => …` after the first `resume` in the flip handler. A clause
+     that resumes in tail position leaves no frames, so a loop stays flat.
+  3. **Drop the nested run's plumbing:** `step_apply` takes `fuel` only to
+     pass it to the nested run.
+  4. **Check the multi-shot and tap examples.** `examples/effects.sl` and
+     `examples/io.sl` keep their outputs; the example suite checks them.
+  5. **Docs.** `DESIGN.md`'s effects section ("A clause may resume any
+     number of times…") and §11's machine paragraph say that resuming pushes
+     the captured slice onto the running stack, so handlers outside it
+     answer what it performs. Remove the two entries under "Defects". No
+     `MIGRATION.md` section: only programs that failed change behaviour.
+
+- **`mu` is delimited by the nearest prompt.** Needs "Resumptions compose in
+  place".
+
+  The semantics:
+  - **Capture stays O(1).** `Value::Kont` still holds the whole stack, plus
+    the id of the nearest `Prompt` in it: its delimiter. Every `Prompt` gets
+    a fresh id when pushed, by `__handle` or for the runtime's `IO` prompt,
+    and a resumption's copy of a prompt keeps its id.
+  - **A jump `<v | k>` walks the current stack from the top** and stops at
+    the first of:
+    - (a) a frame `k`'s stack shares. It pushes `k`'s frames above that frame
+      and delivers `v`. This is a jump within one extent, as today.
+    - (b) a `Prompt` whose id is `k`'s delimiter. It pushes `k`'s frames
+      above that delimiter and delivers `v`. This is the multi-shot case,
+      where a resumption's frames are copies.
+    - (c) any other `Prompt`. This is a run-time error: a continuation
+      captured under one handler was used under another.
+  - **Rule (a) keeps a clause's cut working.** A clause may cut into a
+    continuation it was handed as an operation argument, the way
+    `judge(n, ok, bad)` routes its outcomes in `DESIGN.md`. The clause runs
+    below its prompt, and the frames below are shared.
+  - **Rule (c) is scoped resumptions applied to `mu`** (Xie et al., "Effect
+    handlers, evidently", ICFP 2020). It keeps answer types out of the type
+    system. A static check is later work.
+  - **Exits are unaffected.** `exit` is the runtime's `EXIT` builtin, not a
+    captured continuation, so leaving a program from inside a handler still
+    works. Only `mu` builds a `Value::Kont`.
+
+  What changes for programs:
+  - The H/T example under "A `mu` that performs escapes a resuming clause"
+    answers `"H T"`.
+  - A `mu` continuation used to jump out of a handler's extent, from a place
+    that shares no frame with it, now fails by rule (c).
+  - The `handle (mu i64 { out <= … })` idioms in `examples/effects.sl` and
+    `examples/latent_effects.sl` keep their outputs. The cut into `out`
+    happens in the handled extent or in a resumed slice.
+
+  1. **Tests first:**
+     - the H/T program answers `"H T"`;
+     - a clause that cuts into a `mu` continuation it was passed as an
+       operation argument;
+     - a `mu` continuation jumped to from inside a handler installed after
+       its capture reports the rule (c) error;
+     - the existing examples cover the `handle (mu …)` idioms.
+  2. **`KontNode` gains its depth.** The first shared frame is then found by
+     walking both stacks to equal depth and then in lockstep, so a jump costs
+     the frames it removes, not the stack's depth.
+  3. **`Frame::Prompt` gains `id: u64`,** assigned from a machine-wide
+     counter at push. `Value::Kont` records its delimiter's id; `Node::Mu`
+     reads the nearest prompt, which at top level is the runtime's `IO`
+     prompt.
+  4. **`Value::Kont` activation implements (a)–(c),** and `EvalError` gains
+     the variant for (c), with a message saying the continuation left the
+     handler it was captured under.
+  5. **Update `Value`'s equality, display and `type_of`** for the new shape.
+  6. **Docs.**
+     - `DESIGN.md` §6: `mu` captures up to its delimiter, the jump rule, and
+       the error.
+     - §11: the paragraph "Activating `k` *reinstates* that stack".
+     - The effects section: the note that a clause may still cut into
+       continuations it is handed.
+     - `MIGRATION.md`: a section for the changed jump.
+     - This file: remove the known limit "A `mu` that performs escapes a
+       resuming clause". Whether `if` can now be a prelude command goes to
+       the effects discussion.
+
+- **`reset e` delimits without handling.** Needs "`mu` is delimited by the
+  nearest prompt". `reset e` is a handler with no clauses: it answers no
+  operation, so every operation passes through it, and its value is `e`'s.
+  `handle e { }` already runs this way — lowering gives a missing `return`
+  clause the identity (`crates/slc-syntax/src/lower.rs`, `Expr::Handle`) —
+  so `reset` is surface syntax only.
+
+  1. **Lexer and parser.** `reset` becomes a keyword; no program, test or
+     document uses the word today. `reset e` parses `e` as a full expression
+     and builds `Expr::Handle { body, clauses: vec![], ret: None }`.
+  2. **Checker.** Confirm that a clauseless `handle` types as its body and
+     passes its row through unchanged, and add tests if either is missing.
+  3. **Tests:**
+     - a `mu` inside `reset` aborts only as far as the `reset`;
+     - an operation performed inside `reset` reaches the handler outside it;
+     - a resumption whose slice crosses a `reset` reinstates it.
+  4. **Docs.** `DESIGN.md` §6 gains `reset`. `MIGRATION.md` notes the new
+     reserved word.
 
 ### Evaluation
 
@@ -139,5 +302,10 @@ polarity: delayed computations still need to carry their effects.
     a second special effect, or the driver wraps `main` in the prelude's
     handler, or every program installs it.
 
-- **Replacing `<` and `>`.** The cut brackets are the last non-ASCII
-  surface syntax; their replacement is to be designed.
+- **Composable capture.** A continuation that returns to where it was
+  captured — `shift`'s `k : A -> R` — would be a function rather than a
+  consumer, and would bring answer types into the checker, which the
+  abortive design in "Delimited control" keeps out. Revisit when a program
+  needs one. The typing is worked out in Kobori, Kameyama and Kiselyov,
+  "Answer-type modification without tears" (WoC 2015), and Materzok and
+  Biernacki, "Subtyping delimited continuations" (ICFP 2011).
