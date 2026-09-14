@@ -32,7 +32,7 @@ trait Describe {
 
 impl Describe for Config {
     fn describe(self: Config) -> String {
-        (<(self.name, " with ") | add | x => (x, (<self.retries | fmt)) | add | x => (x, " retries") | add)
+        <(self.name, " with ") | add | x => (x, (<self.retries | fmt)) | add | x => (x, " retries") | add
     }
 }
 
@@ -46,7 +46,7 @@ impl Describe for Sink {
 // displayable, and the dictionary composes at the use.
 impl<+T: Display> Describe for Stream<T> {
     fn describe(self: Stream<T>) -> String {
-        (<("stream starting ", (<self.head | fmt)) | add)
+        <("stream starting ", (<self.head | fmt)) | add
     }
 }
 
@@ -89,7 +89,7 @@ impl Deliver for i64 {
 
 impl Deliver for Bool {
     fn deliver(out: String) <- Bool {
-        fn(b: Bool) { <match b { True => { "affirmative" }, _ => { "negative" } } | out> }
+        fn(b: Bool) { <match b { True => "affirmative", False => "negative" } | out> }
     }
 }
 
@@ -101,11 +101,11 @@ command main | (exit: i32) / {IO} {
     <keeper() | label | println;
 
     // the bounded negative function, at three different types
-    (<mu String { s <= <42 | (<s | emit)> } | println);
-    (<mu String { s <= <Cons(1, Cons(2, Nil)) | (<s | emit)> } | println);
+    <mu String { s <= <42 | (<s | emit)> } | println;
+    <mu String { s <= <Cons(1, Cons(2, Nil)) | (<s | emit)> } | println;
 
     // the Self-consuming method, dispatched by what the cut sends
-    (<mu String { s <= <42 | deliver(s)> } | println);
-    (<mu String { s <= <True | deliver(s)> } | println);
+    <mu String { s <= <42 | deliver(s)> } | println;
+    <mu String { s <= <True | deliver(s)> } | println;
     <0 | exit>
 }

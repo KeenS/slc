@@ -20,15 +20,18 @@ command walk(t: Tree, target: i64) | (jump: i64 & done: unit) / {IO} {
         Leaf => <(,) | done>,
         Node(left, value, right) => {
             <("visiting ", (<value | int_to_str)) | add | println;
-            match (<(value, target) | eq) { True => {
-                // The non-local jump: past this walk's own frames, past
-                // every enclosing walk, straight to the captured `k`.
-                <value | jump>
-            }, _ => {
-                <(left, target) | walk | (jump & select unit {
-                    finished_left => <(right, target) | walk | (jump & done)>,
-                })>
-            } }
+            match (<(value, target) | eq) {
+                True => {
+                    // The non-local jump: past this walk's own frames, past
+                    // every enclosing walk, straight to the captured `k`.
+                    <value | jump>
+                },
+                False => {
+                    <(left, target) | walk | (jump & select unit {
+                        finished_left => <(right, target) | walk | (jump & done)>,
+                    })>
+                },
+            }
         },
     }
 }

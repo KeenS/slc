@@ -20,20 +20,20 @@ effect Choose { fn flip() -> Bool; }
 
 // An exception: `throw` never returns, so its clause does not resume.
 fn checked_div(a: i64, b: i64) -> i64 / {Exn} {
-    match (<(b, 0) | eq) { True => { <"division by zero" | throw }, _ => { (<(a, b) | div) } }
+    match (<(b, 0) | eq) { True => <"division by zero" | throw, False => <(a, b) | div }
 }
 
 // A reader: `config` asks the handler and continues — one resume, and work
 // after it composes.
 fn scaled(x: i64) -> i64 / {Reader} {
-    (<(x, config()) | mul)
+    <(x, config()) | mul
 }
 
 // Nondeterminism: two choices, and the handler takes both by resuming twice.
 fn pick() -> String / {Choose} {
-    let a = match flip() { True => { "H" }, _ => { "T" } };
-    let b = match flip() { True => { "H" }, _ => { "T" } };
-    (<(a, b) | add)
+    let a = match flip() { True => "H", False => "T" };
+    let b = match flip() { True => "H", False => "T" };
+    <(a, b) | add
 }
 
 // Row polymorphism, written the way generics are: a row variable is a
@@ -45,7 +45,7 @@ fn pick() -> String / {Choose} {
 // — so `map(half, xs)` instantiates E to half's row `{Exn}`, and the
 // handler around the call is what keeps `main` pure.
 fn half(n: i64) -> i64 / {Exn} {
-    match (<(n, 2) | rem | x => (x, 0) | eq) { True => { (<(n, 2) | div) }, _ => { <"odd" | throw } }
+    match (<(n, 2) | rem | x => (x, 0) | eq) { True => <(n, 2) | div, False => <"odd" | throw }
 }
 
 // A negative function carries its row in the same place — after the `<-`
@@ -56,19 +56,19 @@ fn emit(out: i64) <- i64 / {Reader} {
 
 command main | (exit: i32) / {IO} {
     // never resumes — the exception replaces the computation
-    let safe = handle (<(10, 0) | checked_div) { throw(m) => (<(0, 1) | sub), return(n) => n };
+    let safe = handle (<(10, 0) | checked_div) { throw(m) => -1, return(n) => n };
     <safe | println;                       // -1
 
-    let ok = handle (<(10, 2) | checked_div) { throw(m) => (<(0, 1) | sub), return(n) => n };
+    let ok = handle (<(10, 2) | checked_div) { throw(m) => -1, return(n) => n };
     <ok | println;                         // 5
 
     // resumes once, then does work after the resume
-    let r = handle (<7 | scaled) { config(): resume => (<((<10 | resume), 1000) | add), return(n) => n };
+    let r = handle (<7 | scaled) { config(): resume => <((<10 | resume), 1000) | add, return(n) => n };
     <r | println;                          // 7*10 + 1000 = 1070
 
     // resumes twice, combining both branches of every choice
     let all = handle pick() {
-        flip(): resume => (<((<True | resume), " ") | add | x => (x, (<False | resume)) | add),
+        flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
         return(s) => s,
     };
     <all | println;                        // "HH HT TH TT"
@@ -86,10 +86,10 @@ command main | (exit: i32) / {IO} {
     <none | fmt | println;                  // "[]"
 
     // the negative function's row, discharged like any other
-    (<handle (mu i64 { out <= <6 | (<out | emit)> }) {
+    <handle (mu i64 { out <= <6 | (<out | emit)> }) {
         config(): resume => <7 | resume,
         return(n) => n,
-    } | println);                                  // 42
+    } | println;                                  // 42
 
     <0 | exit>
 }

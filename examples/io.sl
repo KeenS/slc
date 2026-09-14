@@ -25,7 +25,7 @@ fn greet(name: String) -> (,) / {IO} {
 // A pure function stays pure, and the checker holds it to that: printing
 // inside this one would be an error rather than a surprise.
 fn shout(name: String) -> String {
-    (<(name, "!") | add)
+    <(name, "!") | add
 }
 
 command main | (exit: i32) / {IO} {

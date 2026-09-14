@@ -40,7 +40,7 @@ menu Session {
 
 fn session(n: i64) -> Session {
     mu Session {
-        next <= <(match (<(n, 0) | gt) { True => { Step(n) }, _ => { Quit } }) | next>,
+        next <= <(match (<(n, 0) | gt) { True => Step(n), False => Quit }) | next>,
         config <= <(mu Config { retries <= <n | retries>, name <= <"session" | name> }) | config>,
     }
 }
@@ -82,11 +82,11 @@ command main | (exit: i32) / {IO} {
         Step(k) => <k | println,
     };
 
-    (<mu String { ans <= <Handler { cmd: Step(7), out: ans } | handler()> } | println);
+    <mu String { ans <= <Handler { cmd: Step(7), out: ans } | handler()> } | println;
 
     match Holds(handler()) {
         Vacant => <"idle" | println,
-        Holds(h) => (<mu String { ans <= <Handler { cmd: Quit, out: ans } | h> } | println),
+        Holds(h) => <mu String { ans <= <Handler { cmd: Quit, out: ans } | h> } | println,
     };
 
     <0 | exit>

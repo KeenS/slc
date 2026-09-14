@@ -23,18 +23,18 @@ enum Wrapped {
 // product. `fn f((a, b): (…), c: …)` needs nothing new — the argument was
 // always one packed value, and this destructures it a level deeper.
 fn skew((a, b): (i64, i64), c: i64) -> i64 {
-    (<(a, c) | mul | x => (x, b) | sub)
+    <(a, c) | mul | x => (x, b) | sub
 }
 
 // A record leaf, taken apart in the header rather than the body.
 fn norm(Point { x, y }: Point) -> i64 {
-    (<(x, x) | mul | z => (z, (<(y, y) | mul)) | add)
+    <(x, x) | mul | z => (z, (<(y, y) | mul)) | add
 }
 
 // A `command` does the same, and its exits stay names: control leaves
 // through a name, and a pattern has nowhere to leave through.
 command nearer((here, there): (Point, Point)) | (closer: Point) {
-    match (<((<here | norm), (<there | norm)) | lt) { True => { <here | closer> }, _ => { <there | closer> } }
+    match (<((<here | norm), (<there | norm)) | lt) { True => <here | closer>, False => <there | closer> }
 }
 
 command main | (exit: i32) / {IO} {

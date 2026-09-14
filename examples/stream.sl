@@ -25,7 +25,7 @@ fn count_from(n: i64) -> Stream<i64> {
     }
 }
 
-fn double(n: i64) -> i64 { (<(n, 2) | mul) }
+fn double(n: i64) -> i64 { <(n, 2) | mul }
 
 command main | (exit: i32) / {IO} {
     let s = <10 | count_from;

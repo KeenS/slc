@@ -19,8 +19,8 @@ menu Fallible / {Exn} {
 // to Fallible's latent row and are checked against it.
 fn checked(n: i64) -> Fallible {
     mu Fallible {
-        value <= <(match (<(n, 0) | ge) { True => { n }, _ => { <"negative" | throw } }) | value>,
-        doubled <= <(match (<(n, 0) | ge) { True => { (<(n, 2) | mul) }, _ => { <"negative" | throw } }) | doubled>,
+        value <= <(match (<(n, 0) | ge) { True => n, False => <"negative" | throw }) | value>,
+        doubled <= <(match (<(n, 0) | ge) { True => <(n, 2) | mul, False => <"negative" | throw }) | doubled>,
     }
 }
 
@@ -52,7 +52,7 @@ form Validated / {Exn} {
 
 fn admit() -> Validated {
     select Validated {
-        Validated { age, out } => <(match (<(age, 18) | ge) { True => { age }, _ => { <"too young" | throw } }) | out>,
+        Validated { age, out } => <(match (<(age, 18) | ge) { True => age, False => <"too young" | throw }) | out>,
     }
 }
 
@@ -60,15 +60,15 @@ command main | (exit: i32) / {IO} {
     let f = <21 | checked;
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.
-    <handle f.value { throw(m) => (<(0, 1) | sub), return(n) => n } | println;
-    <handle f.doubled { throw(m) => (<(0, 1) | sub), return(n) => n } | println;
-    <handle (<(0, 5) | sub | checked).value { throw(m) => (<(0, 1) | sub), return(n) => n } | println;
+    <handle f.value { throw(m) => -1, return(n) => n } | println;
+    <handle f.doubled { throw(m) => -1, return(n) => n } | println;
+    <handle (<-5 | checked).value { throw(m) => -1, return(n) => n } | println;
 
     // A consumer carries a latent row too: `risky | out` composes without
     // performing anything — the row fires when the consumer is FED, so the
     // handler belongs around the cut.
     let n = handle (mu i64 { out <= <5 | risky | out> }) {
-        throw(m) => (<(0, 1) | sub),
+        throw(m) => -1,
         return(x) => x,
     };
     <n | println;
@@ -82,13 +82,13 @@ command main | (exit: i32) / {IO} {
 
     // Feeding a rowed form under a handler: the arm's throw fires at the
     // feed, in this extent, and lands in this handler.
-    (<handle (mu i64 { k <= <Validated { age: 21, out: k } | admit()> }) {
-        throw(m) => (<(0, 1) | sub),
+    <handle (mu i64 { k <= <Validated { age: 21, out: k } | admit()> }) {
+        throw(m) => -1,
         return(n) => n,
-    } | println);
-    (<handle (mu i64 { k <= <Validated { age: 15, out: k } | admit()> }) {
-        throw(m) => (<(0, 1) | sub),
+    } | println;
+    <handle (mu i64 { k <= <Validated { age: 15, out: k } | admit()> }) {
+        throw(m) => -1,
         return(n) => n,
-    } | println);
+    } | println;
     <0 | exit>
 }

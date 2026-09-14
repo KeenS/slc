@@ -35,17 +35,16 @@ enum Shape {
 
 fn area(s: Shape) -> i64 {
     match s {
-        Circle(r) => (<(3, r) | mul | x => (x, r) | mul),
-        Rect(w, h) => (<(w, h) | mul),
+        Circle(r) => <(3, r) | mul | x => (x, r) | mul,
+        Rect(w, h) => <(w, h) | mul,
     }
 }
 
 fn label(a: i64) -> String {
-    match (<(a, 50) | gt) { True => {
-        "big"
-    }, _ => {
-        "small"
-    } }
+    match (<(a, 50) | gt) {
+        True => "big",
+        False => "small",
+    }
 }
 
 // ─── Continuation-centric ────────────────────────────────────────────────
@@ -65,11 +64,10 @@ fn area_of(out: i64) <- Shape {
 
 fn label_of(out: String) <- i64 {
     select i64 {
-        a => match (<(a, 50) | gt) { True => {
-            <"big" | out>
-        }, _ => {
-            <"small" | out>
-        } },
+        a => match (<(a, 50) | gt) {
+            True => <"big" | out>,
+            False => <"small" | out>,
+        },
     }
 }
 
@@ -80,14 +78,14 @@ command main | (exit: i32) / {IO} {
 
     // Continuation-first: the same chain, stage for stage. Each `_of` is a
     // consumer transformer, and a pipeline reads it as the function it
-    // equally is — so nothing nests and nothing is written backwards.
-    (<mu String { out <= <Shape::Circle(5) | area_of | label_of | out> } | println);
-    (<mu String { out <= <Shape::Rect(6, 7) | area_of | label_of | out> } | println);
+    // equally is — so nothing nests, nothing is written backwards, and the
+    // answer flows on into `println` just as the value-first one does.
+    <Shape::Circle(5) | area_of | label_of | println;
+    <Shape::Rect(6, 7) | area_of | label_of | println;
 
-    // Where the two differ is what they *are*: the value-first chain
-    // returns a String, and the continuation-first one ends in a cut. The
-    // `mu` above is what turns the second back into a value; without it,
-    // the rest of the program is written inside the last consumer.
+    // Where the two differ is what they *are*: `label_of` hands its answer
+    // to a consumer, so the chain may just as well end in one of its own,
+    // and the rest of the program is then written inside that consumer.
     <Shape::Circle(5) | area_of | label_of | select String {
         answer => {
             <("and directly: ", answer) | add | println;

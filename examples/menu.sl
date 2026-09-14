@@ -56,9 +56,7 @@ command main | (exit: i32) / {IO} {
     <(<cfg | loud).name | println;         // "slant!"
 
     // A cut delivers a request directly: `mu` names where the answer goes.
-    (<mu i32 { a <= {
-        <cfg | (<.retries(a) | reroute)>   // 3
-    } } | println);
+    <mu i32 { a <= <cfg | (<.retries(a) | reroute)> } | println;   // 3
 
     <0 | exit>
 }

@@ -37,9 +37,9 @@ command main | (exit: i32) / {IO} {
     // For a negative declaration, `select` builds the value and the literal
     // builds the *demand* on it — `.item(k)` for a menu, `Report { … }` for
     // a form. The cut sends the demand to the form.
-    (<mu i64 { a <= <Report { value: 42, label: "answer" } | (<a | printer)> } | println);
+    <mu i64 { a <= <Report { value: 42, label: "answer" } | (<a | printer)> } | println;
 
-    (<mu i64 { a <= <Report { value: 7, label: "relabelled" } | (<a | printer | shouting)> } | println);
+    <mu i64 { a <= <Report { value: 7, label: "relabelled" } | (<a | printer | shouting)> } | println;
 
     // What a form cannot do is give up one field: from `(-A ; -B)` there is no
     // `-A` to be had, the way `(A, B)` yields its `A`. Reading `p.x` off a

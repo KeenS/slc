@@ -28,7 +28,7 @@ data Pair {
 
 fn sum(p: Pair) -> i64 {
     match p {
-        Pair { left, right } => (<(left, right) | add),
+        Pair { left, right } => <(left, right) | add,
     }
 }
 
@@ -121,16 +121,18 @@ command main | (exit: i32) / {IO} {
     <Pair { left: 2, right: 40 } | sum | println;
 
     // ; : hand the consumer the whole product — as the dual of a declared
-    // positive, and as a form declared directly. Both are the same cut.
-    (<mu i64 { answer <= <Pair { left: 2, right: 40 } | (<answer | report_sum)> } | println);
-    (<mu i64 { answer <= <Total { left: 2, right: 40 } | (<answer | total)> } | println);
-    (<mu i64 { answer <= <(7, "ignored") | (<answer | report_first)> } | println);
+    // positive, and as a form declared directly. The consumer written with
+    // `<-` flows like the function it equally is; the form value is fed by a
+    // cut, with `mu` naming where its answer goes.
+    <Pair { left: 2, right: 40 } | report_sum | println;
+    <mu i64 { answer <= <Total { left: 2, right: 40 } | (<answer | total)> } | println;
+    <(7, "ignored") | report_first | println;
 
     // | : build one variant, then branch on it.
     <Colour::Green | name | println;
 
     // & : hand the consumer one variant; only its branch runs.
-    (<mu i64 { answer <= <Colour::Green | (<answer | code)> } | println);
+    <Colour::Green | code | println;
 
     // codata: demand one item of the menu. The other is never computed.
     <config().retries | println;

@@ -41,9 +41,9 @@ command main | (exit: i32) / {IO} {
         },
     };
 
-    let first = mu { k <= {
+    let first = mu { k <=
         <file | fs::read_line | (k & select unit { end => { <"empty file" | println; <1 | exit> } })>
-    } };
+    };
     <("first line: ", first) | add | println;
 
     // The failure path: exactly one of the two consumers runs, and this

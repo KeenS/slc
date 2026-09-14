@@ -20,7 +20,7 @@ command main | (exit: i32) / {IO} {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet.  v ∥ μ̃x.  rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.
-    let doubled = (<(21, 2) | mul);
+    let doubled = <(21, 2) | mul;
     <doubled | println;
 
     // 2. The same co-term, written directly. `select` builds the consumer of
