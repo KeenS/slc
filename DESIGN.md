@@ -303,6 +303,13 @@ request is the value.
 `examples/polarity.sl` writes all four; `examples/polarity_error.sl` writes
 the two a `command` rejects.
 
+A type the checker has not solved yet still has a polarity once it meets a
+generic parameter that states one: meeting `<+T>` makes it positive, meeting
+`<-T>` negative, and standing under a `dual` flips it. So a lambda parameter
+used only where `<+T>` is declared needs no annotation, and a type that meets
+both a `<+T>` and a `<-T>` is refused — no type is both positive and
+negative — before anything solves it.
+
 ### Continuation rows
 
 The continuation parameters of a negative function, and the second parameter

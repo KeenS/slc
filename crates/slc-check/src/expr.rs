@@ -1023,6 +1023,34 @@ fn resolve_pending_dicts(env: &mut Env, diags: &mut Vec<Diagnostic>) {
         }
         env.dispatch.calls.insert(pending.span, dict_args);
     }
+    // A variable that meets parameters of both polarities has no type that
+    // fits both, solved or not.
+    let mut first_sign: HashMap<usize, (ParamPolarity, String, String)> = HashMap::new();
+    let mut conflicted = std::collections::HashSet::new();
+    for pending in &env.pending_signs {
+        let Some((var, sign)) = signed_var(&env.uni.apply(&pending.ty), pending.sign) else {
+            continue;
+        };
+        match first_sign.get(&var) {
+            None => {
+                first_sign.insert(var, (sign, pending.owner.clone(), pending.param.clone()));
+            }
+            Some((earlier, owner, param)) if *earlier != sign && conflicted.insert(var) => {
+                let (earlier_mark, earlier_param) = (earlier.mark(), param.clone());
+                diags.push(Diagnostic {
+                    message: format!(
+                        "one type meets `{owner}`'s `<{earlier_mark}{earlier_param}>` and `{}`'s \
+                         `<{}{}>`, and no type is both positive and negative",
+                        pending.owner,
+                        pending.sign.mark(),
+                        pending.param
+                    ),
+                    span: pending.span,
+                });
+            }
+            Some(_) => {}
+        }
+    }
     let mut reported = std::collections::HashSet::new();
     for (span, name, ty) in std::mem::take(&mut env.pending_params) {
         let ty = env.uni.apply(&ty);
@@ -1111,6 +1139,41 @@ fn record_signs(
     }
 }
 
+/// The variable a type is, and the polarity `sign` gives it: the sign itself,
+/// or flipped where the variable stands under a `dual`.
+fn signed_var(ty: &Type, sign: ParamPolarity) -> Option<(usize, ParamPolarity)> {
+    match ty {
+        Type::Var(var) => Some((*var, sign)),
+        Type::Dual(inner) => signed_var(inner, sign.flipped()),
+        Type::Rowed(inner, _) => signed_var(inner, sign),
+        _ => None,
+    }
+}
+
+/// The polarity an unsolved variable has: its parameter's mark for a rigid
+/// one, and otherwise the sign of every generic parameter it has met. `None`
+/// when nothing gives it one, or when two signs disagree.
+fn var_sign(var: usize, env: &Env) -> Option<ParamPolarity> {
+    if let Some(sign) = env.rigid_signs.get(&var) {
+        return Some(*sign);
+    }
+    let mut found = None;
+    for pending in &env.pending_signs {
+        let Some((met, sign)) = signed_var(&env.uni.apply(&pending.ty), pending.sign) else {
+            continue;
+        };
+        if met != var {
+            continue;
+        }
+        match found {
+            None => found = Some(sign),
+            Some(earlier) if earlier != sign => return None,
+            Some(_) => {}
+        }
+    }
+    found
+}
+
 /// Remember the polarity each rigid variable's parameter declares.
 fn record_rigid_signs(
     signs: &[(String, ParamPolarity)],
@@ -1130,7 +1193,7 @@ fn type_polarity(ty: &Type, env: &Env) -> Option<ParamPolarity> {
     match ty {
         Type::Dual(inner) => type_polarity(inner, env).map(ParamPolarity::flipped),
         Type::Rowed(inner, _) => type_polarity(inner, env),
-        Type::Var(var) => env.rigid_signs.get(var).copied(),
+        Type::Var(var) => var_sign(*var, env),
         Type::Param(_) => None,
         ty if ty.is_positive() && !ty.is_negative() => Some(ParamPolarity::Positive),
         ty if ty.is_negative() && !ty.is_positive() => Some(ParamPolarity::Negative),
@@ -3883,9 +3946,11 @@ fn check_expr_unapplied(
                     // mistake. A function and codata are negative *values*
                     // and flow in like any other.
                     let bare = unrowed(acc.clone()).0;
+                    // A variable counts once its sign says it is a consumer.
                     if bare.is_negative()
                         && !matches!(bare, Type::Par(ref parts) if !parts.is_empty())
-                        && !contains_var(&bare)
+                        && (!contains_var(&bare)
+                            || type_polarity(&bare, env) == Some(ParamPolarity::Negative))
                         && !enums.is_negative_value(&bare)
                     {
                         diags.push(Diagnostic {

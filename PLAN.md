@@ -21,9 +21,8 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": the checker's remaining gap, type variables
-without a polarity.
+No large feature is mid-flight, and "Next" is empty: the sweep of the known
+limits has landed, and what remains is listed for discussion.
 
 ## Known limits
 
@@ -42,41 +41,14 @@ without a polarity.
 - **Soundness is enforced by inference, argued informally.** What remains
   short of a proof: no mechanized subject-reduction argument ties the checker
   to the reduction rules, comparing two values nothing else constrains stays
-  unchecked, type variables carry no polarity kind, and the untyped evaluator
-  remains the backstop for whatever that gap hides. The polarity kind is
-  addressed by "Type variables carry a polarity"; the rest stays open.
+  unchecked, and the untyped evaluator remains the backstop for whatever that
+  gap hides. A type variable does carry the polarity of the generic parameters
+  it meets (`DESIGN.md` §4, "Polarity by position").
 
 ## Next
 
-The entries land in this order. Each runs its tests first, then the change,
-then the documents, and passes `cargo fmt --check`, `cargo clippy
---workspace --all-targets -- -D warnings` and `cargo test --workspace`
-before it is committed.
-
-### 1. Type variables carry a polarity
-
-The known limit "Soundness is enforced by inference, argued informally"
-names four gaps; this entry closes one. A generic parameter already states
-its polarity (`<+T>`, `<-T>`), but an inference variable has none until it
-is solved, so a variable used at both polarities in one declaration is
-caught only if it is solved to something concrete, and otherwise left to the
-evaluator.
-
-1. **Tests first:** an unannotated lambda parameter used once as data and
-   once as a consumer is refused; a `let` whose value's polarity is fixed by
-   one use and contradicted by another is refused; every existing test and
-   example still passes.
-2. **Variables carry a kind.** Each unification variable holds a polarity —
-   positive, negative or not yet known — set from a generic's mark, and from
-   the polarity of whatever it is unified with; unifying a variable with a
-   type of the other polarity, or two variables of different kinds, fails.
-3. **Checks that guessed around variables decide by kind.** The places that
-   skip a polarity check because a type still has a variable — the
-   orientation rule in the flow arm's `!contains_var(&acc)`, and the
-   `pending_lets` refusal "whose polarity is not known" — read the kind
-   instead, and each change gets a test.
-4. **Docs.** `DESIGN.md` §4 "Polarity by position" says variables carry the
-   polarity; this file removes that gap from the known limit's list.
+Nothing is queued: every known limit left above is open for discussion
+rather than planned.
 
 ## Deferred, for discussion
 

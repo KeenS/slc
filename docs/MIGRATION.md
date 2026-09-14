@@ -1296,6 +1296,22 @@ negative trait method is its continuation, `<s | deliver`. A type
 constructor's arguments still have to match: `List<(A ; B)>` is not
 `List<(B ; A)>`.
 
+## A type variable takes the polarity of the parameters it meets
+
+A type that nothing solves still has a polarity once it meets a generic
+parameter with a sign. A lambda parameter used only where `<+T>` is declared
+is positive, and no longer asks for an annotation; one type meeting both a
+`<+T>` and a `<-T>` is refused, where it used to be accepted and fail when
+run:
+
+```sl
+fn keep<+T>(x: T) -> (,) { (,) }
+fn feed<-T>(x: T) -> (,) { (,) }
+
+let f = fn(x) { <x | keep };            // old: "polarity is not known"; new: accepted
+let g = fn(x) { <x | keep; <x | feed }; // new: "no type is both positive and negative"
+```
+
 ## Removed constructs
 
 ### `spawn`
