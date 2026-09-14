@@ -216,6 +216,10 @@ fn fits_piecewise(
 /// dispatch resolves against its type and the stage's result is the
 /// method's. Nothing else about a method changes — it is the same static
 /// resolution a call gets, keyed on the stage rather than the call.
+///
+/// The flag says the stage reads the other way round: a negative method,
+/// `fn deliver(out: String) <- Self`, consumes the `Self` that flows in and
+/// hands on what its continuation takes, as a negative `fn` stage does.
 fn check_method_stage(
     method: &str,
     receiver: &Type,
@@ -224,9 +228,21 @@ fn check_method_stage(
     enums: &Declarations,
     env: &mut Env,
     diags: &mut Vec<Diagnostic>,
-) -> Option<Type> {
+) -> Option<(Type, bool)> {
     let sig = env.traits.method_sig(method)?.clone();
     let trait_name = env.traits.method_owner.get(method)?.clone();
+    if sig.polarity == slc_syntax::ast::FunctionPolarity::Negative
+        && !sig.is_command
+        && let [out] = sig.value_params.as_slice()
+    {
+        let target = env.uni.apply(receiver);
+        resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
+        let takes = out.ty.as_ref().and_then(|ty| resolve_with_self(ty, &target, enums))?;
+        let takes = env.uni.apply(&takes);
+        let flows_on =
+            if takes.is_negative() && !takes.is_positive() { takes.dual() } else { takes };
+        return Some((flows_on, true));
+    }
     let target = match sig.value_params.len() {
         // A method of several parameters takes them as one group: `Self`
         // is read off the components its parameters give that type.
@@ -237,11 +253,11 @@ fn check_method_stage(
     };
     resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
     if sig.is_command {
-        return Some(Type::BOTTOM);
+        return Some((Type::BOTTOM, false));
     }
     match &sig.return_type {
-        Some(ty) => resolve_with_self(ty, &target, enums).map(|t| env.uni.apply(&t)),
-        None => Some(Type::ONE),
+        Some(ty) => resolve_with_self(ty, &target, enums).map(|t| (env.uni.apply(&t), false)),
+        None => Some((Type::ONE, false)),
     }
 }
 
@@ -3142,7 +3158,7 @@ fn check_expr_unapplied(
             // width the next stage requires, and only the first stage can be
             // one — everything later is the result of a step.
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
-            let mut commuted_from: Option<usize> = None;
+            let mut commuted: Vec<usize> = Vec::new();
             let mut row_stage: Option<usize> = None;
             let mut swap: Option<slc_syntax::lower::Swap> = None;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
@@ -3295,9 +3311,12 @@ fn check_expr_unapplied(
                 if !(last && *into_consumer)
                     && let Expr::Ident(name) = &stages[index].kind
                     && env.traits.is_method(name)
-                    && let Some(result) =
+                    && let Some((result, turned)) =
                         check_method_stage(name, &acc, shape, stages[index].span, enums, env, diags)
                 {
+                    if turned {
+                        commuted.push(index);
+                    }
                     acc = result;
                     flowing = None;
                     continue;
@@ -3435,9 +3454,9 @@ fn check_expr_unapplied(
                 if fits(env, &forward, &acc, shape) {
                     acc = env.uni.apply(&right);
                 } else {
-                    let commuted = right.dual();
-                    commuted_from.get_or_insert(index);
-                    if !fits(env, &commuted, &acc, shape) {
+                    let mirrored = right.dual();
+                    commuted.push(index);
+                    if !fits(env, &mirrored, &acc, shape) {
                         let forward = env.uni.apply(&forward);
                         diags.push(Diagnostic {
                             message: format!(
@@ -3457,7 +3476,7 @@ fn check_expr_unapplied(
                 slc_syntax::lower::FlowShape {
                     eta: opens,
                     cut: *into_consumer,
-                    commuted_from,
+                    commuted,
                     row_stage,
                     swap,
                 },

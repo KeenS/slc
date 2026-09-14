@@ -2028,6 +2028,75 @@ fn a_continuation_jumped_to_under_a_later_handler_is_an_error() {
 }
 
 #[test]
+fn a_consumer_transformer_stage_hands_on_its_answer_wherever_it_stands() {
+    // `twice` reads the other way round in each chain: last in an open
+    // chain, before and after forward stages, in a `let`, a tuple, a function
+    // body and a handled computation, and closed on a consumer.
+    let dir = std::env::temp_dir().join("slc_test_commuted_stages.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Reader { fn config() -> i64; }
+
+        fn twice(out: i64) <- i64 { select i64 { n => <(n, 2) | mul | out> } }
+        fn shown(out: String) <- i64 { select i64 { n => <n | int_to_str | out> } }
+        fn scaled(out: i64) <- i64 / {Reader} { fn(x: i64) { <(x, config()) | mul | out> } }
+        fn inc(n: i64) -> i64 { <(n, 1) | add }
+        fn len(s: String) -> i64 { <s | str_len }
+        fn wrap(n: i64) -> i64 { <n | twice }
+
+        command main | (exit: i32) / {IO} {
+            let a = <50 | twice;
+            <a | println;
+            <50 | twice | inc | inc | println;
+            <5 | inc | twice | inc | println;
+            <5 | twice | inc | twice | println;
+            <12345 | shown | len | println;
+            <((<50 | twice), 1) | add | println;
+            <21 | wrap | println;
+            let h = handle (<6 | scaled) { config(): resume => <7 | resume, };
+            <h | println;
+            <mu i64 { k <= <50 | twice | inc | k> } | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["100", "102", "13", "22", "5", "101", "42", "42", "101"]
+    );
+}
+
+#[test]
+fn a_negative_trait_method_stage_consumes_what_flows_in() {
+    let dir = std::env::temp_dir().join("slc_test_negative_method_stage.sl");
+    std::fs::write(
+        &dir,
+        r#"trait Deliver { fn deliver(out: String) <- Self; }
+
+        impl Deliver for i64 {
+            fn deliver(out: String) <- i64 { fn(n: i64) { <("the number ", (<n | fmt)) | add | out> } }
+        }
+
+        impl Deliver for Bool {
+            fn deliver(out: String) <- Bool { fn(b: Bool) { <match b { True => "yes", False => "no" } | out> } }
+        }
+
+        command main | (exit: i32) / {IO} {
+            <42 | deliver | println;
+            let b = <True | deliver;
+            <b | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["the number 42", "yes"]);
+}
+
+#[test]
 fn a_continuation_captured_outside_a_reset_cannot_be_jumped_to_inside_it() {
     // Without the `reset`, the jump to `out` answers 5; with it, the jump
     // would leave the `reset`, which is refused.

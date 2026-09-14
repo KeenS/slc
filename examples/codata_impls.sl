@@ -104,8 +104,8 @@ command main | (exit: i32) / {IO} {
     <mu String { s <= <42 | (<s | emit)> } | println;
     <mu String { s <= <Cons(1, Cons(2, Nil)) | (<s | emit)> } | println;
 
-    // the Self-consuming method, dispatched by what the cut sends
-    <mu String { s <= <42 | deliver(s)> } | println;
-    <mu String { s <= <True | deliver(s)> } | println;
+    // the Self-consuming method, dispatched by what flows in
+    <42 | deliver | println;
+    <True | deliver | println;
     <0 | exit>
 }

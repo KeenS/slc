@@ -113,7 +113,7 @@ pub struct DispatchInfo {
 }
 
 /// What a flow chain does, read off the types at its ends.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlowShape {
     /// The chain begins with a function or a consumer rather than a value,
     /// so it denotes one: `f | k` is `λx. x | f | k`.
@@ -124,12 +124,11 @@ pub struct FlowShape {
     /// the rest of the chain as its menu of exits, so the chain ends there
     /// in a two-group call rather than a cut.
     pub row_stage: Option<usize>,
-    /// The stage at which the chain turns around. `;` is commutative, so a
-    /// stage may read as a consumer transformer instead of a function —
-    /// `area_of(out: -i64) <- Shape` takes the *rest of the chain* as its
-    /// continuation — and from here on the stages fold right, building the
-    /// consumer that what flows in is cut against.
-    pub commuted_from: Option<usize>,
+    /// The stages read the other way round, in order. `;` is commutative, so
+    /// a stage may read as a consumer transformer instead of a function —
+    /// `area_of(out: -i64) <- Shape` takes the continuation of its own step —
+    /// and what has flowed in that far is fed to the consumer it builds.
+    pub commuted: Vec<usize>,
     /// The value cut into the closing consumer has the consumer's type at
     /// its other spelling: `(A ; B)` where `(B ; A)` is wanted. The two are one
     /// type, but a value of it is a closure facing one way, so it is lowered
@@ -575,10 +574,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // one that would take a value — `f | k>` is `λx. <x | f | k>` —
             // so eta-expanding leaves every middle step an application.
             let shape =
-                FLOWS.with(|cell| cell.borrow().get(&e.span).copied()).unwrap_or(FlowShape {
+                FLOWS.with(|cell| cell.borrow().get(&e.span).cloned()).unwrap_or(FlowShape {
                     eta: !*from_value,
                     cut: *into_consumer,
-                    commuted_from: None,
+                    commuted: Vec::new(),
                     row_stage: None,
                     swap: None,
                 });
@@ -609,34 +608,24 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     term
                 });
             }
-            // Where the chain turns around, the stages after it fold the
-            // other way: each takes the consumer the rest builds, and what
-            // flowed in that far is cut against the result.
-            let turn = shape.commuted_from.map(|i| i + usize::from(shape.eta));
-            let term = if let Some(turn) = turn.filter(|t| *t < lowered.len()) {
-                let tail = lowered.split_off(turn);
-                let mut acc = lowered.remove(0);
-                for stage in lowered {
-                    acc = call_curried(stage, vec![acc]);
-                }
-                let mut consumer = tail.last().expect("a turn has a consumer").clone();
-                for stage in tail[..tail.len() - 1].iter().rev() {
-                    consumer = call_curried(stage.clone(), vec![consumer]);
-                }
-                Term::Mu(
-                    "__tail".into(),
-                    Box::new(Command::Cut(
-                        consumer,
-                        CoTerm::App(acc, Box::new(CoTerm::Covar("__tail".into()))),
-                    )),
-                )
-            } else {
-                let last = lowered.pop().expect("a flow has at least two stages");
-                let mut acc = lowered.remove(0);
-                for stage in lowered {
-                    acc = call_curried(stage, vec![acc]);
-                }
-                if shape.cut {
+            // Every step folds left. A stage read the other way round builds
+            // a consumer from the continuation of its step, and what flowed in
+            // that far is fed to it; any other stage is applied.
+            let commuted: Vec<usize> =
+                shape.commuted.iter().map(|i| i + usize::from(shape.eta)).collect();
+            let last = shape.cut.then(|| lowered.pop().expect("a closed flow has a consumer"));
+            let mut steps = lowered.into_iter().enumerate();
+            let (_, mut acc) = steps.next().expect("a flow has a first stage");
+            for (at, stage) in steps {
+                acc = if commuted.contains(&at) {
+                    turned_step(stage, acc, at)
+                } else {
+                    call_curried(stage, vec![acc])
+                };
+            }
+            let term = match last {
+                None => acc,
+                Some(last) => {
                     // The closed chain is a cut, and lowers to exactly the
                     // term a cut has always lowered to.
                     let closing = &stages.last().expect("a flow has stages").kind;
@@ -654,8 +643,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                         ),
                     };
                     Term::Mu(cut_binder(closing), Box::new(command))
-                } else {
-                    call_curried(last, vec![acc])
                 }
             };
             Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
@@ -1690,11 +1677,8 @@ fn lower_closed_flow(
     let Expr::Flow { stages, from_value: true, into_consumer: true } = &command.kind else {
         return Ok(None);
     };
-    let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).copied()).is_none_or(|shape| {
-        !shape.eta
-            && shape.commuted_from.is_none()
-            && shape.row_stage.is_none()
-            && shape.swap.is_none()
+    let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).cloned()).is_none_or(|shape| {
+        !shape.eta && shape.commuted.is_empty() && shape.row_stage.is_none() && shape.swap.is_none()
     });
     if !plain {
         return Ok(None);
@@ -1707,6 +1691,21 @@ fn lower_closed_flow(
         value = call_curried(lower_flow_stage(stage, continuations)?, vec![value]);
     }
     Ok(Some(Command::Cut(value, CoTerm::Covar(name.clone()))))
+}
+
+/// One step of a chain read the other way round: `stage` builds a consumer
+/// from the continuation of the step, and `value` is fed to that consumer —
+/// `μk. ⟨stage(k) ∥ value · k⟩`. The step at `at` names its own continuation,
+/// so steps nested in one another never capture each other's.
+fn turned_step(stage: Term, value: Term, at: usize) -> Term {
+    let k = format!("__turn{at}");
+    Term::Mu(
+        k.clone(),
+        Box::new(Command::Cut(
+            call_curried(stage, vec![Term::Var(k.clone())]),
+            CoTerm::App(value, Box::new(CoTerm::Covar(k))),
+        )),
+    )
 }
 
 /// The binder a parameterless declaration introduces for the unit its

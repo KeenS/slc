@@ -91,8 +91,7 @@ command main | (exit: i32) / {IO} {
     // equally is.
     <Point { x: 10, y: 20 } | area_of | println;        // 200
 
-    // Or with the hole the answer comes back through named by `mu`.
-    let r = mu Point { answer <= <Point { x: 1, y: 2 } | (<answer | reflect)> };
+    let r = <Point { x: 1, y: 2 } | reflect;
     <r.x | println;                                   // 2
 
     // `classify_to` sends a `Size` on and `overshoot_of` consumes one: the

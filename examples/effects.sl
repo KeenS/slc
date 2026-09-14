@@ -86,7 +86,7 @@ command main | (exit: i32) / {IO} {
     <none | fmt | println;                  // "[]"
 
     // the negative function's row, discharged like any other
-    <handle (mu i64 { out <= <6 | (<out | emit)> }) {
+    <handle (<6 | emit) {
         config(): resume => <7 | resume,
         return(n) => n,
     } | println;                                  // 42
