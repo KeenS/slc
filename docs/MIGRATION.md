@@ -1246,6 +1246,38 @@ follows the value:
 - Two menus that declare latent rows may now share an item name: a demand's
   type says which menu it is on.
 
+## File operations are an effect
+
+Touching a file performs the `fs` module's `Fs` effect rather than reaching
+the disk behind `IO`, so a declaration that reads or writes files says
+`{fs::Fs}` in its row, and the code that touches files runs under a handler:
+`fs::real` for the disk, or one of the program's own. `main` still leaves
+only `IO`; a program installs `fs::real` itself.
+
+```sl
+command main | (exit: i32) / {IO} {                               // old
+    <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+}
+
+command main | (exit: i32) / {IO} {                               // new
+    let status = <(fn(u: (,)) {
+        mu i32 { done <= <"input.txt" | fs::read | (select String { t => { <t | print; <0 | done> } } & complain)> }
+    }) | fs::real;
+    <status | exit>
+}
+```
+
+The commands keep their shapes. A handler of the program's own answers the
+operations, `fs::read_file` and its siblings, each with a sum of its outcomes:
+
+```sl
+use fs::read_file;
+
+fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+    handle <(,) | program { read_file(path): resume => <::0("canned") | resume }
+}
+```
+
 ## Removed constructs
 
 ### `spawn`

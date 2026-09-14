@@ -13,7 +13,7 @@
 //! module's own declarations; then each ancestor module's, out to the root.
 //! A path resolves by its first segment and keeps the rest.
 
-use crate::ast::{Decl, Expr, Node, Param, Pattern, Program, TypeExpr};
+use crate::ast::{Decl, EffectRow, Expr, Node, Param, Pattern, Program, TypeExpr};
 use crate::token::Span;
 use std::collections::{HashMap, HashSet};
 
@@ -617,8 +617,9 @@ fn resolve_name(written: &str, stack: &[Scope]) -> String {
 fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>) {
     let scope = stack.last().expect("a scope");
     match d {
-        Decl::Fn { name, params, return_type, body, .. } => {
+        Decl::Fn { name, params, return_type, body, effects, .. } => {
             *name = scope.qualify(name);
+            resolve_row(effects, stack);
             let mut bound = HashSet::new();
             for p in params.iter_mut() {
                 resolve_param(p, stack);
@@ -631,8 +632,17 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_expr(&mut body.kind, stack, locals);
             locals.pop();
         }
-        Decl::Command { name, value_params, continuation_params, return_type, body, .. } => {
+        Decl::Command {
+            name,
+            value_params,
+            continuation_params,
+            return_type,
+            body,
+            effects,
+            ..
+        } => {
             *name = scope.qualify(name);
+            resolve_row(effects, stack);
             let mut bound = HashSet::new();
             for p in value_params.iter_mut().chain(continuation_params.iter_mut()) {
                 resolve_param(p, stack);
@@ -659,14 +669,16 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 }
             }
         }
-        Decl::Menu { name, items, .. } => {
+        Decl::Menu { name, items, effects, .. } => {
             *name = scope.qualify(name);
+            resolve_row(effects, stack);
             for (_, ty) in items {
                 resolve_type(ty, stack);
             }
         }
-        Decl::Form { name, fields, .. } => {
+        Decl::Form { name, fields, effects, .. } => {
             *name = scope.qualify(name);
+            resolve_row(effects, stack);
             for (_, ty) in fields {
                 resolve_type(ty, stack);
             }
@@ -707,7 +719,11 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         }
         Decl::Effect { name, operations, .. } => {
             *name = scope.qualify(name);
+            // An operation is named by the module it is declared in, as a
+            // function is: references to it, and a handler's clauses for it,
+            // resolve to the same qualified name.
             for op in operations {
+                op.name = scope.qualify(&op.name);
                 for p in op.params.iter_mut() {
                     resolve_param(p, stack);
                 }
@@ -750,8 +766,18 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
             resolve_type(&mut a.kind, stack);
             resolve_type(&mut b.kind, stack);
         }
-        // The row names effects, not types; only the arrow resolves.
-        TypeExpr::Effectful(inner, _) => resolve_type(&mut inner.kind, stack),
+        TypeExpr::Effectful(inner, row) => {
+            resolve_type(&mut inner.kind, stack);
+            resolve_row(row, stack);
+        }
+    }
+}
+
+/// Qualify the effects a row names, as a type name is qualified. A row
+/// variable is a generic parameter of the declaration, and stays as written.
+fn resolve_row(row: &mut EffectRow, stack: &[Scope]) {
+    for effect in row.effects.iter_mut() {
+        *effect = resolve_name(effect, stack);
     }
 }
 
@@ -877,6 +903,7 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Expr::Handle { body, clauses, ret } => {
             resolve_expr(&mut body.kind, stack, locals);
             for c in clauses.iter_mut() {
+                c.op = resolve_name(&c.op, stack);
                 let mut bound: HashSet<String> = c.params.iter().cloned().collect();
                 bound.insert(c.resume.clone());
                 locals.push(bound);

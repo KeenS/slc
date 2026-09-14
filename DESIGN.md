@@ -1164,13 +1164,27 @@ a clause runs *below* its own prompt, so what the clause itself performs
 escapes outward to the next handler — the runtime's — and a tap can both
 report the write and forward it. `examples/io.sl` writes all three.
 
-The file operations — the `fs` module's `read`, `write`, `open`,
-`read_line`, `close`, `exists`, each a thin wrapper
-over a runtime primitive — charge `{IO}` too, so their rows are honest,
-but they still reach the outside world directly rather than through an
-operation: each offers its outcome to continuations, and an operation that
-carries an outcome needs a type the operation can name. Until then they
-cannot be mocked the way `println` can.
+The file operations are an effect of their own, the `fs` module's `Fs`, and
+can be mocked the way `println` can. `fs::read`, `write`, `open`,
+`read_line`, `close` and `exists` perform its operations, and nothing
+answers them unless a program installs a handler around the code that
+touches files: `fs::real`, which answers from the disk and performs `IO`, or
+one of the program's own. A handler is an ordinary function taking the
+computation it handles —
+
+```sl
+use fs::read_file;
+
+fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+    handle <(,) | program { read_file(path): resume => <::0("canned") | resume }
+}
+```
+
+— so `fs` exports `real` as a function, and a test installs its own. An
+operation answers with its outcome as a sum, `read_file(path) -> (String |
+String)`, which the command then offers to its continuations: a clause runs
+below its handler, so the continuations are activated by the command, under
+the handler, not by the clause (`docs/design-notes/file-system-effect.md`).
 
 **Latent rows are the dual of effects.** A function's row fires at
 application, because a function is a suspended producer: the work runs
@@ -1443,7 +1457,12 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 command main | (exit: i32) / {IO} {
     let complain = select String { message => { <message | println; <1 | exit> } };
-    <"input.txt" | fs::read | (select String { text => { <text | print; <0 | exit> } } & complain)>
+    let status = <(fn(u: (,)) {
+        mu i32 { done <=
+            <"input.txt" | fs::read | (select String { text => { <text | print; <0 | done> } } & complain)>
+        }
+    }) | fs::real;
+    <status | exit>
 }
 ```
 
@@ -1489,7 +1508,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
-| `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, over the runtime's `__read_file` and siblings |
+| `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::tap \| out>` |
 
 The program's text comes first in the combined source, so its spans and
@@ -1572,9 +1591,11 @@ comparison; `str_len`, `str_concat`, `int_to_str`, `str_eq`, `substring`;
 **Files are the `fs` module's**, not builtins a program has unasked:
 `fs::read`, `fs::write`, `fs::open`, `fs::read_line` offer
 their outcomes as above, and `fs::close` spends a handle so a later read
-through it fails, `fs::exists` answers a `Bool`. Each is a thin wrapper
-over a runtime primitive — `__read_file` and its siblings — which is what the
-language cannot express; the module is what a program calls.
+through it fails, `fs::exists` answers a `Bool`. Each performs the `Fs`
+effect, so the code that calls them runs under a handler: `fs::real` answers
+from the disk through the runtime's primitives, `__read_file` and its
+siblings, which are what the language cannot express (see "`IO`: the effect
+the runtime handles").
 
 A handle is a value of its own base type, `File`, produced only by
 `fs::open` — so nothing else closes a file or reads a line. A read after

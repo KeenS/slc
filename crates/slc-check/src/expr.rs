@@ -3400,8 +3400,7 @@ fn check_expr_unapplied(
         }
         Expr::Handle { body, clauses, ret, .. } => {
             // The body runs under the handler; its normal value feeds the
-            // return clause, whose body is the handle's type. (Effect rows
-            // are not yet checked — see PLAN.)
+            // return clause, whose body is the handle's type.
             // The body performs into a row of its own. The handler answers
             // the effects of the operations its clauses name, and the rest
             // reaches the body around it; the clauses run below the prompt.
@@ -3422,11 +3421,23 @@ fn check_expr_unapplied(
             }
             for clause in clauses {
                 env.push();
-                for p in &clause.params {
-                    let v = env.uni.fresh_var();
+                // A clause takes what its operation is performed with, and
+                // `resume` takes what the operation answers.
+                let signature = env
+                    .functions
+                    .get(&clause.op)
+                    .map(|signature| instantiate(signature, &mut env.uni).0);
+                for (index, p) in clause.params.iter().enumerate() {
+                    let v = signature
+                        .as_ref()
+                        .and_then(|signature| signature.params.get(index).cloned())
+                        .unwrap_or_else(|| env.uni.fresh_var());
                     env.define(p, v);
                 }
-                let resume_in = env.uni.fresh_var();
+                let resume_in = signature
+                    .as_ref()
+                    .and_then(|signature| signature.result.clone())
+                    .unwrap_or_else(|| env.uni.fresh_var());
                 let resume_out = env.uni.fresh_var();
                 env.define(&clause.resume, Type::arrow(resume_in, resume_out));
                 check_expr(&clause.body, enums, env, diags);

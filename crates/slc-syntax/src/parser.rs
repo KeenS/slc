@@ -545,7 +545,14 @@ impl Parser {
             if self.eat(&TokenKind::DotDot) {
                 row.tails.push(self.expect_ident("a row variable after `..`")?);
             } else {
-                row.effects.push(self.expect_ident("an effect name")?);
+                // An effect is named as a type is, by its path when it is a
+                // module's: `fs::Fs`.
+                let mut effect = self.expect_ident("an effect name")?;
+                while self.eat(&TokenKind::ColonColon) {
+                    effect.push_str("::");
+                    effect.push_str(&self.expect_ident("an effect name after `::`")?);
+                }
+                row.effects.push(effect);
             }
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RBrace, "`}` after the effect row")?;

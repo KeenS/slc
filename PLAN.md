@@ -22,8 +22,7 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": the file system as an effect, now that rows
-live in types, and then the checker's remaining gaps.
+limits, in the order of "Next": the checker's remaining gaps.
 
 ## Known limits
 
@@ -47,16 +46,6 @@ live in types, and then the checker's remaining gaps.
   remains the backstop for whatever that gap hides. The polarity kind is
   addressed by "Type variables carry a polarity"; the rest stays open.
 
-- **The file operations perform `IO` without an operation.** The `fs`
-  module's `read`, `write`, `open`, `read_line`, `close` and `exists`, and
-  the `__` primitives beneath them, charge `{IO}`, so their rows are honest,
-  but they reach the outside world directly rather than by performing an
-  operation the way `println` does — so they cannot be mocked by a handler.
-  The outcome is not the obstacle; a reusable handler is. `DESIGN.md`'s
-  `IO` section still gives the old reason, that an outcome needs a type the
-  operation can name. Addressed by "File operations are an effect, and
-  handlers are values".
-
 ## Next
 
 The entries land in this order. Each runs its tests first, then the change,
@@ -64,58 +53,7 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo test --workspace`
 before it is committed.
 
-### 1. File operations are an effect, and handlers are values
-
-The `fs` module would declare an `Fs` effect,
-and a standard handler would answer it by performing `IO`. A program that
-touches files would then say `{Fs}` in its row, and a test could mock the
-file system with a handler of its own, the way `examples/io.sl` mocks output.
-
-The effect itself works today. An operation can take its outcome
-continuations as parameters, and a clause below its own prompt performs `IO`
-outward:
-
-```sl
-effect Fs { fn read_file(path: String, ok: -String, failed: -String) -> (;); }
-
-handle mu String { k <= <("input.txt", k, select String { … }) | read_file } {
-    read_file(path, ok, failed) => <path | __read_file | (ok & failed)>,
-    return(s) => s,
-}
-```
-
-What does not work is offering that handler for reuse: `handle` installs
-clauses only where it is written, so `fs` has nothing to export as "the real
-file system". Eff answers this with first-class handlers — `handler { … }`
-is a value, and `with h handle c` installs it.
-
-1. **Design note.** `docs/design-notes/handler-values.md` answers:
-   - the type of a handler value: the effect it discharges, what its clauses
-     perform in turn (`{Fs}` to `{IO}`), and how its return clause maps the
-     body's result, in the rows of `docs/design-notes/rows-in-types.md`;
-   - its place in the polarity story: a handler consumes a computation and
-     binds continuations the copattern way, so whether it is a negative
-     value like a menu or a form;
-   - who installs the standard `Fs` handler, given that `main` may leave
-     only `IO` undischarged: the runtime (a second special effect), the
-     driver wrapping `main` in the prelude's handler, or every program.
-   The note is reviewed before step 2.
-2. **Tests first:** a handler value bound by `let` and installed twice
-   answers both times; a handler passed to a function and installed there
-   discharges its effect from the caller's row; `examples/file_io.sl`'s
-   output is unchanged; a test reads a file through a mock handler that
-   never touches the disk.
-3. **Handler values.** Parser, lowering (a handler value is the clause table
-   `__handle` already takes, unapplied), checker and runtime.
-4. **`Fs`.** The `fs` module declares the effect and exports the standard
-   handler; `read`, `write`, `open`, `read_line`, `close` and `exists`
-   perform its operations; the installer chosen in step 1 is put in place.
-5. **Docs.** `DESIGN.md`'s effects and `IO` sections — the stale reason in
-   the latter goes; `MIGRATION.md` for rows that now say `{Fs}`; this file
-   removes the known limit "The file operations perform `IO` without an
-   operation".
-
-### 2. `;` commutes through structures and stages
+### 1. `;` commutes through structures and stages
 
 The known limit "`;` commutes only where one value meets one declared type"
 has two halves, and a third gap of the same family turned up beside it.
@@ -156,7 +94,7 @@ declaration, so the spelling still has to match, and the diagnostic says so.
 5. **Docs.** `DESIGN.md`'s account of `;` gains structures and stages; this
    file narrows the known limit to type constructors, or removes it.
 
-### 3. Type variables carry a polarity
+### 2. Type variables carry a polarity
 
 The known limit "Soundness is enforced by inference, argued informally"
 names four gaps; this entry closes one. A generic parameter already states
@@ -182,6 +120,14 @@ evaluator.
    polarity; this file removes that gap from the known limit's list.
 
 ## Deferred, for discussion
+
+- **Handler values.** A handler is an ordinary function today, taking the
+  computation it handles (`fs::real`). A first-class `handler { … }` that a
+  program stores, chooses between or composes, installed with
+  `with h handle c`, needs a type for its handled effects, its input and
+  output types and its clauses' row. Revisit when a program needs a handler
+  as data rather than as a function
+  (`docs/design-notes/file-system-effect.md`).
 
 - **Row variables on declarations.** A menu or form declaration keeps a
   concrete row: `menu Seq<+T, E> / {..E}` would

@@ -808,11 +808,14 @@ fn fs_read_offers_a_missing_file_to_its_failure_continuation() {
     std::fs::write(
         &dir,
         r#"command main | (exit: -i32) / {IO} {
-            <"does-not-exist.sl" | fs::read | (select String {
-                source => { <("unexpectedly read ", source) | add | println; <1 | exit> },
-            } & select String {
-                message => { <("failed: ", message) | add | println; <0 | exit> },
-            })>
+            let status = <(fn(u: (,)) {
+                mu i32 { done <= <"does-not-exist.sl" | fs::read | (select String {
+                    source => { <("unexpectedly read ", source) | add | println; <1 | done> },
+                } & select String {
+                    message => { <("failed: ", message) | add | println; <0 | done> },
+                })> }
+            }) | fs::real;
+            <status | exit>
         }"#,
     )
     .unwrap();
@@ -830,12 +833,17 @@ fn fs_write_and_read_round_trip_through_their_continuations() {
         &dir,
         format!(
             r#"command main | (exit: -i32) / {{IO}} {{
-            let failed = select String {{ message => {{ <message | println; <1 | exit> }} }};
-            <({path:?}, "written") | fs::write | (select unit {{
-                done => <{path:?} | fs::read | (select String {{
-                    source => {{ <source | println; <0 | exit> }},
-                }} & failed)>,
-            }} & failed)>
+            let status = <(fn(u: (,)) {{
+                mu i32 {{ finish <= {{
+                    let failed = select String {{ message => {{ <message | println; <1 | finish> }} }};
+                    <({path:?}, "written") | fs::write | (select unit {{
+                        done => <{path:?} | fs::read | (select String {{
+                            source => {{ <source | println; <0 | finish> }},
+                        }} & failed)>,
+                    }} & failed)>
+                }} }}
+            }}) | fs::real;
+            <status | exit>
         }}"#,
             path = target.to_str().unwrap()
         ),
@@ -1132,14 +1140,19 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
         &dir,
         format!(
             r#"command main | (exit: -i32) / {{IO}} {{
-                let fail = select String {{ m => {{ <m | println; <1 | exit> }} }};
-                let fh = mu {{ k <= <"{}" | fs::open | (k & fail)> }};
-                <fh | fs::close;
-                let line = mu {{ k <=
-                    <fh | fs::read_line | (k & select unit {{ e => {{ <"eof" | println; <1 | exit> }} }})>
-                }};
-                <line | println;
-                <0 | exit>
+                let status = <(fn(u: (,)) {{
+                    mu i32 {{ done <= {{
+                        let fail = select String {{ m => {{ <m | println; <1 | done> }} }};
+                        let fh = mu {{ k <= <"{}" | fs::open | (k & fail)> }};
+                        <fh | fs::close;
+                        let line = mu {{ k <=
+                            <fh | fs::read_line | (k & select unit {{ e => {{ <"eof" | println; <1 | done> }} }})>
+                        }};
+                        <line | println;
+                        <0 | done>
+                    }} }}
+                }}) | fs::real;
+                <status | exit>
             }}"#,
             data.display()
         ),
@@ -1148,6 +1161,45 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(!ok, "stdout: {stdout}");
     assert!((stdout + &stderr).contains("is not open"), "a spent handle must not read: {stderr}");
+}
+
+#[test]
+fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_fs_mock.sl",
+        r#"use fs::read_file;
+
+        // Every file holds its own name, and nothing touches the disk.
+        fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+            handle <(,) | program {
+                read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let text = <(fn(u: (,)) {
+                mu String { k <= <"nowhere.txt" | fs::read | (k & select String { m => <"failed" | k> })> }
+            }) | canned;
+            <text | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "canned nowhere.txt\n");
+}
+
+#[test]
+fn a_file_operation_needs_a_handler_around_it() {
+    let (_, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_fs_unhandled.sl",
+        r#"command main | (exit: -i32) / {IO} {
+            <"x.txt" | fs::read | (select String { t => <0 | exit> } & select String { m => <1 | exit> })>
+        }"#,
+    );
+    assert!(!ok);
+    assert!(stderr.contains("`main` performs `fs::Fs`"), "{stderr}");
 }
 
 #[test]
