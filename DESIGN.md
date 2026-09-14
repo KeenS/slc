@@ -1094,19 +1094,20 @@ effect Choose { fn flip() -> Bool; }
 command main | (exit: i32) / {IO} {
     let safe = handle (<(10, 0) | checked_div) {
         throw(message) => -1,                       // never resumes: an exception
-        return(n) => n,
     };
     let reading = handle (<7 | scaled) {
         config(): resume => (<((<10 | resume), 1000) | add),  // resumes once
-        return(n) => n,
     };
     let all = handle pick() {
         flip(): resume => (<((<True | resume), " ") | add | x => (x, (<False | resume)) | add),  // resumes twice
-        return(s) => s,
     };
     …
 }
 ```
+
+A `return(x) => e` clause maps the body's value when the body finishes
+without leaving through an operation's clause. Leaving it out is the
+identity: the handler's value is the body's, and its type the body's type.
 
 An operation is a free function, the dynamic mirror of a trait method: a
 trait is an operation table keyed by a *type* and resolved statically — the

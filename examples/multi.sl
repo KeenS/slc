@@ -48,19 +48,15 @@ command main | (exit: i32) / {IO} {
     // own operations.
     let ok = handle (handle (<5 | scale) {
         fail(m) => -1,
-        return(n) => n,
     }) {
         config(): resume => <10 | resume,
-        return(n) => n,
     };
     <ok | println;                        // 5 * 10 = 50
 
     let bad = handle (handle (<0 | scale) {
         fail(m) => -1,
-        return(n) => n,
     }) {
         config(): resume => <10 | resume,
-        return(n) => n,
     };
     <bad | println;                       // failed → -1
 

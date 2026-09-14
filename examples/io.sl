@@ -54,7 +54,6 @@ command main | (exit: i32) / {IO} {
             <text | write_line;
             <(,) | resume
         },
-        return(u) => u,
     };
 
     <0 | exit>

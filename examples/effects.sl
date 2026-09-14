@@ -56,39 +56,35 @@ fn emit(out: i64) <- i64 / {Reader} {
 
 command main | (exit: i32) / {IO} {
     // never resumes — the exception replaces the computation
-    let safe = handle (<(10, 0) | checked_div) { throw(m) => -1, return(n) => n };
+    let safe = handle (<(10, 0) | checked_div) { throw(m) => -1 };
     <safe | println;                       // -1
 
-    let ok = handle (<(10, 2) | checked_div) { throw(m) => -1, return(n) => n };
+    let ok = handle (<(10, 2) | checked_div) { throw(m) => -1 };
     <ok | println;                         // 5
 
     // resumes once, then does work after the resume
-    let r = handle (<7 | scaled) { config(): resume => <((<10 | resume), 1000) | add, return(n) => n };
+    let r = handle (<7 | scaled) { config(): resume => <((<10 | resume), 1000) | add };
     <r | println;                          // 7*10 + 1000 = 1070
 
     // resumes twice, combining both branches of every choice
     let all = handle pick() {
         flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
-        return(s) => s,
     };
     <all | println;                        // "HH HT TH TT"
 
     // the row of `map(half, …)` is `half`'s row, forwarded — handled here
     let halves = handle (<(half, Cons(8, Cons(4, Nil))) | map) {
         throw(m) => Nil,
-        return(xs) => xs,
     };
     <halves | fmt | println;                // "[4, 2]"
     let none = handle (<(half, Cons(8, Cons(5, Nil))) | map) {
         throw(m) => Nil,
-        return(xs) => xs,
     };
     <none | fmt | println;                  // "[]"
 
     // the negative function's row, discharged like any other
     <handle (<6 | emit) {
         config(): resume => <7 | resume,
-        return(n) => n,
     } | println;                                  // 42
 
     <0 | exit>
