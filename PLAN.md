@@ -21,10 +21,9 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-No large feature is mid-flight. The open work is delimited control —
-resumptions composed in place, `mu` delimited by the nearest prompt, and
-`reset` — and then settling evaluation by polarity: delayed computations
-still need to carry their effects.
+No large feature is mid-flight. The open work is delimited control — `mu`
+delimited by the nearest prompt, and `reset` — and then settling evaluation
+by polarity: delayed computations still need to carry their effects.
 
 ## Known limits
 
@@ -86,29 +85,12 @@ still need to carry their effects.
   of about 20,000 iterations stops with "evaluation diverged (fuel
   exhausted)". Tests that exercise long loops have to fit inside it.
 
-### Defects
-
-Found on 2026-09-14 at 7f7fec2, while surveying how effects meet
-continuations. Each is fixed by "Resumptions compose in place".
-
-- **An operation performed after `resume` finds no handler outside the
-  resumed slice.** A `Reader` handler `config(): resume => <10 | resume`
-  around a function that does `let x = config(); <x | println; x` fails
-  with `no handler for operation 'write_line'`: the runtime's `IO` prompt,
-  like any handler further out, is not on the stack the resumed code runs
-  on.
-- **Resumptions nest, so long effectful loops exhaust memory.** A loop that
-  performs `tick()` once per iteration under `tick(): resume => <(,) | resume`
-  takes 0.41 s for 1,000 iterations against 0.12 s without the handler, and
-  at 20,000 iterations allocates past a 4 GB cap in about ten seconds, where
-  the same loop without the handler only reaches the step limit.
-
 ## Next
 
 ### Delimited control
 
-Decided: resumptions compose onto the running stack; `mu`'s continuation
-stays abortive (a consumer, `-A`) and is delimited by the nearest delimiter —
+Decided: `mu`'s continuation stays abortive (a consumer, `-A`) and is
+delimited by the nearest delimiter —
 a handler or a `reset`; `reset e` is sugar for a handler with no clauses; and
 composable capture is deferred. The semantics follow Racket's `call/cc` (The
 Racket Reference, §10.4 "Continuations") and the reading of a delimiter as a
@@ -116,50 +98,11 @@ dynamically rebound top-level continuation (Ariola, Herbelin and Sabry, "A
 type-theoretic foundation of delimited continuations", HOSC 2009; Downen and
 Ariola, "Delimited control and computational effects", JFP 2014).
 
-The entries land in order: the jump rule of the second needs the one real
-stack the first provides, and the third is only observable once `mu` stops
-at a delimiter.
+Resumptions already compose onto the running stack (`DESIGN.md`, "Effects
+and handlers"), which the jump rule below needs. The entries land in order:
+`reset` is only observable once `mu` stops at a delimiter.
 
-- **Resumptions compose in place.** `Value::Resume(frames)` runs the
-  captured slice in a nested machine,
-  `run(State::Return(arg), frames, fuel)` (`crates/slc-runtime/src/machine.rs`),
-  and waits for it. That is the cause of both entries under "Defects", and of
-  a third problem that follows from the same code: a `mu` inside resumed code
-  captures the nested machine's stack, which ends at the handler's prompt, so
-  jumping to it later would end the program there. `resume` is the only place
-  a program re-enters the machine; `run_term`, `run_command`, `run_apply` and
-  `run_apply_under_io` serve only the driver and tests.
-
-  1. **Tests first**, in `crates/slc-driver/tests/integration.rs`, each
-     failing today:
-     - the `Reader` program under "Defects" prints `10` twice;
-     - the `tick()` loop completes at the largest iteration count that fits
-       the step budget with the handler installed. Find that count by
-       probing before writing the test. If no count both fits the budget and
-       fails today, test in `crates/slc-runtime` instead that a resumption
-       does not start a nested run;
-     - a `mu` captured inside resumed code, jumped to after the `handle` has
-       returned, continues with the program after the `handle`. Construct
-       this program and confirm it fails before relying on it.
-  2. **`Kont::append(&mut self, slice: &Kont)`** pushes a slice's frames
-     bottom-up, and `Value::Resume(frames)` becomes `kont.append(&frames)`
-     followed by `State::Return(arg)`. The slice ends in the handler's
-     `Prompt`, so the value it produces meets the `return` clause and then
-     the frames beneath it — the clause's pending work, such as the
-     `add | x => …` after the first `resume` in the flip handler. A clause
-     that resumes in tail position leaves no frames, so a loop stays flat.
-  3. **Drop the nested run's plumbing:** `step_apply` takes `fuel` only to
-     pass it to the nested run.
-  4. **Check the multi-shot and tap examples.** `examples/effects.sl` and
-     `examples/io.sl` keep their outputs; the example suite checks them.
-  5. **Docs.** `DESIGN.md`'s effects section ("A clause may resume any
-     number of times…") and §11's machine paragraph say that resuming pushes
-     the captured slice onto the running stack, so handlers outside it
-     answer what it performs. Remove the two entries under "Defects". No
-     `MIGRATION.md` section: only programs that failed change behaviour.
-
-- **`mu` is delimited by the nearest prompt.** Needs "Resumptions compose in
-  place".
+- **`mu` is delimited by the nearest prompt.**
 
   The semantics:
   - **Capture stays O(1).** `Value::Kont` still holds the whole stack, plus

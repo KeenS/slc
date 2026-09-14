@@ -1159,7 +1159,11 @@ Demand-time effects are the latent rows above. Between the three, a
 operations to `-> T`.
 
 A clause may resume any number of times — the continuation is a first-class
-value sliced from the one frame stack. Not resuming is an exception; resuming
+value sliced from the one frame stack. Resuming pushes that slice back onto
+the running stack, above the clause's own pending work: what the resumed
+computation performs reaches every handler the program has, a continuation
+it captures is the whole rest of the program, and its result flows on into
+the clause. Not resuming is an exception; resuming
 once (with work after it, which composes) is a reader or state; resuming
 twice is nondeterminism, the same captured continuation run with two answers.
 Operation names are unique across effects.
@@ -1757,6 +1761,11 @@ with their most recent entry at the head, so capturing the continuation
 (`mu`, or a handler's `resume`) or cloning the environment (which the machine
 does on nearly every step) bumps refcounts rather than copying — O(1)
 regardless of depth, and a push never disturbs a handle captured earlier.
+Resuming copies the captured slice onto the running stack, so it costs the
+slice's frames, not the stack's depth. A cut into a co-variable that only
+forwards — one nothing binds, or one holding the very stack running now —
+pushes no frame, so a loop whose body ends in such a cut runs in constant
+space, and so does a handler that resumes in tail position around it.
 
 ### Printed form
 

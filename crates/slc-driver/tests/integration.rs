@@ -1838,3 +1838,100 @@ fn a_match_on_true_and_false_is_exhaustive_without_a_wildcard() {
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout.lines().collect::<Vec<_>>(), ["yes", "no", "1"]);
 }
+
+#[test]
+fn an_operation_performed_after_resume_reaches_a_handler_outside_the_resumed_code() {
+    // `println` performs `IO` after `config()` has resumed; the runtime's `IO`
+    // handler lies outside the `Reader` handler, so resumed code must still
+    // see it.
+    let dir = std::env::temp_dir().join("slc_test_effect_after_resume.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Reader { fn config() -> i64; }
+
+        fn show_config() -> i64 / {Reader, IO} {
+            let x = config();
+            <x | println;
+            x
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let n = handle show_config() {
+                config(): resume => <10 | resume,
+                return(v) => v,
+            };
+            <n | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["10", "10"]);
+}
+
+#[test]
+fn a_tail_resuming_handler_runs_a_long_loop_in_constant_space() {
+    // Each `tick()` resumes in tail position, so nothing is left behind per
+    // iteration; a resumption that held its own machine open made this loop
+    // exhaust memory.
+    let dir = std::env::temp_dir().join("slc_test_many_resumptions.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Tick { fn tick() -> (,); }
+
+        fn spin(n: i64) -> i64 / {Tick} {
+            match (<(n, 0) | eq) {
+                True => 0,
+                False => { tick(); <(n, 1) | sub | spin },
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let done = handle (<10000 | spin) {
+                tick(): resume => <(,) | resume,
+                return(v) => v,
+            };
+            <done | println;
+            <0 | exit>
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "0");
+}
+
+#[test]
+fn a_continuation_captured_in_resumed_code_continues_past_the_handler() {
+    // `k` is captured after `config()` resumes and handed out as the handled
+    // computation's result. Jumping to it after `handle` has returned re-enters
+    // the handled code, then carries on with the program after `handle`.
+    let dir = std::env::temp_dir().join("slc_test_mu_in_resumed_code.sl");
+    std::fs::write(
+        &dir,
+        r#"effect Reader { fn config() -> i64; }
+
+        fn body() -> (i64 | -i64) / {Reader} {
+            let c = config();
+            mu (i64 | -i64) { out <=
+                <(<(mu i64 { k <= <::1(k) | out> }, c) | add) | x => ::0(x) | out>
+            }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            let r = handle body() {
+                config(): resume => <10 | resume,
+                return(x) => x,
+            };
+            match r {
+                ::0(n) => { <n | println; <0 | exit> },
+                ::1(k) => { <"captured" | println; <32 | k> },
+            }
+        }"#,
+    )
+    .unwrap();
+    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["captured", "42"]);
+}

@@ -21,7 +21,10 @@
 //! The stack is a persistent cons (`Kont`) with the top at the head, so a
 //! capture — `mu`, or a handler's `resume` — clones one `Rc`: O(1), no
 //! matter how deep, and repeatable. Pushing a frame never disturbs a stack
-//! already captured, so a resumed continuation walks its own copy.
+//! already captured, so a resumed continuation walks its own copy. Resuming
+//! pushes the captured slice onto the running stack, so what it performs
+//! reaches every handler the program has, and its result flows on into the
+//! clause that resumed it.
 
 use crate::chunk::{Node, NodeId, node};
 use crate::eval::{
@@ -113,6 +116,22 @@ impl Kont {
         }
     }
 
+    /// Push every frame of `slice` onto the top, so the slice's top frame is
+    /// the new top and its bottom frame sits on what was here. The slice is
+    /// shared, so its frames are cloned and it stays reusable: a clause may
+    /// resume it again.
+    pub(crate) fn append(&mut self, slice: &Kont) {
+        let mut frames = Vec::new();
+        let mut cursor = slice.0.as_ref();
+        while let Some(node) = cursor {
+            frames.push(node.frame.clone());
+            cursor = node.tail.as_ref();
+        }
+        for frame in frames.into_iter().rev() {
+            self.push(frame);
+        }
+    }
+
     /// Two captured stacks are equal when they are the same node.
     pub(crate) fn ptr_eq(a: &Kont, b: &Kont) -> bool {
         match (&a.0, &b.0) {
@@ -197,7 +216,7 @@ fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
         state = match state {
             State::Term(t, env) => step_term(t, env, &mut kont)?,
             State::Command(c, env) => step_command(c, env, &mut kont)?,
-            State::Apply { callee, arg } => step_apply(callee, arg, &mut kont, fuel)?,
+            State::Apply { callee, arg } => step_apply(callee, arg, &mut kont)?,
             State::Return(v) => match kont.pop() {
                 None => return Ok(v),
                 Some(frame) => step_frame(frame, v, &mut kont)?,
@@ -271,13 +290,37 @@ fn reify_coterm(co: NodeId, env: &Env) -> Result<Value, EvalError> {
 fn step_command(c: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match node(c) {
         Node::Cut(t, e) => {
-            kont.push(Frame::Consume(e, env.clone()));
+            // A cut into a co-variable that only forwards is a tail position:
+            // the value would be handed to the stack underneath unchanged, so
+            // no frame is pushed and a loop through it stays flat. That holds
+            // when the name is unbound (it names the ambient continuation) or
+            // when it holds the very stack running now, where jumping to it
+            // is returning.
+            if !forwards_to_current(e, &env, kont) {
+                kont.push(Frame::Consume(e, env.clone()));
+            }
             State::Term(t, env)
         }
         other => {
             return Err(EvalError::TypeMismatch(format!("expected a command, found {other:?}")));
         }
     })
+}
+
+/// Whether consuming a value with co-term `e` would only deliver it to
+/// `kont` as it stands: `e` names a continuation that is unbound, or that is
+/// `kont` itself. Such a cut needs no frame.
+fn forwards_to_current(e: NodeId, env: &Env, kont: &Kont) -> bool {
+    let bound = match node(e) {
+        Node::CoLocal(i) => env.local(i),
+        Node::CoDynamic(a) => env.lookup(&a),
+        _ => return false,
+    };
+    match bound {
+        None => true,
+        Some(Value::Kont(captured)) => Kont::ptr_eq(&captured, kont),
+        Some(_) => false,
+    }
 }
 
 fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalError> {
@@ -429,12 +472,7 @@ fn project_value(value: Value, index: usize) -> Result<Value, EvalError> {
 }
 
 /// One application step: a cut against something that consumes.
-fn step_apply(
-    callee: Value,
-    arg: Value,
-    kont: &mut Kont,
-    fuel: &mut usize,
-) -> Result<State, EvalError> {
+fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match callee {
         Value::Closure { body, env } => {
             let mut call_env = env;
@@ -526,13 +564,14 @@ fn step_apply(
             kont.push(Frame::ApplyTo(resume));
             State::Apply { callee: clause, arg }
         }
-        // Resuming a delimited continuation: run the captured work (with its
-        // reinstated handler) to a value and deliver that. A nested run is
-        // what lets the clause compose `resume(a) + resume(b)` and resume
-        // more than once.
+        // Resuming a delimited continuation: push the captured work, with its
+        // reinstated handler, onto the running stack and deliver the value.
+        // What it performs reaches every handler below, its result flows on
+        // into the clause's own pending work, and the slice stays shared, so
+        // a clause may resume it again.
         Value::Resume(frames) => {
-            let result = run(State::Return(arg), frames, fuel)?;
-            State::Return(result)
+            kont.append(&frames);
+            State::Return(arg)
         }
         Value::Builtin(name) => {
             let mut args = Vec::new();
