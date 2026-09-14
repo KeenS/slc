@@ -3610,6 +3610,15 @@ fn check_expr_unapplied(
                 );
             }
             for clause in clauses {
+                // A clause for no operation would answer nothing, and a
+                // misspelt one would leave its effect unhandled with no word
+                // of why.
+                if !enums.op_effects.contains_key(&clause.op) {
+                    diags.push(Diagnostic {
+                        message: format!("`{}` is not an operation of any effect", clause.op),
+                        span: e.span,
+                    });
+                }
                 env.push();
                 // A clause takes what its operation is performed with, and
                 // `resume` takes what the operation answers.

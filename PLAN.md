@@ -81,21 +81,6 @@ and each use instantiates it. How a use writes the argument (`Seq<T, ..E>`,
 4. **Docs.** `DESIGN.md`'s declarations and stdlib sections, the comments in
    `seq.sl` and `fs.sl`, and `MIGRATION.md`.
 
-### 9. A clause naming no operation of the effect is refused
-
-`handle f() { nope(): resume => … }` and `fs::nope(path): resume => …` are
-accepted, and the clause is ignored: the second reports only that the
-handler "performs `fs::Fs` but does not declare it". A misspelt operation,
-more likely now that clauses take paths, should say so.
-
-1. **Tests first:** a clause naming an operation that no effect declares is
-   refused with a message naming it; a clause for a declared operation keeps
-   its meaning.
-2. **The checker.** Where clauses are typed from the op signature, a clause
-   whose name resolves to no operation reports "`nope` is not an operation
-   of any effect".
-3. **Docs.** `DESIGN.md`'s "Diagnostics" section, if the message is new.
-
 ## Deferred, for discussion
 
 - **Value-producing `select` arms.** A `select` arm is a command, so a

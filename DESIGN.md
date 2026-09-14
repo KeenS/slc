@@ -1728,7 +1728,9 @@ Some slips get a message of their own rather than the mismatch they cause. A
 function closed with `>` — `<42 | resume>` in a handler's clause, where
 `<42 | resume` was meant — is reported as a function applied by leaving the
 `>` off, instead of as a value meeting the argument-and-continuation pair a
-function takes by a cut.
+function takes by a cut. A handler clause naming no operation of any
+effect — `fs::nope(path): resume => …` — is refused by name, where it would
+otherwise be ignored and leave its effect reported as unhandled.
 
 ## 10. Modules
 
