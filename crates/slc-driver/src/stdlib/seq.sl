@@ -91,7 +91,7 @@ mod seq {
             }, _ => {
                 match s.next {
                     Step::Done => <Step::Done | next>,
-                    Step::Yield(h, rest) => <Step::Yield(h, <(rest, (<(n, 1) | sub)) | take) | next>,
+                    Step::Yield(h, rest) => <Step::Yield(h, <(rest, <(n, 1) | sub) | take) | next>,
                 }
             } },
         }

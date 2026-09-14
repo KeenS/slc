@@ -4,7 +4,7 @@
 
 fn describe(out: String) <- (i64 | String) {
     select (i64 | String) {
-        ::0(n) => <("number ", (<n | int_to_str)) | add | out>,
+        ::0(n) => <("number ", <n | int_to_str) | add | out>,
         ::1(s) => <("text ", s) | add | out>,
     }
 }
@@ -13,7 +13,7 @@ fn describe(out: String) <- (i64 | String) {
 // position counts along them.
 fn rank(out: String) <- (i64 | Bool | String) {
     select (i64 | Bool | String) {
-        ::0(n) => <("first ", (<n | int_to_str)) | add | out>,
+        ::0(n) => <("first ", <n | int_to_str) | add | out>,
         ::1(b) => <(match b { True => "second, yes", False => "second, no" }) | out>,
         ::2(s) => <("third ", s) | add | out>,
     }

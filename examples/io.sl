@@ -50,7 +50,7 @@ command main | (exit: i32) / {IO} {
     // and forwards it.
     handle <"again" | greet {
         write_line(text): resume => {
-            <("about to write ", (<text | str_len | to_string)) | add | x => (x, " characters") | add | println;
+            <("about to write ", <text | str_len | to_string) | add | x => (x, " characters") | add | println;
             <text | write_line;
             <(,) | resume
         },

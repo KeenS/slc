@@ -24,7 +24,7 @@ fn under_ten(n: i64) -> Bool { <(n, 10) | lt }
 // A step function is another way to write a stream: each step answers an
 // element and the seed the rest is built from.
 fn halving(n: i64) -> (i64, i64) {
-    (n, (<(n, 2) | div))
+    (n, <(n, 2) | div)
 }
 
 command main | (exit: i32) / {IO} {

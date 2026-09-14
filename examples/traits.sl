@@ -34,7 +34,7 @@ impl Show for IntList {
             // Qualified: the prelude's List also has Nil and Cons, so the
             // bare names are ambiguous here.
             IntList::Nil => "nil",
-            IntList::Cons(h, t) => <((<h | show), " :: ") | add | x => (x, (<t | show)) | add,
+            IntList::Cons(h, t) => <(<h | show, " :: ") | add | x => (x, <t | show) | add,
         }
     }
 }
@@ -42,7 +42,7 @@ impl Show for IntList {
 // A bound generic: `T: Show` lets it call `show` on a value whose type is not
 // known here, discharged to a real impl at each call.
 fn labelled<+T: Show>(label: String, x: T) -> String {
-    <(label, ": ") | add | y => (y, (<x | show)) | add
+    <(label, ": ") | add | y => (y, <x | show) | add
 }
 
 command main | (exit: i32) / {IO} {

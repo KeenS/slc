@@ -29,7 +29,7 @@ mod geometry {
 
     pub fn area(s: Shape) -> i64 {
         match s {
-            Circle(r) => <(3, (<r | squared)) | mul,
+            Circle(r) => <(3, <r | squared) | mul,
             Rect(w, h) => <(w, h) | mul,
         }
     }
@@ -42,7 +42,7 @@ mod geometry {
 mod physics {
     // A sibling module reaches another through its path.
     pub fn weight(s: geometry::Shape) -> i64 {
-        <((<s | geometry::area), 10) | mul
+        <(<s | geometry::area, 10) | mul
     }
 }
 

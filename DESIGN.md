@@ -133,6 +133,12 @@ expression. The orientation rule the cut always had survives as the
 direction of the pipe: **a consumer stands only at the right end**,
 since nothing flows out of one.
 
+A chain ends where the expression holding it does: at the `;` or `}` of a
+block, and at the `,` or `)` that closes a component. So a chain stands in a
+tuple, a bundle or a data literal's field without parentheses of its own —
+`<(<p | read_text, "!") | add` — while a tuple written *after* `|` is one
+stage, and `<x | (f, g)` does not end at its `,`.
+
 Two operations look alike in most languages and are different here.
 
 **Application** is flow: `<a | f` supplies an argument to a function and
@@ -598,7 +604,7 @@ fn pick() -> String / {Choose} {
 
 // "H T": each resumption's jump to `r` lands in that resumption.
 handle pick() {
-    flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+    flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 ```
 
@@ -938,7 +944,7 @@ data Reading { value: i64, unit: String }
 // dual(Reading) is `(-i64 ; -String)`: one consumer with both halves
 fn show(out: -String) <- Reading {
     select Reading {
-        Reading { value, unit } => <((<value | int_to_str), unit) | add | out>,
+        Reading { value, unit } => <(<value | int_to_str, unit) | add | out>,
     }
 }
 ```
@@ -1044,7 +1050,7 @@ trait Show { fn show(self: Self) -> String; }
 impl Show for i64  { fn show(self: i64)  -> String { <self | int_to_str } }
 impl Show for Bool { fn show(self: Bool) -> String { match self { True => "t", _ => "f" } } }
 
-fn labelled<+T: Show>(x: T) -> String { (<("= ", (<x | show)) | add) }
+fn labelled<+T: Show>(x: T) -> String { (<("= ", <x | show) | add) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -1096,10 +1102,10 @@ command main | (exit: i32) / {IO} {
         throw(message) => -1,                       // never resumes: an exception
     };
     let reading = handle (<7 | scaled) {
-        config(): resume => (<((<10 | resume), 1000) | add),  // resumes once
+        config(): resume => (<(<10 | resume, 1000) | add),  // resumes once
     };
     let all = handle pick() {
-        flip(): resume => (<((<True | resume), " ") | add | x => (x, (<False | resume)) | add),  // resumes twice
+        flip(): resume => (<(<True | resume, " ") | add | x => (x, <False | resume) | add),  // resumes twice
     };
     …
 }

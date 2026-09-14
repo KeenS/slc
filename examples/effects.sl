@@ -63,12 +63,12 @@ command main | (exit: i32) / {IO} {
     <ok | println;                         // 5
 
     // resumes once, then does work after the resume
-    let r = handle (<7 | scaled) { config(): resume => <((<10 | resume), 1000) | add };
+    let r = handle (<7 | scaled) { config(): resume => <(<10 | resume, 1000) | add };
     <r | println;                          // 7*10 + 1000 = 1070
 
     // resumes twice, combining both branches of every choice
     let all = handle pick() {
-        flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+        flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <all | println;                        // "HH HT TH TT"
 

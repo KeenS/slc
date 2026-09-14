@@ -39,12 +39,12 @@ fn read_twice() -> i64 / {Reader} { <(config(), config()) | add }
 
 command main | (exit: i32) / {IO} {
     let all = handle pick() {
-        flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+        flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <all | println;                                        // H T
 
     let crossed = handle pick_under_reset() {
-        flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+        flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <crossed | println;                                    // H T
 

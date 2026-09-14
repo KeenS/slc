@@ -21,7 +21,7 @@ fn double(n: i64) -> i64 { <(n, 2) | mul }
 fn sum(xs: List<i64>) -> i64 {
     match xs {
         Nil => 0,
-        Cons(n, rest) => <(n, (<rest | sum)) | add,
+        Cons(n, rest) => <(n, <rest | sum) | add,
     }
 }
 

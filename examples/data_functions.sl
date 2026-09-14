@@ -31,7 +31,7 @@ fn translate(p: Point, dx: i64, dy: i64) -> Point {
 fn classify(p: Point) -> Size {
     let area = <(p.x, p.y) | mul;
     match (<(area, 100) | gt) {
-        True => Size::Big((<(area, 100) | sub)),
+        True => Size::Big(<(area, 100) | sub),
         False => Size::Small,
     }
 }
@@ -66,7 +66,7 @@ fn reflect(out: Point) <- Point {
 fn classify_to(out: Size) <- i64 {
     select i64 {
         area => match (<(area, 100) | gt) {
-            True => <Size::Big((<(area, 100) | sub)) | out>,
+            True => <Size::Big(<(area, 100) | sub) | out>,
             False => <Size::Small | out>,
         },
     }

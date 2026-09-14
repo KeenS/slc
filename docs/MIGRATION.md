@@ -357,7 +357,7 @@ select Color {                     // one arm per variant — the negative addit
 }
 
 select Reading {                   // one arm, binding every field — the negative multiplicative
-    Reading { value, unit } => <((<value | int_to_str), unit) | add | out>,
+    Reading { value, unit } => <(<value | int_to_str, unit) | add | out>,
 }
 
 select (+i64, +i64) {              // a bare product names its type
@@ -825,8 +825,8 @@ is that a binder may take its value apart:
 let pair = make(); let a = pair.0; let b = pair.1;   // old
 let (a, b) = make();                                 // new
 
-fn norm(p: Point) -> i64 { <(p.x, p.x) | mul | sum => (sum, (<(p.y, p.y) | mul)) | add }   // still fine
-fn norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, (<(y, y) | mul)) | add }
+fn norm(p: Point) -> i64 { <(p.x, p.x) | mul | sum => (sum, <(p.y, p.y) | mul) | add }   // still fine
+fn norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, <(y, y) | mul) | add }
 ```
 
 A binder must be irrefutable — it stands for every value of its type — so a
@@ -1178,7 +1178,7 @@ fn pick() -> String / {Choose} {
 }
 
 handle pick() {
-    flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
+    flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 // old: "H" — the first jump to `r` left the clause
 // new: "H T"

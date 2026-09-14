@@ -17,7 +17,7 @@ mod list {
     pub fn length<+T>(xs: List<T>) -> i64 {
         match xs {
             Nil => 0,
-            Cons(_, rest) => (<(1, (<rest | length)) | add),
+            Cons(_, rest) => (<(1, <rest | length) | add),
         }
     }
 
@@ -41,7 +41,7 @@ mod list {
         match xs {
             Nil => <"nothing at that index" | missing>,
             Cons(h, rest) => {
-                match (<(i, 0) | eq) { True => { <h | found> }, _ => { <(rest, (<(i, 1) | sub)) | nth | (found & missing)> } }
+                match (<(i, 0) | eq) { True => { <h | found> }, _ => { <(rest, <(i, 1) | sub) | nth | (found & missing)> } }
             },
         }
     }
@@ -50,11 +50,11 @@ mod list {
         match xs {
             Nil => "",
             Cons(h, Nil) => <h | fmt,
-            Cons(h, rest) => (<((<h | fmt), ", ") | add | x => (x, (<rest | fmt_items)) | add),
+            Cons(h, rest) => (<(<h | fmt, ", ") | add | x => (x, <rest | fmt_items) | add),
         }
     }
 
     impl<+T: Display> Display for List<T> {
-        fn fmt(self: List<T>) -> String { (<("[", (<self | fmt_items)) | add | x => (x, "]") | add) }
+        fn fmt(self: List<T>) -> String { (<("[", <self | fmt_items) | add | x => (x, "]") | add) }
     }
 }

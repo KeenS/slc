@@ -39,7 +39,7 @@ command main | (exit: i32) / {IO} {
     // classical reading of `|` promises.
     match lem() {
         Holds(n) => {
-            <("holds: ", (<n | int_to_str)) | add | println;
+            <("holds: ", <n | int_to_str) | add | println;
             <0 | exit>
         },
         Refutes(r) => {

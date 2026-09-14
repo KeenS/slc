@@ -32,7 +32,7 @@ trait Describe {
 
 impl Describe for Config {
     fn describe(self: Config) -> String {
-        <(self.name, " with ") | add | x => (x, (<self.retries | fmt)) | add | x => (x, " retries") | add
+        <(self.name, " with ") | add | x => (x, <self.retries | fmt) | add | x => (x, " retries") | add
     }
 }
 
@@ -46,7 +46,7 @@ impl Describe for Sink {
 // displayable, and the dictionary composes at the use.
 impl<+T: Display> Describe for Stream<T> {
     fn describe(self: Stream<T>) -> String {
-        <("stream starting ", (<self.head | fmt)) | add
+        <("stream starting ", <self.head | fmt) | add
     }
 }
 
@@ -83,7 +83,7 @@ trait Deliver {
 
 impl Deliver for i64 {
     fn deliver(out: String) <- i64 {
-        fn(n: i64) { <("the number ", (<n | fmt)) | add | out> }
+        fn(n: i64) { <("the number ", <n | fmt) | add | out> }
     }
 }
 

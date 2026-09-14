@@ -54,25 +54,6 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 before it is committed. Where an entry says "Proposed", the choice is
 confirmed before the change.
 
-### 3. A chain may stand as a tuple component without parentheses
-
-`<(<p | read_text), "!") | add` is a parse error — "`<` sends a value into a
-stage, and this one has none" — and `((<p | read_text), "!")` is required.
-
-Proposed: a chain opened with `<` inside a tuple, a bundle or a call's
-arguments ends at the `,` or `)` that closes its component, as it already
-ends at `;` and `}`.
-
-1. **Tests first:** `(<p | f, 1)`, `(1, <p | f)` and `(<p | f | g, <q | h)`
-   parse to the tuples the parenthesized forms give, and run the same; a
-   chain whose stage is itself a tuple, `<x | (f, g)`, keeps its meaning.
-2. **The parser.** `crates/slc-syntax/src/parser.rs`: a chain's stage loop
-   stops at `,` and `)` when the chain is a component. If a case turns out
-   ambiguous, keep the parse and improve the error instead: "wrap this chain
-   in parentheses: `(<p | f)`".
-3. **Docs.** `DESIGN.md` §3; `MIGRATION.md` notes the parentheses are no
-   longer needed; the examples drop them where they only guarded a chain.
-
 ### 4. A handler clause may name its operation by path
 
 `fs::read_file(path): resume => …` does not parse, so a handler outside the
