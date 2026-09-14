@@ -266,6 +266,37 @@ fn check_method_stage(
         && let [out] = sig.value_params.as_slice()
     {
         let target = env.uni.apply(receiver);
+        // A consumer flowing in is the continuation the method is handed: the
+        // stage reads forward and produces the consumer of `Self`, which the
+        // cut it stands in fixes, so dispatch waits for that.
+        if target.is_negative() && !target.is_positive() {
+            let self_ty = env.uni.fresh_var();
+            let takes = out.ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))?;
+            let takes = env.uni.apply(&takes);
+            let expects =
+                if takes.is_positive() && !takes.is_negative() { takes.dual() } else { takes };
+            if !fits(env, &expects, &target, shape) {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{method}` takes {expects} as its continuation, and what flows in has \
+                         type {target}"
+                    ),
+                    span,
+                });
+            }
+            env.pending_methods.push(crate::env::PendingMethod {
+                span,
+                method: method.to_string(),
+                trait_name,
+                self_ty: self_ty.clone(),
+            });
+            let returns = sig
+                .return_type
+                .as_ref()
+                .and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+                .unwrap_or(self_ty);
+            return Some((env.uni.apply(&returns).dual(), false));
+        }
         resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
         let takes = out.ty.as_ref().and_then(|ty| resolve_with_self(ty, &target, enums))?;
         let takes = env.uni.apply(&takes);
@@ -907,7 +938,23 @@ fn resolve_pending_injections(env: &mut Env, diags: &mut Vec<Diagnostic>) {
                 });
                 continue;
             };
-            if env.uni.unify(alternative, &pending.payload).is_err() {
+            // An alternative's payload is one value meeting one declared type,
+            // so it may stand at the other spelling of it, turned around.
+            let before = env.uni.clone();
+            let fitted = env.uni.unify(alternative, &pending.payload).is_ok() || {
+                let failed = std::mem::replace(&mut env.uni, before);
+                match commute(env, alternative, &pending.payload) {
+                    Some(swap) => {
+                        env.dispatch.swaps.insert(pending.value_span, swap);
+                        true
+                    }
+                    None => {
+                        env.uni = failed;
+                        false
+                    }
+                }
+            };
+            if !fitted {
                 let payload = env.uni.apply(&pending.payload);
                 diags.push(Diagnostic {
                     message: format!(
@@ -1721,6 +1768,25 @@ fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr
         return true;
     }
     let failed = std::mem::replace(&mut env.uni, before);
+    // A tuple written out is turned component by component: each component is
+    // one value meeting one declared type.
+    if let Expr::Pair(items) = &value.kind
+        && let (Type::Tensor(wanted), Type::Tensor(given)) =
+            (env.uni.apply(expected), env.uni.apply(actual))
+        && wanted.len() == items.len()
+        && given.len() == items.len()
+    {
+        let probe = env.uni.clone();
+        if items
+            .iter()
+            .zip(&wanted)
+            .zip(&given)
+            .all(|((item, want), give)| fits_turning(env, want, give, item))
+        {
+            return true;
+        }
+        env.uni = probe;
+    }
     match commute(env, expected, actual) {
         Some(swap) => {
             env.dispatch.swaps.insert(value.span, swap);
@@ -1730,6 +1796,39 @@ fn fits_turning(env: &mut Env, expected: &Type, actual: &Type, value: &Node<Expr
             env.uni = failed;
             false
         }
+    }
+}
+
+/// The type constructor two types share when they differ only by how a `;`
+/// inside its arguments is spelled: `List<(A ; B)>` against `List<(B ; A)>`.
+/// There is no one value to turn around there, so the diagnostic says so.
+fn turned_inside_constructor(expected: &Type, actual: &Type) -> Option<String> {
+    fn canonical(ty: &Type) -> Type {
+        let each = |items: &[Type]| items.iter().map(canonical).collect::<Vec<_>>();
+        match ty {
+            Type::Par(items) => {
+                let mut items = each(items);
+                if items.len() == 2 {
+                    items.sort_by_key(|item| item.to_string());
+                }
+                Type::Par(items)
+            }
+            Type::Tensor(items) => Type::Tensor(each(items)),
+            Type::With(items) => Type::With(each(items)),
+            Type::Sum(items) => Type::Sum(each(items)),
+            Type::Dual(inner) => Type::Dual(Box::new(canonical(inner))),
+            Type::Rowed(inner, row) => Type::Rowed(Box::new(canonical(inner)), row.clone()),
+            Type::Named(name, args) => Type::Named(name.clone(), each(args)),
+            other => other.clone(),
+        }
+    }
+    match (expected, actual) {
+        (Type::Named(name, _), Type::Named(other, _))
+            if name == other && expected != actual && canonical(expected) == canonical(actual) =>
+        {
+            Some(name.clone())
+        }
+        _ => None,
     }
 }
 
@@ -1937,13 +2036,21 @@ fn check_let_binding(
     if let (Some(annotation), Some(actual)) = (&annotation, actual.clone())
         && !fits_turning(env, annotation, &actual, value)
     {
+        let hint = turned_inside_constructor(&env.uni.apply(annotation), &env.uni.apply(&actual))
+            .map(|name| {
+                format!(
+                    "; a `;` inside `{name}<…>` is spelled the other way round, and there is \
+                     no one value there to turn around, so write it at the annotation's spelling"
+                )
+            })
+            .unwrap_or_default();
         diags.push(Diagnostic {
             message: match pattern.binder_name() {
                 Some(name) => format!(
-                    "`let {name}` is annotated as {annotation}; initializer has type {actual}"
+                    "`let {name}` is annotated as {annotation}; initializer has type {actual}{hint}"
                 ),
                 None => format!(
-                    "this `let` is annotated as {annotation}; initializer has type {actual}"
+                    "this `let` is annotated as {annotation}; initializer has type {actual}{hint}"
                 ),
             },
             span: value.span,
@@ -3462,6 +3569,7 @@ fn check_expr_unapplied(
             let sum = env.uni.fresh_var();
             env.pending_injections.push(crate::env::PendingInjection {
                 span: e.span,
+                value_span: value.span,
                 index: *index,
                 payload,
                 sum: sum.clone(),
@@ -3569,6 +3677,7 @@ fn check_expr_unapplied(
             // one — everything later is the result of a step.
             let mut flowing: Option<&Expr> = (!opens).then(|| &stages[0].kind);
             let mut commuted: Vec<usize> = Vec::new();
+            let mut turned: Vec<(usize, slc_syntax::lower::Swap)> = Vec::new();
             let mut row_stage: Option<usize> = None;
             let mut swap: Option<slc_syntax::lower::Swap> = None;
             for (index, ty) in types.iter().enumerate().skip(usize::from(!opens)) {
@@ -3664,7 +3773,7 @@ fn check_expr_unapplied(
                         let probe = Env { uni: probe, ..env.clone() };
                         piecewise
                             || would_fit(&probe, &packed, &acc, Some(shape))
-                            || (flowing.is_some() && commutes(&probe.uni, &packed, &acc))
+                            || commutes(&probe.uni, &packed, &acc)
                     }
                 {
                     let (signature, seen) = instantiate(signature, &mut env.uni);
@@ -3704,7 +3813,25 @@ fn check_expr_unapplied(
                                 env.tag_rows_since(rows_from, origin);
                                 fitted
                             }
-                            _ => fits(env, &packed, &acc, shape),
+                            // What flows in is the result of the stage before:
+                            // where it fits only at its other spelling, it is
+                            // turned around between the two steps.
+                            _ => {
+                                let before = env.uni.clone();
+                                fits(env, &packed, &acc, shape) || {
+                                    let failed = std::mem::replace(&mut env.uni, before);
+                                    match commute(env, &packed, &acc) {
+                                        Some(swap) if index > 0 => {
+                                            turned.push((index - 1, swap));
+                                            true
+                                        }
+                                        _ => {
+                                            env.uni = failed;
+                                            false
+                                        }
+                                    }
+                                }
+                            }
                         };
                     if !fitted {
                         let packed = env.uni.apply(&packed);
@@ -3875,6 +4002,44 @@ fn check_expr_unapplied(
                     diags.push(Diagnostic { message, span: stages[index].span });
                     return None;
                 }
+                // A bounded function has no type as a value, since its
+                // dictionaries would have to travel with it; named as a stage
+                // it is given its signature's, and the dictionaries its bounds
+                // need are recorded at the stage.
+                let signed;
+                let ty = match &stages[index].kind {
+                    Expr::Ident(name)
+                        if env.lookup(name).is_none()
+                            && !env.traits.is_method(name)
+                            && env.functions.get(name).is_some_and(|s| !s.bounds.is_empty()) =>
+                    {
+                        let signature = env.functions.get(name).expect("checked above");
+                        let (signature, seen) = instantiate(signature, &mut env.uni);
+                        record_signs(&signature, &seen, name, stages[index].span, env);
+                        let bounds = signature
+                            .bounds
+                            .iter()
+                            .filter_map(|(position, trait_name)| {
+                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
+                            })
+                            .collect();
+                        env.pending_dicts.push(crate::env::PendingDicts {
+                            span: stages[index].span,
+                            callee: name.clone(),
+                            bounds,
+                        });
+                        signed = match signature.result {
+                            Some(result) if !signature.params.is_empty() => Type::rowed(
+                                Type::arrow(packed_group(signature.params), result),
+                                signature.row,
+                            ),
+                            Some(result) => result,
+                            None => env.uni.fresh_var(),
+                        };
+                        &signed
+                    }
+                    _ => ty,
+                };
                 // Applying the stage runs it: it performs its row.
                 let (ty, stage_row) = unrowed(env.uni.apply(ty));
                 env.perform(stage_row);
@@ -3921,6 +4086,7 @@ fn check_expr_unapplied(
                     commuted,
                     row_stage,
                     swap,
+                    turned,
                 },
             );
             Some(if opens { Type::arrow(env.uni.apply(&entry), acc) } else { acc })
@@ -5057,15 +5223,23 @@ mod tests {
             )
             .is_ok()
         );
-        // Inside a constructor there is no one value to turn around, so a
-        // component's spelling still has to match.
+        // A tuple written out is turned component by component.
         assert!(
             check(
                 "fn deliver_i64(out: String) <- i64 { select i64 { n => <n | int_to_str | out> } }
                  fn f() -> i64 { let p: ((i64 -> String), i64) = (deliver_i64, 1); 0 }"
             )
-            .is_err()
+            .is_ok()
         );
+        // Inside a type constructor's arguments there is no one value to turn
+        // around, so the spelling still has to match.
+        let diags = check(
+            "enum Held<+T> { Holds(T) }
+             fn deliver_i64(out: String) <- i64 { select i64 { n => <n | int_to_str | out> } }
+             fn f() -> i64 { let h: Held<(i64 -> String)> = Held::Holds(deliver_i64); 0 }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("inside `Held<…>`")), "{diags:?}");
     }
 
     #[test]

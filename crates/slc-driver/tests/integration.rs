@@ -1727,6 +1727,81 @@ fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
 }
 
 #[test]
+fn a_value_is_turned_inside_a_written_structure_and_between_stages() {
+    // A tuple and an alternative written out, and a stage's result meeting the
+    // next stage, each at the other spelling of its declared type. Each runs.
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_par_structures.sl",
+        r#"fn deliver_i64(out: String) <- i64 {
+            select i64 { n => <("the number ", (<n | int_to_str)) | add | out> }
+        }
+        fn use_it(g: (i64 -> String)) -> String { <42 | g }
+        fn get_negative() -> (-String -> -i64) { deliver_i64 }
+
+        command main | (exit: i32) / {IO} {
+            let t: ((i64 -> String), i64) = (deliver_i64, 1);
+            <t.1 | t.0 | println;
+            let s: ((i64 -> String) | i64) = ::0(deliver_i64);
+            match s { ::0(f) => <5 | f | println, ::1(n) => <n | println> };
+            <(,) | get_negative | use_it | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        ["the number 1", "the number 5", "the number 42"]
+    );
+}
+
+#[test]
+fn a_spelling_inside_a_type_constructor_is_not_turned_around() {
+    let (_, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_par_constructor.sl",
+        r#"use list::List;
+        use list::List::*;
+
+        fn deliver_i64(out: String) <- i64 {
+            select i64 { n => <("the number ", (<n | int_to_str)) | add | out> }
+        }
+
+        command main | (exit: i32) / {IO} {
+            let xs: List<(i64 -> String)> = Cons(deliver_i64, Nil);
+            <0 | exit>
+        }"#,
+    );
+    assert!(!ok);
+    assert!(stderr.contains("inside `list::List<…>`"), "{stderr}");
+}
+
+#[test]
+fn a_bounded_function_and_a_negative_method_read_either_way_in_a_chain() {
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_bounded_stages.sl",
+        r#"fn emit<+T: Display>(out: String) <- T {
+            fn(x: T) { <x | fmt | out> }
+        }
+
+        trait Deliver { fn deliver(out: String) <- Self; }
+
+        impl Deliver for i64 {
+            fn deliver(out: String) <- i64 { fn(n: i64) { <("the number ", (<n | fmt)) | add | out> } }
+        }
+
+        command main | (exit: -i32) / {IO} {
+            <42 | emit | println;
+            <mu String { s <= <7 | (<s | deliver)> } | println;
+            <0 | exit>
+        }"#,
+    );
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["42", "the number 7"]);
+}
+
+#[test]
 fn an_alternative_is_resolved_against_the_sum_its_context_gives() {
     // `::1(v)` is the second alternative of whatever sum it meets: of two it
     // is the last, of three the middle. A return type, a `let` annotation and

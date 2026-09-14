@@ -22,22 +22,22 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": the checker's remaining gaps.
+limits, in the order of "Next": the checker's remaining gap, type variables
+without a polarity.
 
 ## Known limits
 
 ### Of the design
 
-- **`;` commutes only where one value meets one declared type.** `(A ; B)`
+- **`;` commutes only where there is a value to turn around.** `(A ; B)`
   and `(B ; A)` are one type, and a value is accepted at either spelling where
-  it is cut into a consumer, stored in a record field, a variant or a
-  `let`, passed as a written argument, or returned — the checker records a
-  swap and lowering turns the closure around. Inside a type constructor —
-  a tuple's component, `List<(A ; B)>` against `List<(B ; A)>` — there is no
-  one value to turn, so the spelling still has to match; nor is an argument
-  turned when it is the result of an earlier stage rather than a written
-  value. Both would need the swap mapped through a structure or a chain.
-  Addressed by "`;` commutes through structures and stages".
+  one value meets one declared type — cut into a consumer, stored, passed,
+  returned, written as a tuple's component or an alternative, or handed from
+  one stage to the next — and lowering turns the closure around. A type
+  constructor's arguments, `List<(A ; B)>` against `List<(B ; A)>`, and a
+  structure that is not written out, have no one value to turn, so the
+  spelling still has to match; mapping a swap through them would need a
+  traversal per declaration.
 
 - **Soundness is enforced by inference, argued informally.** What remains
   short of a proof: no mechanized subject-reduction argument ties the checker
@@ -53,48 +53,7 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo test --workspace`
 before it is committed.
 
-### 1. `;` commutes through structures and stages
-
-The known limit "`;` commutes only where one value meets one declared type"
-has two halves, and a third gap of the same family turned up beside it.
-
-Decided: a swap maps through a structure whose components are written out —
-a tuple, an anonymous sum — by turning each component, and through a stage's
-result by turning the value between stages. A named type constructor's
-arguments, `List<(A ; B)>`, are not mapped: that needs a traversal per
-declaration, so the spelling still has to match, and the diagnostic says so.
-
-1. **Tests first,** in `crates/slc-check/src/expr.rs` and
-   `crates/slc-driver/tests/integration.rs`:
-   - a tuple whose component is written at the mirrored spelling of its
-     declared component type is accepted and runs;
-   - a sum alternative likewise;
-   - `<x | f | g>` where `f`'s result meets `g`'s parameter at the mirrored
-     spelling is accepted and runs;
-   - `List<(A ; B)>` against `List<(B ; A)>` is refused, with a message
-     naming the type constructor.
-2. **Structures.** `commute` (`expr.rs`) returns a swap per component, and
-   `Swap` gains a component form that lowering (`swap_adapter`,
-   `crates/slc-syntax/src/lower.rs`) applies by taking the tuple or sum
-   apart, turning the component and rebuilding it.
-3. **Stages.** Where a stage's result fits the next stage only at the
-   mirrored spelling, the checker records the swap on that stage, and the
-   flow lowering wraps the value between the two steps.
-4. **Two refusals found beside the commuted-stage fix.** Each gets a test
-   first, then a fix or a better diagnostic:
-   - `<42 | emit | println` with `fn emit<+T: Display>(out: String) <- T` is
-     refused with "`println` needs `Display` for a type parameter": the
-     stage read the other way round does not tie `T` to what flows in before
-     the bound is discharged. Tie it, and the chain is accepted.
-   - `<s | deliver` with `s: -String` and a negative trait method
-     `fn deliver(out: String) <- Self` is refused with "no `impl Deliver for
-     String`": a consumer flowing in is read as the receiver. Either read it
-     as the method's continuation, leaving `Self` to the context, or refuse
-     it with a message pointing at the call form `deliver(s)`.
-5. **Docs.** `DESIGN.md`'s account of `;` gains structures and stages; this
-   file narrows the known limit to type constructors, or removes it.
-
-### 2. Type variables carry a polarity
+### 1. Type variables carry a polarity
 
 The known limit "Soundness is enforced by inference, argued informally"
 names four gaps; this entry closes one. A generic parameter already states

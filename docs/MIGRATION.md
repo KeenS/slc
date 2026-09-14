@@ -1278,6 +1278,24 @@ fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
 }
 ```
 
+## More values are turned to the other spelling of `;`
+
+Nothing that compiled changes meaning. A tuple or an alternative written out
+may now hold a component at the other spelling of its declared type, and a
+stage's result may meet the next stage at the other spelling, where both
+used to be refused:
+
+```sl
+let t: ((i64 -> String), i64) = (deliver_i64, 1);   // new: accepted
+<(,) | get_negative | use_it | println;             // new: accepted
+```
+
+A bounded negative function, `fn emit<+T: Display>(out: String) <- T`, now
+stands as a stage read either way round, and a consumer flowing into a
+negative trait method is its continuation, `<s | deliver`. A type
+constructor's arguments still have to match: `List<(A ; B)>` is not
+`List<(B ; A)>`.
+
 ## Removed constructs
 
 ### `spawn`

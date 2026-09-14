@@ -105,9 +105,13 @@ f : left ⅋ right   ↦   λk. μx. ⟨ f x ∥ k ⟩        a positive left
 — capturing with `μ` where the binder is a genuine continuation, building
 the consumer with `μ̃` where it is a genuine value, and cutting toward `k`
 or from it by the polarity of `right`. The forward reading is always tried
-first, so nothing that fits as written changes meaning. Inside a type
-constructor there is no one value to turn, so a tuple's component or a
-`List`'s argument still has to be written at its value's spelling.
+first, so nothing that fits as written changes meaning. A tuple or an
+alternative written out is turned component by component, each component
+one value meeting one declared type, and a stage's result that meets the
+next stage at the other spelling is turned around between the two steps.
+Inside a type constructor's arguments there is no one value to turn —
+`List<(A ; B)>` against `List<(B ; A)>` — so the spelling still has to match,
+and the checker says so.
 
 **`<` is never left out.** A chain without it begins with a function,
 whatever its head is, and composes: `f | g` is a function, and `f | k>` a

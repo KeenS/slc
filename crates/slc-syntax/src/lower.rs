@@ -134,6 +134,10 @@ pub struct FlowShape {
     /// type, but a value of it is a closure facing one way, so it is lowered
     /// through the swap that faces it the other.
     pub swap: Option<Swap>,
+    /// Stages whose result meets the next stage at the other spelling of its
+    /// type, with the swap that turns the result around between the two
+    /// steps.
+    pub turned: Vec<(usize, Swap)>,
 }
 
 /// The polarities of a `;` value's two halves, `(left ; right)`, which is what
@@ -580,6 +584,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     commuted: Vec::new(),
                     row_stage: None,
                     swap: None,
+                    turned: Vec::new(),
                 });
             let mut lowered = Vec::new();
             if shape.eta {
@@ -613,15 +618,25 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // that far is fed to it; any other stage is applied.
             let commuted: Vec<usize> =
                 shape.commuted.iter().map(|i| i + usize::from(shape.eta)).collect();
+            // A result the next stage takes at the other spelling of its type
+            // is turned around between the two steps.
+            let turned: Vec<(usize, Swap)> =
+                shape.turned.iter().map(|(i, swap)| (i + usize::from(shape.eta), *swap)).collect();
+            let turn = |at: usize, acc: Term| match turned.iter().find(|(i, _)| *i == at) {
+                Some((_, swap)) => swap_adapter(acc, *swap),
+                None => acc,
+            };
             let last = shape.cut.then(|| lowered.pop().expect("a closed flow has a consumer"));
             let mut steps = lowered.into_iter().enumerate();
-            let (_, mut acc) = steps.next().expect("a flow has a first stage");
+            let (first, mut acc) = steps.next().expect("a flow has a first stage");
+            acc = turn(first, acc);
             for (at, stage) in steps {
                 acc = if commuted.contains(&at) {
                     turned_step(stage, acc, at)
                 } else {
                     call_curried(stage, vec![acc])
                 };
+                acc = turn(at, acc);
             }
             let term = match last {
                 None => acc,
@@ -1678,7 +1693,11 @@ fn lower_closed_flow(
         return Ok(None);
     };
     let plain = FLOWS.with(|cell| cell.borrow().get(&command.span).cloned()).is_none_or(|shape| {
-        !shape.eta && shape.commuted.is_empty() && shape.row_stage.is_none() && shape.swap.is_none()
+        !shape.eta
+            && shape.commuted.is_empty()
+            && shape.row_stage.is_none()
+            && shape.swap.is_none()
+            && shape.turned.is_empty()
     });
     if !plain {
         return Ok(None);
