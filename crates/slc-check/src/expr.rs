@@ -35,9 +35,9 @@ pub fn check_program_resolving(
 }
 
 /// Check the program, and hand back beside what lowering needs what the
-/// rows in its types refuse (`docs/design-notes/rows-in-types.md`). Until
-/// the rows replace the effect pass, the driver reports them only when
-/// `SLC_ROWS` is set.
+/// rows in its types refuse (`docs/design-notes/rows-in-types.md`): the
+/// effects a declaration performs beyond its row, and the rows an argument
+/// or an arm does not fit.
 pub fn check_program_with_rows(
     p: &Program,
     traits: &TraitInfo,
@@ -51,6 +51,21 @@ pub fn check_program_with_rows(
     check_trait_signatures(traits, &enums, &mut env, &mut diags);
     for d in &p.decls {
         check_decl(d, &enums, &mut env, &mut diags);
+    }
+    // A menu's or form's latent row stays concrete: a row variable on a
+    // declaration is later work (`PLAN.md`, "Row variables on declarations").
+    for d in &p.decls {
+        if let Decl::Menu { name, effects, .. } | Decl::Form { name, effects, .. } = &d.kind
+            && !effects.tails.is_empty()
+        {
+            env.row_diagnostics.push(Diagnostic {
+                message: format!(
+                    "`{name}` declares a row variable; a declaration's latent row is concrete \
+                     (row variables on declarations are not yet supported)"
+                ),
+                span: d.span,
+            });
+        }
     }
     resolve_pending_injections(&mut env, &mut diags);
     resolve_pending_pars(&mut env, &mut diags);
@@ -525,6 +540,29 @@ fn unrowed(ty: Type) -> (Type, slc_core::types::Row) {
     }
 }
 
+/// Where an argument meets the parameter it is passed to, for the row
+/// constraints recorded there.
+fn argument_origin(
+    callee: &str,
+    signature: &FunctionSignature,
+    index: usize,
+    argument: &Node<Expr>,
+) -> crate::env::RowOrigin {
+    crate::env::RowOrigin::Argument {
+        callee: callee.to_string(),
+        param: signature
+            .param_names
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| format!("argument {}", index + 1)),
+        argument: match &argument.kind {
+            Expr::Ident(name) => Some(name.clone()),
+            _ => None,
+        },
+        span: argument.span,
+    }
+}
+
 /// An exit accepts any row. A command runs the exits it is handed before
 /// control goes anywhere else, so what a consumer handed to one performs is
 /// charged where it is handed over — and so is what each exit of a bundle
@@ -559,11 +597,11 @@ fn close_declaration_rows(
     );
     let constraints = env.uni.row_constraints()[from..].to_vec();
     for failure in env.uni.solve_rows(&constraints) {
-        let performs = match &failure.atom {
-            slc_core::typing::RowAtom::Effect(effect) => format!("`{effect}`"),
+        let (performs, addition) = match &failure.atom {
+            slc_core::typing::RowAtom::Effect(effect) => (format!("`{effect}`"), effect.clone()),
             slc_core::typing::RowAtom::Rigid(var) => {
                 let written = env.row_names.get(var).cloned().unwrap_or_else(|| format!("?{var}"));
-                format!("the row `..{written}`")
+                (format!("the row `..{written}`"), format!("..{written}"))
             }
         };
         let (message, at) = match (env.row_origins.get(&(from + failure.constraint)), &failure.atom)
@@ -581,10 +619,28 @@ fn close_declaration_rows(
             (Some(crate::env::RowOrigin::Declaration { name, span }), _) => (
                 format!(
                     "`{name}` performs {performs} of a parameter but does not declare it; add \
-                     it to its row"
+                     `{addition}` to its row"
                 ),
                 *span,
             ),
+            (Some(crate::env::RowOrigin::Argument { callee, param, argument, span }), _) => {
+                let allowed = &constraints[failure.constraint].sup;
+                let arrow = if allowed.is_empty() {
+                    " a pure arrow".to_string()
+                } else {
+                    format!(" row {allowed}")
+                };
+                let what = argument
+                    .as_ref()
+                    .map(|argument| format!("`{argument}`"))
+                    .unwrap_or_else(|| "this argument".into());
+                (
+                    format!(
+                        "`{callee}` takes `{param}` with{arrow} but {what} performs {performs}"
+                    ),
+                    *span,
+                )
+            }
             (Some(crate::env::RowOrigin::Latent { decl, span }), _) => (
                 format!("this arm performs {performs}, which `{decl}` does not declare latent"),
                 *span,
@@ -1195,7 +1251,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // `main` is the root, and the runtime handles one effect: `IO`
             // is what may reach it, and everything else is handled before.
             if name == "main"
-                && (declared.effects.iter().any(|effect| effect != crate::effects::IO)
+                && (declared.effects.iter().any(|effect| effect != crate::signatures::IO)
                     || declared.tail.is_some())
             {
                 env.row_diagnostics.push(Diagnostic {
@@ -1803,7 +1859,12 @@ fn check_call_arguments(
         // `Type::ONE` is this checker's "not determined" placeholder — an
         // unannotated `let` binding, for instance. A mismatch is only
         // reported for an argument whose type is actually known.
-        if !fits(env, expected, &actual, &arg.kind) {
+        let rows_from = env.uni.row_constraints().len();
+        let fitted = fits(env, expected, &actual, &arg.kind);
+        if !in_row {
+            env.tag_rows_since(rows_from, argument_origin(name, signature, index, arg));
+        }
+        if !fitted {
             let expected = &env.uni.apply(expected);
             let message = if in_row {
                 format!(
@@ -2665,7 +2726,7 @@ fn check_expr_unapplied(
                     });
                 }
                 for (arg, expected) in args.iter().zip(payload.iter()) {
-                    if let Some(actual) = check_expr(arg, enums, env, diags)
+                    if let Some(actual) = check_by_name(arg, enums, env, diags)
                         && !fits_turning(env, expected, &actual, arg)
                     {
                         diags.push(Diagnostic {
@@ -3608,15 +3669,30 @@ fn check_expr_unapplied(
                     let components = tensor_spine(&env.uni.apply(&acc));
                     let piecewise = written.is_some_and(|items| {
                         items.len() == components.len()
-                            && items.iter().zip(components.iter()).zip(signature.params.iter()).all(
-                                |((item, actual), param)| fits_turning(env, param, actual, item),
-                            )
+                            && items
+                                .iter()
+                                .zip(components.iter())
+                                .zip(signature.params.iter())
+                                .enumerate()
+                                .all(|(position, ((item, actual), param))| {
+                                    let rows_from = env.uni.row_constraints().len();
+                                    let fitted = fits_turning(env, param, actual, item);
+                                    let origin = argument_origin(name, &signature, position, item);
+                                    env.tag_rows_since(rows_from, origin);
+                                    fitted
+                                })
                     });
                     let fitted = piecewise
                         || match flowing {
                             // What flows in is a written value, so it can be
                             // turned around where it stands.
-                            Some(_) if index == 1 => fits_turning(env, &packed, &acc, &stages[0]),
+                            Some(_) if index == 1 => {
+                                let rows_from = env.uni.row_constraints().len();
+                                let fitted = fits_turning(env, &packed, &acc, &stages[0]);
+                                let origin = argument_origin(name, &signature, 0, &stages[0]);
+                                env.tag_rows_since(rows_from, origin);
+                                fitted
+                            }
                             _ => fits(env, &packed, &acc, shape),
                         };
                     if !fitted {

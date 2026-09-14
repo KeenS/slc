@@ -57,8 +57,8 @@ mod seq {
         mu Seq {
             next <= match s.next {
                 Step::Done => <Step::Done | next>,
-                // The rest is built with `let+` before it is stored: a stored
-                // computation may not perform anything, and though building a
+                // The rest is built with `let+` before it is stored: `Yield`'s
+                // payload is declared without a row, and though building a
                 // `Seq` performs nothing, the call's row says `..E`.
                 Step::Yield(h, rest) => {
                     let+ tail = <(f, rest) | map;

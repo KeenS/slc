@@ -1220,15 +1220,31 @@ let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // old
 let g = handle { let+ f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // new
 ```
 
-A delayed computation stored in a tuple, a bundle, a variant or a record, or
-one whose row is a variable, is refused when it performs anything; compute it
-first with `let+`. That includes lazy recursion through a function whose row
-is a variable:
+## Effect rows are part of types
 
-```sl
-Step::Yield(h, <(f, rest) | map)                                       // old
-{ let+ tail = <(f, rest) | map; <Step::Yield(<h | f, tail) | next> }  // new
-```
+A row now rides on the type of the value that performs it, instead of being
+followed by name. What a program performs is unchanged; where it is charged
+follows the value:
+
+- A `fn` performs its body's effects where it is called, not where it is
+  written. A lambda written inside a `handle` and called after it is refused
+  unless a handler answers the call; one written outside and called under a
+  handler is accepted.
+
+  ```sl
+  let f = handle { fn(x: i64) { <"late" | throw } } { … };   // old: accepted, then failed at run time
+  <1 | f | println;                                          // new: refused, `main` performs `Exn`
+  ```
+
+- A function bound again by `let`, or a higher-order global handed on as a
+  value, keeps its row: calling it performs what the original does.
+- A delayed computation carries its row on its type. Stored in a tuple or
+  handed on, it is accepted, and performs where it runs; passed where a pure
+  arrow is declared, it is refused. `let+` still runs it where it is written.
+- An exit accepts any row: a consumer handed to a command's continuation
+  parameter performs where it is handed over, as before.
+- Two menus that declare latent rows may now share an item name: a demand's
+  type says which menu it is on.
 
 ## Removed constructs
 

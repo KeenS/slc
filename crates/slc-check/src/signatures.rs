@@ -18,6 +18,9 @@ pub struct FunctionSignature {
     /// `IO` a file primitive reaches. A row variable is a template, by the
     /// position of its type parameter, instantiated afresh at every call.
     pub row: Row,
+    /// The name each parameter is declared under, positionally, for the
+    /// diagnostic of an argument that does not fit it.
+    pub param_names: Vec<String>,
     /// Trait bounds, as (type-parameter variable index, trait name): the
     /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
     /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
@@ -128,6 +131,31 @@ fn builtin_functions() -> Vec<Builtin> {
     ]
 }
 
+/// The builtins that reach outside the program: the file primitives beneath
+/// `fs` reach out directly, so calling one performs `IO`, exactly as a
+/// written operation would.
+pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
+    matches!(
+        name,
+        "__read_file"
+            | "__write_file"
+            | "__open_file"
+            | "__read_line"
+            | "__close_file"
+            | "__file_exists"
+    )
+    .then_some(IO)
+}
+
+/// The one effect the runtime itself handles: `main` may leave it
+/// undischarged, and nothing else may.
+pub(crate) const IO: &str = "IO";
+
+/// The name a parameter is declared under, or `_` for a pattern.
+fn parameter_name(param: &slc_syntax::ast::Param) -> String {
+    param.name().map(str::to_string).unwrap_or_else(|| "_".into())
+}
+
 /// A written type as a signature sees it: declaration names resolved, and a
 /// generic name a template variable, instantiated afresh at every call. A
 /// type that resolves to nothing gets its own template variable — unknown to
@@ -165,9 +193,10 @@ pub(crate) fn function_types(
             (
                 builtin.name.to_string(),
                 FunctionSignature {
-                    row: crate::effects::builtin_effect(builtin.name)
+                    row: builtin_effect(builtin.name)
                         .map(|effect| Row { effects: [effect.to_string()].into(), tail: None })
                         .unwrap_or_default(),
+                    param_names: Vec::new(),
                     params: builtin.params,
                     continuations: builtin.continuations,
                     result: builtin.result,
@@ -231,6 +260,7 @@ pub(crate) fn function_types(
                             type_params.iter().position(|p| p == tail)
                         }),
                         params: resolved,
+                        param_names: params.iter().map(parameter_name).collect(),
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
                         bounds: resolve_bounds(type_params, bounds),
@@ -264,6 +294,7 @@ pub(crate) fn function_types(
                             type_params.iter().position(|p| p == tail)
                         }),
                         params,
+                        param_names: declared.iter().map(|p| parameter_name(p)).collect(),
                         continuations,
                         result: Some(Type::BOTTOM),
                         bounds: resolve_bounds(type_params, bounds),
@@ -286,6 +317,7 @@ pub(crate) fn function_types(
                         op.name.clone(),
                         FunctionSignature {
                             row: Row { effects: [effect.clone()].into(), tail: None },
+                            param_names: op.params.iter().map(parameter_name).collect(),
                             params,
                             continuations: op.params.iter().map(|_| false).collect(),
                             result: Some(result),
@@ -316,6 +348,7 @@ pub(crate) fn instantiate(
         continuations: signature.continuations.clone(),
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, &mut rows, uni)),
         row: freshen_row(&signature.row, &mut rows, uni),
+        param_names: signature.param_names.clone(),
         bounds: signature.bounds.clone(),
         signs: signature.signs.clone(),
         builtin: signature.builtin,

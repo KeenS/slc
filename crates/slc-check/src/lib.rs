@@ -2,7 +2,6 @@
 //! declaration inference, all reporting the same kind of diagnostic.
 
 mod declarations;
-pub mod effects;
 mod env;
 pub mod exhaustive;
 pub mod expr;

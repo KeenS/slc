@@ -471,20 +471,19 @@ Effects follow the same rule. A delayed computation performs nothing where it
 is written: what it performs happens at each use, under the handlers around
 that use, so a `let-` written inside a `handle` and used after the `handle`
 has returned answers to the handlers outside it. `let+` is how a computation
-performs under the handler where it is written. An argument, and what flows
-into a chain, hand the computation to a callee, which runs it inside the
-call. A tuple component, a bundle item, a variant's payload and a record
-field store it instead, and where it then runs cannot be followed by name
-(§8, "Effects and handlers"), so a stored computation that
-performs anything is refused, and so is a delayed computation whose row is a
-variable: compute it first with `let+` and store what it made.
+performs under the handler where it is written. What a delayed computation
+performs rides on its type as a row (§8, "Effects and handlers"), so it
+follows the computation wherever it goes — bound again, stored in a tuple or
+a variant, handed to a callee — and is performed wherever it finally runs.
+Where its type meets a slot that allows less, a parameter declared as a pure
+arrow for instance, it is refused there.
 
 ```sl
 let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
 <5 | g | println;              // refused: `make` performs `Exn` here, unhandled
 
-let+ f = make();               // performs here, under the handler in scope
-let pair = (1, f);             // and stores what it made
+let pair = (1, make());        // stored, it performs nothing yet
+let r = handle <5 | pair.1 { throw(m) => -1 };   // and performs here, handled
 ```
 
 ## 5. `command`: consumer abstraction
@@ -1193,19 +1192,25 @@ says the returned consumer performs `..E` when *fed*, not that the call
 performs anything — a returned `fn`/`select` literal is checked against
 that latent row, the cut it is eventually fed at incurs it, and a `handle`
 around the mere construction discharges nothing, because nothing fired.
-Latent rows on declarations are concrete in this version (a row variable
-on a type is the rows-into-types upgrade), rowed declarations' item names
-must be distinct, and a rowless menu or form keeps the conservative
-account: its arms are charged to the declaration that wrote them.
+Latent rows on declarations are concrete in this version: a row variable
+on a menu or form declaration is refused.
 
-The tracking follows names, conservatively where a function value loses
-its name: a lambda's body is charged to the declaration that wrote it, a
-higher-order global passed on as a value contributes its concrete row but
-no further forwarding, and a function laundered through a `let` binding is
-not tracked — though a `let` of a call whose result carries a latent row
-keeps that row on the name, and so does a `let` that delays a computation:
-each use of the name performs what the computation does (§4, "When a `let`
-computes").
+**Rows are part of types.** A row rides on the type of the value that
+performs it when run — a function, a consumer, a menu or form, a delayed
+computation — so it follows the value wherever the value goes, and is
+performed wherever the value runs (`docs/design-notes/rows-in-types.md`).
+A lambda performs its body's effects where it is called; a function bound
+again by `let`, or a global handed on as a value, keeps its row; a delayed
+computation stored in a tuple carries its row until it runs. Where a value
+meets a slot, its row must fit inside the slot's: a pure function fits
+where `/ {Exn}` is allowed, and a function that performs `Exn` does not fit
+a parameter declared as a pure arrow. Two places are exceptions. An exit —
+a command's continuation parameter, or a bundle of them — accepts any row,
+charged where it is handed over, since the command runs it before control
+goes anywhere else. And a declaration that hands back a value whose row its
+promised type does not carry answers for that row itself, which is how a
+rowless menu or form built by a function is accounted for: its arms are
+charged to the declaration that built it.
 
 An operation may take several parameters; since calls are curried, the
 performing value collects them all before suspending. **Operations are

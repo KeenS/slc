@@ -77,6 +77,14 @@ pub(crate) enum RowOrigin {
     Declaration { name: String, span: slc_syntax::token::Span },
     /// A menu or form arm against the latent row its declaration writes.
     Latent { decl: String, span: slc_syntax::token::Span },
+    /// An argument against the parameter it is passed to: what the argument
+    /// performs when run against the row the parameter's type allows.
+    Argument {
+        callee: String,
+        param: String,
+        argument: Option<String>,
+        span: slc_syntax::token::Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -196,6 +204,14 @@ impl<'a> Env<'a> {
         if let Some(current) = self.current_row {
             let here = slc_core::types::Row { effects: Default::default(), tail: Some(current) };
             self.uni.constrain_row(row, here);
+        }
+    }
+
+    /// Give every row constraint recorded since `from` the origin `origin`,
+    /// unless it already has one.
+    pub(crate) fn tag_rows_since(&mut self, from: usize, origin: RowOrigin) {
+        for index in from..self.uni.row_constraints().len() {
+            self.row_origins.entry(index).or_insert_with(|| origin.clone());
         }
     }
 

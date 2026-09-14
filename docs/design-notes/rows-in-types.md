@@ -1,8 +1,11 @@
 # Rows in types
 
-Status: reviewed; being implemented — `PLAN.md`, "Rows live in types". The
-decisions move to `DESIGN.md` as they land, and this note records why they
-were taken.
+Status: implemented. `DESIGN.md`'s effects section is the definition; this
+note records why the design was taken. Two decisions were added while it
+landed: an exit — a command's continuation parameter, or a bundle of them —
+accepts any row, charged where it is handed over; and a returned value whose
+row the promised type does not carry is charged to the declaration, as the
+name-following pass charged a returned literal.
 
 ## Why
 

@@ -246,15 +246,16 @@ fn a_delayed_computation_performs_under_the_handler_around_its_use() {
             // Run with `let+` under the handler where it is written.
             let g = handle { let+ made = make(); made } { throw(m) => fn(n: i64) { 0 }, };
             <5 | g | println;
-            // Handed to a callee, which runs it inside the call.
-            let b = handle <f | apply5 { throw(m) => -2, };
-            <b | println;
+            // What flows into a callee is computed at the call.
             let c = handle <make() | apply5 { throw(m) => -3, };
-            <c | println;"#,
+            <c | println;
+            // Stored, it carries its row on its type, and never runs unused.
+            let t = (make(), 1);
+            <t.1 | println;"#,
         ),
     );
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["-1", "0", "-2", "-3"]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["-1", "0", "-3", "1"]);
 }
 
 #[test]
@@ -265,15 +266,14 @@ fn a_delayed_computation_that_escapes_its_handler_is_refused() {
             "let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 }, };\n<5 | g | println;",
             "`main` performs `Exn`",
         ),
-        // Handed to a callee outside any handler.
-        ("let- f = make();\n<f | apply5 | println;", "`main` performs `Exn`"),
-        // Stored where its uses cannot be followed.
-        ("let t = (make(), 1);\n<t.1 | println;", "stored where its uses cannot be tracked"),
+        // Handed to a callee that promises a pure arrow, even under a
+        // handler: running it performs `Exn` inside `apply5`.
         (
-            "let- f = make();\nlet t = (f, 1);\n<t.1 | println;",
-            "stored where its uses cannot be tracked",
+            "let- f = make();\nlet b = handle <f | apply5 { throw(m) => -2, };\n<b | println;",
+            "`apply5` takes `f` with a pure arrow but `f` performs `Exn`",
         ),
-        ("let h = Held::Holds(make());\n<0 | println;", "stored where its uses cannot be tracked"),
+        // Stored in a variant whose payload is declared pure.
+        ("let h = Held::Holds(make());\n<0 | println;", "performs `Exn`"),
     ];
     for (index, (body, expected)) in refused.iter().enumerate() {
         let (stdout, stderr, ok) = run_sl_with(
@@ -299,24 +299,8 @@ fn a_declaration_returning_a_delayed_computation_performs_its_row() {
     assert!(stderr.contains("`later` performs `Exn`"), "{stderr}");
 }
 
-#[test]
-fn a_delayed_computation_whose_row_is_a_variable_is_refused() {
-    let source = format!(
-        "{DELAYED_DECLS}
-        fn wrap<E>(k: ((,) -> (i64 -> i64) / {{..E}})) -> i64 / {{..E}} {{
-            let- f = <(,) | k;
-            <5 | f
-        }}
-
-        command main | (exit: -i32) / {{IO}} {{ <0 | exit> }}"
-    );
-    let (_, stderr, ok) = run_sl_with(&[], "slc_test_delayed_row_variable.sl", &source);
-    assert!(!ok);
-    assert!(stderr.contains("`let+`") && stderr.contains("..E"), "{stderr}");
-}
-
-// What "Rows live in types" (PLAN.md) changes: a row follows the value that
-// carries it, wherever names cannot. Ignored until the switch, its step 4.
+// A row follows the value that carries it, wherever names cannot
+// (`docs/design-notes/rows-in-types.md`).
 const ROWS_DECLS: &str = r#"effect Exn { fn throw(m: String) -> i64; }
 
 fn risky(x: i64) -> i64 / {Exn} { <"boom" | throw }
@@ -333,7 +317,6 @@ fn rows_program(body: &str) -> String {
 }
 
 #[test]
-#[ignore = "rows live in types: PLAN.md, \"Rows live in types\", step 4"]
 fn a_row_follows_its_value_where_names_cannot() {
     // Each performs `Exn` where no handler answers it. Today every one of
     // them is accepted and then fails with "no handler for operation".
@@ -372,7 +355,6 @@ fn a_row_follows_its_value_where_names_cannot() {
 }
 
 #[test]
-#[ignore = "rows live in types: PLAN.md, \"Rows live in types\", step 4"]
 fn a_delayed_computation_carries_a_row_variable_on_its_type() {
     let source = format!(
         "{ROWS_DECLS}
@@ -1960,20 +1942,20 @@ fn a_plain_let_follows_the_polarity_of_its_type() {
 }
 
 #[test]
-fn a_tuple_component_that_performs_when_it_runs_is_computed_with_let_plus() {
-    // A tuple component of negative type is delayed, and a stored computation
-    // that performs is refused: where it runs cannot be followed.
-    let (_, stderr, ok) = run_sl_with(
+fn a_tuple_component_of_negative_type_runs_at_each_use() {
+    // Delayed, the component runs each time it is used, and performs there.
+    let (stdout, stderr, ok) = run_sl_with(
         &[],
-        "slc_test_by_name_component_refused.sl",
+        "slc_test_by_name_component_each_use.sl",
         r#"command main | (exit: -i32) / {IO} {
             let pair = (1, { <"made" | println; fn(s: String) { <s | println } });
             <"a" | pair.1;
+            <"b" | pair.1;
             <0 | exit>
         }"#,
     );
-    assert!(!ok);
-    assert!(stderr.contains("stored where its uses cannot be tracked"), "{stderr}");
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["made", "a", "made", "b"]);
 
     // Computed first with `let+`, it runs once, here.
     let (stdout, stderr, ok) = run_sl_with(

@@ -22,9 +22,8 @@ effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
 No large feature is mid-flight. The work below is a sweep of the known
-limits, in the order of "Next": effects first — rows in types, and the
-file system as an effect that rows in types unblocks — and then the
-checker's remaining gaps.
+limits, in the order of "Next": the file system as an effect, now that rows
+live in types, and then the checker's remaining gaps.
 
 ## Known limits
 
@@ -48,16 +47,6 @@ checker's remaining gaps.
   remains the backstop for whatever that gap hides. The polarity kind is
   addressed by "Type variables carry a polarity"; the rest stays open.
 
-- **Effect tracking follows names.** Rows and row variables are explicit
-  and checked per declaration, but the rows live beside the type system
-  rather than in core types: a lambda's effects are charged where it is
-  written, a higher-order global passed as a value forwards nothing
-  further, and a function laundered through a `let` binding is not
-  tracked. Moving rows into the arrow type itself (unified during
-  inference) is the known upgrade if these bite. A stage's row variables
-  are instantiated only for the first stage of a chain, since that is the
-  only one whose argument is syntax. Addressed by "Rows live in types".
-
 - **The file operations perform `IO` without an operation.** The `fs`
   module's `read`, `write`, `open`, `read_line`, `close` and `exists`, and
   the `__` primitives beneath them, charge `{IO}`, so their rows are honest,
@@ -75,47 +64,9 @@ then the documents, and passes `cargo fmt --check`, `cargo clippy
 --workspace --all-targets -- -D warnings` and `cargo test --workspace`
 before it is committed.
 
-### 1. Rows live in types
+### 1. File operations are an effect, and handlers are values
 
-Decided: rows move from the name-following pass into inferred types, the
-upgrade "Effect tracking follows names" names. What does not change is the
-surface: rows are written where they are today, `/ {E, ..R}` after an
-arrow and on menus and forms.
-
-The design is settled in `docs/design-notes/rows-in-types.md`, reviewed: a
-`Type::Rowed(Box<Type>, Row)` wrapper on the negative type that runs; rows fit
-by inclusion constraints solved per declaration; nested rows unify as equal;
-every body — a declaration, a lambda, a `handle` body, an arm — has a current
-row that each performing point adds to.
-
-1. **The type.** `Type::Rowed` and `Row` in `crates/slc-core/src/types.rs`,
-   with `apply`, `occurs`, `unify`, `dual`, `instantiate`, `freshen`
-   (`crates/slc-check/src/signatures.rs`) and display. No row is built yet,
-   so nothing changes and the existing suite is the test.
-2. **Tests first.** One test for each gap "Effect tracking follows names"
-   lists — a lambda's effects charged where it runs, a higher-order global
-   passed as a value forwarding its row, a function laundered through a `let`
-   still charging its row, a row variable instantiated at a later stage of a
-   chain — and for the lifted refusals of a stored delayed computation and a
-   delayed row variable. They are marked `#[ignore]` until step 4.
-3. **Rows in signatures, checked beside the effect pass.** Written rows are
-   kept (`signature_type`, `resolve_with_self`, `resolve_rigid`); the checker
-   records inclusion constraints at the points the note lists and solves them
-   per declaration. Its verdict is compared with `effects.rs` over every
-   program in the suite, and differences are either fixed or listed as the
-   intended changes of the note's "Consequences".
-4. **The switch.** The solver's diagnostics replace the effect pass's, with
-   the same messages; the refusals of stored and row-variable delayed
-   computations go; `effects.rs` is deleted, or keeps only what types cannot
-   say. Step 2's tests are un-ignored.
-5. **Docs.** `DESIGN.md`'s effects section describes rows as part of types,
-   and §4 loses the two refusals; this file removes the known limit "Effect
-   tracking follows names"; `MIGRATION.md` gains a section for the programs
-   whose acceptance changes.
-
-### 2. File operations are an effect, and handlers are values
-
-Needs "Rows live in types". The `fs` module would declare an `Fs` effect,
+The `fs` module would declare an `Fs` effect,
 and a standard handler would answer it by performing `IO`. A program that
 touches files would then say `{Fs}` in its row, and a test could mock the
 file system with a handler of its own, the way `examples/io.sl` mocks output.
@@ -141,7 +92,7 @@ is a value, and `with h handle c` installs it.
 1. **Design note.** `docs/design-notes/handler-values.md` answers:
    - the type of a handler value: the effect it discharges, what its clauses
      perform in turn (`{Fs}` to `{IO}`), and how its return clause maps the
-     body's result, in the row representation "Rows live in types" chose;
+     body's result, in the rows of `docs/design-notes/rows-in-types.md`;
    - its place in the polarity story: a handler consumes a computation and
      binds continuations the copattern way, so whether it is a negative
      value like a menu or a form;
@@ -164,7 +115,7 @@ is a value, and `with h handle c` installs it.
    removes the known limit "The file operations perform `IO` without an
    operation".
 
-### 3. `;` commutes through structures and stages
+### 2. `;` commutes through structures and stages
 
 The known limit "`;` commutes only where one value meets one declared type"
 has two halves, and a third gap of the same family turned up beside it.
@@ -205,7 +156,7 @@ declaration, so the spelling still has to match, and the diagnostic says so.
 5. **Docs.** `DESIGN.md`'s account of `;` gains structures and stages; this
    file narrows the known limit to type constructors, or removes it.
 
-### 4. Type variables carry a polarity
+### 3. Type variables carry a polarity
 
 The known limit "Soundness is enforced by inference, argued informally"
 names four gaps; this entry closes one. A generic parameter already states
@@ -233,15 +184,15 @@ evaluator.
 ## Deferred, for discussion
 
 - **Row variables on declarations.** A menu or form declaration keeps a
-  concrete row after "Rows live in types": `menu Seq<+T, E> / {..E}` would
+  concrete row: `menu Seq<+T, E> / {..E}` would
   instantiate its row like a type parameter at each use. Revisit when a
   per-use row on the type, `(Seq<B> / {..E})`, is not enough.
 
-- **The stdlib's lazy codata carries its rows on the returned type.** Once
-  rows live in types, `seq::map`, `filter` and `take_while` can declare
-  `-> (Seq<B> / {..E})` instead of a call row, since building a `Seq`
-  performs nothing, and their bodies lose the `let+` that "Delayed
-  computations carry their effects" required.
+- **The stdlib's lazy codata carries its rows on the returned type.**
+  `seq::map`, `filter` and `take_while` can declare `-> (Seq<B> / {..E})`
+  instead of a call row, since building a `Seq` performs nothing; with
+  `Step::Yield`'s payload typed `(Seq<T> / {..E})` in turn, their bodies lose
+  the `let+` that a payload declared without a row requires.
 
 - **Composable capture.** A continuation that returns to where it was
   captured — `shift`'s `k : A -> R` — would be a function rather than a

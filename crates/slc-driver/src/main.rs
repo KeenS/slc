@@ -279,24 +279,14 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
             .join("\n")
     })?;
 
-    // Rows in types are checked beside the effect pass until they replace it;
-    // `SLC_ROWS` reports their verdict instead, for comparing the two.
-    if std::env::var_os("SLC_ROWS").is_some() {
-        if !row_diagnostics.is_empty() {
-            return Err(row_diagnostics
-                .iter()
-                .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
-                .collect::<Vec<_>>()
-                .join("\n"));
-        }
-    } else {
-        slc_check::effects::check_effects(&program, &resolved.delays).map_err(|diags| {
-            diags
-                .iter()
-                .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })?;
+    // Effects are rows in the types just checked: what they refuse is
+    // reported once the other checks have passed.
+    if !row_diagnostics.is_empty() {
+        return Err(row_diagnostics
+            .iter()
+            .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
+            .collect::<Vec<_>>()
+            .join("\n"));
     }
 
     let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
