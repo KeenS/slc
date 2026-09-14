@@ -141,33 +141,42 @@ effects, not operations.
 5. **Docs.** `DESIGN.md`'s effects section and the "Diagnostics" list;
    `docs/design-notes/file-system-effect.md` "Consequences".
 
-### A `select` arm may produce a value
+### A command closed on functions yields their result
 
-A `select` arm is a command, so a handler clause routing a primitive's
-outcomes back captures its own result with `mu { out <= … <(<v | resume) |
-out> … }`, as `fs::real` and `fs::real_command` do four times each.
+A chain closes on a command's exits, `<path | __read_file | (k1 & k2)>`, and
+the exits are consumers, so an outcome can only leave through a continuation
+captured for it: `fs::real` and `fs::real_command` write `mu { out <= …
+<(<v | resume) | out> … }` four times each. A value-producing `select` would
+not help — `select T { p => v }` is `fn(x: T) { match x { p => v } }` in type
+and meaning, and the bundle would still have to close the chain.
 
-Proposed: an arm may be an expression, and its value is delivered to the
-continuation of the cut that activates the `select` — the way a `match`
-arm's value is the `match`'s. A `select T { p => v }` whose arms produce `B`
-then has the type `(T -> B)`: it *is* a function, and flows through `|` like
-one, so `<::0(t) | select (i64 | String) { … } | println` composes. Arms
-that are all commands keep the type `-T`; a `select` mixing the two is
-refused.
+Proposed: a command's menu of exits may be met by a bundle of functions
+instead of consumers. Where the command offers `(-A & -B)` and the closing
+stage has type `((A -> R) & (B -> R))`, the chain does not end there: its
+value is the `R` the chosen function produces, and it composes on —
+`<path | __read_file | (fn(t) { ::0(t) } & fn(w) { ::1(w) }) | resume`. It
+is sugar for `mu { out <= <… | (f₁ | out> & f₂ | out>)> }`, and `select`
+keeps meaning one thing.
 
-1. **Tests first:** `<::0(3) | select (i64 | String) { ::0(n) => <n | fmt,
-   ::1(s) => s } | println` prints `3`; a mixed `select` is refused with "this
-   arm is a command, and the arm before it produces a value"; `fs::real`
-   rewritten as `read_file(path): resume => <path | __read_file | (select
-   String { text => <::0(text) | resume } & select String { why => <::1(why)
-   | resume })` passes the file tests.
-2. **The checker.** `Expr::Select`: the arms' result types unify; `Some(B)`
-   for a value, `(;)` for a command; the whole is `Type::arrow(T, B)`.
-3. **Lowering.** `Expr::Select` in `crates/slc-syntax/src/lower.rs`: a
-   value-producing `select` lowers to `λx. μk. ⟨x ∥ select-consumer⟩` with
-   each arm's value cut into `k` — the shape a `match` already lowers to.
-4. **Docs and stdlib.** `DESIGN.md` §7 ("Negative additive construction"),
-   `MIGRATION.md`; `fs.sl` loses its `mu { out <= … }`.
+1. **Tests first:** the chain above prints what the `mu` form prints; a
+   bundle mixing a function and a consumer is refused with "exit 2 is a
+   consumer, and exit 1 a function producing `R`; a command yields a value
+   only when every exit does"; the result type is the functions' common
+   `R`, and the chain composes on through `| println`; `fs::real` and
+   `fs::real_command` rewritten without `mu { out <= … }` pass the file
+   tests.
+2. **The checker.** The command signature arm in `Expr::Flow`
+   (`crates/slc-check/src/expr.rs`): when the closing stage's items all have
+   type `(Aᵢ -> R)` against declared exits `-Aᵢ`, the stage is not the last
+   and `acc` becomes `R`; `FlowShape` records the command's index as a
+   `yielding` stage.
+3. **Lowering.** `Expr::Flow` in `crates/slc-syntax/src/lower.rs`: a
+   yielding command lowers to `μout. ⟨command values (f₁·out & … & fₙ·out)⟩`,
+   each `fᵢ·out` the function composed into `out`, and the rest of the chain
+   applies to the `mu`'s value.
+4. **Docs and stdlib.** `DESIGN.md` §5 (`command`) gains the rule and
+   `MIGRATION.md` shows the `mu` form beside it; `fs.sl` loses its `mu {
+   out <= … }`.
 
 ### Handler values
 
