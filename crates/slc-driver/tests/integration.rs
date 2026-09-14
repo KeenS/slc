@@ -315,6 +315,83 @@ fn a_delayed_computation_whose_row_is_a_variable_is_refused() {
     assert!(stderr.contains("`let+`") && stderr.contains("..E"), "{stderr}");
 }
 
+// What "Rows live in types" (PLAN.md) changes: a row follows the value that
+// carries it, wherever names cannot. Ignored until the switch, its step 4.
+const ROWS_DECLS: &str = r#"effect Exn { fn throw(m: String) -> i64; }
+
+fn risky(x: i64) -> i64 / {Exn} { <"boom" | throw }
+fn inc(x: i64) -> i64 { <(x, 1) | add }
+fn app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 / {..E} { <x | f }
+fn make() -> (i64 -> i64) / {Exn} {
+    <"made" | throw;
+    fn(n: i64) { <(n, 1) | add }
+}
+"#;
+
+fn rows_program(body: &str) -> String {
+    format!("{ROWS_DECLS}\ncommand main | (exit: -i32) / {{IO}} {{\n{body}\n<0 | exit>\n}}\n")
+}
+
+#[test]
+#[ignore = "rows live in types: PLAN.md, \"Rows live in types\", step 4"]
+fn a_row_follows_its_value_where_names_cannot() {
+    // Each performs `Exn` where no handler answers it. Today every one of
+    // them is accepted and then fails with "no handler for operation".
+    let refused = [
+        // A lambda written under a handler and called after it.
+        "let f = handle { fn(x: i64) { <\"late\" | throw } } { throw(m) => fn(x: i64) { 0 }, };\n<1 | f | println;",
+        // A higher-order global handed on as a value.
+        "let+ h = app;\n<(risky, 1) | h | println;",
+        // A function laundered through a `let`.
+        "let+ f = risky;\n<1 | f | println;",
+        // A row variable instantiated at a later stage of a chain.
+        "<1 | inc | x => (risky, x) | app | println;",
+    ];
+    for (index, body) in refused.iter().enumerate() {
+        let (stdout, stderr, ok) =
+            run_sl_with(&[], &format!("slc_test_rows_refused_{index}.sl"), &rows_program(body));
+        assert!(!ok, "{body}: stdout {stdout}");
+        assert!(stderr.contains("`main` performs `Exn`"), "{body}: {stderr}");
+    }
+    // Each performs `Exn` under the handler around the point where it runs.
+    // Today the first is refused where the lambda is written, and the last
+    // is refused as a stored delayed computation.
+    let accepted = [
+        "let+ f = fn(x: i64) { <\"late\" | throw };\nlet r = handle <1 | f { throw(m) => -1, };\n<r | println;",
+        "let+ h = app;\nlet r = handle <(risky, 1) | h { throw(m) => -1, };\n<r | println;",
+        "let+ f = risky;\nlet r = handle <1 | f { throw(m) => -1, };\n<r | println;",
+        "let r = handle <1 | inc | x => (risky, x) | app { throw(m) => -1, };\n<r | println;",
+        "let t = (make(), 1);\nlet r = handle <5 | t.0 { throw(m) => -1, };\n<r | println;",
+    ];
+    for (index, body) in accepted.iter().enumerate() {
+        let (stdout, stderr, ok) =
+            run_sl_with(&[], &format!("slc_test_rows_accepted_{index}.sl"), &rows_program(body));
+        assert!(ok, "{body}: {stderr}");
+        assert_eq!(stdout, "-1\n", "{body}");
+    }
+}
+
+#[test]
+#[ignore = "rows live in types: PLAN.md, \"Rows live in types\", step 4"]
+fn a_delayed_computation_carries_a_row_variable_on_its_type() {
+    let source = format!(
+        "{ROWS_DECLS}
+        fn wrap<E>(k: ((,) -> (i64 -> i64) / {{..E}})) -> i64 / {{..E}} {{
+            let- f = <(,) | k;
+            <5 | f
+        }}
+
+        command main | (exit: -i32) / {{IO}} {{
+            let r = handle <(fn(u: (,)) {{ make() }}) | wrap {{ throw(m) => -1, }};
+            <r | println;
+            <0 | exit>
+        }}"
+    );
+    let (stdout, stderr, ok) = run_sl_with(&[], "slc_test_rows_delayed_variable.sl", &source);
+    assert!(ok, "stderr: {stderr}");
+    assert_eq!(stdout, "-1\n");
+}
+
 #[test]
 fn a_run_has_no_step_cap_by_default() {
     let (stdout, stderr, ok) = run_sl_with(&[], "slc_test_long_loop.sl", LONG_LOOP);

@@ -52,7 +52,7 @@ fn type_key(ty: &Type) -> Option<String> {
     match ty {
         Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
         Type::Named(n, _) => Some(n.clone()),
-        Type::Dual(t) => type_key(t),
+        Type::Dual(t) | Type::Rowed(t, _) => type_key(t),
         Type::Tensor(items) => Some(slc_syntax::traits::anonymous_key("tuple", items.len())),
         Type::Sum(items) if !items.is_empty() => {
             Some(slc_syntax::traits::anonymous_key("choice", items.len()))
@@ -904,6 +904,7 @@ fn record_rigid_signs(
 fn type_polarity(ty: &Type, env: &Env) -> Option<ParamPolarity> {
     match ty {
         Type::Dual(inner) => type_polarity(inner, env).map(ParamPolarity::flipped),
+        Type::Rowed(inner, _) => type_polarity(inner, env),
         Type::Var(var) => env.rigid_signs.get(var).copied(),
         Type::Param(_) => None,
         ty if ty.is_positive() && !ty.is_negative() => Some(ParamPolarity::Positive),
@@ -1167,7 +1168,7 @@ fn scrutinee_args(scrutinee: &Type) -> &[Type] {
         Type::Named(_, args) => args,
         // A tuple's or a choice's components are its arguments.
         Type::Tensor(items) | Type::Sum(items) => items,
-        Type::Dual(inner) => scrutinee_args(inner),
+        Type::Dual(inner) | Type::Rowed(inner, _) => scrutinee_args(inner),
         _ => &[],
     }
 }

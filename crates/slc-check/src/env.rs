@@ -244,6 +244,7 @@ fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| replace_vars(a, map)).collect())
         }
+        Type::Rowed(t, row) => Type::Rowed(Box::new(replace_vars(t, map)), row.clone()),
         atom => atom.clone(),
     }
 }
@@ -258,7 +259,7 @@ pub(crate) fn collect_vars(ty: &Type, out: &mut std::collections::HashSet<usize>
                 collect_vars(item, out);
             }
         }
-        Type::Dual(t) => {
+        Type::Dual(t) | Type::Rowed(t, _) => {
             collect_vars(t, out);
         }
         Type::Named(_, args) => {
