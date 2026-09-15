@@ -3,7 +3,7 @@
 use crate::command::Command;
 use crate::coterm::CoTerm;
 use crate::term::Term;
-use crate::types::{Row, Type};
+use crate::types::{Effect, Row, Type};
 use std::collections::HashMap;
 
 /// Term context: `Γ`
@@ -102,6 +102,7 @@ pub struct Unification {
     /// The negative declarations — menus and forms — whose bare name is the
     /// positive type of their demands, and whose dual is the value.
     negative_decls: std::collections::HashSet<String>,
+    latent_decls: HashMap<String, (Row, Option<usize>)>,
 }
 
 /// One row fitting inside another: what a value performs, inside what its
@@ -116,7 +117,7 @@ pub struct RowConstraint {
 /// whatever its declaration's caller chose.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RowAtom {
-    Effect(String),
+    Effect(Effect),
     Rigid(usize),
 }
 
@@ -191,11 +192,80 @@ impl Unification {
         &self.row_constraints
     }
 
+    pub fn infer_row_arguments(&mut self, from: usize) {
+        loop {
+            let constraints = self.row_constraints[from..].to_vec();
+            let failures = self.solve_rows(&constraints);
+            let mut changed = false;
+            for failure in failures {
+                let RowAtom::Effect(actual) = failure.atom else { continue };
+                for expected in &constraints[failure.constraint].sup.effects {
+                    if expected.name != actual.name || expected.args.len() != actual.args.len() {
+                        continue;
+                    }
+                    let mut trial = self.clone();
+                    let before = trial.row_constraints.len();
+                    if expected.args.iter().zip(&actual.args).all(|(expected, actual)| {
+                        trial.unify_in(expected, actual, true, false).is_ok()
+                    }) {
+                        let added = trial.row_constraints.split_off(before);
+                        for constraint in added {
+                            if !trial.row_constraints.contains(&constraint) {
+                                trial.row_constraints.push(constraint);
+                            }
+                        }
+                        if trial.substitutions != self.substitutions
+                            || trial.row_constraints.len() != before
+                        {
+                            *self = trial;
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    fn effects_equated(
+        &self,
+        expected: &Effect,
+        actual: &Effect,
+        constraints: &[RowConstraint],
+    ) -> bool {
+        if expected.name != actual.name || expected.args.len() != actual.args.len() {
+            return false;
+        }
+        if expected == actual {
+            return true;
+        }
+        let mut trial = self.clone();
+        let before = trial.row_constraints.len();
+        expected
+            .args
+            .iter()
+            .zip(&actual.args)
+            .all(|(expected, actual)| trial.unify_in(expected, actual, true, false).is_ok())
+            && trial.substitutions == self.substitutions
+            && trial.row_constraints[before..]
+                .iter()
+                .all(|constraint| constraints.contains(constraint))
+    }
+
     /// Solve `constraints`: every flexible row variable takes the least row
     /// its lower bounds give it, and each constraint whose larger side is
     /// concrete or rigid is checked against that. What does not fit is
     /// returned, one failure per atom, in the constraints' order.
     pub fn solve_rows(&self, constraints: &[RowConstraint]) -> Vec<RowFailure> {
+        let constraints: Vec<_> = constraints
+            .iter()
+            .map(|constraint| RowConstraint {
+                sub: constraint.sub.map_types(|argument| self.apply(argument)),
+                sup: constraint.sup.map_types(|argument| self.apply(argument)),
+            })
+            .collect();
         let mut solved: HashMap<usize, std::collections::BTreeSet<RowAtom>> = HashMap::new();
         let atoms = |row: &Row, solved: &HashMap<usize, std::collections::BTreeSet<RowAtom>>| {
             let mut out: std::collections::BTreeSet<RowAtom> =
@@ -211,13 +281,14 @@ impl Unification {
         };
         loop {
             let mut changed = false;
-            for constraint in constraints {
+            for constraint in &constraints {
                 let Some(tail) = constraint.sup.tail.filter(|t| !self.is_rigid_row(*t)) else {
                     continue;
                 };
                 let grown: Vec<RowAtom> = atoms(&constraint.sub, &solved)
                     .into_iter()
-                    .filter(|atom| !matches!(atom, RowAtom::Effect(e) if constraint.sup.effects.contains(e)))
+                    .filter(|atom| !matches!(atom, RowAtom::Effect(effect)
+                        if constraint.sup.effects.iter().any(|expected| expected.name == effect.name)))
                     .collect();
                 let entry = solved.entry(tail).or_default();
                 for atom in grown {
@@ -230,12 +301,23 @@ impl Unification {
         }
         let mut failures = Vec::new();
         for (index, constraint) in constraints.iter().enumerate() {
-            if constraint.sup.tail.is_some_and(|t| !self.is_rigid_row(t)) {
-                continue;
-            }
             let allowed = atoms(&constraint.sup, &solved);
             for atom in atoms(&constraint.sub, &solved) {
-                if !allowed.contains(&atom) {
+                let accepted = match &atom {
+                    RowAtom::Effect(actual) => {
+                        match constraint
+                            .sup
+                            .effects
+                            .iter()
+                            .find(|expected| expected.name == actual.name)
+                        {
+                            Some(expected) => self.effects_equated(expected, actual, &constraints),
+                            None => allowed.contains(&atom),
+                        }
+                    }
+                    RowAtom::Rigid(_) => allowed.contains(&atom),
+                };
+                if !accepted {
                     failures.push(RowFailure { constraint: index, atom });
                 }
             }
@@ -260,7 +342,12 @@ impl Unification {
             Type::Named(name, args) => {
                 Type::Named(name.clone(), args.iter().map(|a| self.apply(a)).collect())
             }
-            Type::Rowed(t, row) => Type::Rowed(Box::new(self.apply(t)), row.clone()),
+            Type::Rowed(t, row) => {
+                Type::Rowed(Box::new(self.apply(t)), row.map_types(|arg| self.apply(arg)))
+            }
+            Type::Delayed(inner, row) => {
+                Type::delayed(self.apply(inner), row.map_types(|arg| self.apply(arg)))
+            }
             atom => atom.clone(),
         }
     }
@@ -273,7 +360,15 @@ impl Unification {
             Type::Tensor(xs) | Type::Par(xs) | Type::With(xs) | Type::Sum(xs) => {
                 xs.iter().any(|x| self.occurs(var, x))
             }
-            Type::Dual(t) | Type::Rowed(t, _) => self.occurs(var, t),
+            Type::Dual(t) => self.occurs(var, t),
+            Type::Rowed(inner, row) | Type::Delayed(inner, row) => {
+                self.occurs(var, inner)
+                    || row
+                        .effects
+                        .iter()
+                        .flat_map(|effect| &effect.args)
+                        .any(|argument| self.occurs(var, argument))
+            }
             Type::Named(_, args) => args.iter().any(|a| self.occurs(var, a)),
             _ => false,
         }
@@ -293,6 +388,40 @@ impl Unification {
     /// same row on both sides.
     pub fn unify(&mut self, expected: &Type, actual: &Type) -> Result<Type, TypeError> {
         self.unify_in(expected, actual, false, false)
+    }
+
+    pub fn set_latent_decls(
+        &mut self,
+        declarations: impl IntoIterator<Item = (String, Row, Option<usize>)>,
+    ) {
+        self.latent_decls = declarations
+            .into_iter()
+            .map(|(name, row, parameter)| (name, (row, parameter)))
+            .collect();
+    }
+
+    pub fn latent_row(&mut self, ty: &Type) -> Row {
+        let Type::Dual(inner) = self.apply(ty) else { return Row::default() };
+        let Type::Named(name, arguments) = *inner else { return Row::default() };
+        let Some((mut row, parameter)) = self.latent_decls.get(&name).cloned() else {
+            return Row::default();
+        };
+        row = row.map_types(|argument| argument.instantiate(&arguments));
+        if let Some(argument) = parameter.and_then(|index| arguments.get(index)) {
+            let argument = self.apply(argument);
+            let given = match argument {
+                Type::Rowed(unit, given) if *unit == Type::ONE => given,
+                Type::Var(variable) if !self.rigid.contains(&variable) => {
+                    let fresh = Row { effects: Default::default(), tail: Some(self.fresh_row()) };
+                    let _ = self.bind(variable, Type::rowed(Type::ONE, fresh.clone()));
+                    fresh
+                }
+                _ => Row::default(),
+            };
+            row.effects.extend(given.effects);
+            row.tail = given.tail;
+        }
+        row
     }
 
     fn fit_rows(&mut self, expected: &Row, actual: &Row, nested: bool) {
@@ -346,6 +475,21 @@ impl Unification {
             }
             // A row is compared, not unified: the value's must fit inside the
             // slot's. A type without one performs nothing.
+            (Type::Delayed(inner_a, row_a), Type::Delayed(inner_b, row_b)) => {
+                self.unify_in(inner_a, inner_b, nested, flipped)?;
+                self.fit_rows(row_a, row_b, nested);
+                Ok(self.apply(&expected))
+            }
+            (Type::Delayed(inner, row), other) => {
+                self.unify_in(inner, other, nested, flipped)?;
+                self.fit_rows(row, &Row::default(), nested);
+                Ok(self.apply(&expected))
+            }
+            (other, Type::Delayed(inner, row)) => {
+                self.unify_in(other, inner, nested, flipped)?;
+                self.fit_rows(&Row::default(), row, nested);
+                Ok(self.apply(&expected))
+            }
             (Type::Rowed(a, row_a), Type::Rowed(b, row_b)) => {
                 let (row_a, row_b) = (row_a.clone(), row_b.clone());
                 self.unify_in(a, b, nested, flipped)?;
@@ -361,7 +505,8 @@ impl Unification {
             (other, Type::Rowed(b, row_b)) => {
                 let row_b = row_b.clone();
                 self.unify_in(other, b, nested, flipped)?;
-                self.fit_rows(&Row::default(), &row_b, nested);
+                let allowed = self.latent_row(other);
+                self.fit_rows(&allowed, &row_b, false);
                 Ok(self.apply(&expected))
             }
             (Type::Dual(a), Type::Dual(b)) => self.unify_in(a, b, nested, !flipped),
@@ -387,6 +532,14 @@ impl Unification {
                 Ok(self.apply(&expected))
             }
             (Type::Named(a, xs), Type::Named(b, ys)) if a == b && xs.len() == ys.len() => {
+                if a == "Handler" {
+                    let args = xs
+                        .iter()
+                        .zip(ys)
+                        .map(|(expected, actual)| self.unify_in(expected, actual, true, flipped))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(Type::Named(a.clone(), args));
+                }
                 // A row argument, carried on the unit, says what running the
                 // value performs: one that performs less fits where more is
                 // allowed, so it is fitted one way, not made equal. Which way
@@ -474,7 +627,11 @@ pub fn contains_var(ty: &Type) -> bool {
             xs.iter().any(contains_var)
         }
 
-        Type::Dual(t) | Type::Rowed(t, _) => contains_var(t),
+        Type::Dual(t) => contains_var(t),
+        Type::Rowed(inner, row) | Type::Delayed(inner, row) => {
+            contains_var(inner)
+                || row.effects.iter().flat_map(|effect| &effect.args).any(contains_var)
+        }
         Type::Named(_, args) => args.iter().any(contains_var),
         _ => false,
     }

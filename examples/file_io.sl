@@ -15,10 +15,9 @@
 // through `exit` itself. The same work could run under a handler of the
 // program's own, which answers from somewhere else.
 //
-// Once a file is open, no path may leave it behind. That is not discipline
-// at every cut — it is composition at the only door out: shadow `exit` with
-// a consumer that closes the file and then leaves, and every later
-// `| exit>` goes through the close, unhappy paths included.
+// Cleanup runs on paths routed through the wrapped exit. Earlier consumers
+// keep the exit they captured, so the failure consumers used after opening
+// the file are built after the wrapper too.
 
 command main | (exit: i32) / {IO} {
     <(,) | fs::real_command | (fn {
@@ -39,9 +38,8 @@ command main | (exit: i32) / {IO} {
         let file = mu { k <= <"examples/hello.sl" | fs::open | (k & complain)> };
 
         // From here on, `exit` *is* "close the file, then leave": the
-        // arm's `exit` is the outer one, and everything below sees only
-        // the composed door. No path past this line can finish with the
-        // file open.
+        // arm's `exit` is the outer one. The earlier `complain` still holds
+        // that original exit and is used only before acquisition.
         let exit = select i32 {
             status => {
                 <file | fs::close;

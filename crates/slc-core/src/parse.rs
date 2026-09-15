@@ -9,7 +9,7 @@
 use crate::command::Command;
 use crate::coterm::{CoCaseBranch, CoTerm};
 use crate::term::{CoMatchBranch, Term};
-use crate::types::{Base, Type};
+use crate::types::{Base, Effect, Row, Type};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
@@ -367,29 +367,31 @@ impl Parser {
                 self.pos += 1;
                 // A paren holding only its separator is that connective's unit.
                 for (unit, ty) in
-                    [(",)", Type::ONE), (";)", Type::BOTTOM), ("&)", Type::TOP), ("|)", Type::ZERO)]
+                    [(",", Type::ONE), (";", Type::BOTTOM), ("&", Type::TOP), ("|", Type::ZERO)]
                 {
                     if self.eat(unit) {
-                        return Ok(ty);
+                        return self.finish_type_group(ty);
                     }
                 }
                 let left = self.ty()?;
+                self.spaces();
+                if matches!(self.peek(), Some('/' | ')')) {
+                    return self.finish_type_group(left);
+                }
                 let separator = ["->", ",", ";", "&", "|"]
                     .into_iter()
                     .find(|separator| self.eat(separator))
                     .ok_or_else(|| self.error("expected a type connective"))?;
                 let right = self.ty()?;
                 if separator == "->" {
-                    self.expect(")")?;
                     // `A -> B` is `(dual(A) ; B)`.
-                    return Ok(Type::arrow(left, right));
+                    return self.finish_type_group(Type::arrow(left, right));
                 }
                 let mut items = vec![left, right];
                 while self.eat(separator) {
                     items.push(self.ty()?);
                 }
-                self.expect(")")?;
-                Ok(match separator {
+                self.finish_type_group(match separator {
                     "," => Type::Tensor(items),
                     ";" => Type::Par(items),
                     "&" => Type::With(items),
@@ -413,6 +415,14 @@ impl Parser {
                     self.expect(")")?;
                     return Ok(Type::Dual(Box::new(inner)));
                 }
+                if name == "Delayed" {
+                    self.expect("<")?;
+                    let inner = self.ty()?;
+                    self.expect(",")?;
+                    let row = self.row()?;
+                    self.expect(">")?;
+                    return Ok(Type::delayed(inner, row));
+                }
                 // `Name<A, B>` — a declaration applied to type arguments.
                 let mut args = Vec::new();
                 if self.eat("<") {
@@ -428,6 +438,51 @@ impl Parser {
                 Ok(Type::Named(name, args))
             }
             None => Err(self.error("expected a type")),
+        }
+    }
+
+    fn finish_type_group(&mut self, mut ty: Type) -> Result<Type, ParseError> {
+        while self.eat("/") {
+            ty = Type::rowed(ty, self.row()?);
+        }
+        self.expect(")")?;
+        Ok(ty)
+    }
+
+    fn row(&mut self) -> Result<Row, ParseError> {
+        self.expect("{")?;
+        let mut row = Row::default();
+        if self.eat("}") {
+            return Ok(row);
+        }
+        loop {
+            if self.eat("..?") {
+                if row.tail.is_some() {
+                    return Err(self.error("an effect row has at most one tail"));
+                }
+                row.tail = Some(
+                    self.name()?
+                        .parse()
+                        .map_err(|_| self.error("expected a row variable index"))?,
+                );
+            } else {
+                let name = self.name()?;
+                let mut args = Vec::new();
+                if self.eat("<") {
+                    loop {
+                        args.push(self.ty()?);
+                        if !self.eat(",") {
+                            self.expect(">")?;
+                            break;
+                        }
+                    }
+                }
+                row.effects.insert(Effect { name, args });
+            }
+            if !self.eat(",") {
+                self.expect("}")?;
+                return Ok(row);
+            }
         }
     }
 

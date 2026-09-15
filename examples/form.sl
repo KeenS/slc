@@ -13,11 +13,11 @@
 // A record carries every field; a form wants every field. Its fields name
 // what flows *in*, so `form Report` denotes `(-i64 ; -String)`.
 
-form Report { value: i64, label: String }
+form Report / {IO} { value: i64, label: String }
 
 // `select` builds the form value, exactly as it builds a menu value: the arm
 // binds the whole demand — every field at once — and runs a command.
-fn printer(out: -i64) -> Report / {IO} {
+fn printer(out: -i64) -> Report {
     select Report {
         Report { value, label } => {
             <label | println;

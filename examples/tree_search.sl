@@ -15,7 +15,7 @@ enum Tree {
     Node(Tree, i64, Tree),
 }
 
-command walk(t: Tree, target: i64) | (jump: i64 & done: unit) / {IO} {
+command walk<E>(t: Tree, target: i64) | (jump: (-i64 / {..E}) & done: (-unit / {IO, ..E})) / {IO, ..E} {
     match t {
         Leaf => <(,) | done>,
         Node(left, value, right) => {

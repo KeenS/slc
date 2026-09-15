@@ -34,9 +34,10 @@ thread_local! {
     /// its menu of exits.
     static CALL_GROUPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     static FLOWS: RefCell<HashMap<Span, FlowShape>> = RefCell::new(HashMap::new());
+    static ELABORATED: RefCell<HashMap<Span, Node<Expr>>> = RefCell::new(HashMap::new());
     /// Expression span → the swap its value needs: it is used at the
     /// mirrored `;` spelling of its type.
-    static SWAPS: RefCell<HashMap<Span, Swap>> = RefCell::new(HashMap::new());
+    static SWAPS: RefCell<HashMap<Span, usize>> = RefCell::new(HashMap::new());
     static PARS: RefCell<HashMap<Span, Vec<bool>>> = RefCell::new(HashMap::new());
     /// The spans of the computations a plain `let` delays: negative, and
     /// not values, so each runs where its result is demanded.
@@ -84,6 +85,7 @@ pub struct Projection {
 
 #[derive(Debug, Clone, Default)]
 pub struct DispatchInfo {
+    pub elaborated: HashMap<Span, Node<Expr>>,
     pub methods: HashMap<Span, MethodDispatch>,
     pub calls: HashMap<Span, Vec<DictExpr>>,
     /// Projection span → what `.i` or `.field` resolved to.
@@ -100,7 +102,8 @@ pub struct DispatchInfo {
     pub flows: HashMap<Span, FlowShape>,
     /// Expression span → the swap its value needs, where a value of `(A ; B)`
     /// is stored at, passed as, or returned for `(B ; A)`.
-    pub swaps: HashMap<Span, Swap>,
+    pub swaps: HashMap<Span, usize>,
+    pub adapters: Vec<Adapter>,
     /// Form value span → whether each component is positive: a consumer takes
     /// its part, and a value is taken by it.
     pub pars: HashMap<Span, Vec<bool>>,
@@ -115,6 +118,7 @@ pub struct DispatchInfo {
 /// What a flow chain does, read off the types at its ends.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FlowShape {
+    pub yielding: Option<usize>,
     /// The chain begins with a function or a consumer rather than a value,
     /// so it denotes one: `f | k` is `λx. x | f | k`.
     pub eta: bool,
@@ -133,11 +137,141 @@ pub struct FlowShape {
     /// its other spelling: `(A ; B)` where `(B ; A)` is wanted. The two are one
     /// type, but a value of it is a closure facing one way, so it is lowered
     /// through the swap that faces it the other.
-    pub swap: Option<Swap>,
+    pub swap: Option<usize>,
     /// Stages whose result meets the next stage at the other spelling of its
     /// type, with the swap that turns the result around between the two
     /// steps.
-    pub turned: Vec<(usize, Swap)>,
+    pub turned: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Adapter {
+    Identity,
+    Swap(Swap),
+    Compose(usize, usize),
+    Function { input: usize, output: usize },
+    Consumer { input: usize },
+    Product { items: Vec<usize>, additive: bool },
+    ReverseProduct(Swap),
+    Tagged { owner: String, branches: Vec<(String, Vec<usize>)> },
+    Menu { owner: String, answers: Vec<(String, usize)> },
+}
+
+fn adapter_name(index: usize) -> String {
+    format!("$adapter_{index}")
+}
+
+fn adapt_term(value: Term, adapter: usize) -> Term {
+    call_curried(
+        Term::Var("$adapt".into()),
+        vec![Term::Tuple(vec![Term::Var(adapter_name(adapter)), value])],
+    )
+}
+
+fn adapter_definition(adapter: &Adapter) -> Term {
+    let value = || Term::Var("$adapt_value".into());
+    let returned = |term| Command::Cut(term, CoTerm::Covar("$adapt_return".into()));
+    let body = match adapter {
+        Adapter::Identity => value(),
+        Adapter::Swap(swap) => swap_adapter(value(), *swap),
+        Adapter::Compose(first, second) => adapt_term(adapt_term(value(), *first), *second),
+        Adapter::Function { input, output } => Term::Lam(
+            "$adapt_argument".into(),
+            Box::new(adapt_term(
+                call_curried(
+                    value(),
+                    vec![adapt_term(Term::Var("$adapt_argument".into()), *input)],
+                ),
+                *output,
+            )),
+        ),
+        Adapter::Consumer { input } => Term::Lam(
+            "$adapt_argument".into(),
+            Box::new(call_curried(
+                value(),
+                vec![adapt_term(Term::Var("$adapt_argument".into()), *input)],
+            )),
+        ),
+        Adapter::ReverseProduct(_) => Term::Mu(
+            "$adapt_return".into(),
+            Box::new(Command::Cut(
+                value(),
+                CoTerm::MuTildeTensor(
+                    vec!["$adapt_left".into(), "$adapt_right".into()],
+                    Box::new(returned(Term::Tuple(vec![
+                        Term::Var("$adapt_right".into()),
+                        Term::Var("$adapt_left".into()),
+                    ]))),
+                ),
+            )),
+        ),
+        Adapter::Product { items, .. } => {
+            let binders: Vec<String> =
+                (0..items.len()).map(|index| format!("$adapt_part_{index}")).collect();
+            let parts = binders
+                .iter()
+                .zip(items)
+                .map(|(name, adapter)| adapt_term(Term::Var(name.clone()), *adapter))
+                .collect();
+            Term::Mu(
+                "$adapt_return".into(),
+                Box::new(Command::Cut(
+                    value(),
+                    CoTerm::MuTildeTensor(binders, Box::new(returned(Term::Tuple(parts)))),
+                )),
+            )
+        }
+        Adapter::Tagged { owner, branches } => {
+            let branches = branches
+                .iter()
+                .map(|(label, items)| {
+                    let binders: Vec<String> =
+                        (0..items.len()).map(|index| format!("$adapt_part_{index}")).collect();
+                    let parts = binders
+                        .iter()
+                        .zip(items)
+                        .map(|(name, adapter)| adapt_term(Term::Var(name.clone()), *adapter))
+                        .collect();
+                    CoCaseBranch {
+                        label: label.clone(),
+                        binders,
+                        body: Box::new(returned(Term::Tag(
+                            label.clone(),
+                            Box::new(pack_group(parts)),
+                        ))),
+                    }
+                })
+                .collect();
+            Term::Mu(
+                "$adapt_return".into(),
+                Box::new(Command::Cut(value(), CoTerm::CoCase { owner: owner.clone(), branches })),
+            )
+        }
+        Adapter::Menu { owner, answers } => Term::CoMatch {
+            owner: owner.clone(),
+            branches: answers
+                .iter()
+                .map(|(label, adapter)| CoMatchBranch {
+                    label: label.clone(),
+                    binder: "$adapt_continuation".into(),
+                    body: Box::new(Command::Cut(
+                        value(),
+                        CoTerm::Dtor(
+                            label.clone(),
+                            Box::new(CoTerm::MuTilde(
+                                "$adapt_answer".into(),
+                                Box::new(Command::Cut(
+                                    adapt_term(Term::Var("$adapt_answer".into()), *adapter),
+                                    CoTerm::Covar("$adapt_continuation".into()),
+                                )),
+                            )),
+                        ),
+                    )),
+                })
+                .collect(),
+        },
+    };
+    Term::Lam("$adapt_value".into(), Box::new(body))
 }
 
 /// The polarities of a `;` value's two halves, `(left ; right)`, which is what
@@ -319,17 +453,28 @@ pub fn lower_program_resolving(
     DEMANDS.with(|cell| *cell.borrow_mut() = dispatch.demands.clone());
     CALL_GROUPS.with(|cell| *cell.borrow_mut() = dispatch.call_groups.clone());
     FLOWS.with(|cell| *cell.borrow_mut() = dispatch.flows.clone());
+    ELABORATED.with(|cell| *cell.borrow_mut() = dispatch.elaborated.clone());
     SWAPS.with(|cell| *cell.borrow_mut() = dispatch.swaps.clone());
     PARS.with(|cell| *cell.borrow_mut() = dispatch.pars.clone());
     DELAYS.with(|cell| *cell.borrow_mut() = dispatch.delays.clone());
     RUNS.with(|cell| *cell.borrow_mut() = dispatch.runs.clone());
-    let result = lower_program(p);
+    let result = lower_program(p).map(|mut definitions| {
+        definitions.extend(
+            dispatch
+                .adapters
+                .iter()
+                .enumerate()
+                .map(|(index, adapter)| (adapter_name(index), adapter_definition(adapter))),
+        );
+        definitions
+    });
     METHODS.with(|cell| cell.borrow_mut().clear());
     CALLS.with(|cell| cell.borrow_mut().clear());
     PROJECTIONS.with(|cell| cell.borrow_mut().clear());
     DEMANDS.with(|cell| cell.borrow_mut().clear());
     CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
     FLOWS.with(|cell| cell.borrow_mut().clear());
+    ELABORATED.with(|cell| cell.borrow_mut().clear());
     SWAPS.with(|cell| cell.borrow_mut().clear());
     PARS.with(|cell| cell.borrow_mut().clear());
     DELAYS.with(|cell| cell.borrow_mut().clear());
@@ -404,9 +549,10 @@ fn lower_types(items: &[Node<TypeExpr>]) -> Result<Vec<Type>, LowerError> {
 /// Lower an expression, turned around first if the checker found its value
 /// used at the mirrored `;` spelling of its type.
 fn lower_expr(e: &Node<Expr>, continuations: &[String]) -> Result<Term, LowerError> {
-    let term = lower_expr_facing(e, continuations)?;
+    let elaborated = ELABORATED.with(|cell| cell.borrow().get(&e.span).cloned());
+    let term = lower_expr_facing(elaborated.as_ref().unwrap_or(e), continuations)?;
     Ok(match SWAPS.with(|cell| cell.borrow().get(&e.span).copied()) {
-        Some(swap) => swap_adapter(term, swap),
+        Some(adapter) => adapt_term(term, adapter),
         None => term,
     })
 }
@@ -552,7 +698,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         }
         // `::i(v)`: the alternative at position `i`, labelled by it alone.
         Expr::Inject { index, value } => {
-            Ok(Term::Tag(alternative_label(*index), Box::new(lower_expr(value, continuations)?)))
+            Ok(Term::Tag(alternative_label(*index), Box::new(lower_by_name(value, continuations)?)))
         }
         Expr::Pair(items) => Ok(pack_group(
             items
@@ -585,6 +731,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     cut: *into_consumer,
                     commuted: Vec::new(),
                     row_stage: None,
+                    yielding: None,
                     swap: None,
                     turned: Vec::new(),
                 });
@@ -595,7 +742,13 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             for (index, stage) in stages.iter().enumerate() {
                 let term = lower_flow_stage(stage, continuations)?;
                 // What flows in stands by name.
-                lowered.push(if index == 0 { delay_if_delayed(stage.span, term) } else { term });
+                lowered.push(
+                    if index == 0 || (shape.yielding.is_some() && index + 1 == stages.len()) {
+                        delay_if_delayed(stage.span, term)
+                    } else {
+                        term
+                    },
+                );
             }
             // A command takes both its groups from the chain: what flowed
             // in that far is its values, and the closing stage its menu of
@@ -608,10 +761,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 shape.commuted.iter().map(|i| i + usize::from(shape.eta)).collect();
             // A result the next stage takes at the other spelling of its type
             // is turned around between the two steps.
-            let turned: Vec<(usize, Swap)> =
+            let turned: Vec<(usize, usize)> =
                 shape.turned.iter().map(|(i, swap)| (i + usize::from(shape.eta), *swap)).collect();
             let turn = |at: usize, acc: Term| match turned.iter().find(|(i, _)| *i == at) {
-                Some((_, swap)) => swap_adapter(acc, *swap),
+                Some((_, adapter)) => adapt_term(acc, *adapter),
                 None => acc,
             };
             let fold = |steps: Vec<Term>| {
@@ -619,11 +772,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 let (first, mut acc) = steps.next().expect("a flow has a first stage");
                 acc = turn(first, acc);
                 for (at, stage) in steps {
-                    acc = if commuted.contains(&at) {
-                        turned_step(stage, acc, at)
-                    } else {
-                        call_curried(stage, vec![acc])
-                    };
+                    acc = flow_step(stage, acc, commuted.contains(&at).then_some(at));
                     acc = turn(at, acc);
                 }
                 acc
@@ -634,7 +783,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 // The stages before the command fold as any chain's do; the
                 // command is the last step and closes on its menu.
                 let values = fold(lowered);
-                let term = call_curried(callee, vec![values, row]);
+                let term = match shape.yielding {
+                    Some(count) => yielding_command(callee, values, row, count),
+                    None => call_curried(callee, vec![values, row]),
+                };
                 return Ok(if shape.eta {
                     Term::Lam(FLOW_ARGUMENT.into(), Box::new(term))
                 } else {
@@ -652,14 +804,23 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     // A value used at the mirrored spelling of its type is
                     // turned to face the consumer before it meets it.
                     let acc = match shape.swap {
-                        Some(swap) => swap_adapter(acc, swap),
+                        Some(adapter) => adapt_term(acc, adapter),
                         None => acc,
                     };
                     let command = match named_consumer(closing) {
                         Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
                         None => Command::Cut(
-                            last,
-                            CoTerm::App(acc, Box::new(CoTerm::Covar("__tail".into()))),
+                            acc,
+                            CoTerm::MuTilde(
+                                "$cut_value".into(),
+                                Box::new(Command::Cut(
+                                    last,
+                                    CoTerm::App(
+                                        Term::Var("$cut_value".into()),
+                                        Box::new(CoTerm::Covar("__tail".into())),
+                                    ),
+                                )),
+                            ),
                         ),
                     };
                     Term::Mu(cut_binder(closing), Box::new(command))
@@ -762,7 +923,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         }
         // `handle` lowers to a `__handle` call the runtime special-cases: the
         // effect name, a value encoding the clauses, and a thunk of the body.
-        Expr::Handle { body, clauses, ret } => {
+        Expr::Handle { clauses, ret, .. } | Expr::Handler { clauses, ret, .. } => {
             // Each clause → ($str_op ⊗ λpayload. λresume. body): performing
             // an operation is a call, so its arguments arrive packed, and a
             // clause of several parameters destructures them. A nullary
@@ -792,6 +953,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             };
             entries.push(Term::Tuple(vec![Term::Var("$str_\"return\"".into()), ret_closure]));
             let encoded = Term::Tuple(entries);
+            let encoded = Term::Tag("__clauses".into(), Box::new(encoded));
+            let Expr::Handle { body, .. } = &e.kind else {
+                return Ok(encoded);
+            };
             // The body stands as a command when it is one: a program of type
             // `(;)` handed in by name runs under the handler.
             let body_thunk = Term::Lam(
@@ -800,11 +965,18 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             );
             // The clause tree is wrapped so the runtime's argument collection,
             // which flattens pairs, passes it as one value.
-            Ok(call_curried(
-                Term::Var("__handle".into()),
-                vec![Term::Tag("__clauses".into(), Box::new(encoded)), body_thunk],
-            ))
+            Ok(call_curried(Term::Var("__handle".into()), vec![encoded, body_thunk]))
         }
+        Expr::WithHandler { handler, body } => Ok(call_curried(
+            Term::Var("__handle".into()),
+            vec![
+                lower_expr(handler, continuations)?,
+                Term::Lam(
+                    "$handler_body".into(),
+                    Box::new(lower_in_command_position(body, continuations)?),
+                ),
+            ],
+        )),
         Expr::Match { scrutinee, arms } => {
             // A match the core can express lowers to a genuine cut against
             // its branch table — μ̃[…], μ̃(x…), or μ̃x — with each arm's value
@@ -851,7 +1023,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // form covers both.
             let payload = fields
                 .iter()
-                .map(|(_, value)| lower_expr(value, continuations))
+                .map(|(_, value)| lower_by_name(value, continuations))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Term::Tag(name.clone(), Box::new(pack_group(payload))))
         }
@@ -975,15 +1147,19 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     return lower_in_command_position(e, continuations);
                 }
                 let t = lower_in_command_position(e, continuations)?;
-                let seq_name = format!("__seq{}", *seq_counter);
+                let mut used = slc_core::substitution::free_vars_term(&t);
+                used.extend(slc_core::substitution::free_vars_term(&rest));
+                let seq_name =
+                    slc_core::substitution::fresh(&format!("__seq{}", *seq_counter), &mut used);
+                let discarded = slc_core::substitution::fresh("__discarded", &mut used);
                 *seq_counter += 1;
                 Ok(Term::Mu(
-                    seq_name,
+                    seq_name.clone(),
                     Box::new(Command::Cut(
                         t,
                         CoTerm::MuTilde(
-                            "__discarded".into(),
-                            Box::new(Command::Cut(rest, CoTerm::Covar("__tail".into()))),
+                            discarded,
+                            Box::new(Command::Cut(rest, CoTerm::Covar(seq_name))),
                         ),
                     )),
                 ))
@@ -1171,13 +1347,21 @@ fn lower_binding(
         };
         let value = if delay {
             Term::Lam(slc_core::term::DELAY_BINDER.into(), Box::new(value))
+        } else if mode == crate::ast::LetMode::Now {
+            call_curried(Term::Var("$force".into()), vec![value])
         } else {
             value
         };
         return Ok(lower_let(name, value, body));
     }
     if matches!(pattern, Pattern::Wildcard) {
-        return Ok(lower_let(DISCARDED_BINDING, lower_expr(value, continuations)?, body));
+        let value = lower_expr(value, continuations)?;
+        let value = if mode == crate::ast::LetMode::Now {
+            call_curried(Term::Var("$force".into()), vec![value])
+        } else {
+            value
+        };
+        return Ok(lower_let(DISCARDED_BINDING, value, body));
     }
     // The one-arm match it abbreviates: the pattern's binders scope over the
     // body, so the body is the arm's own command.
@@ -1186,6 +1370,11 @@ fn lower_binding(
         LowerError::Unsupported("a binder pattern the core cannot express".into())
     })?;
     let value = lower_expr(value, continuations)?;
+    let value = if mode == crate::ast::LetMode::Now {
+        call_curried(Term::Var("$force".into()), vec![value])
+    } else {
+        value
+    };
     Ok(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(value, consumer))))
 }
 
@@ -1698,6 +1887,8 @@ fn lower_closed_flow(
     command: &Node<Expr>,
     continuations: &[String],
 ) -> Result<Option<Command>, LowerError> {
+    let elaborated = ELABORATED.with(|cell| cell.borrow().get(&command.span).cloned());
+    let command = elaborated.as_ref().unwrap_or(command);
     let Expr::Flow { stages, from_value: true, into_consumer: true } = &command.kind else {
         return Ok(None);
     };
@@ -1716,7 +1907,7 @@ fn lower_closed_flow(
     let Some((first, rest)) = flowing.split_first() else { return Ok(None) };
     let mut value = delay_if_delayed(first.span, lower_flow_stage(first, continuations)?);
     for stage in rest {
-        value = call_curried(lower_flow_stage(stage, continuations)?, vec![value]);
+        value = flow_step(lower_flow_stage(stage, continuations)?, value, None);
     }
     Ok(Some(Command::Cut(value, CoTerm::Covar(name.clone()))))
 }
@@ -1734,6 +1925,29 @@ fn turned_step(stage: Term, value: Term, at: usize) -> Term {
             CoTerm::App(value, Box::new(CoTerm::Covar(k))),
         )),
     )
+}
+
+fn flow_step(stage: Term, value: Term, commuted: Option<usize>) -> Term {
+    let pure_stage = matches!(stage, Term::Var(_) | Term::Lam(..));
+    let apply = |argument| match commuted {
+        Some(index) => turned_step(stage, argument, index),
+        None => call_curried(stage, vec![argument]),
+    };
+    if pure_stage {
+        apply(value)
+    } else {
+        let result = apply(Term::Var("$flow_argument".into()));
+        Term::Mu(
+            "$flow_binding".into(),
+            Box::new(Command::Cut(
+                value,
+                CoTerm::MuTilde(
+                    "$flow_argument".into(),
+                    Box::new(Command::Cut(result, CoTerm::Covar("$flow_binding".into()))),
+                ),
+            )),
+        )
+    }
 }
 
 /// The binder a parameterless declaration introduces for the unit its
@@ -1763,6 +1977,52 @@ fn call_curried(callee: Term, args: Vec<Term>) -> Term {
         );
     }
     result
+}
+
+fn yielding_command(callee: Term, values: Term, row: Term, count: usize) -> Term {
+    let callbacks = (0..count)
+        .map(|index| {
+            let callback = if count == 1 {
+                Term::Var("$yield_row".into())
+            } else {
+                Term::Mu(
+                    "$yield_projection".into(),
+                    Box::new(Command::Cut(Term::Var("$yield_row".into()), CoTerm::Prj(index))),
+                )
+            };
+            Term::Lam(
+                "$yield_argument".into(),
+                Box::new(Term::Mu(
+                    "$yield_callback".into(),
+                    Box::new(Command::Cut(
+                        call_curried(callback, vec![Term::Var("$yield_argument".into())]),
+                        CoTerm::Covar("$yield_out".into()),
+                    )),
+                )),
+            )
+        })
+        .collect::<Vec<_>>();
+    let exits =
+        if count == 1 { callbacks.into_iter().next().unwrap() } else { Term::Tuple(callbacks) };
+    Term::Mu(
+        "$yield_out".into(),
+        Box::new(Command::Cut(
+            values,
+            CoTerm::MuTilde(
+                "$yield_values".into(),
+                Box::new(Command::Cut(
+                    row,
+                    CoTerm::MuTilde(
+                        "$yield_row".into(),
+                        Box::new(Command::Cut(
+                            call_curried(callee, vec![Term::Var("$yield_values".into()), exits]),
+                            CoTerm::Covar("$yield_out".into()),
+                        )),
+                    ),
+                )),
+            ),
+        )),
+    )
 }
 
 fn pattern_descriptor(pattern: &Pattern) -> String {
@@ -1951,6 +2211,22 @@ mod tests {
             printed.matches("__seq0").count() >= 2,
             "user continuation must still be referenced: {printed}"
         );
+    }
+
+    #[test]
+    fn a_block_returns_through_its_own_bound_continuation() {
+        let definitions = lower_str("fn result() -> i64 { 1; 2 }");
+        let Term::Lam(_, body) = &definitions[0].1 else { panic!("expected a function") };
+        let Term::Mu(bound, command) = body.as_ref() else { panic!("expected a block") };
+        let Command::Cut(_, CoTerm::MuTilde(_, rest)) = command.as_ref() else {
+            panic!("expected a sequencing binder")
+        };
+        let Command::Cut(_, CoTerm::Covar(returned)) = rest.as_ref() else {
+            panic!("expected a return through a continuation")
+        };
+        assert_eq!(bound, returned);
+        let free = slc_core::substitution::free_vars_term(body);
+        assert_eq!(free, ["$int_1".into(), "$int_2".into()].into_iter().collect());
     }
 
     #[test]
@@ -2152,16 +2428,25 @@ mod tests {
             panic!("a cut is wrapped in a μ binder: {body}");
         };
         assert_eq!(binder, "__cut");
-        let Command::Cut(consumer, CoTerm::App(value, _)) = command.as_ref() else {
-            panic!("a computed consumer is applied to the value: {command}");
+        let Command::Cut(value, CoTerm::MuTilde(binding, apply)) = command.as_ref() else {
+            panic!("the value is evaluated before its computed consumer: {command}");
         };
+        let Command::Cut(consumer, CoTerm::App(argument, _)) = apply.as_ref() else {
+            panic!("the computed consumer receives the saved value: {apply}");
+        };
+        assert_eq!(argument, &Term::Var(binding.clone()));
         assert!(format!("{consumer}").contains("pick"), "the consumer is evaluated: {consumer}");
         assert_eq!(value, &Term::Var("$int_1".into()));
 
         let open = lower_str("fn f(ignored: +i32) -> i32 { <1 | pick(2) }");
         let Term::Lam(_, body) = &open[0].1 else { panic!("expected a value binder") };
-        let Term::Mu(binder, _) = body.as_ref() else { panic!("an application: {body}") };
-        assert_eq!(binder, "__call");
+        let Term::Mu(binder, command) = body.as_ref() else { panic!("an application: {body}") };
+        assert_eq!(binder, "$flow_binding");
+        let Command::Cut(value, CoTerm::MuTilde(_, application)) = command.as_ref() else {
+            panic!("the value is bound before computing the stage: {command}");
+        };
+        assert_eq!(value, &Term::Var("$int_1".into()));
+        assert!(format!("{application}").contains("pick"));
     }
 
     #[test]

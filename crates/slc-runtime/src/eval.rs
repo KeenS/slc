@@ -83,6 +83,7 @@ pub fn run_node(
 /// A variable is a lowered literal, a builtin constant, or a binding.
 pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> {
     match x {
+        "$force" | "$adapt" => return Ok(Value::Builtin(x.into())),
         n if n.starts_with("$int_") => {
             let v: i64 = n[5..].parse().map_err(|_| EvalError::Unbound(x.to_string()))?;
             return Ok(Value::Int(v));
@@ -141,6 +142,7 @@ pub(crate) fn is_applicable(v: &Value) -> bool {
         v,
         Value::Closure { .. }
             | Value::Delayed { .. }
+            | Value::Adapted { .. }
             | Value::CoCase { .. }
             | Value::CoTensor { .. }
             | Value::Kont(_)

@@ -52,7 +52,7 @@ mod seq {
     }
 
     // Every stream is a sequence that never ends.
-    pub fn of_stream<+T>(s: Stream<T>) -> Seq<T> {
+    pub fn of_stream<+T, E>(s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
         mu Seq {
             next <= <Step::Yield(s.head, <s.tail | of_stream) | next>,
         }
@@ -97,7 +97,7 @@ mod seq {
     // The other bridge: a stream, cut where a value stops passing. The
     // result can end, so it is a `Seq` — the type says what the function
     // does.
-    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Stream<T>) -> Seq<T, ..E> {
+    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
         mu Seq {
             next <= match <s.head | keep {
                 True => <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>,

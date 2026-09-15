@@ -4,10 +4,10 @@
 //   data App     holds a menu        — codata stored in data
 //   enum Slot    holds a form        — a consumer stored in a variant
 //   menu Session answers an enum     — and one item is itself a menu
-//   form Handler is fed an enum      — the consumer branches on data
+//   form CommandSink is fed an enum  — the consumer branches on data
 //
 // A consumer is a value like any other: a raw continuation sits in a
-// positive record bare (Handler's `out`), named negatives likewise.
+// positive record bare (CommandSink's `out`), named negatives likewise.
 
 enum Cmd {
     Quit,
@@ -46,14 +46,14 @@ fn session(n: i64) -> Session {
 }
 
 // ─── a form fed an enum: the consumer branches on the data it receives ───
-form Handler {
+form CommandSink {
     cmd: Cmd,
     out: -String,
 }
 
-fn handler() -> Handler {
-    select Handler {
-        Handler { cmd, out } => match cmd {
+fn command_sink() -> CommandSink {
+    select CommandSink {
+        CommandSink { cmd, out } => match cmd {
             Quit => <"quit" | out>,
             Step(k) => <k | to_string | out>,
         },
@@ -63,7 +63,7 @@ fn handler() -> Handler {
 // ─── an enum payload holding a form value ───
 enum Slot {
     Vacant,
-    Holds(Handler),
+    Holds(CommandSink),
 }
 
 command main | (exit: i32) / {IO} {
@@ -82,11 +82,11 @@ command main | (exit: i32) / {IO} {
         Step(k) => <k | println,
     };
 
-    <mu String { ans <= <Handler { cmd: Step(7), out: ans } | handler()> } | println;
+    <mu String { ans <= <CommandSink { cmd: Step(7), out: ans } | command_sink()> } | println;
 
-    match Holds(handler()) {
+    match Holds(command_sink()) {
         Vacant => <"idle" | println,
-        Holds(h) => <mu String { ans <= <Handler { cmd: Quit, out: ans } | h> } | println,
+        Holds(h) => <mu String { ans <= <CommandSink { cmd: Quit, out: ans } | h> } | println,
     };
 
     <0 | exit>

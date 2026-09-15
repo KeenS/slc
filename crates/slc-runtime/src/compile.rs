@@ -71,7 +71,9 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             if x == slc_core::term::DELAY_BINDER { Node::Delay(body) } else { Node::Lam(body) }
         }
         Term::Mu(a, c) => {
-            let body = compile_cmd(c, &scope.with(std::slice::from_ref(a)), chunk);
+            let inner = scope.with(std::slice::from_ref(a));
+            let body = compile_sequence(a, c, &inner, chunk)
+                .unwrap_or_else(|| compile_cmd(c, &inner, chunk));
             Node::Mu(body)
         }
         Term::Tuple(items) => {
@@ -141,4 +143,63 @@ fn compile_cmd(c: &Command, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         }
     };
     chunk.push(node)
+}
+
+fn compile_sequence(
+    returned: &str,
+    command: &Command,
+    scope: &Scope,
+    chunk: &mut Chunk,
+) -> Option<NodeId> {
+    let Command::Cut(first, CoTerm::MuTilde(discarded, next)) = command else { return None };
+    let Command::Cut(rest, CoTerm::Covar(target)) = next.as_ref() else { return None };
+    if target != returned
+        || discarded == returned
+        || slc_core::substitution::free_vars_term(first).contains(returned)
+        || slc_core::substitution::free_vars_term(rest).contains(returned)
+    {
+        return None;
+    }
+    let first = compile_ir(first, scope, chunk);
+    let rest = compile_ir(rest, &scope.with(std::slice::from_ref(discarded)), chunk);
+    let forward = chunk.push(Node::Forward);
+    let next = chunk.push(Node::Cut(rest, forward));
+    let binder = chunk.push(Node::MuTilde(next));
+    Some(chunk.push(Node::Cut(first, binder)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_nonescaping_sequence_return_becomes_forwarding() {
+        for (first, rest, discarded, forwarding) in [
+            ("$int_1", "$int_2", "ignored", true),
+            ("returned", "$int_2", "ignored", false),
+            ("$int_1", "returned", "ignored", false),
+            ("$int_1", "$int_2", "returned", false),
+        ] {
+            let term = Term::Mu(
+                "returned".into(),
+                Box::new(Command::Cut(
+                    Term::Var(first.into()),
+                    CoTerm::MuTilde(
+                        discarded.into(),
+                        Box::new(Command::Cut(
+                            Term::Var(rest.into()),
+                            CoTerm::Covar("returned".into()),
+                        )),
+                    ),
+                )),
+            );
+            let (chunk, root) = compile_term(&term);
+            let Node::Mu(command) = chunk.node(root) else { panic!("expected a capture") };
+            let Node::Cut(_, binder) = chunk.node(*command) else { panic!("expected a cut") };
+            let Node::MuTilde(command) = chunk.node(*binder) else { panic!("expected a binder") };
+            let Node::Cut(_, returned) = chunk.node(*command) else { panic!("expected a return") };
+            assert_eq!(matches!(chunk.node(*returned), Node::Forward), forwarding);
+            assert!(matches!(chunk.node(*returned), Node::Forward | Node::CoLocal(_)));
+        }
+    }
 }

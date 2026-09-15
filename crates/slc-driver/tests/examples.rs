@@ -25,6 +25,51 @@ fn run_example(name: &str) -> (String, String, bool) {
 }
 
 #[test]
+fn updated_feature_examples_have_exact_outputs() {
+    for (name, expected) in [
+        ("handler_forwarding.sl", "complete: 30\nforwarded: 42\n"),
+        ("escaping_exits.sl", "stored without running\ntick on activation\n42\n"),
+        ("handler_answers.sl", "resumed: answer: 42\n"),
+        ("consumer_returns.sl", "1\nreturned from sink\nconsumer constructed\n2\n"),
+        ("stream_effects.sl", "built, not demanded\n[10, 20, 30]\n[100, 200, 300]\n[2, 4]\n"),
+        (
+            "by_name_components.sl",
+            "positive field\nstored\nrecord build\n11\nrecord build\n22\nchoice build\n33\n",
+        ),
+        (
+            "delayed_bundle.sl",
+            "stored\nbuild for value\n10\nbuild for callback\nprojected, not activated\nbuild again\nuse callback\n41\n",
+        ),
+        (
+            "flow_evaluation.sl",
+            "0\n0\n0\nbuild at demand\nbuild at demand\n23\nbuild at demand\nbuild at demand\n23\nbuild at demand\nbuild at demand\n23\n",
+        ),
+        ("yielding_commands.sl", "14\n-14\n42\n"),
+        ("handler_values.sl", "140\n72\n42\n"),
+        ("generic_effects.sl", "42\nhello\n7\n"),
+        ("composable_capture.sl", "30\n"),
+        (
+            "structural_adapters.sl",
+            "7\n42\nstored\nbuild now\nready\nuse\n11\nbuild again\nuse\n22\n",
+        ),
+        ("inferred_demand.sl", "0\ndemand\ndemand\n3\nstored\ncalled\n42\ncalled\n42\n"),
+        (
+            "delayed_and_lazy.sl",
+            "build now\nready\nuse\nuse\n11\n12\nbuild again\n23\nlazy build\nlazy ready\nlazy use\n34\n",
+        ),
+        (
+            "lazy_effect_phases.sl",
+            "factory build\nfactory ready\nfirst use\n11\nsecond use\n12\nlazy build\nlazy ready\nthird use\n23\nfourth use\n24\nlazy rebuild\nfifth use\n35\n",
+        ),
+    ] {
+        let (stdout, stderr, success) = run_example(name);
+        assert!(success, "{name}: stdout={stdout:?}, stderr={stderr:?}");
+        assert!(stderr.is_empty(), "{name}: {stderr}");
+        assert_eq!(stdout, expected, "{name}");
+    }
+}
+
+#[test]
 fn repository_example_suite_has_expected_results() {
     let expected = [
         (

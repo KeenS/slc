@@ -26,7 +26,7 @@ const ROWS: &[Row] = &[
         source: "enum Color { Red } fn f() -> Color { Color::Red }",
         core: "Color::Red($unit)",
     },
-    Row { id: "expr.call", source: "fn f() -> i32 { g(1) }", core: "⟨g ∥ $int_1 · __call⟩" },
+    Row { id: "expr.call", source: "fn f() -> i32 { g() }", core: "⟨g ∥ $unit · __call⟩" },
     Row { id: "expr.lambda", source: "fn f() -> i32 { fn(x: +i32) -> i32 { x } }", core: "λx. x" },
     Row { id: "expr.pair", source: "fn f() -> i32 { (1, 2) }", core: "($int_1 ⊗ $int_2)" },
     Row { id: "expr.inject", source: "fn f() -> i64 { ::0(1) }", core: "|0($int_1)" },
@@ -41,8 +41,8 @@ const ROWS: &[Row] = &[
     Row { id: "expr.block", source: "fn f() -> i32 { println(1); 2 }", core: "μ̃__discarded." },
     Row {
         id: "expr.mu",
-        source: "fn f() -> i32 { mu i32 { k <= k(1) } }",
-        core: "μk. ⟨μ__call. ⟨k ∥ $int_1 · __call⟩ ∥ k⟩",
+        source: "fn f() -> i32 { mu i32 { k <= <1 | k> } }",
+        core: "μk. ⟨μ__cut. ⟨$int_1 ∥ k⟩ ∥ k⟩",
     },
     Row {
         id: "expr.match",
@@ -62,12 +62,22 @@ const ROWS: &[Row] = &[
     Row {
         id: "expr.consumer_argument",
         // A consumer is a value: it passes as an ordinary argument.
-        source: "fn f(k: -i64) <- i64 { g(k) }",
+        source: "fn f(k: -i64) <- i64 { <k | g }",
         core: "⟨g ∥ k · __call⟩",
     },
-    Row { id: "decl.fn.positive", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
-    Row { id: "decl.fn.negative", source: "fn f(k: -i32) <- i32 { k(1) }", core: "λk." },
-    Row { id: "decl.mu", source: "command f(x: +i32) | (k: -i32) { k(x) }", core: "λx. λk." },
+    Row {
+        id: "expr.handler",
+        source: "effect Reader { fn read() -> i64; } fn f() -> Handler<i64, i64, {Reader}, {}> { handler Reader { read(): resume => <1 | resume } }",
+        core: "__clauses",
+    },
+    Row {
+        id: "expr.with_handler",
+        source: "fn f(reader: Handler<i64, i64, {}, {}>) -> i64 { with reader handle 42 }",
+        core: "__handle",
+    },
+    Row { id: "decl.fn.returning", source: "fn f(x: +i32) -> i32 { x }", core: "λx. x" },
+    Row { id: "decl.fn.transformer", source: "fn f(k: -i32) <- i32 { <1 | k> }", core: "λk." },
+    Row { id: "decl.mu", source: "command f(x: +i32) | (k: -i32) { <x | k> }", core: "λx. λk." },
     Row { id: "decl.const", source: "const C: +i32 = 1;", core: "$int_1" },
     Row {
         id: "expr.request",

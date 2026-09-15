@@ -225,6 +225,7 @@ fn make() -> (i64 -> i64) / {Exn} {
 }
 
 fn apply5(f: (i64 -> i64)) -> i64 { <5 | f }
+fn apply5_effectful(f: Delayed<(i64 -> i64), {Exn}>) -> i64 / {Exn} { <5 | f }
 
 enum Held { Holds((i64 -> i64)) }
 "#;
@@ -246,8 +247,8 @@ fn a_delayed_computation_performs_under_the_handler_around_its_use() {
             // Run with `let+` under the handler where it is written.
             let g = handle { let+ made = make(); made } { throw(m) => fn(n: i64) { 0 }, };
             <5 | g | println;
-            // What flows into a callee is computed at the call.
-            let c = handle <make() | apply5 { throw(m) => -3, };
+            // What flows into a callee is demanded by the callee.
+            let c = handle <make() | apply5_effectful { throw(m) => -3, };
             <c | println;
             // Stored, it carries its row on its type, and never runs unused.
             let t = (make(), 1);
@@ -287,7 +288,7 @@ fn a_delayed_computation_that_escapes_its_handler_is_refused() {
 }
 
 #[test]
-fn a_declaration_returning_a_delayed_computation_performs_its_row() {
+fn a_declaration_returning_a_delayed_computation_preserves_its_row() {
     let source = format!(
         "{DELAYED_DECLS}
         fn later() -> (i64 -> i64) {{ let- f = make(); f }}
@@ -296,7 +297,7 @@ fn a_declaration_returning_a_delayed_computation_performs_its_row() {
     );
     let (_, stderr, ok) = run_sl_with(&[], "slc_test_delayed_returned.sl", &source);
     assert!(!ok);
-    assert!(stderr.contains("`later` performs `Exn`"), "{stderr}");
+    assert!(stderr.contains("`later` hands on a value that performs `Exn`"), "{stderr}");
 }
 
 // A row follows the value that carries it, wherever names cannot
@@ -638,7 +639,7 @@ fn named_error_propagation_success_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_ok.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String) | (ok: -String & err: -String) {
+        r#"command parse<E>(input: +String) | (ok: (-String / {..E}) & err: (-String / {..E})) / {..E} {
             match (<(input, "ok") | eq) { True => <"parsed" | ok>, _ => <"failed" | err> }
         }
         command main | (exit: -i32) / {IO} {
@@ -658,7 +659,7 @@ fn named_error_propagation_error_path() {
     let dir = std::env::temp_dir().join("slc_test_named_error_err.sl");
     std::fs::write(
         &dir,
-        r#"command parse(input: +String) | (ok: -String & err: -String) {
+        r#"command parse<E>(input: +String) | (ok: (-String / {..E}) & err: (-String / {..E})) / {..E} {
             match (<(input, "ok") | eq) { True => <"parsed" | ok>, _ => <"failed" | err> }
         }
         command main | (exit: -i32) / {IO} {
@@ -678,7 +679,7 @@ fn json_selected_error_continuation_reports_parse_error() {
     let dir = std::env::temp_dir().join("slc_test_json_selected_error.sl");
     std::fs::write(
         &dir,
-        r#"command parse_json(input: +String) | (ok: -String & err: -String) {
+        r#"command parse_json<E>(input: +String) | (ok: (-String / {..E}) & err: (-String / {..E})) / {..E} {
             let start = <(input, 0) | skip_ws;
             match (<(start, (<input | str_len)) | lt) {
                 True => match (<(input, start) | index) {
@@ -1174,6 +1175,11 @@ fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
         fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
             handle <(,) | program {
                 read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+                fs::write_file(path, text): resume => <::0((,)) | resume,
+                fs::open_file(path): resume => <::1("not supported") | resume,
+                fs::read_line_of(file): resume => <::1((,)) | resume,
+                fs::close_file(file): resume => <(,) | resume,
+                fs::file_exists(path): resume => <False | resume,
             }
         }
 
@@ -1195,7 +1201,14 @@ fn a_computation_is_handed_to_a_handler_as_fn_braces() {
         &[],
         "slc_test_fn_braces.sl",
         r#"fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            handle <(,) | program { fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume }
+            handle <(,) | program {
+                fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+                fs::write_file(path, text): resume => <::0((,)) | resume,
+                fs::open_file(path): resume => <::1("not supported") | resume,
+                fs::read_line_of(file): resume => <::1((,)) | resume,
+                fs::close_file(file): resume => <(,) | resume,
+                fs::file_exists(path): resume => <False | resume,
+            }
         }
 
         fn shout(path: String) -> String / {fs::Fs} {
@@ -1222,7 +1235,14 @@ fn a_program_ending_in_a_cut_is_handed_to_a_command_handler() {
         "slc_test_command_handler.sl",
         r#"// The program leaves through `exit`, so it is `(;)`: a command's exit.
         command canned<E> | (program: ((;) / {fs::Fs, ..E})) / {..E} {
-            handle program { fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume }
+            handle program {
+                fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+                fs::write_file(path, text): resume => <::0((,)) | resume,
+                fs::open_file(path): resume => <::1("not supported") | resume,
+                fs::read_line_of(file): resume => <::1((,)) | resume,
+                fs::close_file(file): resume => <(,) | resume,
+                fs::file_exists(path): resume => <False | resume,
+            }
         }
 
         command main | (exit: -i32) / {IO} {
@@ -1263,6 +1283,11 @@ fn a_handler_clause_names_its_operation_by_path() {
         r#"fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
             handle <(,) | program {
                 fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
+                fs::write_file(path, text): resume => <::0((,)) | resume,
+                fs::open_file(path): resume => <::1("not supported") | resume,
+                fs::read_line_of(file): resume => <::1((,)) | resume,
+                fs::close_file(file): resume => <(,) | resume,
+                fs::file_exists(path): resume => <False | resume,
             }
         }
 
@@ -1276,6 +1301,39 @@ fn a_handler_clause_names_its_operation_by_path() {
     );
     assert!(ok, "stderr: {stderr}");
     assert_eq!(stdout, "canned nowhere.txt\n");
+}
+
+#[test]
+fn a_partial_file_handler_forwards_writes_to_real_command() {
+    let path = std::env::temp_dir().join("slc_test_forwarded_write.txt");
+    let _ = std::fs::remove_file(&path);
+    let (stdout, stderr, ok) = run_sl_with(
+        &[],
+        "slc_test_fs_forwarding.sl",
+        &format!(
+            r#"command main | (exit: -i32) / {{IO}} {{
+                <(,) | fs::real_command | (fn {{
+                    handle {{
+                        let outcome = <("{}", "forwarded") | fs::write_file;
+                        let contents = mu String {{ done <=
+                            <"ignored" | fs::read | (done & select String {{ message => <1 | exit> }})>
+                        }};
+                        <contents | println;
+                        <0 | exit>
+                    }} {{
+                        fs::read_file(path): resume => <::0("intercepted") | resume,
+                        _ => forward
+                    }}
+                }})>
+            }}"#,
+            path.display(),
+        ),
+    );
+    let written = std::fs::read_to_string(&path);
+    let _ = std::fs::remove_file(&path);
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, "intercepted\n");
+    assert_eq!(written.unwrap(), "forwarded");
 }
 
 #[test]
@@ -1737,7 +1795,7 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
     std::fs::write(
         &dir,
         "command main | (exit: -i32) / {IO} {
-             let show = select +i64 { n => <(n, 2) | mul | println };
+             let show = select +i64 { n => { <(n, 2) | mul | println; <0 | exit> } };
              <21 | show>;
              <0 | exit>
          }",
@@ -1845,7 +1903,7 @@ fn a_value_is_turned_inside_a_written_structure_and_between_stages() {
 }
 
 #[test]
-fn a_spelling_inside_a_type_constructor_is_not_turned_around() {
+fn adapters_do_not_override_a_type_parameters_polarity() {
     let (_, stderr, ok) = run_sl_with(
         &[],
         "slc_test_par_constructor.sl",
@@ -1862,7 +1920,7 @@ fn a_spelling_inside_a_type_constructor_is_not_turned_around() {
         }"#,
     );
     assert!(!ok);
-    assert!(stderr.contains("inside `list::List<…>`"), "{stderr}");
+    assert!(stderr.contains("negative type"), "{stderr}");
 }
 
 #[test]
@@ -2001,27 +2059,27 @@ fn nesting_is_significant_and_a_position_needs_no_sum() {
 }
 
 #[test]
-fn a_form_value_hands_each_continuation_its_part_in_order() {
-    // `(k1 ; k2)` consumes the product of what its continuations want, left
-    // to right: both parts arrive when the first continuation returns, and
-    // only the first when it is an exit that jumps.
+fn a_joint_transfers_to_its_first_nonreturning_consumer() {
     let dir = std::env::temp_dir().join("slc_test_form_value.sl");
     std::fs::write(
         &dir,
         r#"command main | (exit: i32) / {IO} {
-            let first = select i64 { n => <n | println };
-            let second = select String { s => <s | println };
-            <(7, "seven") | (first ; second)>;
-            <mu i64 { k <= <(1, "never") | (k ; second)> } | println;
-            let typed: (-i64 ; -String) = (first ; second);
-            <(8, "eight") | typed>;
+            let answer = mu i64 { done <= {
+                let first = select i64 { n => { <n | println; <n | done> } };
+                let second = select String { s => { <s | println; <0 | done> } };
+                let typed: ((-i64 ; -String) / {IO}) = (first ; second);
+                <(7, "never") | typed>
+            } };
+            <answer | println;
+            let sink = fn(n: i64) { <n | println };
+            <8 | sink;
             <0 | exit>
         }"#,
     )
     .unwrap();
     let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
     assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "seven", "1", "8", "eight"]);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["7", "7", "8"]);
 }
 
 #[test]
@@ -2053,7 +2111,7 @@ fn a_consumer_binder_builds_a_row_from_the_rest_of_the_chain() {
     let dir = std::env::temp_dir().join("slc_test_consumer_binder.sl");
     let program = |start: i64| {
         format!(
-            r#"command halve(n: i64) | (ok: i64 & odd: String) {{
+            r#"command halve<E>(n: i64) | (ok: (-i64 / {{..E}}) & odd: (-String / {{..E}})) / {{..E}} {{
                 match (<(n, 2) | rem | x => (x, 0) | eq) {{ True => <(n, 2) | div | ok>, _ => <"odd" | odd> }}
             }}
             command main | (exit: i32) / {{IO}} {{
@@ -2194,7 +2252,7 @@ fn a_bundle_item_that_ends_in_a_cut_runs_only_when_chosen() {
     let dir = std::env::temp_dir().join("slc_test_by_name_bundle.sl");
     std::fs::write(
         &dir,
-        r#"command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+        r#"command pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
             match c { True => <(,) | then>, _ => <(,) | otherwise> }
         }
 
@@ -2215,11 +2273,11 @@ fn an_exit_named_as_a_command_runs_and_passed_on_it_does_not() {
     let dir = std::env::temp_dir().join("slc_test_exit_as_command.sl");
     std::fs::write(
         &dir,
-        r#"command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+        r#"command pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
             match c { True => then, _ => otherwise }
         }
 
-        command forward(c: Bool) | (then: (;) & otherwise: (;)) {
+        command forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
             <c | pick | (then & otherwise)>
         }
 
@@ -2240,7 +2298,7 @@ fn what_flows_into_a_function_is_by_name() {
     let dir = std::env::temp_dir().join("slc_test_by_name_flow_head.sl");
     std::fs::write(
         &dir,
-        r#"fn twice(g: (String -> (,) / {IO})) -> (,) / {IO} {
+        r#"fn twice(g: Delayed<(String -> (,) / {IO}), {IO}>) -> (,) / {IO} {
             <"a" | g;
             <"b" | g
         }

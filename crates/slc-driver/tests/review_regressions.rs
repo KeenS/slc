@@ -86,7 +86,7 @@ fn a_command_with_several_exits_takes_the_rowed_ones_row() {
     let (ok, stdout, stderr) = run(
         "two_exits",
         "effect Exn { fn throw(m: String) -> i64; }
-        command two<E> | (ok: -i64 & program: ((;) / {Exn, ..E})) / {..E} {
+        command two<E> | (ok: (-i64 / {..E}) & program: ((;) / {Exn, ..E})) / {..E} {
             handle program { throw(m) => <0 | ok> }
         }
         command main | (exit: -i32) / {IO} {
@@ -102,7 +102,7 @@ fn a_bundles_exits_meet_declared_latent_rows_one_by_one() {
     let (ok, stdout, stderr) = run(
         "two_latent_exits",
         "effect Tick { fn tick() -> (,); }
-        command choose | (ok: (-i64 / {Tick}) & err: -String) / {Tick} { <1 | ok> }
+        command choose | (ok: (-i64 / {Tick, IO}) & err: (-String / {IO})) / {Tick, IO} { <1 | ok> }
         command main | (exit: -i32) / {IO} {
             handle (<(,) | choose | (
                 select i64 { n => { let u = tick(); <n | println; <0 | exit> } }
@@ -112,6 +112,132 @@ fn a_bundles_exits_meet_declared_latent_rows_one_by_one() {
     );
     assert!(ok, "{stderr}");
     assert_eq!(stdout, "tick\n1\n");
+}
+
+#[test]
+fn consumer_arms_cannot_return_unit() {
+    for (name, declarations, body) in [
+        ("direct", "", "<1 | select i64 { value => <value | println }>"),
+        ("named", "", "let sink = select i64 { value => <value | println }; <1 | sink>"),
+        (
+            "form",
+            "form Sink / {IO} { value: i64 }",
+            "let sink = select Sink { Sink { value } => <value | println }; <Sink { value: 1 } | sink>",
+        ),
+    ] {
+        let (ok, _, stderr) = run(
+            &format!("returning_consumer_{name}"),
+            &format!("{declarations} command main | (exit: -i32) / {{IO}} {{ {body} }}"),
+        );
+        assert!(!ok, "{name} accepted a returning consumer");
+        assert!(stderr.contains("a `select` arm is a command"), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn positive_atoms_cannot_be_cut_into_even_after_inference() {
+    for (name, declaration) in [
+        (
+            "generic",
+            "fn dne<+T>(refuter: T) -> T { mu { continuation <= <continuation | refuter> } }",
+        ),
+        (
+            "named",
+            "fn dne(refuter: i64) -> i64 { mu { continuation <= <continuation | refuter> } }",
+        ),
+        (
+            "computed",
+            "fn dne(refuter: i64) -> i64 { mu { continuation <= <continuation | (<refuter | id)> } }",
+        ),
+        (
+            "alias",
+            "fn dne(refuter: i64) -> i64 { let alias = refuter; mu { continuation <= <continuation | alias> } }",
+        ),
+    ] {
+        let (ok, _, stderr) = run(
+            &format!("positive_consumer_{name}"),
+            &format!(
+                "{declaration} command main | (exit: -i32) / {{IO}} {{ <42 | dne | println; <0 | exit> }}"
+            ),
+        );
+        assert!(!ok);
+        assert!(stderr.contains("the right of a cut must be a consumer"), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn double_negation_and_generic_consumers_use_identity() {
+    let (ok, stdout, stderr) = run(
+        "generic_identity_consumers",
+        "fn dne<+T>(value: -(-T)) -> T { value }
+        fn consume<+T>(out: T) <- T { out }
+        command main | (exit: -i32) / {IO} {
+            <42 | dne | println;
+            <mu i64 { done <= <7 | (<done | consume)> } | println;
+            <mu String { done <= <\"text\" | (<done | consume)> } | println;
+            <0 | exit>
+        }",
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, "42\n7\ntext\n");
+
+    let (ok, _, stderr) = run(
+        "generic_consumer_cannot_invent_integer",
+        "fn consume<+T>(out: T) <- T { <0 | out> }
+        command main | (exit: -i32) / {IO} { <0 | exit> }",
+    );
+    assert!(!ok);
+    assert!(stderr.contains("type:"), "{stderr}");
+}
+
+#[test]
+fn cleanup_runs_only_through_the_wrapped_exit() {
+    for (name, finish, expected) in [
+        ("success", "<0 | exit>", "opened\nclosed\n"),
+        ("failure", "<\"failed\" | complain>", "opened\nfailed\nclosed\n"),
+        ("earlier_capture", "<\"failed\" | earlier>", "opened\nfailed\n"),
+    ] {
+        let (ok, stdout, stderr) = run(
+            &format!("cleanup_{name}"),
+            &format!(
+                "effect Resource {{ fn acquire() -> i64; fn close(resource: i64) -> (,); }}
+                command main | (exit: -i32) / {{IO}} {{
+                    let earlier = select String {{ message => {{ <message | println; <0 | exit> }} }};
+                    handle {{
+                        let resource = acquire();
+                        let exit = select i32 {{ status => {{ <resource | close; <status | exit> }} }};
+                        let complain = select String {{ message => {{ <message | println; <0 | exit> }} }};
+                        {finish}
+                    }} {{
+                        acquire(): resume => {{ <\"opened\" | println; <1 | resume }},
+                        close(resource): resume => {{ <\"closed\" | println; <(,) | resume }}
+                    }}
+                }}"
+            ),
+        );
+        assert!(ok, "{name}: {stderr}");
+        assert_eq!(stdout, expected, "{name}");
+    }
+}
+
+#[test]
+fn block_returns_and_generated_names_are_lexically_scoped() {
+    let (ok, stdout, stderr) = run(
+        "block_names",
+        "command main | (exit: -i32) / {IO} {
+            let __discarded = 7;
+            let __tail = select i64 { value => { <\"wrong tail\" | println; <0 | exit> } };
+            let __seq0 = select i64 { value => { <value | println; <0 | exit> } };
+            let answer = { 1; { 2; __discarded } };
+            <answer | println;
+            let captured = mu i64 { done <= { 3; <8 | done> } };
+            <captured | println;
+            4;
+            <9 | __seq0>
+        }",
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(stdout, "7\n8\n9\n");
 }
 
 #[test]

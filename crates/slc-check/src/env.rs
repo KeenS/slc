@@ -75,10 +75,21 @@ pub(crate) struct PendingMethod {
 /// where a value met its slot.
 #[derive(Debug, Clone)]
 pub(crate) enum RowOrigin {
+    Returned {
+        name: String,
+        ty: Type,
+        span: slc_syntax::token::Span,
+    },
     /// A declaration's body against the row it writes.
-    Declaration { name: String, span: slc_syntax::token::Span },
+    Declaration {
+        name: String,
+        span: slc_syntax::token::Span,
+    },
     /// A menu or form arm against the latent row its declaration writes.
-    Latent { decl: String, span: slc_syntax::token::Span },
+    Latent {
+        decl: String,
+        span: slc_syntax::token::Span,
+    },
     /// An argument against the parameter it is passed to: what the argument
     /// performs when run against the row the parameter's type allows.
     Argument {
@@ -152,10 +163,12 @@ pub(crate) struct Env<'a> {
     pub(crate) pending_injections: Vec<PendingInjection>,
     /// Form values whose components' types are not settled yet.
     pub(crate) pending_pars: Vec<PendingPar>,
+    pub(crate) pending_consumers: Vec<(slc_syntax::token::Span, Type)>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
     pub(crate) dispatch: slc_syntax::lower::DispatchInfo,
+    pub(crate) declarations: Option<&'a crate::declarations::Declarations>,
     /// The row variable of the body being checked: what running it performs.
     /// `None` outside every body.
     pub(crate) current_row: Option<usize>,
@@ -165,6 +178,10 @@ pub(crate) struct Env<'a> {
     pub(crate) row_names: HashMap<usize, String>,
     /// What the solved rows refuse, one diagnostic each.
     pub(crate) row_diagnostics: Vec<crate::Diagnostic>,
+    pub(crate) elaboration_origins: HashMap<slc_syntax::token::Span, slc_syntax::token::Span>,
+    pub(crate) polarity_hints: HashMap<slc_syntax::token::Span, slc_syntax::ast::ParamPolarity>,
+    pub(crate) pending_computations:
+        Vec<(slc_syntax::token::Span, Type, Option<slc_syntax::ast::ParamPolarity>)>,
 }
 
 impl<'a> Env<'a> {
@@ -193,11 +210,16 @@ impl<'a> Env<'a> {
             pending_methods: Vec::new(),
             pending_injections: Vec::new(),
             pending_pars: Vec::new(),
+            pending_consumers: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
+            declarations: None,
             current_row: None,
             row_origins: HashMap::new(),
             row_names: HashMap::new(),
             row_diagnostics: Vec::new(),
+            elaboration_origins: HashMap::new(),
+            polarity_hints: HashMap::new(),
+            pending_computations: Vec::new(),
         }
     }
 
@@ -308,7 +330,12 @@ fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
         Type::Named(name, args) => {
             Type::Named(name.clone(), args.iter().map(|a| replace_vars(a, map)).collect())
         }
-        Type::Rowed(t, row) => Type::Rowed(Box::new(replace_vars(t, map)), row.clone()),
+        Type::Rowed(t, row) => {
+            Type::rowed(replace_vars(t, map), row.map_types(|arg| replace_vars(arg, map)))
+        }
+        Type::Delayed(inner, row) => {
+            Type::delayed(replace_vars(inner, map), row.map_types(|arg| replace_vars(arg, map)))
+        }
         atom => atom.clone(),
     }
 }
@@ -323,8 +350,14 @@ pub(crate) fn collect_vars(ty: &Type, out: &mut std::collections::HashSet<usize>
                 collect_vars(item, out);
             }
         }
-        Type::Dual(t) | Type::Rowed(t, _) => {
+        Type::Dual(t) => {
             collect_vars(t, out);
+        }
+        Type::Rowed(inner, row) | Type::Delayed(inner, row) => {
+            collect_vars(inner, out);
+            for argument in row.effects.iter().flat_map(|effect| &effect.args) {
+                collect_vars(argument, out);
+            }
         }
         Type::Named(_, args) => {
             for arg in args {
@@ -351,4 +384,37 @@ fn constant_declarations(p: &Program) -> HashMap<String, Type> {
             lower_type(ty).ok().map(|ty| (name.clone(), ty))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slc_core::types::{Effect, Row};
+
+    #[test]
+    fn schemes_collect_and_replace_variables_inside_effect_arguments() {
+        let nested = Type::rowed(
+            Type::Var(2),
+            Row {
+                effects: [Effect { name: "Nested".into(), args: vec![Type::Var(3)] }].into(),
+                tail: Some(9),
+            },
+        );
+        let ty = Type::delayed(
+            Type::Var(1),
+            Row {
+                effects: [Effect { name: "Build".into(), args: vec![nested] }].into(),
+                tail: None,
+            },
+        );
+        let mut variables = Default::default();
+        collect_vars(&ty, &mut variables);
+        assert_eq!(variables, [1, 2, 3].into());
+        let replaced = replace_vars(&ty, &[(3, Type::ONE)].into());
+        variables.clear();
+        collect_vars(&replaced, &mut variables);
+        assert_eq!(variables, [1, 2].into());
+        assert!(replaced.to_string().contains("Nested<(,)>"));
+        assert!(replaced.to_string().contains("..?9"));
+    }
 }

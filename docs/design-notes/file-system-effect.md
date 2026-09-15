@@ -46,10 +46,11 @@ passes through both.
 
 ## Proposal
 
-1. **No new language feature.** A handler is an ordinary function that takes
-   the computation it handles, as above. First-class handler values —
-   `handler { … }` and `with h handle c` — move to "Deferred, for
-   discussion": nothing needs them once handlers are functions.
+1. **Originally no new language feature; now superseded.** The function
+   encoding above remains useful, but first-class handler values are now
+   implemented: `handler { … }` constructs one and `with h handle c`
+   installs it. `DESIGN.md` specifies `Handler<A, B, E, F>`; the
+   `examples/handler_values.sl` example stores, selects and composes them.
 2. **`fs` declares `Fs`,** one operation per primitive: reading a file,
    writing one, opening one, reading a line, closing, and asking whether a
    path exists. An operation answers with its outcome as a sum, one
@@ -61,7 +62,7 @@ passes through both.
    the command activate the continuation, under the handler. Operation names
    are unique across effects, so they are named for the file system rather
    than reusing `read` and `write`.
-3. **The commands keep their shapes.** `fs::read(path) | (ok & failed)` and its
+3. **The commands keep their shapes.** `<path | fs::read | (ok & failed)>` and its
    siblings stay, as commands that perform the operation, so a call site does
    not change; their rows say `{Fs}` instead of `{IO}`.
 4. **`fs::real` is the standard handler,** answering each operation with its
@@ -72,6 +73,13 @@ passes through both.
    "Decided".
 
 ## Consequences
+
+A handler naming an operation of `Fs` must answer all six operations, or
+end with `_ => forward`. Forwarding leaves `Fs` in the outward row and
+requires an outer handler, typically `fs::real` or `fs::real_command`.
+A complete mock can discharge `Fs` without touching the disk. The runtime
+already routes unmatched operations outward; the explicit clause makes
+that behavior visible to the checker rather than silently erasing the effect.
 
 - A declaration that touches files says `{Fs}` in its row rather than `{IO}`,
   and something between it and `main` installs a handler for `Fs`.
@@ -86,6 +94,10 @@ passes through both.
 
 Reviewed, with both proposals taken:
 
-1. Handlers are functions; first-class handler values are deferred.
+1. Handler-installing functions remain supported alongside first-class
+   handler values. The later handler-value implementation supersedes the
+   original decision to defer them. Yielding command exits also let
+   `fs::real` and `fs::real_command` resume with outcomes without explicit
+   `mu` result captures.
 2. A program installs `fs::real` itself, around the code that touches files.
    `main` still leaves only `IO` undischarged, and nothing is special-cased.

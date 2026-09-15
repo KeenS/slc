@@ -155,6 +155,13 @@ fn check_type_param_signs(d: &Node<Decl>, declared: &Declarations, diags: &mut V
             rows.push(effects);
             (type_params, type_param_signs)
         }
+        Decl::Effect { type_params, type_param_signs, operations, .. } => {
+            for operation in operations {
+                types.extend(operation.params.iter().filter_map(|param| param.ty.as_ref()));
+                types.extend(&operation.return_type);
+            }
+            (type_params, type_param_signs)
+        }
         Decl::Command {
             type_params,
             type_param_signs,
@@ -175,6 +182,14 @@ fn check_type_param_signs(d: &Node<Decl>, declared: &Declarations, diags: &mut V
     };
     for ty in types.iter().copied() {
         collect_rows(ty, &mut rows);
+    }
+    let mut index = 0;
+    while index < rows.len() {
+        let row = rows[index];
+        for effect in &row.effects {
+            collect_rows(&effect.kind, &mut rows);
+        }
+        index += 1;
     }
     let is_row = |name: &str| rows.iter().any(|row| row.tails.iter().any(|tail| tail == name));
     for param in type_params {
@@ -199,7 +214,10 @@ fn check_type_param_signs(d: &Node<Decl>, declared: &Declarations, diags: &mut V
     }
     // A type written in the signature gives each declaration it applies a
     // type of the polarity that declaration's parameter states.
-    for ty in types {
+    for ty in types
+        .into_iter()
+        .chain(rows.iter().flat_map(|row| row.effects.iter().map(|effect| &effect.kind)))
+    {
         check_applications(ty, signs, declared, d.span, diags);
     }
 }
@@ -222,12 +240,14 @@ fn check_applications(
                 declared.param_signs(name).iter().zip(args).enumerate()
             {
                 if let Some(sign) = sign
+                    && *sign != ParamPolarity::Any
                     && let Some(actual) = written_polarity(&arg.kind, own, declared)
                     && actual != *sign
                 {
                     let found = match actual {
                         ParamPolarity::Positive => "positive",
                         ParamPolarity::Negative => "negative",
+                        ParamPolarity::Any => "polarity-unrestricted",
                     };
                     diags.push(Diagnostic {
                         message: format!(
@@ -252,15 +272,24 @@ fn check_applications(
                 recurse(&item.kind, diags);
             }
         }
-        TypeExpr::Positive(inner)
-        | TypeExpr::Negative(inner)
-        | TypeExpr::Dual(inner)
-        | TypeExpr::Effectful(inner, _) => recurse(&inner.kind, diags),
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            recurse(&inner.kind, diags)
+        }
+        TypeExpr::Effectful(inner, row) => {
+            recurse(&inner.kind, diags);
+            for effect in &row.effects {
+                recurse(&effect.kind, diags);
+            }
+        }
         TypeExpr::Fun(from, to) => {
             recurse(&from.kind, diags);
             recurse(&to.kind, diags);
         }
-        TypeExpr::Row(_) => {}
+        TypeExpr::Row(row) => {
+            for effect in &row.effects {
+                recurse(&effect.kind, diags);
+            }
+        }
     }
 }
 
@@ -285,7 +314,7 @@ fn written_polarity(
                 }
             }
         },
-        TypeExpr::Apply(name, _) if declared.is_negative_decl(name) => {
+        TypeExpr::Apply(name, _) if name == "Delayed" || declared.is_negative_decl(name) => {
             Some(ParamPolarity::Negative)
         }
         TypeExpr::Apply(..) | TypeExpr::Tensor(_) | TypeExpr::Sum(_) => {

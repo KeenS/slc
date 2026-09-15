@@ -25,6 +25,7 @@ pub struct ResolveError {
 
 /// One module's names: what it declares, and what it `use`s.
 struct Scope {
+    type_parameters: std::cell::RefCell<Vec<HashSet<String>>>,
     /// The module's path from the root, `["a", "b"]` for `a::b`.
     path: Vec<String>,
     /// Names this module declares: functions, commands, types, constants,
@@ -63,7 +64,7 @@ fn collect_modules(decls: &[Node<Decl>], prefix: &str, out: &mut Modules) {
                 | Decl::Const { name, is_public, .. }
                 | Decl::Trait { name, is_public, .. }
                 | Decl::Mod { name, is_public, .. } => members.push((name.clone(), *is_public)),
-                Decl::Effect { name, is_public, operations } => {
+                Decl::Effect { name, is_public, operations, .. } => {
                     members.push((name.clone(), *is_public));
                     for op in operations {
                         members.push((op.name.clone(), *is_public));
@@ -474,6 +475,7 @@ fn apply_variant_imports(
 
 fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<ResolveError>) -> Scope {
     let mut scope = Scope {
+        type_parameters: Default::default(),
         path,
         declares: HashSet::new(),
         aliases: HashMap::new(),
@@ -617,6 +619,18 @@ fn resolve_name(written: &str, stack: &[Scope]) -> String {
 
 fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>) {
     let scope = stack.last().expect("a scope");
+    let parameters = match &*d {
+        Decl::Fn { type_params, .. }
+        | Decl::Command { type_params, .. }
+        | Decl::Data { type_params, .. }
+        | Decl::Enum { type_params, .. }
+        | Decl::Menu { type_params, .. }
+        | Decl::Form { type_params, .. }
+        | Decl::Effect { type_params, .. }
+        | Decl::Impl { type_params, .. } => type_params.iter().cloned().collect(),
+        _ => HashSet::new(),
+    };
+    scope.type_parameters.borrow_mut().push(parameters);
     match d {
         Decl::Fn { name, params, return_type, body, effects, .. } => {
             *name = scope.qualify(name);
@@ -735,6 +749,7 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         }
         Decl::Mod { .. } | Decl::Use { .. } => {}
     }
+    scope.type_parameters.borrow_mut().pop();
 }
 
 fn resolve_param(p: &mut Param, stack: &[Scope]) {
@@ -746,12 +761,12 @@ fn resolve_param(p: &mut Param, stack: &[Scope]) {
 fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
     match ty {
         TypeExpr::Apply(name, args) => {
-            *name = resolve_name(name, stack);
+            *name = resolve_type_name(name, stack);
             for arg in args {
                 resolve_type(&mut arg.kind, stack);
             }
         }
-        TypeExpr::Base(name) => *name = resolve_name(name, stack),
+        TypeExpr::Base(name) => *name = resolve_type_name(name, stack),
         TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
             resolve_type(&mut inner.kind, stack)
         }
@@ -775,11 +790,31 @@ fn resolve_type(ty: &mut TypeExpr, stack: &[Scope]) {
     }
 }
 
+fn resolve_type_name(name: &str, stack: &[Scope]) -> String {
+    if stack
+        .iter()
+        .any(|scope| scope.type_parameters.borrow().iter().any(|params| params.contains(name)))
+    {
+        name.to_string()
+    } else {
+        resolve_name(name, stack)
+    }
+}
+
 /// Qualify the effects a row names, as a type name is qualified. A row
 /// variable is a generic parameter of the declaration, and stays as written.
 fn resolve_row(row: &mut EffectRow, stack: &[Scope]) {
     for effect in row.effects.iter_mut() {
-        *effect = resolve_name(effect, stack);
+        match &mut effect.kind {
+            TypeExpr::Base(name) => *name = resolve_name(name, stack),
+            TypeExpr::Apply(name, args) => {
+                *name = resolve_name(name, stack);
+                for argument in args {
+                    resolve_type(&mut argument.kind, stack);
+                }
+            }
+            _ => resolve_type(&mut effect.kind, stack),
+        }
     }
 }
 
@@ -902,8 +937,20 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Expr::Project { base: body, .. } => {
             resolve_expr(&mut body.kind, stack, locals);
         }
-        Expr::Handle { body, clauses, ret } => {
-            resolve_expr(&mut body.kind, stack, locals);
+        Expr::Handle { .. } | Expr::Handler { .. } => {
+            let (clauses, ret) = match e {
+                Expr::Handle { body, clauses, ret, .. } => {
+                    resolve_expr(&mut body.kind, stack, locals);
+                    (clauses, ret)
+                }
+                Expr::Handler { effects, clauses, ret, .. } => {
+                    for effect in effects {
+                        *effect = resolve_name(effect, stack);
+                    }
+                    (clauses, ret)
+                }
+                _ => unreachable!(),
+            };
             for c in clauses.iter_mut() {
                 c.op = resolve_name(&c.op, stack);
                 let mut bound: HashSet<String> = c.params.iter().cloned().collect();
@@ -917,6 +964,10 @@ fn resolve_expr(e: &mut Expr, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 resolve_expr(&mut rbody.kind, stack, locals);
                 locals.pop();
             }
+        }
+        Expr::WithHandler { handler, body } => {
+            resolve_expr(&mut handler.kind, stack, locals);
+            resolve_expr(&mut body.kind, stack, locals);
         }
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) => {}
     }
@@ -1081,14 +1132,25 @@ fn rewrite_expr_imports(e: &mut Expr, imported: &HashMap<String, String>) {
         }
         Expr::Request { arg: expr, .. } => rewrite_expr_imports(&mut expr.kind, imported),
         Expr::Project { base, .. } => rewrite_expr_imports(&mut base.kind, imported),
-        Expr::Handle { body, clauses, ret } => {
-            rewrite_expr_imports(&mut body.kind, imported);
+        Expr::Handle { .. } | Expr::Handler { .. } => {
+            let (clauses, ret) = match e {
+                Expr::Handle { body, clauses, ret, .. } => {
+                    rewrite_expr_imports(&mut body.kind, imported);
+                    (clauses, ret)
+                }
+                Expr::Handler { clauses, ret, .. } => (clauses, ret),
+                _ => unreachable!(),
+            };
             for clause in clauses {
                 rewrite_expr_imports(&mut clause.body.kind, imported);
             }
             if let Some((_, ret)) = ret {
                 rewrite_expr_imports(&mut ret.kind, imported);
             }
+        }
+        Expr::WithHandler { handler, body } => {
+            rewrite_expr_imports(&mut handler.kind, imported);
+            rewrite_expr_imports(&mut body.kind, imported);
         }
         Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) => {}
     }

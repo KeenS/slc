@@ -36,6 +36,7 @@ pub struct FunctionSignature {
     /// by where the signature came from, never by name — a program's own
     /// `fn add` is a declaration, and is checked as one.
     pub builtin: bool,
+    pub nullary_value: bool,
 }
 
 /// The standard library.
@@ -190,19 +191,34 @@ pub(crate) fn function_types(
     let mut out = builtin_functions()
         .into_iter()
         .map(|builtin| {
+            let exit_row = builtin.continuations.iter().any(|is_exit| *is_exit).then_some(0);
             (
                 builtin.name.to_string(),
                 FunctionSignature {
-                    row: builtin_effect(builtin.name)
-                        .map(|effect| Row { effects: [effect.to_string()].into(), tail: None })
-                        .unwrap_or_default(),
+                    row: Row {
+                        effects: builtin_effect(builtin.name).map(Into::into).into_iter().collect(),
+                        tail: exit_row,
+                    },
                     param_names: Vec::new(),
-                    params: builtin.params,
+                    params: builtin
+                        .params
+                        .into_iter()
+                        .zip(&builtin.continuations)
+                        .map(|(ty, is_exit)| {
+                            if *is_exit {
+                                let row = Row { effects: Default::default(), tail: exit_row };
+                                Type::delayed(Type::rowed(ty, row.clone()), row)
+                            } else {
+                                ty
+                            }
+                        })
+                        .collect(),
                     continuations: builtin.continuations,
                     result: builtin.result,
                     bounds: Vec::new(),
                     signs: Vec::new(),
                     builtin: true,
+                    nullary_value: false,
                 },
             )
         })
@@ -256,9 +272,7 @@ pub(crate) fn function_types(
                 out.insert(
                     name.clone(),
                     FunctionSignature {
-                        row: crate::declarations::written_row(effects, |tail| {
-                            type_params.iter().position(|p| p == tail)
-                        }),
+                        row: signature_row(effects, type_params, enums),
                         params: resolved,
                         param_names: params.iter().map(parameter_name).collect(),
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
@@ -266,6 +280,8 @@ pub(crate) fn function_types(
                         bounds: resolve_bounds(type_params, bounds),
                         signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
+                        nullary_value: params.is_empty()
+                            && *polarity == slc_syntax::ast::FunctionPolarity::Negative,
                     },
                 );
             }
@@ -290,9 +306,7 @@ pub(crate) fn function_types(
                 out.insert(
                     name.clone(),
                     FunctionSignature {
-                        row: crate::declarations::written_row(effects, |tail| {
-                            type_params.iter().position(|p| p == tail)
-                        }),
+                        row: signature_row(effects, type_params, enums),
                         params,
                         param_names: declared.iter().map(|p| parameter_name(p)).collect(),
                         continuations,
@@ -300,30 +314,64 @@ pub(crate) fn function_types(
                         bounds: resolve_bounds(type_params, bounds),
                         signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
+                        nullary_value: false,
                     },
                 );
             }
-            Decl::Effect { name: effect, operations, .. } => {
+            Decl::Effect { name: effect, operations, type_params, type_param_signs, .. } => {
                 for op in operations {
                     let mut next_template = 0;
                     let params = op
                         .params
                         .iter()
-                        .map(|p| signature_type(p.ty.as_ref(), &[], enums, &mut next_template))
+                        .map(|p| {
+                            signature_type(p.ty.as_ref(), type_params, enums, &mut next_template)
+                        })
                         .collect();
-                    let result =
-                        signature_type(op.return_type.as_ref(), &[], enums, &mut next_template);
+                    let result = signature_type(
+                        op.return_type.as_ref(),
+                        type_params,
+                        enums,
+                        &mut next_template,
+                    );
                     out.insert(
                         op.name.clone(),
                         FunctionSignature {
-                            row: Row { effects: [effect.clone()].into(), tail: None },
+                            row: Row {
+                                effects: [slc_core::types::Effect {
+                                    name: effect.clone(),
+                                    args: type_params
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(index, param)| {
+                                            if type_param_signs
+                                                .iter()
+                                                .any(|(name, _)| name == param)
+                                            {
+                                                Type::Var(index)
+                                            } else {
+                                                Type::rowed(
+                                                    Type::ONE,
+                                                    Row {
+                                                        effects: Default::default(),
+                                                        tail: Some(index),
+                                                    },
+                                                )
+                                            }
+                                        })
+                                        .collect(),
+                                }]
+                                .into(),
+                                tail: None,
+                            },
                             param_names: op.params.iter().map(parameter_name).collect(),
                             params,
                             continuations: op.params.iter().map(|_| false).collect(),
                             result: Some(result),
                             bounds: Vec::new(),
-                            signs: Vec::new(),
+                            signs: resolve_signs(type_params, type_param_signs),
                             builtin: false,
+                            nullary_value: false,
                         },
                     );
                 }
@@ -332,6 +380,17 @@ pub(crate) fn function_types(
         }
     }
     out
+}
+
+fn signature_row(row: &slc_syntax::ast::EffectRow, params: &[String], enums: &Declarations) -> Row {
+    let scope = params.iter().enumerate().map(|(index, name)| (name.clone(), index)).collect();
+    let variables: Vec<_> = (0..params.len()).map(Type::Var).collect();
+    let resolved =
+        enums.resolve_in(&TypeExpr::Row(row.clone()), &scope).map(|ty| ty.instantiate(&variables));
+    match resolved {
+        Some(Type::Rowed(_, row)) => row,
+        _ => Row::default(),
+    }
 }
 
 /// A signature's template variables are instantiated afresh at each call:
@@ -347,11 +406,12 @@ pub(crate) fn instantiate(
         params: signature.params.iter().map(|ty| freshen(ty, &mut seen, &mut rows, uni)).collect(),
         continuations: signature.continuations.clone(),
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, &mut rows, uni)),
-        row: freshen_row(&signature.row, &mut rows, uni),
+        row: freshen_row(&signature.row, &mut seen, &mut rows, uni),
         param_names: signature.param_names.clone(),
         bounds: signature.bounds.clone(),
         signs: signature.signs.clone(),
         builtin: signature.builtin,
+        nullary_value: signature.nullary_value,
     };
     (fresh, seen)
 }
@@ -374,7 +434,10 @@ fn freshen(
         Type::Dual(t) => Type::Dual(Box::new(freshen(t, seen, rows, uni))),
         Type::Named(name, args) => Type::Named(name.clone(), each(args)),
         Type::Rowed(t, row) => {
-            Type::Rowed(Box::new(freshen(t, seen, rows, uni)), freshen_row(row, rows, uni))
+            Type::Rowed(Box::new(freshen(t, seen, rows, uni)), freshen_row(row, seen, rows, uni))
+        }
+        Type::Delayed(inner, row) => {
+            Type::delayed(freshen(inner, seen, rows, uni), freshen_row(row, seen, rows, uni))
         }
         atom => atom.clone(),
     }
@@ -382,9 +445,59 @@ fn freshen(
 
 /// A signature's row with its template row variable instantiated: one
 /// template, one fresh row variable per call.
-fn freshen_row(row: &Row, rows: &mut HashMap<usize, usize>, uni: &mut Unification) -> Row {
-    Row {
-        effects: row.effects.clone(),
-        tail: row.tail.map(|template| *rows.entry(template).or_insert_with(|| uni.fresh_row())),
+fn freshen_row(
+    row: &Row,
+    seen: &mut HashMap<usize, Type>,
+    rows: &mut HashMap<usize, usize>,
+    uni: &mut Unification,
+) -> Row {
+    let mut fresh = row.map_types(|argument| freshen(argument, seen, rows, uni));
+    fresh.tail = row.tail.map(|template| *rows.entry(template).or_insert_with(|| uni.fresh_row()));
+    fresh
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use slc_core::types::Effect;
+
+    #[test]
+    fn signature_instantiation_shares_effect_arguments_with_value_types() {
+        let nested = Row {
+            effects: [Effect { name: "Nested".into(), args: vec![Type::Var(1)] }].into(),
+            tail: Some(3),
+        };
+        let signature = FunctionSignature {
+            params: vec![Type::Var(0)],
+            result: Some(Type::Var(0)),
+            row: Row {
+                effects: [Effect {
+                    name: "Reader".into(),
+                    args: vec![Type::Var(0), Type::rowed(Type::ONE, nested)],
+                }]
+                .into(),
+                tail: Some(3),
+            },
+            continuations: vec![false],
+            param_names: vec!["value".into()],
+            bounds: Vec::new(),
+            signs: Vec::new(),
+            builtin: false,
+            nullary_value: false,
+        };
+        let mut uni = Unification::new();
+        let (first, first_variables) = instantiate(&signature, &mut uni);
+        let (second, second_variables) = instantiate(&signature, &mut uni);
+        assert_ne!(first_variables[&0], second_variables[&0]);
+        assert_ne!(first_variables[&1], second_variables[&1]);
+        assert_ne!(first.row.tail, second.row.tail);
+        for (instance, variables) in [(first, first_variables), (second, second_variables)] {
+            let effect = instance.row.effects.iter().next().unwrap();
+            assert_eq!(effect.args[0], instance.params[0]);
+            assert_eq!(instance.result, Some(instance.params[0].clone()));
+            let Type::Rowed(_, nested) = &effect.args[1] else { panic!("missing nested row") };
+            assert_eq!(nested.tail, instance.row.tail);
+            assert_eq!(nested.effects.iter().next().unwrap().args, vec![variables[&1].clone()]);
+        }
     }
 }

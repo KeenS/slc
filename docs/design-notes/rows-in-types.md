@@ -1,11 +1,19 @@
 # Rows in types
 
 Status: implemented. `DESIGN.md`'s effects section is the definition; this
-note records why the design was taken. Two decisions were added while it
-landed: an exit — a command's continuation parameter, or a bundle of them —
-accepts any row, charged where it is handed over; and a returned value whose
-row the promised type does not carry is charged to the declaration, as the
-name-following pass charged a returned literal.
+note records why the design was taken. Returned values and command exits
+must preserve their latent rows in their promised types. Neither constructing
+a consumer nor passing it runs it. The earlier constructor-charge and
+exit-handover exceptions were unsound when a consumer escaped the handler
+around its construction or handover. An effectful exit no longer fits a
+rowless slot; commands that activate arbitrary exits use explicit row
+parameters and account for those rows when activating them.
+
+The forcing/activation follow-up is also implemented: `Delayed<T, E>`
+keeps construction effects separate from `T`'s activation row. See
+`forcing-and-lazy.md` for the representation and the corresponding change
+to duality. The initial single-wrapper representation below is historical
+where it conflates the phases.
 
 ## Why
 
@@ -69,10 +77,10 @@ struct Row {
 - **An unrowed negative type is the empty, closed row.** `Rowed(t, {})` is
   normalized to `t`, so every existing type is already a rowed type and
   nothing that does not mention rows changes shape.
-- **`dual` maps through the wrapper,** `dual(Rowed(t, r)) = Rowed(dual(t), r)`,
-  so `dual` stays an involution. A positive `Rowed` arises only as the dual of
-  a negative one — the argument side of a commuted `;` — and means nothing of
-  its own; nothing performs it.
+- **`dual` retains the row inside the dual,**
+  `dual(Rowed(t, r)) = Dual(Rowed(t, r))`. It must not move an answer's
+  activation row onto its forwarding continuation. Double duality remains
+  the identity; merely forwarding an effectful answer does not activate it.
 - **`;` stays commutative.** The row wraps the whole `Par`, so turning its
   components around (`commute`, `swap_adapter`) keeps it. `commute` and the
   flow arm look through `Rowed` to the connective beneath.

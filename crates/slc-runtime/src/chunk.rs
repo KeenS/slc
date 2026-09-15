@@ -50,6 +50,7 @@ pub enum Node {
     CoLocal(usize),
     /// A name used as a co-variable (a forwarding continuation, or a global).
     CoDynamic(Rc<str>),
+    Forward,
     /// `v · e` — application: the argument term, then the tail co-term that
     /// consumes the result.
     App(NodeId, NodeId),

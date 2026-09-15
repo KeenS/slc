@@ -24,6 +24,7 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Var(v) => write!(f, "?{v}"),
+            Type::Delayed(inner, row) => write!(f, "Delayed<{inner}, {row}>"),
             Type::Pos(b) => write!(f, "+{b}"),
             Type::Neg(b) => write!(f, "-{b}"),
             Type::Tensor(xs) => connective(f, xs, ", ", "(,)"),
@@ -69,11 +70,25 @@ impl std::fmt::Display for Type {
 
 impl std::fmt::Display for Row {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut parts: Vec<String> = self.effects.iter().cloned().collect();
+        let mut parts: Vec<String> = self.effects.iter().map(ToString::to_string).collect();
         if let Some(tail) = self.tail {
             parts.push(format!("..?{tail}"));
         }
         write!(f, "{{{}}}", parts.join(", "))
+    }
+}
+
+impl std::fmt::Display for crate::types::Effect {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.name)?;
+        if let Some((first, rest)) = self.args.split_first() {
+            write!(formatter, "<{first}")?;
+            for argument in rest {
+                write!(formatter, ", {argument}")?;
+            }
+            write!(formatter, ">")?;
+        }
+        Ok(())
     }
 }
 

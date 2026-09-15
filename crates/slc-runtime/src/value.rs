@@ -118,6 +118,10 @@ pub enum Value {
         body: crate::chunk::NodeId,
         env: Env,
     },
+    Adapted {
+        adapter: Box<Value>,
+        value: Box<Value>,
+    },
     /// A captured continuation: the machine's frame stack, reified. It can
     /// be reinstated any number of times, at any time — activating it
     /// replaces the running stack down to the nearest handler prompt the two
@@ -207,6 +211,7 @@ impl PartialEq for Value {
 impl Value {
     pub fn type_of(&self) -> Type {
         match self {
+            Value::Adapted { value, .. } => value.type_of(),
             Value::Int(_) => Type::Pos(slc_core::types::Base::I64),
             Value::Float(_) => Type::Pos(slc_core::types::Base::Unit),
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
@@ -245,7 +250,7 @@ impl Value {
                 format!("({})", items.iter().map(Value::display).collect::<Vec<_>>().join(", "))
             }
             Value::Closure { .. } => "<closure>".to_string(),
-            Value::Delayed { .. } => "<delayed>".to_string(),
+            Value::Delayed { .. } | Value::Adapted { .. } => "<delayed>".to_string(),
             Value::Kont(_) => "<continuation>".to_string(),
             Value::Builtin(s) => format!("<builtin {s}>"),
             Value::PartialBuiltin(s, args) => {

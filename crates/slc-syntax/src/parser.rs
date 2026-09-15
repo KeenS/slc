@@ -569,10 +569,12 @@ impl Parser {
             } else {
                 // An effect is named as a type is, by its path when it is a
                 // module's: `fs::Fs`.
-                let mut effect = self.expect_ident("an effect name")?;
-                while self.eat(&TokenKind::ColonColon) {
-                    effect.push_str("::");
-                    effect.push_str(&self.expect_ident("an effect name after `::`")?);
+                let effect = self.parse_type()?;
+                if !matches!(&effect.kind, TypeExpr::Base(_) | TypeExpr::Apply(..)) {
+                    return Err(ParseError {
+                        message: "expected an effect name with optional type arguments".into(),
+                        span: effect.span,
+                    });
                 }
                 row.effects.push(effect);
             }
@@ -653,6 +655,7 @@ impl Parser {
                 Some(sign) => Some(sign),
                 None if self.eat(&TokenKind::Plus) => Some(ParamPolarity::Positive),
                 None if self.eat(&TokenKind::Minus) => Some(ParamPolarity::Negative),
+                None if self.eat(&TokenKind::Star) => Some(ParamPolarity::Any),
                 None => None,
             };
             let name = self.expect_ident("type parameter")?;
@@ -812,6 +815,19 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Effect, "`effect`")?;
         let name = self.expect_ident("effect name")?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "effect parameters do not support trait bounds".into(),
+                span: t.span,
+            });
+        }
+        if type_params.iter().collect::<std::collections::HashSet<_>>().len() != type_params.len() {
+            return Err(ParseError {
+                message: "an effect cannot repeat a type parameter".into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{` after the effect name")?;
         let mut operations = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
@@ -829,7 +845,10 @@ impl Parser {
             self.expect(TokenKind::Semicolon, "`;` after an operation")?;
             operations.push(EffectOp { name: op, params, return_type });
         }
-        Ok(Node { span: t.span, kind: Decl::Effect { name, is_public, operations } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Effect { name, type_params, type_param_signs, is_public, operations },
+        })
     }
 
     fn parse_trait_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -1061,6 +1080,7 @@ impl Parser {
             Box::new(Node { span: node.span, kind: Parser::imply_negative(node.kind) })
         }
         match ty {
+            TypeExpr::Apply(ref name, _) if name == "Delayed" => ty,
             TypeExpr::Base(_) | TypeExpr::Apply(..) | TypeExpr::Tensor(..) | TypeExpr::Sum(..) => {
                 TypeExpr::Negative(Box::new(Node { span: Span { start: 0, end: 0 }, kind: ty }))
             }
@@ -1141,6 +1161,9 @@ impl Parser {
     }
 
     fn expect_ident(&mut self, what: &str) -> Result<String, ParseError> {
+        if (what == "function name" || what == "a path segment") && self.eat(&TokenKind::Reset) {
+            return Ok("reset".into());
+        }
         self.expect_name(what)
     }
 
@@ -1909,21 +1932,89 @@ impl Parser {
                 let body = self.parse_expr()?;
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Handle { body: Box::new(body), clauses: Vec::new(), ret: None },
+                    kind: Expr::Handle {
+                        body: Box::new(body),
+                        clauses: Vec::new(),
+                        ret: None,
+                        forward: false,
+                    },
                 })
             }
-            Some(TokenKind::Handle) => {
+            Some(TokenKind::With) => {
                 self.pos += 1;
-                let body = self.parse_scrutinee()?;
+                let handler = self.parse_scrutinee()?;
+                self.expect(TokenKind::Handle, "`handle` after the handler value")?;
+                let body = self.parse_expr()?;
+                Ok(Node {
+                    span: Span { start, end: self.span_end() },
+                    kind: Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) },
+                })
+            }
+            Some(TokenKind::Handle | TokenKind::Handler) => {
+                let literal = self.peek_kind() == Some(&TokenKind::Handler);
+                self.pos += 1;
+                let mut effects = Vec::new();
+                let body = if literal {
+                    let bracketed = self.eat(&TokenKind::LBracket);
+                    if self.peek_kind() != Some(&TokenKind::LBrace)
+                        && (!bracketed || self.peek_kind() != Some(&TokenKind::RBracket))
+                    {
+                        loop {
+                            let mut effect = self.expect_ident("an effect name after `handler`")?;
+                            while self.eat(&TokenKind::ColonColon) {
+                                effect.push_str("::");
+                                effect.push_str(&self.expect_ident("an effect name after `::`")?);
+                            }
+                            effects.push(effect);
+                            if !bracketed
+                                || !self.eat(&TokenKind::Comma)
+                                || self.peek_kind() == Some(&TokenKind::RBracket)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    if bracketed {
+                        self.expect(TokenKind::RBracket, "`]` after the handled effects")?;
+                    }
+                    None
+                } else {
+                    Some(self.parse_scrutinee()?)
+                };
                 self.expect(TokenKind::LBrace, "`{` after the handled expression")?;
                 let mut clauses = Vec::new();
                 let mut ret = None;
+                let mut forward = false;
                 loop {
                     if self.eat(&TokenKind::RBrace) {
                         break;
                     }
+                    if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "_") {
+                        self.pos += 1;
+                        self.expect(TokenKind::FatArrow, "`=>` after `_` in a forwarding clause")?;
+                        let action = self.expect_ident("`forward` after `_ =>`")?;
+                        if action != "forward" {
+                            return Err(ParseError {
+                                message: "a forwarding clause is written `_ => forward`".into(),
+                                span: Span { start, end: self.span_end() },
+                            });
+                        }
+                        forward = true;
+                        self.eat(&TokenKind::Comma);
+                        self.expect(
+                            TokenKind::RBrace,
+                            "`}` after the final `_ => forward` clause",
+                        )?;
+                        break;
+                    }
                     // `return(x) => body` or `op(params) resume => body`.
                     if self.peek_kind() == Some(&TokenKind::Return) {
+                        if ret.is_some() {
+                            return Err(ParseError {
+                                message: "a handler has only one `return` clause".into(),
+                                span: Span { start, end: self.span_end() },
+                            });
+                        }
                         self.pos += 1;
                         self.expect(TokenKind::LParen, "`(` after `return`")?;
                         let binder = self.expect_ident("the return binder")?;
@@ -1978,7 +2069,10 @@ impl Parser {
                 }
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
-                    kind: Expr::Handle { body: Box::new(body), clauses, ret },
+                    kind: match body {
+                        Some(body) => Expr::Handle { body: Box::new(body), clauses, ret, forward },
+                        None => Expr::Handler { effects, clauses, ret, forward },
+                    },
                 })
             }
             Some(TokenKind::Match) => {
@@ -2776,6 +2870,35 @@ mod tests {
             &continuation_params[0].ty,
             Some(TypeExpr::Negative(inner)) if matches!(&inner.kind, TypeExpr::Base(b) if b == "i32")
         ));
+    }
+
+    #[test]
+    fn a_handler_forwarding_clause_is_explicit_and_last() {
+        for source in [
+            "handle 1 { _ => forward }",
+            "handle 1 { return(value) => value, _ => forward, }",
+            "handle 1 { read(): resume => <1 | resume, _ => forward }",
+        ] {
+            let program = parse_str(source);
+            let Decl::Fn { body, .. } = &program.decls[0].kind else {
+                panic!("expected a declaration")
+            };
+            assert!(matches!(body.kind, Expr::Handle { forward: true, .. }));
+        }
+        for source in [
+            "handle 1 { _ => forward, read() => 1 }",
+            "handle 1 { _ => forward, return(value) => value }",
+            "handle 1 { _ => forward, _ => forward }",
+            "handle 1 { _ => ignore }",
+            "handle 1 { _ => forward() }",
+        ] {
+            assert!(parse(lex(source).unwrap()).is_err(), "{source}");
+        }
+        let program = parse_str("reset 1");
+        let Decl::Fn { body, .. } = &program.decls[0].kind else {
+            panic!("expected a declaration")
+        };
+        assert!(matches!(body.kind, Expr::Handle { forward: false, .. }));
     }
 
     #[test]

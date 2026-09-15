@@ -2,20 +2,13 @@
 //! variant carries, the fields of each `data` — and how a written type
 //! resolves against them.
 
-use slc_core::types::{Row, Type};
+use slc_core::types::{Effect, Row, Type};
 use slc_syntax::ast::{Decl, EffectRow, ParamPolarity, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use std::collections::HashMap;
 
 /// A written row as a type carries it: its effects, and its row variable
 /// wherever `tail` can say which one the name stands for.
-pub(crate) fn written_row(row: &EffectRow, tail: impl Fn(&str) -> Option<usize>) -> Row {
-    Row {
-        effects: row.effects.iter().cloned().collect(),
-        tail: row.tails.first().and_then(|name| tail(name)),
-    }
-}
-
 /// What the checker knows about the program's type declarations: the variants
 /// of each `enum`, the payload each variant carries, and the fields of each
 /// `data`.
@@ -49,6 +42,7 @@ pub struct Declarations {
     param_signs: HashMap<String, Vec<(String, Option<ParamPolarity>)>>,
     /// Operation name → the effect that declares it.
     pub(crate) op_effects: HashMap<String, String>,
+    pub(crate) effects: std::collections::HashSet<String>,
     /// Menu or form name → the latent row it declares: what demanding an
     /// item, or feeding the form, performs.
     pub(crate) latent_rows: HashMap<String, Row>,
@@ -58,6 +52,47 @@ pub struct Declarations {
 }
 
 impl Declarations {
+    pub(crate) fn resolve_row(
+        &self,
+        row: &EffectRow,
+        tail: impl Fn(&str) -> Option<usize>,
+        resolve: impl Fn(&TypeExpr) -> Option<Type>,
+    ) -> Option<Row> {
+        if row.tails.len() > 1 {
+            return None;
+        }
+        let mut effects = std::collections::BTreeSet::new();
+        for effect in &row.effects {
+            let (name, args) = match &effect.kind {
+                TypeExpr::Base(name) => (name, &[][..]),
+                TypeExpr::Apply(name, args) => (name, args.as_slice()),
+                _ => return None,
+            };
+            if (!self.effects.contains(name) && name != "IO")
+                || args.len() != self.arity(name)
+                || !self.args_match_kinds(name, args)
+                || effects.iter().any(|effect: &Effect| effect.name == *name)
+            {
+                return None;
+            }
+            let args =
+                args.iter().map(|argument| resolve(&argument.kind)).collect::<Option<Vec<_>>>()?;
+            for (argument, (_, sign)) in args.iter().zip(self.param_signs(name)) {
+                if matches!(sign, Some(ParamPolarity::Positive))
+                    && argument.is_negative()
+                    && !argument.is_positive()
+                    || matches!(sign, Some(ParamPolarity::Negative))
+                        && argument.is_positive()
+                        && !argument.is_negative()
+                {
+                    return None;
+                }
+            }
+            effects.insert(Effect { name: name.clone(), args });
+        }
+        Some(Row { effects, tail: row.tails.first().and_then(|name| tail(name)) })
+    }
+
     /// Lower a written type, resolving a declaration name to its named type.
     /// `lower_type` only knows the built-in types, so `data` and `enum`
     /// names have to be resolved here — including under a sign or a
@@ -88,12 +123,22 @@ impl Declarations {
             // A declaration applied to arguments; the argument count must
             // match the declaration's.
             TypeExpr::Apply(name, args) => {
-                if !self.args_match_kinds(name, args) {
+                if self.effects.contains(name) || !self.args_match_kinds(name, args) {
                     return None;
                 }
                 let args = args.iter().map(|a| resolve(&a.kind)).collect::<Option<Vec<_>>>()?;
                 let args = self.complete_args(name, args)?;
-                if self.is_negative_decl(name) {
+                if name == "Delayed" {
+                    let inner = args.first()?;
+                    if inner.is_positive() && !inner.is_negative() {
+                        return None;
+                    }
+                    let row = match args.get(1)? {
+                        Type::Rowed(_, row) => row.clone(),
+                        _ => Row::default(),
+                    };
+                    Type::delayed(inner.clone(), row)
+                } else if self.is_negative_decl(name) {
                     Type::Dual(Box::new(Type::Named(name.clone(), args)))
                 } else {
                     Type::Named(name.clone(), args)
@@ -107,7 +152,10 @@ impl Declarations {
                 if row.tails.iter().any(|tail| !params.contains_key(tail)) {
                     return None;
                 }
-                Type::rowed(Type::ONE, written_row(row, |tail| params.get(tail).copied()))
+                Type::rowed(
+                    Type::ONE,
+                    self.resolve_row(row, |tail| params.get(tail).copied(), resolve)?,
+                )
             }
             TypeExpr::Positive(inner) => resolve(&inner.kind)?,
             TypeExpr::Negative(inner) if !inner.kind.is_bottom() => resolve(&inner.kind)?.dual(),
@@ -132,7 +180,7 @@ impl Declarations {
             // variable is one of the declaration's parameters, by position.
             TypeExpr::Effectful(inner, row) => Type::rowed(
                 resolve(&inner.kind)?,
-                written_row(row, |tail| params.get(tail).copied()),
+                self.resolve_row(row, |tail| params.get(tail).copied(), resolve)?,
             ),
             other => return lower_type(other).ok(),
         };
@@ -182,6 +230,9 @@ impl Declarations {
     /// Whether a declaration's parameter at `index` is a row: one declared
     /// without a sign, as a function's row parameters are.
     pub(crate) fn is_row_param(&self, name: &str, index: usize) -> bool {
+        if name == "Handler" {
+            return index >= 2;
+        }
         self.param_signs(name).get(index).is_some_and(|(_, sign)| sign.is_none())
     }
 
@@ -209,7 +260,7 @@ impl Declarations {
                 for (index, arg) in args.iter().enumerate() {
                     let is_row = matches!(arg.kind, TypeExpr::Row(_));
                     let (param, sign) = self.param_signs(name).get(index)?;
-                    if sign.is_none() == is_row {
+                    if self.is_row_param(name, index) == is_row {
                         continue;
                     }
                     return Some(if is_row {
@@ -310,7 +361,11 @@ impl Declarations {
     /// The menu an item's answer is, if it is one — what a nested
     /// copattern `.item(.inner(k))` refines into.
     pub(crate) fn nested_menu(&self, label: &str) -> Option<&str> {
-        match self.destructor(label)?.1.first()? {
+        let mut answer = self.destructor(label)?.1.first()?;
+        while let Type::Delayed(inner, _) | Type::Rowed(inner, _) | Type::Dual(inner) = answer {
+            answer = inner;
+        }
+        match answer {
             Type::Named(inner, _) if self.is_menu(inner) => Some(inner),
             _ => None,
         }
@@ -327,6 +382,18 @@ impl Declarations {
 
 pub(crate) fn enum_types(p: &Program) -> Declarations {
     let mut enums = Declarations::default();
+    enums.declarations.insert("Delayed".into());
+    enums.arities.insert("Delayed".into(), 2);
+    enums.param_signs.insert(
+        "Delayed".into(),
+        vec![("T".into(), Some(ParamPolarity::Negative)), ("E".into(), None)],
+    );
+    enums.declarations.insert("Handler".into());
+    enums.arities.insert("Handler".into(), 4);
+    enums.param_signs.insert(
+        "Handler".into(),
+        ["A", "B", "E", "F"].into_iter().map(|name| (name.into(), None)).collect(),
+    );
     for d in &p.decls {
         if let Decl::Data { name, .. }
         | Decl::Enum { name, .. }
@@ -339,14 +406,10 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             enums.menus.insert(name.clone());
         }
         if let Decl::Effect { name, operations, .. } = &d.kind {
+            enums.effects.insert(name.clone());
             for op in operations {
                 enums.op_effects.insert(op.name.clone(), name.clone());
             }
-        }
-        if let Decl::Menu { name, effects, .. } | Decl::Form { name, effects, .. } = &d.kind
-            && !effects.effects.is_empty()
-        {
-            enums.latent_rows.insert(name.clone(), written_row(effects, |_| None));
         }
         // A row variable in a menu's or form's own row is one of its row
         // parameters, instantiated at each use.
@@ -364,7 +427,8 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         if let Decl::Data { name, type_params, type_param_signs, .. }
         | Decl::Enum { name, type_params, type_param_signs, .. }
         | Decl::Menu { name, type_params, type_param_signs, .. }
-        | Decl::Form { name, type_params, type_param_signs, .. } = &d.kind
+        | Decl::Form { name, type_params, type_param_signs, .. }
+        | Decl::Effect { name, type_params, type_param_signs, .. } = &d.kind
         {
             enums.arities.insert(name.clone(), type_params.len());
             let signs = type_params
@@ -375,6 +439,20 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
                 })
                 .collect();
             enums.param_signs.insert(name.clone(), signs);
+        }
+    }
+    for declaration in &p.decls {
+        if let Decl::Menu { name, effects, type_params, .. }
+        | Decl::Form { name, effects, type_params, .. } = &declaration.kind
+        {
+            let params =
+                type_params.iter().enumerate().map(|(index, name)| (name.clone(), index)).collect();
+            if let Some(row) =
+                enums.resolve_row(effects, |_| None, |ty| enums.resolve_in(ty, &params))
+                && !row.is_empty()
+            {
+                enums.latent_rows.insert(name.clone(), row);
+            }
         }
     }
     /// A declaration's parameter scope: each name to its position.

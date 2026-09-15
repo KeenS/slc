@@ -38,6 +38,7 @@ command main | (exit: i32) / {IO} {
     let captured = handle <(<"slant" | shout) | greet {
         write_line(text): resume => text,
         return(u) => "nothing was written",
+        _ => forward,
     };
 
     // The clause above never resumed, so `greet` stopped where it performed
@@ -54,6 +55,7 @@ command main | (exit: i32) / {IO} {
             <text | write_line;
             <(,) | resume
         },
+        _ => forward,
     };
 
     <0 | exit>

@@ -52,6 +52,7 @@ pub(crate) enum State {
 /// produced. The whole stack is the continuation.
 #[derive(Debug, Clone)]
 pub enum Frame {
+    Force,
     /// `(v₀, …, _, …)` — the components before `next` are done; evaluate
     /// the one at `next`.
     Tuple {
@@ -389,6 +390,7 @@ fn step_command(c: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError
 /// `kont` itself. Such a cut needs no frame.
 fn forwards_to_current(e: NodeId, env: &Env, kont: &Kont) -> bool {
     let bound = match node(e) {
+        Node::Forward => return true,
         Node::CoLocal(i) => env.local(i),
         Node::CoDynamic(a) => env.lookup(&a),
         _ => return false,
@@ -402,6 +404,7 @@ fn forwards_to_current(e: NodeId, env: &Env, kont: &Kont) -> bool {
 
 fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match frame {
+        Frame::Force => force_value(v, kont),
         Frame::Tuple { mut done, items, next, env } => {
             done.push(v);
             match items.get(next).copied() {
@@ -438,17 +441,36 @@ fn run_delayed(body: NodeId, env: Env) -> State {
     State::Term(body, env)
 }
 
+fn force_value(value: Value, kont: &mut Kont) -> State {
+    let mut current = value;
+    loop {
+        match current {
+            Value::Adapted { adapter, value } => {
+                kont.push(Frame::Force);
+                kont.push(Frame::ApplyCallee(*adapter));
+                current = *value;
+            }
+            Value::Delayed { body, env } => {
+                kont.push(Frame::Force);
+                return run_delayed(body, env);
+            }
+            other => return State::Return(other),
+        }
+    }
+}
+
 /// ⟨ v ∥ e ⟩ with the value in hand, `e` the co-term node.
 fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
-    // A request demands what a delayed computation produces: run it, and
-    // send the request to the result.
-    if let Value::Delayed { body, env: delayed_env } = &v
-        && matches!(node(e), Node::Dtor(..))
+    // A request or projection demands what a delayed computation produces:
+    // run it, and send the demand to the result.
+    if matches!(v, Value::Delayed { .. } | Value::Adapted { .. })
+        && matches!(node(e), Node::Dtor(..) | Node::Prj(..))
     {
         kont.push(Frame::Consume(e, env));
-        return Ok(run_delayed(*body, delayed_env.clone()));
+        return Ok(force_value(v, kont));
     }
     Ok(match node(e) {
+        Node::Forward => State::Return(v),
         // ⟨v ∥ α⟩ sends v to α. When α names a consumer — a continuation
         // parameter, a `select` consumer, a captured continuation — the cut
         // activates it. A co-variable that only names the ambient
@@ -551,6 +573,10 @@ fn project_value(value: Value, index: usize) -> Result<Value, EvalError> {
 /// One application step: a cut against something that consumes.
 fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalError> {
     Ok(match callee {
+        Value::Adapted { adapter, value } => {
+            kont.push(Frame::ApplyTo(arg));
+            force_value(Value::Adapted { adapter, value }, kont)
+        }
         Value::Closure { body, env } => {
             let mut call_env = env;
             call_env.define_local(arg);
@@ -601,10 +627,11 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
         }
         // A request demands the menu a delayed computation produces: run it,
         // then send the request to the result.
-        Value::Tagged(label, payload) if matches!(arg, Value::Delayed { .. }) => {
-            let Value::Delayed { body, env } = arg else { unreachable!("matched above") };
+        Value::Tagged(label, payload)
+            if matches!(arg, Value::Delayed { .. } | Value::Adapted { .. }) =>
+        {
             kont.push(Frame::ApplyCallee(Value::Tagged(label, payload)));
-            run_delayed(body, env)
+            force_value(arg, kont)
         }
         // Activating a product consumer binds every component.
         Value::CoTensor { co, env } => {
@@ -650,6 +677,24 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
         Value::Resume(frames) => {
             kont.append(&frames);
             State::Return(arg)
+        }
+        Value::Builtin(name) if name == "$force" => force_value(arg, kont),
+        Value::Builtin(name) if name == "$adapt" => {
+            let Value::Tuple(mut parts) = arg else {
+                return Err(EvalError::TypeMismatch(
+                    "an adapter needs its function and value".into(),
+                ));
+            };
+            if parts.len() != 2 {
+                return Err(EvalError::TypeMismatch("an adapter needs two components".into()));
+            }
+            let value = parts.pop().expect("two components");
+            let adapter = parts.pop().expect("two components");
+            if matches!(value, Value::Delayed { .. } | Value::Adapted { .. }) {
+                State::Return(Value::Adapted { adapter: Box::new(adapter), value: Box::new(value) })
+            } else {
+                State::Apply { callee: adapter, arg: value }
+            }
         }
         Value::Builtin(name) => {
             let mut args = Vec::new();

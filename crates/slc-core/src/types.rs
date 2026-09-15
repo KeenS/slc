@@ -1,7 +1,7 @@
 //! Types with explicit polarity.
 
 /// A base (atomic) type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Base {
     I32,
     I64,
@@ -15,16 +15,48 @@ pub enum Base {
     File,
 }
 
-/// What running a value performs: effects by name, and at most one row
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Effect {
+    pub name: String,
+    pub args: Vec<Type>,
+}
+
+impl From<String> for Effect {
+    fn from(name: String) -> Self {
+        Self { name, args: Vec::new() }
+    }
+}
+
+impl From<&str> for Effect {
+    fn from(name: &str) -> Self {
+        name.to_owned().into()
+    }
+}
+
+/// What running a value performs: typed effects, and at most one row
 /// variable standing for the rest. A negative type without a row performs
 /// nothing (`docs/design-notes/rows-in-types.md`).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Row {
-    pub effects: std::collections::BTreeSet<String>,
+    pub effects: std::collections::BTreeSet<Effect>,
     pub tail: Option<usize>,
 }
 
 impl Row {
+    pub fn map_types(&self, mut map: impl FnMut(&Type) -> Type) -> Self {
+        Self {
+            effects: self
+                .effects
+                .iter()
+                .map(|effect| Effect {
+                    name: effect.name.clone(),
+                    args: effect.args.iter().map(&mut map).collect(),
+                })
+                .collect(),
+            tail: self.tail,
+        }
+    }
+
     /// Performs nothing: no effect, and no variable that could stand for one.
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty() && self.tail.is_none()
@@ -32,7 +64,7 @@ impl Row {
 }
 
 /// A type in the λ̄μμ̃ calculus, with explicit positive/negative polarity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Type {
     /// Inference variable.
     Var(usize),
@@ -63,10 +95,11 @@ pub enum Type {
     Named(String, Vec<Type>),
     /// A negative type together with what running a value of it performs:
     /// calling a function, feeding a consumer, demanding an item. Never
-    /// built with the empty row, which is the type alone. Its dual keeps the
-    /// row, so `dual` stays an involution; a positive one means nothing of
-    /// its own.
+    /// built with the empty row, which is the type alone. Its dual retains
+    /// the whole wrapper as an answer requirement, without charging the
+    /// row when that answer is merely forwarded.
     Rowed(Box<Type>, Row),
+    Delayed(Box<Type>, Row),
 }
 
 impl Type {
@@ -93,10 +126,11 @@ impl Type {
             Type::Named(name, own) => {
                 Type::Named(name.clone(), own.iter().map(|a| a.instantiate(args)).collect())
             }
-            Type::Rowed(t, row) => {
+            Type::Rowed(t, row) | Type::Delayed(t, row) => {
                 // A declaration's row variable is a parameter by position:
                 // where that argument is a row — carried on the unit, or the
                 // empty one — the row takes its place.
+                let row = row.map_types(|argument| argument.instantiate(args));
                 let row = match row.tail.and_then(|position| args.get(position)) {
                     Some(Type::Rowed(unit, given)) if **unit == Type::ONE => Row {
                         effects: row.effects.iter().chain(&given.effects).cloned().collect(),
@@ -107,7 +141,11 @@ impl Type {
                     }
                     _ => row.clone(),
                 };
-                Type::rowed(t.instantiate(args), row)
+                if matches!(self, Type::Delayed(..)) {
+                    Type::delayed(t.instantiate(args), row)
+                } else {
+                    Type::rowed(t.instantiate(args), row)
+                }
             }
             atom => atom.clone(),
         }
@@ -116,6 +154,10 @@ impl Type {
     /// `ty`, performing `row` when it runs. The empty row is `ty` itself.
     pub fn rowed(ty: Type, row: Row) -> Type {
         if row.is_empty() { ty } else { Type::Rowed(Box::new(ty), row) }
+    }
+
+    pub fn delayed(ty: Type, row: Row) -> Type {
+        if row.is_empty() { ty } else { Type::Delayed(Box::new(ty), row) }
     }
 
     /// A function type: `A -> B` is `(dual(A) ; B)`, so its dual is
@@ -153,7 +195,7 @@ impl Type {
                 Type::Dual(Box::new(Type::Named(name.clone(), args.clone())))
             }
             Type::Param(i) => Type::Dual(Box::new(Type::Param(*i))),
-            Type::Rowed(t, row) => Type::Rowed(Box::new(t.dual()), row.clone()),
+            Type::Rowed(..) | Type::Delayed(..) => Type::Dual(Box::new(self.clone())),
         }
     }
 
@@ -162,7 +204,7 @@ impl Type {
         match self {
             // The dual of a negative type is positive.
             Type::Dual(inner) => inner.is_negative(),
-            Type::Rowed(inner, _) => inner.is_positive(),
+            Type::Rowed(inner, _) | Type::Delayed(inner, _) => inner.is_positive(),
             other => matches!(
                 other,
                 Type::Var(_)
@@ -180,7 +222,7 @@ impl Type {
         match self {
             // The dual of a positive type is negative.
             Type::Dual(inner) => inner.is_positive(),
-            Type::Rowed(inner, _) => inner.is_negative(),
+            Type::Rowed(inner, _) | Type::Delayed(inner, _) => inner.is_negative(),
             other => matches!(
                 other,
                 Type::Var(_) | Type::Param(_) | Type::Neg(_) | Type::Par(..) | Type::With(..)
@@ -243,7 +285,7 @@ mod tests {
     }
 
     fn exn() -> Row {
-        Row { effects: ["Exn".to_string()].into_iter().collect(), tail: None }
+        Row { effects: [Effect::from("Exn")].into(), tail: None }
     }
 
     #[test]
@@ -252,13 +294,45 @@ mod tests {
         let consumer = Type::rowed(Type::Neg(Base::Str), exn());
         for t in [function, consumer] {
             assert_eq!(t.dual().dual(), t, "dual(dual({t:?})) != {t:?}");
-            assert!(matches!(t.dual(), Type::Rowed(_, ref row) if *row == exn()), "{t:?}");
+            assert_eq!(t.dual(), Type::Dual(Box::new(t.clone())));
         }
     }
 
     #[test]
     fn the_empty_row_is_no_wrapper() {
         assert_eq!(Type::rowed(Type::Neg(Base::I64), Row::default()), Type::Neg(Base::I64));
+    }
+
+    #[test]
+    fn delayed_rows_preserve_the_result_and_duality() {
+        let callable = Type::rowed(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64)), io());
+        let delayed = Type::delayed(callable.clone(), exn());
+        assert!(delayed.is_negative() && !delayed.is_positive());
+        assert!(delayed.dual().is_positive() && !delayed.dual().is_negative());
+        assert_eq!(delayed.dual().dual(), delayed);
+        assert_eq!(Type::delayed(callable.clone(), Row::default()), callable);
+        assert_eq!(delayed.to_string(), "Delayed<(+i64 -> +i64 / {IO}), {Exn}>");
+    }
+
+    #[test]
+    fn forcing_and_activation_budgets_fit_independently() {
+        let callable = Type::rowed(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64)), io());
+        let delayed = Type::delayed(callable.clone(), exn());
+        for (expected, actual, accepted) in [
+            (delayed.clone(), delayed.clone(), true),
+            (delayed.clone(), callable.clone(), true),
+            (callable.clone(), delayed.clone(), false),
+            (Type::delayed(callable.clone(), io()), delayed.clone(), false),
+            (
+                Type::delayed(Type::arrow(Type::Pos(Base::I64), Type::Pos(Base::I64)), exn()),
+                delayed,
+                false,
+            ),
+        ] {
+            let mut unification = crate::typing::Unification::new();
+            unification.unify(&expected, &actual).unwrap();
+            assert_eq!(unification.solve_rows(unification.row_constraints()).is_empty(), accepted);
+        }
     }
 
     #[test]
@@ -269,7 +343,7 @@ mod tests {
     }
 
     fn io() -> Row {
-        Row { effects: ["IO".to_string()].into_iter().collect(), tail: None }
+        Row { effects: [Effect::from("IO")].into(), tail: None }
     }
 
     #[test]
@@ -296,6 +370,35 @@ mod tests {
         assert!(uni.solve_rows(uni.row_constraints()).is_empty());
         assert!(uni.unify(&pure, &rowed).is_ok());
         assert_eq!(uni.solve_rows(uni.row_constraints()).len(), 1);
+    }
+
+    #[test]
+    fn a_nominal_demand_budget_accepts_only_its_declared_effects() {
+        for (declared, actual, accepted) in
+            [(io(), io(), true), (io(), exn(), false), (Row::default(), io(), false)]
+        {
+            let mut uni = crate::typing::Unification::new();
+            uni.set_negative_decls(["Menu".into()]);
+            uni.set_latent_decls([("Menu".into(), declared, None)]);
+            let menu = Type::Named("Menu".into(), Vec::new()).dual();
+            uni.unify(&menu, &Type::rowed(menu.clone(), actual)).unwrap();
+            assert_eq!(uni.solve_rows(uni.row_constraints()).is_empty(), accepted);
+        }
+    }
+
+    #[test]
+    fn a_nominal_demand_budget_tracks_its_row_argument() {
+        let mut uni = crate::typing::Unification::new();
+        uni.set_negative_decls(["Menu".into()]);
+        uni.set_latent_decls([("Menu".into(), Row::default(), Some(0))]);
+        let argument = uni.fresh_var();
+        let menu = Type::Named("Menu".into(), vec![argument.clone()]).dual();
+        let latent = uni.latent_row(&menu);
+        assert!(latent.tail.is_some());
+        assert_eq!(uni.apply(&argument), Type::rowed(Type::ONE, latent.clone()));
+        uni.unify(&menu, &Type::rowed(menu.clone(), io())).unwrap();
+        uni.constrain_row(latent, Row::default());
+        assert!(!uni.solve_rows(uni.row_constraints()).is_empty());
     }
 
     #[test]

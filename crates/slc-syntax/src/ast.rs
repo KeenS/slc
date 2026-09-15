@@ -133,8 +133,19 @@ pub enum Expr {
     Handle {
         body: Box<Node<Expr>>,
         clauses: Vec<HandleClause>,
+        forward: bool,
         /// The `return(x) => r` clause: its binder and body.
         ret: Option<(String, Box<Node<Expr>>)>,
+    },
+    Handler {
+        effects: Vec<String>,
+        clauses: Vec<HandleClause>,
+        forward: bool,
+        ret: Option<(String, Box<Node<Expr>>)>,
+    },
+    WithHandler {
+        handler: Box<Node<Expr>>,
+        body: Box<Node<Expr>>,
     },
     /// A sequence of expressions; the value of the last one.
     Block(Vec<Node<Expr>>),
@@ -170,10 +181,16 @@ impl Expr {
             }
             Expr::Project { base, .. } => vec![base],
             Expr::Request { arg, .. } => vec![arg],
-            Expr::Handle { body, clauses, ret } => std::iter::once(&**body)
+            Expr::Handle { body, clauses, ret, .. } => std::iter::once(&**body)
                 .chain(clauses.iter().map(|c| &c.body))
                 .chain(ret.iter().map(|(_, b)| &**b))
                 .collect(),
+            Expr::Handler { clauses, ret, .. } => clauses
+                .iter()
+                .map(|clause| &clause.body)
+                .chain(ret.iter().map(|(_, body)| &**body))
+                .collect(),
+            Expr::WithHandler { handler, body } => vec![handler, body],
         }
     }
 }
@@ -249,7 +266,7 @@ impl TypeExpr {
 /// spelling.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct EffectRow {
-    pub effects: Vec<String>,
+    pub effects: Vec<Node<TypeExpr>>,
     pub tails: Vec<String>,
 }
 
@@ -392,12 +409,13 @@ impl Pattern {
 }
 
 /// The polarity a generic parameter declares: a `+T` stands for positive
-/// types, a `-T` for negative ones. A type variable carries no polarity of
-/// its own, so a generic parameter states it.
+/// types, a `-T` for negative ones, and a `*T` for either. A type variable
+/// carries no polarity of its own, so a generic parameter states its scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamPolarity {
     Positive,
     Negative,
+    Any,
 }
 
 impl ParamPolarity {
@@ -406,6 +424,7 @@ impl ParamPolarity {
         match self {
             ParamPolarity::Positive => ParamPolarity::Negative,
             ParamPolarity::Negative => ParamPolarity::Positive,
+            ParamPolarity::Any => ParamPolarity::Any,
         }
     }
 
@@ -414,6 +433,7 @@ impl ParamPolarity {
         match self {
             ParamPolarity::Positive => '+',
             ParamPolarity::Negative => '-',
+            ParamPolarity::Any => '*',
         }
     }
 }
@@ -599,6 +619,8 @@ pub enum Decl {
     /// An effect: a named set of operations a computation may perform.
     Effect {
         name: String,
+        type_params: Vec<String>,
+        type_param_signs: Vec<(String, ParamPolarity)>,
         /// `pub` — visible outside the module that declares it. A
         /// declaration is private by default, reachable by its own module
         /// and the modules nested inside it; a top-level declaration, which

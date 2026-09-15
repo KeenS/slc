@@ -43,6 +43,216 @@ fn with_main(decls: &[&str], body: &str) -> String {
 const EXN: &str = "effect Exn { fn throw(m: String) -> i64; }\n";
 const MAIN: &str = "command main | (exit: -i32) / {IO} { <0 | exit> }\n";
 const RISKY: &str = "fn risky(x: i64) -> i64 / {Exn} { <\"boom\" | throw }\n";
+
+const PAIR_OPS: &str = "effect PairOps { fn first() -> i64; fn second() -> i64; }\n";
+
+#[test]
+fn a_handler_must_answer_every_operation_of_a_handled_effect() {
+    refused(
+        "incomplete_file_handler",
+        &with_main(
+            &[],
+            "let outcome = handle <(\"unused\", \"text\") | fs::write_file { fs::read_file(path): resume => <::0(\"mock\") | resume };",
+        ),
+        &["fs::Fs", "6 operations", "fs::write_file", "_ => forward"],
+    );
+    for body in ["second()", "1"] {
+        refused(
+            &format!("incomplete_handler_{}", if body == "1" { "pure" } else { "effectful" }),
+            &with_main(&[PAIR_OPS], &format!("<handle ({body}) {{ first() => 1 }} | println;")),
+            &["handler", "PairOps", "second", "_ => forward"],
+        );
+    }
+    assert_eq!(
+        accepted(
+            "complete_handler",
+            &with_main(&[PAIR_OPS], "<handle second() { first() => 1, second() => 2 } | println;"),
+        ),
+        "2\n",
+    );
+}
+
+#[test]
+fn a_forwarding_handler_keeps_the_effect_for_an_outer_handler() {
+    refused(
+        "forwarding_without_outer_handler",
+        &with_main(&[PAIR_OPS], "<handle second() { first() => 1, _ => forward } | println;"),
+        &["effect:", "PairOps"],
+    );
+    assert_eq!(
+        accepted(
+            "forwarding_multishot",
+            &with_main(
+                &[PAIR_OPS, "fn run() -> i64 / {PairOps} { let before = first(); let middle = second(); let after = first(); <(<(before, middle) | add, after) | add }"],
+                "let result = handle (handle run() { first(): resume => <1 | resume, _ => forward }) {
+                    first(): resume => <100 | resume,
+                    second(): resume => <(<2 | resume, <3 | resume) | add
+                };
+                <result | println;",
+            ),
+        ),
+        "9\n",
+    );
+}
+
+#[test]
+fn an_escaping_exit_cannot_forget_its_row() {
+    let source = "effect Tick { fn tick() -> (,); }
+        data Stored { consumer: -i64 }
+        command store | (consumer: i64 & stored: Stored) {
+            <Stored { consumer: consumer } | stored>
+        }
+        command main | (exit: -i32) / {IO} {
+            let saved = handle (mu Stored { stored <=
+                <(,) | store | (select i64 { value => { tick(); <0 | exit> } } & stored)>
+            }) { tick(): resume => <(,) | resume };
+            <42 | saved.consumer>
+        }";
+    refused("escaping_pure_exit", source, &["effect:", "Tick"]);
+}
+
+#[test]
+fn an_escaping_exit_is_handled_when_activated_not_when_passed() {
+    let declarations = "effect Tick { fn tick() -> (,); }
+        data Stored<E> { consumer: (-i64 / {..E}) }
+        command store<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
+            <Stored { consumer: consumer } | stored>
+        }
+        command forward<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
+            <(,) | store | (consumer & stored)>
+        }";
+    let setup = "let saved = handle (mu Stored<{Tick}> { stored <=
+            <(,) | forward | (select i64 { value => { tick(); <0 | exit> } } & stored)>
+        }) { tick(): resume => { <\"construction\" | println; <(,) | resume } };";
+    for (label, stored) in
+        [("direct", "consumer"), ("closure", "select i64 { value => <value | consumer> }")]
+    {
+        let declarations =
+            declarations.replace("consumer: consumer", &format!("consumer: {stored}"));
+        refused(
+            &format!("escaping_rowed_exit_{label}"),
+            &format!(
+                "{declarations} command main | (exit: -i32) / {{IO}} {{ {setup} <42 | saved.consumer> }}"
+            ),
+            &["effect:", "Tick"],
+        );
+        assert_eq!(
+            accepted(
+                &format!("escaping_rowed_exit_handled_{label}"),
+                &format!("{declarations} command main | (exit: -i32) / {{IO}} {{
+                {setup}
+                handle (<42 | saved.consumer>) {{ tick(): resume => {{ <\"activation\" | println; <(,) | resume }} }}
+            }}"),
+            ),
+            "activation\n",
+        );
+    }
+}
+
+#[test]
+fn a_generic_exit_cannot_be_stored_as_a_pure_consumer() {
+    refused(
+        "generic_exit_pure_storage",
+        "data Stored { consumer: -i64 }
+        command store<E> | (consumer: (-i64 / {..E}) & stored: Stored) {
+            <Stored { consumer: consumer } | stored>
+        }
+        command main | (exit: -i32) / {IO} { <0 | exit> }",
+        &["effect:", "..E"],
+    );
+}
+
+#[test]
+fn an_unused_exit_does_not_perform_its_row() {
+    assert_eq!(
+        accepted(
+            "unused_rowed_exit",
+            "effect Tick { fn tick() -> (,); }
+            command ignore<E> | (unused: (-i64 / {..E}) & done: i32) { <0 | done> }
+            command main | (exit: -i32) / {IO} {
+                <(,) | ignore | (select i64 { value => { tick(); <0 | exit> } } & exit)>
+            }",
+        ),
+        "",
+    );
+}
+
+#[test]
+fn returned_values_cannot_charge_latent_effects_to_construction() {
+    for (name, declaration) in [
+        (
+            "returned_consumer",
+            "fn make(out: -i64) -> -i64 / {Exn} {
+                select i64 { value => <(<\"late\" | throw) | out> }
+            }",
+        ),
+        (
+            "returned_menu",
+            "menu Counter { value: i64 }
+            fn make() -> Counter / {Exn} {
+                mu Counter { value <= <(<\"late\" | throw) | value> }
+            }",
+        ),
+        (
+            "returned_form",
+            "form Sink { value: i64 }
+            fn make(out: -i64) -> Sink / {Exn} {
+                select Sink { Sink { value } => <(<\"late\" | throw) | out> }
+            }",
+        ),
+    ] {
+        refused(name, &[EXN, declaration, MAIN].concat(), &["hands back", "Exn"]);
+    }
+}
+
+#[test]
+fn effectful_streams_keep_their_rows_through_consumers_and_bridges() {
+    let declarations = [EXN, RISKY, "use list::List::*;\n"];
+    for (name, demand) in [
+        ("stream_take", "<(source, 2) | stream::take"),
+        (
+            "stream_to_seq",
+            "<source | seq::of_stream | current => (current, 2) | seq::take | seq::to_list",
+        ),
+        (
+            "stream_take_while",
+            "<(fn(value: i64) { True }, source) | seq::take_while | current => (current, 2) | seq::take | seq::to_list",
+        ),
+    ] {
+        let setup = "let source = <(risky, <1 | stream::count_from) | stream::map;";
+        refused(
+            name,
+            &with_main(&declarations, &format!("{setup} <({demand}) | println;")),
+            &["performs", "Exn"],
+        );
+        assert_eq!(
+            accepted(
+                &format!("{name}_handled"),
+                &with_main(
+                    &declarations,
+                    &format!("{setup} <handle ({demand}) {{ throw(message) => Nil }} | println;"),
+                ),
+            ),
+            "[]\n",
+        );
+    }
+}
+
+#[test]
+fn a_lazy_stream_bridge_does_not_run_its_source() {
+    assert_eq!(
+        accepted(
+            "unused_effectful_stream",
+            &with_main(
+                &[EXN, RISKY],
+                "let source = <(risky, <1 | stream::count_from) | stream::map;
+                let+ sequence = <source | seq::of_stream;
+                <\"built\" | println;",
+            ),
+        ),
+        "built\n",
+    );
+}
 const APP: &str = "fn app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 / {..E} { <x | f }
 fn inc(x: i64) -> i64 { <(x, 1) | add }
 ";

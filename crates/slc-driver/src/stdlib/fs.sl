@@ -27,28 +27,28 @@ mod fs {
     }
 
     // The whole file, or why not.
-    pub command read(path: String) | (ok: String & failed: String) / {Fs} {
+    pub command read<E>(path: String) | (ok: (-String / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
         <path | read_file | (ok & failed)>
     }
 
     // Replace a file's contents, or say why not.
-    pub command write(path: String, contents: String) | (ok: unit & failed: String) / {Fs} {
+    pub command write<E>(path: String, contents: String) | (ok: (-unit / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
         <(path, contents) | write_file | (ok & failed)>
     }
 
     // A handle to read line by line, or why not.
-    pub command open(path: String) | (opened: File & failed: String) / {Fs} {
+    pub command open<E>(path: String) | (opened: (-File / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
         <path | open_file | (opened & failed)>
     }
 
     // The next line, or the end of the file.
-    pub command read_line(file: File) | (line: String & end: unit) / {Fs} {
+    pub command read_line<E>(file: File) | (line: (-String / {..E}) & end: (-unit / {..E})) / {Fs, ..E} {
         <file | read_line_of | (line & end)>
     }
 
-    // Spend the handle: a later read through it fails. Every path closes
-    // the file by construction when the close is composed onto the only door
-    // out, as `examples/file_io.sl` does.
+    // Spend the handle: a later read through it fails. Composing a close
+    // onto an exit closes paths routed through that wrapper, not earlier
+    // captured exits; see `examples/file_io.sl`.
     pub fn close(file: File) -> (,) / {Fs} {
         <file | close_file
     }
@@ -62,25 +62,18 @@ mod fs {
     // else it performs.
     pub fn real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
         handle <(,) | program {
-            // The primitive offers its outcome to one of two consumers; each
-            // resumes with that outcome, and hands what the resumed program
-            // produces to `out`, the clause's own continuation.
-            read_file(path): resume => mu { out <= <path | __read_file | (
-                select String { text => <(<::0(text) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            write_file(path, contents): resume => mu { out <= <(path, contents) | __write_file | (
-                select unit { done => <(<::0(done) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            open_file(path): resume => mu { out <= <path | __open_file | (
-                select File { file => <(<::0(file) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            read_line_of(file): resume => mu { out <= <file | __read_line | (
-                select String { line => <(<::0(line) | resume) | out> }
-                & select unit { end => <(<::1(end) | resume) | out> }
-            )> },
+            read_file(path): resume => <path | __read_file | (
+                fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            write_file(path, contents): resume => <(path, contents) | __write_file | (
+                fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            open_file(path): resume => <path | __open_file | (
+                fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            read_line_of(file): resume => <file | __read_line | (
+                fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) }
+            ) | resume,
             close_file(file): resume => <(<file | __close_file) | resume,
             file_exists(path): resume => <(<path | __file_exists) | resume,
         }
@@ -93,25 +86,18 @@ mod fs {
     // own continuation was captured outside the handler.
     pub command real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
         handle program {
-            // The primitive offers its outcome to one of two consumers; each
-            // resumes with that outcome, and hands what the resumed program
-            // produces to `out`, the clause's own continuation.
-            read_file(path): resume => mu { out <= <path | __read_file | (
-                select String { text => <(<::0(text) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            write_file(path, contents): resume => mu { out <= <(path, contents) | __write_file | (
-                select unit { done => <(<::0(done) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            open_file(path): resume => mu { out <= <path | __open_file | (
-                select File { file => <(<::0(file) | resume) | out> }
-                & select String { why => <(<::1(why) | resume) | out> }
-            )> },
-            read_line_of(file): resume => mu { out <= <file | __read_line | (
-                select String { line => <(<::0(line) | resume) | out> }
-                & select unit { end => <(<::1(end) | resume) | out> }
-            )> },
+            read_file(path): resume => <path | __read_file | (
+                fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            write_file(path, contents): resume => <(path, contents) | __write_file | (
+                fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            open_file(path): resume => <path | __open_file | (
+                fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) }
+            ) | resume,
+            read_line_of(file): resume => <file | __read_line | (
+                fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) }
+            ) | resume,
             close_file(file): resume => <(<file | __close_file) | resume,
             file_exists(path): resume => <(<path | __file_exists) | resume,
         }

@@ -69,17 +69,19 @@ before it consumes, so the chain delivers rather than returns.
 | `f \| g` | function composition — a function |
 | `f \| k>` | composition into a consumer — a consumer |
 
-**A stage reads either way round, because `;` is commutative.** `(A ; B)`
-is `dual(A) -> B` and equally `dual(B) -> A`, so a function and the
-consumer transformer that mirrors it are one type:
+**A stage can be adapted to read either way round.** `(A ; B)` is
+`dual(A) -> B`; turning it gives `(B ; A)`, or `dual(B) -> A`.
+A returning function and its consumer-transformer counterpart can therefore
+serve the same pipeline, through an elaborated adapter rather than
+unrestricted type equality:
 
 ```sl
 fn area(s: Shape) -> i64                  // (-Shape ; +i64)
-fn area_of(out: i64) <- Shape             // (+i64 ; -Shape) — the same type
+fn area_of(out: i64) <- Shape             // (+i64 ; -Shape) — adapted orientation
 ```
 
-Either stands as a stage, and what flows in picks the reading; where
-both fit they agree, so nothing is chosen. A stage read the second way
+Either stands as a stage, and what flows in picks the reading; the forward
+reading wins when both fit. A stage read the second way
 takes *the rest of the chain* as its continuation, which is why the two
 styles are written the same:
 
@@ -90,8 +92,8 @@ styles are written the same:
 
 `examples/two_styles.sl` is that program, twice.
 
-The same identity holds wherever a value meets a declared type. A negative
-function stored in a menu item declared `(i64 -> String)`, a positive one
+The same adapter is available wherever a value meets a declared type. A
+consumer transformer stored in a menu item declared `(i64 -> String)`, a returning function
 passed where `(-String -> -i64)` is declared, or either kept in a record
 field, a variant, a `let`, or returned, is accepted at the other spelling.
 A value of a joint type is a closure facing one way, so the checker records a swap
@@ -109,9 +111,55 @@ first, so nothing that fits as written changes meaning. A tuple or an
 alternative written out is turned component by component, each component
 one value meeting one declared type, and a stage's result that meets the
 next stage at the other spelling is turned around between the two steps.
-Inside a type constructor's arguments there is no one value to turn —
-`List<(A ; B)>` against `List<(B ; A)>` — so the spelling still has to match,
-and the checker says so.
+**Adapters lift through structure, not just literals.** A stored tuple,
+alternative, record, or enum can be adapted componentwise. Functions adapt
+their inputs in the opposite direction and their results in the forward
+direction. Menus adapt the answer to the item actually requested; forms
+and other named consumers adapt the demand they receive. The compiler
+derives these adapters from declarations, including regular recursive
+declarations, rather than treating different representations as equal.
+
+```sl
+data Box<-F> { value: F }
+
+fn deliver(out: String) <- i64 {
+    select i64 { number => <number | int_to_str | out> }
+}
+
+command main | (exit: i32) / {IO} {
+    let original = Box { value: deliver };
+    let adapted: Box<(i64 -> String)> = original;
+    <7 | adapted.value | println;
+    <0 | exit>
+}
+```
+
+Parameter polarity still applies: `Box<-F>` accepts these negative stages;
+the standard `List<+T>` does not. Polarity is not variance. Dual occurrences
+use the reverse adapter's dual; they do not simply map inputs forward.
+Tuple order is unchanged except when adapting an explicitly dual parameter
+requires the dual of a `;` reversal. There is no general tuple permutation
+or commutative type equality.
+
+**Turning preserves forcing as well as activation.** Adapting
+`Delayed<T, E>` to `Delayed<U, E>` stores an adapter for the result. Each
+demand first forces the original computation under that demand's handlers,
+then adapts the result, without activating it. An eager `let+` therefore
+performs construction but not activation; another demand of the original
+delayed value repeats construction. Neither row may be erased, merged into
+the other, or moved across a handler boundary. Adapting a structure does
+not force delayed payloads or request unselected menu items.
+
+Lifting requires a finite, bounded adapter derivation from available
+declarations. Recursive specialization whose type arguments keep growing
+is refused. Opaque constructors, including `Handler`, still require matching
+arguments; capability rows are checked invariantly rather than mapped.
+Exact matching remains the first choice. These are elaborated adapters,
+not an unrestricted equality law under every type constructor.
+
+`examples/structural_adapters.sl` demonstrates stored and recursive values
+and the separate construction and activation phases. Implementation details
+and the validation obligations are in `docs/design-notes/structural-adapters.md`.
 
 **`<` is never left out.** A chain without it begins with a function,
 whatever its head is, and composes: `f | g` is a function, and `f | k>` a
@@ -127,11 +175,16 @@ f | k>          // compose f into k: a consumer
 <f | k>         // send f itself to k: a cut
 ```
 
-A chain is flat, because composition is associative and the syntax says
-so: `<v | f | g | k>` may be bracketed any way and is the same
-expression. The orientation rule the cut always had survives as the
-direction of the pipe: **a consumer stands only at the right end**,
-since nothing flows out of one.
+A flat chain and its nested applications share one elaboration:
+`<v | f | g` and `<(<v | f) | g` have the same demand boundaries.
+Composition `<v | (f | g)` follows those same boundaries. Each stage receives
+its argument by the polarity rule in §4: positive computations run before
+the stage, negative computations wait for demand. The rule includes a
+computed final consumer: a positive input runs before that consumer is
+constructed. Intermediate negative results can be discarded or demanded
+repeatedly. These are regrouping laws, not permission to reorder effects,
+insert eager bindings, or move expressions across handlers. **A consumer
+stands only at the right end**, since nothing flows out of one.
 
 A chain ends where the expression holding it does: at the `;` or `}` of a
 block, and at the `,` or `)` that closes a component. So a chain stands in a
@@ -142,8 +195,8 @@ stage, and `<x | (f, g)` does not end at its `,`.
 Two operations look alike in most languages and are different here.
 
 **Application** is flow: `<a | f` supplies an argument to a function and
-gets a result, and it is the *only* way to apply one — `f(a)` is refused,
-with the pipeline spelled out. Several arguments are the product they
+gets a result. An ordinary declared function with arguments uses flow:
+`f(a)` is refused, with the pipeline spelled out. Several arguments are the product they
 always were, written as one: `<(a, b) | f`. So a call and a chain are not
 two things to learn, and reading either goes left to right:
 
@@ -162,8 +215,13 @@ builtin's arguments one at a time, but a stage still supplies the whole
 group, checked against the builtin's signature as a declaration's is — so
 `<(1, "b") | add` is refused before it runs.
 
-The call form survives only where a callee is not a function of values:
-a variant constructor `Cons(h, t)` *builds*, and keeps its parentheses.
+Nullary returning functions use `f()` or `<(,) | f`; the name `f` alone
+is a function value of type `((,) -> T / {E})`, not an invocation. Naming
+it performs nothing. A parameterless consumer transformer instead denotes
+the consumer it declares; naming it does not activate that consumer.
+Primitive and trait-method calls retain their parenthesized compatibility
+forms, with the same argument demand rules as flow. A variant constructor
+`Cons(h, t)` *builds*, and keeps its parentheses.
 
 **A `command` is a stage too.** It takes two groups — values, then the
 menu of exits — and the chain hands it both: what flows in is the value
@@ -178,7 +236,7 @@ command nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String)
 
 The row travels whole, so a command that takes one may hand it on
 unopened — `command forward(…) | (row: (-T & -String)) { <(xs, 2) | nth | row> }`.
-A negative function is *not* this case: it answers a consumer rather than
+A consumer transformer is *not* this case: it answers a consumer rather than
 `⊥`, so it composes on, and its exits are the rest of the chain
 (`<shape | area_of | label_of | out>`).
 
@@ -228,23 +286,23 @@ flows into, so `<(a, b) | add | k>` sends the sum. A `-` touching a number is
 part of it, `-1`, and a `String`'s character at a position is
 `<(s, i) | index`, a slice of it `<(s, i, j) | substring`.
 The consumer may be any expression that produces one — a name, or a
-negative function applied to its row:
+consumer transformer applied to its row:
 
 ```sl
 <Color::Blue | code | answer>     // `code` is a stage; `answer` closes
 ```
 
 Because a cut has type `⊥`, an arm that ends in one constrains nothing: in
-`match c { True => pos + 1, False => <message | err> }` the `match` has the type of
+`match c { True => <(pos, 1) | add, False => <message | err> }` the `match` has the type of
 the arm that returns, and arms that both return must agree.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and
 not a function, because a reader — and the compiler — should not have to know
 what `k` is bound to in order to tell an application from a command.
 
-## 4. Function polarity
+## 4. Function orientation and evaluation polarity
 
-A positive function is the familiar value-to-value function:
+A **returning function** uses `->` and produces a value:
 
 ```sl
 fn plus(x: +i32, y: +i32) -> i32 {
@@ -252,7 +310,7 @@ fn plus(x: +i32, y: +i32) -> i32 {
 }
 ```
 
-A negative function consumes continuations and produces a continuation. It is
+A **consumer transformer** consumes continuations and produces a continuation. It is
 written with the reverse arrow:
 
 ```sl
@@ -273,9 +331,11 @@ The arrows identify the direction of the cut:
   produces a continuation.
 
 There is one `fn` declaration form. The old `+fn` and `-fn` prefixes do not
-exist.
+exist. Both orientations have negative function types; "returning" does not
+mean positive polarity or call-by-value evaluation. Argument and result
+types determine evaluation independently of the declaration's orientation.
 
-A negative function declaration is an ordinary negative abstraction. It does not
+A consumer-transformer declaration is an ordinary negative abstraction. It does not
 implicitly capture the current continuation. A distinct local `mu` expression
 must be used when a body needs to capture control; its binders are independent
 of the declared continuation parameters.
@@ -294,7 +354,7 @@ The diagonal is the ordinary reading — data in, control out. The other two are
 what polarity buys:
 
 - A **negative type in argument position** is a consumer received as data. A
-  positive `fn` may take one, because it returns rather than ending in a cut,
+  returning `fn` may take one, because it returns rather than ending in a cut,
   so it promises nothing about consuming it; a `command` splits its parameters by
   polarity, so a consumer there belongs in the continuation group instead.
 - A **positive type in continuation position** is the type after `<-`. A
@@ -318,7 +378,7 @@ negative — before anything solves it.
 
 ### Continuation rows
 
-The continuation parameters of a negative function, and the second parameter
+The continuation parameters of a consumer transformer, and the second parameter
 group of a `command`, form that declaration's **continuation row**. A row is
 compared **positionally and invariantly**:
 
@@ -356,18 +416,23 @@ is taken, `<(,) | then>`, and not while the bundle is built:
 <c | pick | ({ <"then" | println; <0 | exit> } & { <1 | exit> })>
 ```
 
-A value ran nothing and is passed as it is, and a builtin's arguments are
-computed at once.
+A value ran nothing and is passed as it is. Primitive arguments obey the
+same polarity rule as other arguments, including direct calls and aliases.
+A scalar primitive receives computed positive values; an outcome primitive
+forces and activates only the callback it selects. A primitive inspecting
+an opaque negative value, such as internal `__display`, does not demand it
+just to print its representation. There is no blanket eager-argument
+exception for primitive names.
 
 An exit is taken by naming it where a command stands — an arm, a block's
 statement or its end — and passed on by naming it anywhere else:
 
 ```sl
-command pick(c: Bool) | (then: (;) & otherwise: (;)) {
+command pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
     match c { True => then, _ => otherwise }       // runs the exit
 }
 
-command forward(c: Bool) | (then: (;) & otherwise: (;)) {
+command forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
     <c | pick | (then & otherwise)>               // passes them on
 }
 ```
@@ -386,7 +451,8 @@ an argument whose type is known.
 
 A declaration may declare type parameters, and each states its polarity on
 the declaration: `<+T>` ranges over positive types, `<-T>` over negative
-ones. A type variable carries no polarity of its own, so the mark is
+ones, and `<*T>` accepts either polarity without assuming which. A type
+variable carries no polarity of its own, so the mark is
 required — on type declarations, functions, commands and impls alike — and
 it goes on the declaration because `-T` in a type already means `dual(T)`.
 A row variable, used as `..E`, ranges over effects rather than types and
@@ -402,19 +468,26 @@ mark, so `fn f<-U>(x: U) -> U { <x | id }` is refused when `id` declares
 with `enum List<+T>`, `List<-i64>` and `List<(i64 -> i64)>` are refused, and
 a list of consumers is a declaration of its own.
 
-In a positive function, a bare use of a generic parameter is positive; in a
-negative function or continuation row, it is negative. Thus `T` instantiates
-to the polarity required by its position:
+An unrestricted parameter can forward or store its argument, but cannot
+assume it is positive or negative. `fn id<*T>(value: T) -> T { value }`
+accepts both data and functions. Passing its `T` to a `<+U>`-only function
+is refused. A computation whose result has unrestricted polarity needs
+an explicit evaluation choice if inference cannot settle that polarity.
+
+The mark on a generic parameter fixes the polarity of its instantiation.
+With `<+T>`, `T` is positive; a bare `T` in a continuation row denotes its
+dual consumer, not a negative instantiation of `T`:
 
 ```sl
 fn id<+T>(value: T) -> T { value }
-fn consume<+T>(ok: T) <- T { <0 | ok> }
+fn consume<+T>(ok: T) <- T { ok }
 ```
 
-An explicit sign is a constraint, not a change of representation. `+T` denotes
-a positive instantiation and `-T` denotes a negative instantiation;
-therefore `+T` is rejected in a continuation row, and `-T` is rejected for a
-positive value parameter. Generic function declarations are type-erased at
+An explicit sign also states the position's polarity: `+T` is rejected in
+a continuation row, while `-T` explicitly requests the dual of a positive
+`T`. A returning function may receive an explicitly negative value parameter;
+its declaration orientation does not make all its parameters positive.
+Generic function declarations are type-erased at
 lowering: their ordinary parameters lower to λ binders and their continuation
 parameters lower to λ binders as well — a continuation is a value like any other.
 
@@ -452,8 +525,15 @@ A binding says when its value is computed. `let+` computes it where it is
 written, whatever its type — the way to perform a computation's effects under
 the handler in scope. `let-` does not compute it there: the name holds the
 computation, which runs afresh each time its result is demanded — applied,
-cut into, or asked for a menu item — and is passed on unrun when it is bound
-again, stored, or supplied as an argument.
+cut into, projected as a bundle, or asked for a menu item — and is passed on
+unrun when it is bound again, stored, or supplied as an argument.
+
+Eager binding also forces an existing implicit delay. With
+`let- pending = make(); let+ ready = pending;`, construction runs at the
+second binding, under the handlers surrounding it. `ready` holds the
+resulting value; `pending` is unchanged and recomputes on its next demand.
+This does not invoke a resulting function, demand a resulting menu item,
+or recursively force fields. It is explicit evaluation, not memoization.
 
 ```sl
 let- shout = { <"made" | println; fn(s: String) { <s | println } };
@@ -463,15 +543,17 @@ let- shout = { <"made" | println; fn(s: String) { <s | println } };
 
 What `let-` holds is negative — a function, a consumer, a menu — and a
 positive type is refused: a value delayed would bring back the `↑` that §8
-removed, so `Lazy<T>` stays the spelling of a delayed value. It binds a name,
+removed, so `Lazy<T, E>` stays the explicit menu spelling for a delayed
+positive result. It also accepts negative results. `let-` binds a name,
 since a pattern takes apart a value and a delayed computation is not one
 until it runs. In the core a delayed computation is `λ$delay. t`, a thunk of
 the unit, and the runtime runs it where it is demanded.
 
 A binding is one of the **by-name positions**. The others are what flows
 into a chain — the argument it applies, `<e | f` — an argument written in
-parentheses, a tuple component and a bundle item. In each, a computation of
-negative type is delayed and a positive one computed where it is written.
+parentheses, a tuple component, a record field, a variant or positional-choice
+payload, and a bundle item. In each, a computation of negative type is delayed
+and a positive one computed when the enclosing constructor is evaluated.
 Nothing is cached: a delayed value demanded twice runs twice, effects
 included, as a continuation resumed twice does. A name of type `(;)`
 standing as a command runs the exit it holds (see "Continuation rows").
@@ -484,16 +566,53 @@ binding is may be known only once the declaration's unification has
 finished, so it is settled then, and a computation whose polarity is still
 unknown is refused, asking for an annotation, `let+` or `let-`.
 
+The same inference applies to every by-name position, not just bindings.
+Preliminary inference supplies unresolved polarities for placing effects;
+the final type check validates those choices before lowering marks delays.
+An unresolved or changed choice is rejected rather than checking effects as
+immediate while lowering the computation as delayed. An unrestricted generic
+`*T` computation needs an explicit evaluation choice, such as `let+`, because
+its result may have either polarity.
+
 Effects follow the same rule. A delayed computation performs nothing where it
 is written: what it performs happens at each use, under the handlers around
 that use, so a `let-` written inside a `handle` and used after the `handle`
 has returned answers to the handlers outside it. `let+` is how a computation
 performs under the handler where it is written. What a delayed computation
 performs rides on its type as a row (§8, "Effects and handlers"), so it
-follows the computation wherever it goes — bound again, stored in a tuple or
-a variant, handed to a callee — and is performed wherever it finally runs.
+follows the computation wherever it goes — bound again, stored in a tuple,
+record or alternative, handed to a callee — and is performed wherever it
+finally runs.
 Where its type meets a slot that allows less, a parameter declared as a pure
 arrow for instance, it is refused there.
+
+**Forcing is not activation.** `Delayed<T, E>` annotates an implicitly
+delayed computation of negative result type `T`. Its forcing row is `E`;
+the result keeps its own activation row. For example:
+
+```sl
+data Saved { callback: Delayed<(i64 -> i64 / {Use}), {Build}> }
+```
+
+Constructing the function performs `Build`; applying the result performs
+`Use`. Ordinary application of the delayed callback does both. An eager
+binding performs only `Build` and binds `(i64 -> i64 / {Use})`. A plain
+function type promises no effectful forcing: replacing the field above
+with `(i64 -> i64 / {Build, Use})` is not equivalent. The same distinction
+survives parameters, returns, aliases, fields and menu answers. Empty
+forcing rows normalize away, so `Delayed<T, {}>` and `Delayed<T>` are `T`
+as effect promises, without changing call-by-name evaluation.
+
+Put the eager binding *inside* the construction handler:
+
+```sl
+let+ ready = handle { let+ value = pending; value } {
+    build(): resume => <10 | resume
+};
+```
+
+Merely handling the expression `pending` does not force it, and a `let+`
+outside that handler cannot move forcing back inside it.
 
 ```sl
 let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
@@ -509,7 +628,7 @@ A `command` declaration is the form that takes **both** values and
 continuations: value parameters and continuation parameters appear in separate
 parenthesized groups, and the body is a command — hence the name. A
 declaration that consumes values and consumes a continuation is a `command`; a
-positive `fn` may still receive a consumer as a value it forwards — `-String`
+returning `fn` may still receive a consumer as a value it forwards — `-String`
 is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
@@ -529,6 +648,29 @@ Conceptually, `command f(x: A) | (k: B) { E }` lowers to `λx. λk. E`: the
 value parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
 continuations. `k` is a *parameter*: the caller passes it.
+
+### Yielding through returning exits
+
+A command's exit group may instead be a bundle of returning functions. For
+exits `(-A & -B)`, a bundle `((A -> R) & (B -> R))` lets the chain produce
+the chosen function's common result `R`. Leave off the closing `>` and
+continue the chain normally:
+
+```sl
+let outcome = <path | __read_file | (
+    fn(text: String) { ::0(text) } & fn(reason: String) { ::1(reason) }
+);
+```
+
+Every exit must return the same type; mixing returning functions and
+non-returning consumers is rejected. With a closing `>`, exits remain
+consumers and the chain is a command. Yielding is an adapter that captures
+the result continuation and composes each callback into it, not a change to
+`select`: its arms still end in commands. The selected callback's forcing
+and activation effects remain under the handlers around the yielding call;
+unselected callbacks are not demanded. `examples/yielding_commands.sl`
+compares this syntax with an explicit `mu`. The file-system handlers use
+yielding exits to resume with outcomes without hand-written captures.
 
 ## 6. `mu`: capturing the current continuation
 
@@ -585,7 +727,7 @@ command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
 Each path ends in a cut: either forwarding both continuations to another
 command, or sending an outcome to one of them. One continuation per outcome
 *is* the outcome type — see §11. A helper that only computes
-with values — `at` above — stays an ordinary positive `fn`.
+with values — `at` above — stays an ordinary returning `fn`.
 
 A handler delimits `mu`. `k` holds the whole rest of the program, but a
 jump to it replaces the running continuation only down to the nearest
@@ -630,6 +772,48 @@ mu i64 { out <= <(reset <out | escape) | out> }    // refused: the jump would le
 
 A resumption whose slice crosses a `reset` carries a copy of it, as it does a
 handler, so a continuation captured under the `reset` lands on the copy.
+
+### Composable capture
+
+`control::reset` is a library handler, not the bare `reset` delimiter. It
+takes an explicit computation thunk. Inside it, `control::shift` receives a
+callback whose argument is the captured, returning continuation:
+
+```sl
+command main | (exit: i32) / {IO} {
+    let result = <fn {
+        let value = <fn(resume: (i64 -> i64)) {
+            <(<1 | resume, <2 | resume) | add
+        } | control::shift;
+        <(value, 10) | mul
+    } | control::reset;
+    <result | println;
+    <0 | exit>
+}
+```
+
+This prints `30`. Each resumption multiplies its argument by ten and returns
+to the callback, which adds the answers. `mu` instead captures an abortive
+consumer: cutting into it does not return to the cut site. Resumptions are
+multi-shot and never memoize results.
+
+The library uses `Shift<+A, +R, E>`. `A` is the operation's result and `R`
+is the fixed answer type of one capture handler; both are positive.
+The resumption has type `(A -> R / {..E})`. Its callback has type
+`Delayed<((A -> R / {..E}) -> R / {..E}), ..E>`, so construction, callback
+execution and resumption retain their separate demand points but share one
+conservative effect budget `E`. Annotate an effectful resumption accordingly;
+for example `(i64 -> i64 / {Factor})` when its continuation performs `Factor`.
+Those effects escape to an outer handler rather than disappearing during
+capture. Forcing an effectful callback happens when the capture handler
+invokes it, not when it is passed to `shift`.
+
+All captures at one installation share its `A` and `R`; this is not a
+rank-polymorphic prompt. Nested capture handlers may use different types. Each handles its
+own typed operations; incompatible answers at the same installation are
+rejected. A thunk with no capture also works. Unhandled `control::shift` is
+an effect error, including under bare `reset`. Always write the qualified
+`control::reset` call: unqualified `reset e` retains its delimiter meaning.
 `examples/delimited.sl` runs all of it; `examples/delimited_error.sl` is the
 refused jump.
 
@@ -682,7 +866,7 @@ fn k(return: i32) <- Color {
 }
 ```
 
-The negative function receives the consumer continuation `return`; activating
+The consumer transformer receives the consumer continuation `return`; activating
 the constructed continuation with an enum value dispatches to the matching arm,
 which activates that arm's consumer. Arms must cover exactly one enum variant
 each, must be exhaustive, and must not repeat variants.
@@ -852,6 +1036,26 @@ components, so its `.1` is `(b, c)`, while `(a, b, c)` has three. A record's
 field is read by binding the record's fields under its label, so a record of
 one field is read the same way. `examples/projection.sl` uses both forms.
 
+Building data does not demand its negative components. A record field and a
+tuple component follow the same by-name rule, as do a named variant's payload
+and `::i(e)`. Projection and pattern binding retrieve the stored computation
+without running it; applying the retrieved function runs it afresh under the
+handler around that application. Its row must fit the declared component
+type, even when a handler surrounds construction. Positive components still
+compute during construction, in written order. `let+` on a constructor
+evaluates that constructor, not recursively its negative components.
+`examples/by_name_components.sl` shows both polarities and repeated demand.
+
+Projecting from a delayed bundle first runs the computation that produces
+the bundle, under the handlers around the projection. Repeating the
+projection repeats that computation; neither the bundle nor its aliases
+cache the result. Projection then retrieves the chosen item without forcing
+it if it is itself delayed. Thus constructing a bundle may require `Build`
+while applying its retrieved callback separately requires `Use`. An effect
+handler that resumes construction several times completes the pending
+projection in each resumption. `examples/delayed_bundle.sl` demonstrates the
+construction and item-demand boundaries.
+
 ### Explicit connective types
 
 Every connective is available as explicit *type* syntax, always
@@ -870,7 +1074,7 @@ command consume_pair | (k: (-i64 ; -i64)) { … }
 | `(A & B)` | a **bundle**: negative sum; the anonymous form of a two-item `menu` |
 | `(A ; B)` | a **joint**: negative product; the dual of `,`, a joint consumer of both sides |
 | `(A -> B)` | function: `(dual(A) ; B)`. So a function is negative, `(A -> (;))` *is* `-A`, and `dual(A -> B)` is `(A, dual(B))` — an argument together with a continuation for the result, which is what a call stack is |
-| `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Only a declaration's name stays wrapped, since it is opaque to the core |
+| `dual(A)` | the dual of `A`, applied — `dual(+i64)` *is* `-i64`, and `dual(dual(A))` is `A`. Opaque named types and effect-annotated types retain an explicit wrapper: receiving an effectful answer must not activate or force it |
 | `(,)`, `(\|)`, `(&)`, `(;)` | the units of `,`, `\|`, `&` and `;`: the empty tuple, choice, bundle and joint |
 
 `,` and `data` are the same connective: a `data` declaration names a
@@ -918,9 +1122,11 @@ pair is a pair of punctuation marks.
   String)`, reads `describe` the way round that takes a choice, and the chain
   carries on with the `String` it hands on.
 - **Joints** are built from one continuation per component: `(k1 ; k2)` is
-  a value of `(T1 ; T2)`. Fed a product `(a, b)`, it delivers left to
-  right — `a` to `k1`, then `b` to `k2` — so if `k1` is an exit that jumps,
-  `k2` never receives. It is the consumer `select (A, B) { (a, b) => … }`
+  a value of `(T1 ; T2)`. Fed a product `(a, b)`, delivery starts on the
+  left, with `a` sent to `k1`. A genuine consumer does not return, so this
+  transfer prevents delivery to `k2`; constructing a joint does not promise
+  that all its components run. Its latent row includes the component rows.
+  It is the consumer `select (A, B) { (a, b) => … }`
   builds, so a joint and a `form` value keep one runtime shape. It has no
   pattern form, for the reason a form has none. A joint value is one
   consumer, a closure over a single command, and does not hold the
@@ -1046,7 +1252,7 @@ so.)
 
 A `trait` names operations over an implicit `Self`; an `impl` gives them for a
 type; a bound `<T: Show>` lets a generic use them. A method is a free function
-overloaded on its first argument's type — `x | show`, never `x.show()`:
+overloaded on its first argument's type — `<x | show`, never `x.show()`:
 
 ```sl
 trait Show { fn show(self: Self) -> String; }
@@ -1090,7 +1296,7 @@ supertraits are not yet provided.
 
 An `effect` names operations a computation may perform; a `handle` answers
 them. Performing an operation suspends the computation and passes control to
-the nearest enclosing handler. An operation is a demand, so its clause binds
+the nearest enclosing handler with a matching clause. An operation is a demand, so its clause binds
 the carried continuation the copattern way — after a colon, under any name
 (`resume` by convention) — or omits it, for a clause that never resumes:
 
@@ -1118,12 +1324,75 @@ A `return(x) => e` clause maps the body's value when the body finishes
 without leaving through an operation's clause. Leaving it out is the
 identity: the handler's value is the body's, and its type the body's type.
 
+Every operation clause binds exactly as many parameters as its operation
+declares; a nullary operation has a clause `config()`, with no unit binder.
+The handler has one answer type: the body's type without a `return` clause,
+or the return clause's result type with one. Every operation clause must
+produce that answer type or leave through a command. Its resumption accepts
+the operation's result and returns the handler's answer, including the
+return clause's transformation. Resuming a computation that never returns
+does not produce an answer either.
+
+A resumption also retains the residual effect row of its handler's body and
+clauses. Passing it as a function does not make those effects pure. That row
+is scoped to this installation, not all effects in the surrounding block.
+
+An effect is handled whole: naming any of its operations requires clauses
+for all of them. A partial handler instead ends with `_ => forward`.
+Unmatched operations pass to an outer handler, and the effect remains in
+the body's outward row; forwarding is not effect elimination. Clauses
+already named still intercept their operations, including after a
+resumption crosses the forwarding handler. The forwarding clause is last,
+after any `return` clause, and has no binder or body. `reset` remains a
+delimiter that discharges no effects.
+
+#### Handlers as values
+
+`handler Reader { clauses }` constructs a reusable handler value;
+`handler [Reader, Other] { clauses }` lists several effects. The shorter
+`handler { clauses }` infers the effects from the named operations.
+`with h handle body` installs the value `h` around `body`:
+
+```sl
+effect Reader { fn config() -> i64; }
+fn scaled(value: i64) -> i64 / {Reader} { <(value, config()) | mul }
+
+command main | (exit: i32) / {IO} {
+    let reader: Handler<i64, String, {Reader}, {}> = handler Reader {
+        config(): resume => <10 | resume,
+        return(value) => <value | to_string
+    };
+    <(with reader handle (<7 | scaled)) | println;
+    <(with reader handle 42) | println;
+    <0 | exit>
+}
+```
+
+This prints `70` and `42`. `Handler<A, B, E, F>` is positive data: its body
+produces `A`, its common answer is `B`, it discharges the concrete effects
+in `E`, and its residual budget is `F`. The body's row must fit within
+`E` plus `F`; installing a handler around a pure body or a subset of `E`
+is valid. Clause effects must fit `F` too. All four arguments are invariant:
+an annotation cannot grant a handler additional capabilities. Open handled
+row tails do not grant unknown capabilities; installation subtracts only
+the explicitly represented effects.
+
+Construction installs nothing and runs no clause. Clauses run on installation
+and operation demand; their effects therefore remain in the handler's type
+when it is stored or returned. A `return` clause transforms even a pure body;
+without one `A` and `B` coincide. Clause arity, common-answer typing and
+whole-effect coverage are the same as for inline `handle`. An explicit
+forwarding handler retains its forwarded effects in `F` rather than claiming
+to discharge them in `E`. Reusing a handler does not cache bodies or answers.
+Handlers can be stored in lists, selected at runtime and composed by nesting
+installations; `examples/handler_values.sl` demonstrates all three. Inline
+`handle body { clauses }` uses the same clause-tree installation mechanism.
+
 An operation is a free function, the dynamic mirror of a trait method: a
 trait is an operation table keyed by a *type* and resolved statically — the
 dictionary travels with the value — while an effect is an operation table
 keyed by the *stack* and resolved dynamically: a handler is installed by
-`handle` (the effect it handles is inferred from its clause operations, not
-written), and its clauses bind the captured continuation, which no trait
+`handle` or `with h handle`, and its clauses bind the captured continuation, which no trait
 has. That mirror
 is static-versus-dynamic provisioning; the *polarity* dual of effects is a
 different axis — latency, below — and the two cross: `impl Trait for Menu`
@@ -1152,11 +1421,41 @@ error at the argument. A handler discharges the effects of the operations
 it answers, and `main`'s row is `{IO}` or empty, so a well-typed program
 performs no operation the runtime cannot answer.
 
-A stage is a call — `x | f` *is* `f(x)` — so it charges what the call
-charges. Only the first stage's argument is syntax, the rest receiving what
-the stage before them produced, so that is the one whose row variables are
-instantiated; the closing consumer is not applied and charges nothing of
-its own.
+A returning stage charges its application row, with row variables
+instantiated from the values reaching that stage. Feeding the closing
+consumer charges its activation row too; `>` marks a non-returning transfer,
+not an exemption from effect accounting.
+
+#### Generic effects
+
+An effect can declare type and row parameters using the same signs as other
+generic declarations. Its operations share those parameters:
+
+```sl
+effect Reader<+T> { fn read() -> T; }
+fn get<+T>() -> T / {Reader<T>} { read() }
+```
+
+`{Reader<i64>}` and `{Reader<String>}` are distinct effect applications.
+Arguments are inferred from operation parameters/results, declared rows and
+handler clauses; they are invariant, including rows nested inside arguments.
+Names, arity, parameter kinds and polarity are checked even on unused
+declarations. All effect arguments must be supplied in a written application;
+an unsigned parameter takes a row such as `{IO}` or `..E`. Effect parameters
+do not currently accept trait bounds.
+
+One handler installation gives every operation of an effect the same type
+arguments. Different installations may use different arguments. Runtime
+dispatch remains by operation name, so a same-name operation with incompatible
+arguments is rejected at the intercepting handler even if an outer handler
+or residual row could otherwise accept it. Partial handlers retain this
+consistency requirement and forward the typed effect outward.
+
+A literal `handler Reader { clauses }` infers its arguments; an annotation
+such as `Handler<i64, i64, {Reader<i64>}, {}>` constrains them. Merely changing
+that annotation cannot change its capabilities. `examples/generic_effects.sl`
+demonstrates independent instantiations and stored handlers. The implementation
+and additional checks are described in `docs/design-notes/generic-effects.md`.
 
 #### `IO`: the effect the runtime handles
 
@@ -1194,12 +1493,17 @@ one of the program's own. A handler is an ordinary function taking the
 computation it handles —
 
 ```sl
-fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-    handle <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
+fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {fs::Fs, ..E} {
+    handle <(,) | program {
+        fs::read_file(path): resume => <::0("canned") | resume,
+        _ => forward,
+    }
 }
 ```
 
-— so `fs` exports `real` as a function, and a test installs its own. A
+— so `fs` exports `real` as a function, and a test installs its own. This
+partial mock still requires an outer handler such as `fs::real` for `Fs`;
+a self-contained mock answers all six operations and may discharge it. A
 clause names its operation as a row names its effect, by path. An
 operation answers with its outcome as a sum, `read_file(path) -> (String |
 String)`, which the command then offers to its continuations: a clause runs
@@ -1221,17 +1525,23 @@ command main | (exit: i32) / {IO} {
 }
 ```
 
-Two rules make that work. An exit is charged where it is handed over, since
-a command runs it before control goes anywhere else — except at an exit
-parameter that writes a row, `program: ((;) / {Fs, ..E})`, which takes what
-the exit performs, as a function parameter does. And a `handle` whose body
-is `(;)` runs it as a command, under the handler.
+An exit parameter preserves its supplied value's latent effects, just as
+a function parameter does: `program: ((;) / {Fs, ..E})` describes what
+running the program may perform. A `handle` whose body is `(;)` runs it as
+a command under the handler. Passing the program does not itself run it.
 
-**Latent rows are the dual of effects.** A function's row fires at
-application, because a function is a suspended producer: the work runs
-before the value exists. Codata is the mirror — a menu answers per demand,
-a form runs when fed — so its work runs *after* the value exists, on the
-consumer's schedule, and its row belongs to the *type*:
+**Latent rows describe effects at activation.** A function's row is charged
+when it is applied; a menu's when an item is demanded; a form's or consumer's
+when it is fed. Each uses the same effect-accounting rule, with a different
+activation point.
+
+`Delayed<T, E>` adds a separate forcing row before that activation. A cut
+that only forwards an effectful function or menu as an answer preserves
+its activation row; it does not perform it. In particular, the dual of a
+rowed result retains the row as a requirement on the answer, not as an
+effect of forwarding that answer. Double duality remains the identity.
+
+A menu's demand row belongs to its type:
 
 ```sl
 menu Fallible / {Exn} { value: i64, doubled: i64 }
@@ -1273,14 +1583,18 @@ again by `let`, or a global handed on as a value, keeps its row; a delayed
 computation stored in a tuple carries its row until it runs. Where a value
 meets a slot, its row must fit inside the slot's: a pure function fits
 where `/ {Exn}` is allowed, and a function that performs `Exn` does not fit
-a parameter declared as a pure arrow. Two places are exceptions. An exit —
-a command's continuation parameter, or a bundle of them — accepts any row,
-charged where it is handed over, since the command runs it before control
-goes anywhere else; only an exit parameter that writes a row takes the row
-of the exit it is handed, item by item through a bundle. And a declaration that hands back a value whose row its
-promised type does not carry answers for that row itself, which is how a
-rowless menu or form built by a function is accounted for: its arms are
-charged to the declaration that built it.
+a parameter declared as a pure arrow. Command exits obey the same rule,
+item by item through a bundle. A rowless exit slot promises purity;
+an effectful exit keeps its row when bound, stored or forwarded, and is
+charged when activated, not merely when passed. Commands that activate
+arbitrary exits use explicit row parameters, for example
+`command send<E>(value: i64) | (out: (-i64 / {..E})) / {..E} { <value | out> }`.
+An unused exit need not contribute to the command's own row. Builtin
+commands similarly carry their possible exits' rows in their signatures.
+A declaration that
+hands back a value must preserve its latent row in the promised type. A
+rowless returned consumer, menu or form must perform nothing when activated;
+declaring its effects on the constructor cannot account for later demands.
 
 An operation may take several parameters; since calls are curried, the
 performing value collects them all before suspending. **Operations are
@@ -1320,9 +1634,9 @@ function carries them in the same places — `fn emit<+T: Show>(out: -String)
 describes what the body performs, neither of which depends on whether the
 function returns a value or a consumer.
 
-A bound on a negative function is discharged by the **cut**, not by an
+A bound on a consumer transformer is discharged by the **cut**, not by an
 argument: in `fn emit<+T: Display>(out: -String) <- T`, nothing the call
-receives mentions `T`, and `<42 | emit(s)` is what fixes it. So dictionary
+receives mentions `T`, and `<42 | emit | s>` is what fixes it. So dictionary
 solving waits until a declaration's body is fully checked — by then every
 cut has spoken — and the same deferral gives a trait a second method
 shape:
@@ -1332,11 +1646,11 @@ trait Describe { fn describe(self: Self) -> String; }   // receives Self
 trait Deliver  { fn deliver(out: String) <- Self; }     // consumes Self
 ```
 
-A positive method takes `self: Self` and dispatches on what it receives.
-A negative method takes no `self` — a negative function's parameters are
+A returning method takes `self: Self` and dispatches on what it receives.
+A consumer-transformer method takes no `self` — a consumer transformer's parameters are
 all continuations — so its `Self` is the type it *consumes*, and dispatch
-reads the value the cut sends: `<42 | deliver(s)` finds the `i64` impl,
-`<True | deliver(s)` the `Bool` one. Both shapes resolve statically, and a
+reads the value the cut sends: `<42 | deliver | s>` finds the `i64` impl,
+`<True | deliver | s>` the `Bool` one. Both shapes resolve statically, and a
 bound forwards through either.
 
 ### Polymorphism
@@ -1399,14 +1713,29 @@ the way any enum value is.
 
 ### No shifts: a consumer is a value
 
+Here "shifts" means polarity-shifting type wrappers, not composable control
+capture. The library operation `control::shift` in §6 is unrelated.
+
 The language once had the polarity shifts `↓`/`↑`, boxing a consumer as
 data and marking the computation returning a value. They were removed:
 they erased at lowering — a boxed consumer and the consumer were already
 the same value at run time — and the declared negatives made them
 redundant. A menu or form value always stored bare, so the box taxed only
 the *structural* negatives; and both shift roles are one declaration away
-when a name is wanted — `menu Lazy<+T> { force: T }` is the computation
-returning `T`, and a one-field `form` is a named, storable consumer.
+when a name is wanted — `menu Lazy<*T, E> / {..E} { force: T }` is the
+explicit computation returning `T`, and a one-field `form` is a named,
+storable consumer.
+
+`Lazy<T, E>` is an ordinary one-item menu, accepting either polarity of
+`T`; `.force` performs `E` and returns `T` without activating that result.
+`Lazy<T>` has an empty demand row. `Delayed<T, E>` instead annotates an
+implicit computation and accepts only negative `T`. They are not literal
+duals: `dual(Lazy<T, E>)` is the menu's request type, carrying a continuation
+for its answer, not a delayed computation. For negative `T`,
+`lazy::of_delayed` and `lazy::to_delayed` convert between the two interfaces
+without running the computation at conversion time. Both preserve
+call-by-name: repeated demands repeat construction. Neither caches results.
+`examples/delayed_and_lazy.sl` contrasts the interfaces and their handlers.
 
 So a consumer travels bare everywhere a value does: an enum payload
 (`Refutes(-i64)`), a record field, a `fn` value parameter — passing a
@@ -1437,7 +1766,7 @@ inside one may leave a type out when something else already says it:
 |-------------------------------------------------|-----------------------------------------------------------------------------------------|
 | a lambda's parameter and result: `fn(x) { … }` | how the value is used fixes the parameter's polarity by the end of the declaration    |
 | a `mu`'s produced type: `mu { k <= … }`        | the arm hands `k` to a slot whose type is declared, or cuts a value against it          |
-| a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing negative `fn` already said what it consumes |
+| a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing consumer transformer already said what it consumes |
 | a type's sign: `x: +i64`, `k: -i64`             | it agrees with the position — see below                                                 |
 
 **A sign is omitted where the position implies it.** The table in §4 has a
@@ -1480,14 +1809,15 @@ fn twice(out: i64) <- i64 {
 ```
 
 What is left is what nothing else says. `select { n => <n | k> }` bound to
-a `let`, outside any negative `fn`, is rejected: no arm names a type and no
+a `let`, outside any consumer transformer, is rejected: no arm names a type and no
 declaration supplied one, so it is written.
 
-There is deliberately **no** way to build such a consumer out of two
-independent consumers, and no way to feed one half at a time. Both are the
-same thing — halves that progress independently — and both need either a send
-that returns or concurrency. A cut does not return, and the language has no
-concurrency, so a joint is supplied whole.
+`(k1 ; k2)` builds a joint from separate consumers, but does not make them
+progress independently. There is no way to feed one half at a time: a joint
+is supplied whole, and has no destructuring pattern. Sequencing returning
+sinks uses ordinary functions of type `A -> (,)`, not consumers `-A`.
+A `select` arm must be a command, never a unit-valued returning sink; a cut
+does not return to the statement following it.
 
 ## 9. Entry point and exit
 
@@ -1560,9 +1890,10 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `num` | `min`, `max`, `abs` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
-| `lazy` | `Lazy<T>`, the one-item menu that is a by-name thunk |
+| `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `Delayed<T, E>` |
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
-| `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `("answer", 42) \| trace::tap \| out>` |
+| `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
+| `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
 
 The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,
@@ -1601,13 +1932,13 @@ demanded — under whatever handler is around `seq::to_list`. There is no
 **A stdlib helper that takes both values and continuations is a
 `command`.** That is what the declaration square calls the shape, and the
 header says it: the value group before the `|`, the menu of exits after. It
-could instead be a positive `fn` returning `-T` — the same type, since
-`A → ⊥` *is* `-A`, and a negative `fn` cannot do it because its one
+could instead be a returning `fn` returning `-T` — the same type, since
+`A → ⊥` *is* `-A`, and a consumer transformer cannot do it because its one
 parameter group *is* its row — but that spelling says the shape only in the
 return position, and it makes the caller build the consumer before cutting
 into it rather than write the call every other call is written as. Two
 combinators had it and are gone: `then(f, k)`, because composing a function
-with a continuation is `f | k`, and `defaulting(fallback, k)`, because a row
+with a continuation is `f | k>`, and `defaulting(fallback, k)`, because a row
 slot wants a consumer and `select String { m => <fallback | k> }` is the
 consumer — the combinator only hid the arm. The `<- A` form remains the
 natural spelling for a consumer transformer whose inputs are all
@@ -1657,19 +1988,20 @@ A handle is a value of its own base type, `File`, produced only by
 `fs::open` — so nothing else closes a file or reads a line. A read after
 `fs::close` is a runtime error.
 
-Closing on every terminating path needs no separate check, because control
-is continuations: a program leaves only through a door it was handed, so
-composing the close onto that door closes the file on every path by
-construction. Shadow `exit` where the handle comes into scope:
+Composing a close onto an exit closes the file on paths routed through
+that wrapper. Shadow `exit` where the handle comes into scope:
 
 ```sl
 let file = mu { k <= <path | fs::open | (k & complain)> };
 let exit = select i32 { status => { <file | fs::close; <status | exit> } };
 ```
 
-The arm's `exit` is the outer one; everything after the shadow sees only the
-composed door, so every later `| exit` — unhappy paths included — closes the
-file on its way through. `examples/file_io.sl` is written this way.
+The arm's `exit` is the outer one. A later direct `| exit>` uses the wrapper,
+but a consumer created earlier still captures the old exit. Shadowing does
+not rewrite closures or captured continuations. Build failure consumers
+used after acquisition around the wrapped exit as well;
+`examples/file_io.sl` routes its post-acquisition success and failure paths
+this way. Unrestricted control supplies no automatic resource guarantee.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range
 `<(s, i) | index` and a division by zero. `index` and `div` are plain
@@ -1696,7 +2028,7 @@ write it, because a consumer literal is worth reading as one at a glance.
 and `(;)` is the unit of `;`. The same identity gives the dual: `dual(A -> B)`
 is `(A, -B)`,
 an argument together with a continuation for the result — a *call stack*. So
-`f(v)` and the cut of `f` against the pair `(v, k)` are the same interaction,
+`<v | f` delivered to `k` and the cut of `f` against `(v, k)` are the same interaction,
 and a consumer of a function is an ordinary value of that product type.
 
 A cut is well typed exactly when its two sides are dual. Which side is
@@ -1743,7 +2075,11 @@ Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
 
 Some slips get a message of their own rather than the mismatch they cause. A
-function closed with `>` — `<42 | resume>` in a handler's clause, where
+handler clause binding the wrong number of parameters reports the operation's
+arity and the number bound; a clause returning a different type reports the
+handler's answer type. An incomplete effect handler lists the missing
+operations and suggests a final `_ => forward` when forwarding is intended.
+A function closed with `>` — `<42 | resume>` in a handler's clause, where
 `<42 | resume` was meant — is reported as a function applied by leaving the
 `>` off, instead of as a value meeting the argument-and-continuation pair a
 function takes by a cut. A handler clause naming no operation of any
@@ -1818,7 +2154,8 @@ first segment and keeps the rest, so `inner::deep()` works from a sibling and
 for later passes — that is how builtins stay global. Two `use` declarations
 bringing in the same name are an error.
 
-Modules are single-file, everything is public, and `main` must be declared at
+Modules are single-file, visibility follows the private-by-default rule above,
+and `main` must be declared at
 the root — a `main` inside a module is `m::main`, which the entry point does
 not accept.
 
@@ -1978,21 +2315,23 @@ its unlabelled counterpart.
 ### Lowering table
 
 Every accepted surface construct lowers as follows. `⟦e⟧` is the lowering of
-`e`, and `f(a)` abbreviates the application `μ__call. ⟨ ⟦f⟧ ∥ ⟦a⟧ · __call ⟩`,
-nested left to right for several arguments.
+`e`. Application uses a fresh result continuation; parameter groups pack
+into one product of values and, for commands, one bundle of exits. By-name
+positions wrap negative computations in `λ$delay. ⟦e⟧` before passing or
+storing them. Positive arguments are evaluated before computed stages.
 
 | Construct | Surface | Core |
 |---|---|---|
 | `expr.literal` | `42`, `"s"`, `'c'` | a constant variable (`$int_42`, `$str_"s"`, …) |
 | `expr.ident` | `x` | `x` |
 | `expr.enum` | `Color::Red`, `Shape::Circle(r)` | `Color::Red(unit)`, `Shape::Circle(⟦r⟧)` — several payload values pack into one tensor |
-| `expr.call` | `f(a, b)` | `f(a)(b)` (curried application encoding) |
+| `expr.call` | `f()`, primitive or trait compatibility calls | unit for a nullary call; otherwise group arguments as the signature declares, then apply; primitives retain their internal curried encoding |
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧`. A stage `x => e` is `fn(x) { e }`, and a stage `k <= e` followed by `rest>` is the closing consumer `<rest> \| fn(k) { e }` |
 | `expr.pair` | `(a, b, …)`, `(,)` | the tuple `(⟦a⟧ ⊗ ⟦b⟧ ⊗ …)`; `(,)` is `unit` |
 | `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
 | `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
-| `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __retᵢ ⟩ ⟩` |
-| `expr.flow` | `v | k`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer, and `μ__cut. ⟨ ⟦k⟧ ∥ ⟦v⟧ · __tail ⟩` for a computed one — evaluate the consumer, then apply it, exactly as an application does. The μ binder is never referenced — a command has no result — and is renamed if the consumer is called `__cut`. A chain that does not close is a fold of applications, and one that does not begin with a value is that fold under a λ. A chain whose stage is a `command` is neither: the stages before it fold into its value group, the closing stage is its row, and the two are applied together — `⟦callee⟧ ⟦values⟧ ⟦row⟧` |
+| `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __seqᵢ ⟩ ⟩` — both generated binders are fresh against the expressions they enclose |
+| `expr.flow` | `<v \| k>`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer; for a computed one, first bind the by-name input to a fresh `saved`, then evaluate the consumer and apply it to `saved`. The cut has no result. Open chains fold grouped applications; composition wraps that fold in a λ. A command takes its value group and exit bundle together; yielding exits compose returning callbacks into a fresh captured result continuation (§5) |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
 | `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ λ__match_arg. ⟦e⟧)` |
 | `expr.data` | `S { f: v, g: w }` | `S((⟦v⟧ ⊗ ⟦w⟧))` — the declaration's name labelling the tuple of its fields, the same shape a variant has |
@@ -2001,17 +2340,27 @@ nested left to right for several arguments.
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
 | `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
-| `expr.consumer_argument` | `f(k)` — a consumer as an argument | `⟦k⟧` — a consumer is a value; nothing to coerce |
-| `decl.fn.positive` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
-| `decl.fn.negative` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
+| `expr.consumer_argument` | `<k \| f` — a consumer as an argument | `⟦k⟧` — a consumer is a value; nothing to coerce |
+| `expr.handler` | `handler E { clauses }` | a labelled clause tree containing operation closures and the return closure, defaulting to identity; unmatched operations forward outward |
+| `expr.with_handler` | `with h handle body` | runtime handler installation with `⟦h⟧` and a thunk of `body`; inline `handle` builds the same clause tree |
+| `decl.fn.returning` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
+| `decl.fn.transformer` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
 | `decl.mu` | `command f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
 | `decl.const` | `const C: +A = v;` | `⟦v⟧` |
 | `decl.enum` | `enum E { V }` | one global per variant: `E::V = E::V(unit)` |
 | `decl.data` | `data S { … }` | no term; the declaration is a type |
 
-Binders are nested in declaration order, so a call supplies arguments in the
-order the parameters are written; value and continuation parameters alike
-become λ binders.
+Block sequencing returns through a bound, fresh continuation in the core.
+When that continuation is used only for the final return, compilation
+replaces that return with the machine's `Forward` instruction: deliver to
+the current stack, including the stack reinstated by a handler resumption.
+This keeps tail-resuming loops constant-space without relying on an unbound
+`__tail` name. Escaping or otherwise used continuations retain ordinary
+capture semantics.
+
+Parameter groups are nested in declaration order. Each group becomes a λ
+binder followed by destructuring; arguments keep the order written within
+the group. This is not partial application of individual source parameters.
 
 ### Surface-to-core coverage
 
@@ -2024,8 +2373,8 @@ become λ binders.
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
 | `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
-| `α` | the consumer named on the right of a cut, `v | k` |
-| `v · e` | application, and nothing else — `f(a)`, and a cut whose consumer is computed rather than named (`v | f(a)`), which is the same act: applying the consumer the expression evaluates to |
+| `α` | the consumer named on the right of a cut, `<v \| k>` |
+| `v · e` | application, `<a \| f`, and a cut whose consumer is computed rather than named, which applies the resulting consumer after binding the input |
 | `μ̃x. c` | every binder: `let`, a discarded block expression; written directly as `select +A { x => c }` |
 | `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum`, a `data` or a sum `(A \| B)`, including `select (\|) {}` |
 | `μ̃(x…)` | `select` over a bare product |
@@ -2034,15 +2383,12 @@ become λ binders.
 ### Classical control
 
 The core is classical, so the classical laws are ordinary programs. Negation
-is a consumer — `¬A` is `-A`, since `A → ⊥` and `-A` are one type — and both
-laws are written with `mu`, which hands out the continuation of the expression
-it stands in:
+is a consumer — `¬A` is `-A`, since `A → ⊥` and `-A` are one type. Double
+negation is an involution, so its elimination is the identity. Excluded
+middle uses `mu`, which hands out the continuation of its expression:
 
 ```sl
-// ¬¬A → A: give the refuter this call's continuation.
-fn dne(refuter: i64) -> i64 {
-    mu { k <= <k | refuter> }
-}
+fn dne<+T>(value: -(-T)) -> T { value }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
 fn lem() -> Choice {
@@ -2054,6 +2400,9 @@ fn lem() -> Choice {
 
 `examples/classical.sl` runs both. The types above go through the shifts of
 §8 — `-(-i64)` *is* `+i64`: `dne` is the identity, and `<42 | dne` is `42`.
+Involution does not make an integer executable: putting a positive atom on
+the consumer side of a cut is rejected after inference, whether named or
+computed.
 
 A captured continuation is a value with no expiry: the evaluator is an
 abstract machine whose continuation is an explicit frame stack, and `mu`

@@ -16,6 +16,102 @@ fn check(source: &str) -> Result<(), Vec<slc_check::Diagnostic>> {
 const READER: &str = "effect Reader { fn config() -> i64; }\n";
 
 #[test]
+fn handler_clauses_bind_exactly_the_operation_parameters() {
+    for (operation, invocation, clause, expected) in [
+        (
+            "fn write(path: String, text: String) -> i64;",
+            "<(\"path\", \"text\") | write",
+            "write(path): resume => <0 | resume",
+            "`write` takes 2 parameters, and this clause binds 1",
+        ),
+        (
+            "fn read(path: String) -> i64;",
+            "<\"path\" | read",
+            "read(path, extra): resume => <0 | resume",
+            "`read` takes 1 parameter, and this clause binds 2",
+        ),
+        (
+            "fn config() -> i64;",
+            "config()",
+            "config(unit): resume => <0 | resume",
+            "`config` takes 0 parameters, and this clause binds 1",
+        ),
+    ] {
+        let source = format!(
+            "effect Test {{ {operation} }} fn answer() -> i64 {{ handle ({invocation}) {{ {clause} }} }}"
+        );
+        let diagnostics = check(&source).unwrap_err();
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.message.contains(expected)),
+            "{diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn handler_clause_results_match_the_answer_type() {
+    let diagnostics = check(&format!(
+        "{READER} fn answer() -> i64 {{ handle config() {{ config() => \"wrong\" }} }}"
+    ))
+    .unwrap_err();
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.message.contains("handler clause")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn resumption_results_match_the_handler_answer_type() {
+    let diagnostics = check(&format!(
+        "{READER}
+        fn needs_string(value: String) -> String {{ value }}
+        fn answer() -> i64 {{
+            handle config() {{ config(): resume => <(<7 | resume) | needs_string }}
+        }}"
+    ))
+    .unwrap_err();
+    assert!(!diagnostics.is_empty());
+}
+
+#[test]
+fn return_clause_determines_the_resumption_answer_type() {
+    assert!(
+        check(&format!(
+            "{READER} fn answer() -> String {{
+            handle config() {{
+                config(): resume => <7 | resume,
+                return(value) => \"answer\",
+            }}
+        }}"
+        ))
+        .is_ok()
+    );
+    assert!(
+        check(&format!(
+            "{READER} fn answer() -> String {{
+            handle config() {{
+                config() => 7,
+                return(value) => \"answer\",
+            }}
+        }}"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
+fn handler_clauses_may_leave_through_a_continuation() {
+    assert!(
+        check(&format!(
+            "{READER} fn answer(out: -i64) -> i64 {{
+            handle config() {{ config() => <7 | out> }}
+        }}"
+        ))
+        .is_ok()
+    );
+}
+
+#[test]
 fn a_handler_without_return_has_its_bodys_type() {
     // The body is an `i64`, so the handler is one.
     assert!(
