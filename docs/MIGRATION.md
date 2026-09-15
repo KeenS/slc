@@ -1,10 +1,92 @@
 # Migration Guide
 
 This guide covers the syntax changes made during and after the λ̄μμ̃
-redesign, in the order they were made. Old forms are rejected by the current
-compiler; each section shows the unsupported form and its replacement, and
+redesign. Removed forms are rejected by the current
+compiler; sections show their replacements or explain compatible additions, and
 every replacement is written in today's syntax, even where a later section is
 what made it so.
+
+## Generic effects and composable capture
+
+Non-generic effects keep their spelling. Generic effects declare signed
+parameters and write applications in rows:
+
+```sl
+effect Reader<+T> { fn read() -> T; }
+fn get<+T>() -> T / {Reader<T>} { read() }
+```
+
+Handlers infer their application from the operations they intercept and the
+answers their clauses supply. A stored handler can be annotated with
+`Handler<i64, i64, {Reader<i64>}, {}>`. An incompatible same-name operation
+is rejected even if a residual row or outer handler could accept it.
+Invalid effect names and arguments are now rejected on unused signatures too.
+
+For returning, multi-shot capture, pass a thunk to `control::reset` and use
+`control::shift` inside it. Bare `reset e` is unchanged: it only delimits
+abortive jumps and does not handle `Shift`. The callback's resumption
+annotation must retain its effects, such as `(i64 -> i64 / {IO})`; resumptions
+are no longer incorrectly treated as pure when their continuations perform
+effects. See `examples/composable_capture.sl` and `examples/generic_effects.sl`.
+
+## Inferred demand and nullary calls
+
+Negative computations are call-by-name in every argument and component,
+including when their polarity is inferred from later uses. Primitive direct
+calls, flows and aliases now agree: positive arguments compute immediately,
+negative arguments wait for demand. Outcome primitives demand only the
+chosen callback. Use a separate `let+` to request eager construction instead
+of relying on the old primitive-call exception.
+
+A nullary returning function's name now has its actual runtime type: a
+function accepting `(,)`. Naming it neither calls it nor charges its effects.
+
+```sl
+fn answer() -> i64 { 42 }
+let factory = answer;
+let first = answer();
+let second = <(,) | factory;
+```
+
+Use `answer()` or `<(,) | answer` when a result is wanted. Parameterless
+consumer transformers still name their direct consumers; naming is not
+activation. Positive inputs now also run before computed final consumers,
+consistently with ordinary stages and explicitly eager inputs. See
+`examples/inferred_demand.sl` and the `flow_evaluation` regressions.
+
+## Returning command exits
+
+Explicit capture remains valid:
+
+```sl
+let result = mu i64 { out <= <path | __read_file | (
+    select String { text => <(<text | str_len) | out> }
+    & select String { reason => <0 | out> }
+)> };
+```
+
+The equivalent yielding form supplies returning functions and omits `>`:
+
+```sl
+let result = <path | __read_file | (
+    fn(text: String) { <text | str_len } & fn(reason: String) { 0 }
+);
+```
+
+The chain can continue through `| println`. Every exit must return the same
+type: do not mix a returning callback with a consumer. `select` remains
+non-returning. `fs::real` and `fs::real_command` now use this adapter rather
+than explicit `mu` captures. See `examples/yielding_commands.sl`.
+
+## Stored handlers
+
+Functions that install inline handlers remain valid. To store or select the
+handler itself, use `handler Reader { clauses }` and `with value handle body`.
+The type is `Handler<A, B, E, F>`: body, answer, handled effects, residual
+effects. A `return` clause can change `A` to `B` even for a pure body.
+`handler` and `with` are reserved syntax, and `Handler` is a built-in type
+name; rename conflicting declarations. The old composition example's
+`Handler` form is now `CommandSink`. See `examples/handler_values.sl`.
 
 ## Lists
 
@@ -1347,7 +1429,132 @@ fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E>    // new
 A function that demands a sequence's steps forwards its row:
 `seq::to_list(s: Seq<T, ..E>) -> List<T> / {..E}`.
 
+## Returned effects stay on the returned type
+
+A constructor's row describes constructing its result. A returned consumer,
+menu or form carries its own effects, performed when applied or demanded:
+
+```sl
+fn make(out: -i64) -> -i64 / {Tick}             // old, refused
+fn make(out: -i64) -> (-i64 / {Tick})           // new
+```
+
+Declare a menu or form's latent row, or give its row parameter at each use.
+`Stream<T, ..E>` now carries its demand effects through `tail`, mapping and
+the sequence bridges. `stream::take` performs that row while producing a
+list; `seq::of_stream` and `seq::take_while` retain it on their lazy result.
+A handler belongs around the demand that runs the effect, not merely around
+the constructor. Delay remains call-by-name and does not cache a result.
+
+### Record fields and positional choices are by-name positions
+
+Negative computations in record fields and `::i(e)` payloads now follow the
+same rule as tuple components and named variant payloads: they run on demand,
+not during storage. Positive components still compute during construction.
+Projection, matching and aliasing do not force a stored negative computation.
+
+```sl
+data Holder { callback: (i64 -> i64 / {Build}) }
+let saved = Holder { callback: make() };
+let choice: ((i64 -> i64 / {Build}) | i64) = ::0(make());
+```
+
+If `make()` performs `Build` before returning a function, these components
+must retain `Build`, even if a handler surrounds the record or choice
+construction. Handle each later demand instead. To retain eager construction
+of the callback, write `let+ callback = make();` separately and store
+`callback`; an eager binding of the containing record is not a recursive force.
+See `examples/by_name_components.sl` for a complete runnable example.
+
+### Projection demands a delayed bundle
+
+Projecting `pending.0` from a delayed bundle now constructs the bundle rather
+than failing with "projection of component 0 from <delayed>". Each projection
+repeats construction under its current handlers. The selected item is passed
+on as stored: projection does not additionally force a delayed callback.
+
+```sl
+let pending = (build() & 0);
+let first = handle pending.0 { build(): resume => <10 | resume };
+let second = handle pending.0 { build(): resume => <20 | resume };
+```
+
+Here `build()` returns an integer; `first` is `10`, and `second` is `20`.
+The bundle's construction row is required at projection, while a negative
+item retains its own row for later demand. See `examples/delayed_bundle.sl`
+for both effect boundaries in a complete program.
+
 ## Removed constructs
+
+Runnable examples of the updated handler, exit, consumer and stream rules
+are collected in [the examples guide](../examples/README.md).
+
+### Partial handlers require explicit forwarding
+
+A handler must answer every operation of each effect it names. To intercept
+only some operations, add a final `_ => forward` clause. The effect remains
+in the outward row, so supply an outer handler. A standalone mock must
+provide all operation clauses; a partial `fs::read_file` mock no longer
+silently discharges all of `fs::Fs`.
+
+### Command exits preserve their effects
+
+A pure exit slot no longer accepts an effectful consumer. To forward to an
+arbitrary consumer, write its latent row and charge it when activated:
+
+```sl
+command send<E>(value: i64) | (out: (-i64 / {..E})) / {..E} {
+    <value | out>
+}
+```
+
+Store or return that consumer with the same latent row. A handler around
+handover cannot discharge an activation that happens later. An unused exit
+may have a row parameter without adding it to the command's own row.
+`fs` commands, `list::nth`, `trace::tap` and builtin outcome commands now
+preserve their exits' rows explicitly.
+
+### Separate construction and activation
+
+A stored effectfully constructed function now names both phases:
+`Delayed<(i64 -> i64 / {Use}), {Build}>`. The old combined annotation
+`(i64 -> i64 / {Build, Use})` cannot represent effectful construction.
+Plain negative types permit only pure forcing; `/ {Use}` still describes
+activation. Empty forcing rows can be omitted.
+
+`let+ ready = pending` now forces an existing implicit delay without
+applying the resulting function or demanding the resulting menu. Put that
+binding inside the construction handler. Reusing `ready` does not repeat
+construction; reusing `pending` still does. No value is memoized or mutated.
+
+`lazy::Lazy<*T, E>` accepts either polarity and declares its demand row.
+Use `Lazy<T, {Build}>` for an effectful `.force`; `Lazy<T>` is pure.
+Negative-result thunks need no positive record wrapper. The new `<*T>`
+mark means polarity-unrestricted, not a row parameter. `lazy::of_delayed`
+and `lazy::to_delayed` adapt the explicit and implicit interfaces for
+negative `T` without forcing during conversion.
+
+`Stream` tails now explicitly allow delayed construction:
+`Delayed<Stream<T, ..E>, ..E>`. Stream consumers and sequence bridges
+accept that type too. Suspended effectful command blocks use
+`Delayed<(;), ..E>` rather than conflating construction with activation
+in `((;) / {..E})`. In exit groups `Delayed` already denotes a negative
+computation, so no implicit dual is added.
+
+`examples/delayed_and_lazy.sl` is a runnable migration example.
+
+Before turning a `;` adapter, explicitly force an effectfully delayed
+computation under its construction handler. Turning such a computation
+directly is refused until adapters preserve its forcing boundary.
+
+### Consumers do not return unit
+
+A `select` arm must end in a command. Replace a returning sink such as
+`select i64 { value => <value | println }` with
+`fn(value: i64) { <value | println }` and use ordinary application without
+a closing `>`. To keep a genuine consumer, end its arm by transferring to
+an explicit continuation. Joints do not sequence returning sinks; delivery
+to a non-returning component prevents delivery to subsequent components.
 
 ### `spawn`
 

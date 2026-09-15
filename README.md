@@ -17,6 +17,7 @@ cargo test
 
 ## Documentation
 
+- [examples/README.md](examples/README.md) — runnable feature examples and expected output
 - `DESIGN.md` — language design
 - `docs/MIGRATION.md` — syntax migration from the pre-redesign language
 - `PLAN.md` — known limits, deferrals, and what is planned next
