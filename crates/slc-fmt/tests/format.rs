@@ -37,6 +37,14 @@ fn a_negative_function_keeps_its_arrow_and_its_menu_of_exits() {
 }
 
 #[test]
+fn several_bounds_are_joined_by_spaced_pluses() {
+    assert_eq!(
+        fmt("fn f<+T:Ord+Display,-K:Show>(x:T)->T{x}\nimpl<+T:Ord+Loud>Loud for Pair<T>{}"),
+        "fn f<+T: Ord + Display, -K: Show>(x: T) -> T { x }\nimpl<+T: Ord + Loud> Loud for Pair<T> {}\n"
+    );
+}
+
+#[test]
 fn statements_end_in_semicolons_and_the_last_expression_does_not() {
     let expected = "fn f() -> i64 {\n    let x = 1;\n    x | println;\n    x\n}\n";
     assert_eq!(fmt("fn f() -> i64 { let x = 1 x | println; x; }"), expected);

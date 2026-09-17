@@ -292,7 +292,7 @@ fn repository_example_suite_has_expected_results() {
             "effects/multi.sl",
             Expected {
                 success: true,
-                stdout: &["42, yes", "n (4 digits)", "50", "-1"],
+                stdout: &["42, yes", "n (4 digits)", "1234 is 4 wide", "50", "-1"],
                 stderr: &[],
             },
         ),

@@ -633,8 +633,9 @@ impl Parser {
         }
     }
 
-    /// Type parameters with their bounds and polarities: `<+T: Show, U>`
-    /// yields `["T", "U"]`, `[("T", "Show")]` and `[("T", Positive)]`. A type
+    /// Type parameters with their bounds and polarities: `<+T: Show + Ord, U>`
+    /// yields `["T", "U"]`, `[("T", "Show"), ("T", "Ord")]` and
+    /// `[("T", Positive)]`. A type
     /// parameter states its polarity; a row variable, used as `..U`, has none.
     fn parse_type_params_bounded(&mut self) -> Result<TypeParams, ParseError> {
         let mut params = Vec::new();
@@ -659,10 +660,27 @@ impl Parser {
                 None => None,
             };
             let name = self.expect_ident("type parameter")?;
-            // `T: Show` — one bound today; `T: Show + Ord` is deferred.
-            while self.eat(&TokenKind::Colon) {
-                let trait_name = self.expect_ident("a trait bound")?;
-                bounds.push((name.clone(), trait_name));
+            // `T: Show + Ord` — every trait the parameter must implement,
+            // joined by `+`. Inside the bounds a `+` can only join: the next
+            // parameter's sign comes after a `,`.
+            if self.eat(&TokenKind::Colon) {
+                loop {
+                    let trait_name = self.expect_ident("a trait bound")?;
+                    bounds.push((name.clone(), trait_name));
+                    if !self.eat(&TokenKind::Plus) {
+                        break;
+                    }
+                }
+                if self.peek_kind() == Some(&TokenKind::Colon) {
+                    let first = &bounds[bounds.len() - 1].1;
+                    return Err(ParseError {
+                        message: format!(
+                            "bounds are joined by `+`, not by another `:` — write \
+                             `{name}: {first} + …`, as in `T: Ord + Display`"
+                        ),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                }
             }
             if let Some(sign) = sign {
                 signs.push((name.clone(), sign));

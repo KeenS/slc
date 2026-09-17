@@ -1,9 +1,10 @@
 // Several traits and several effects in one function.
 //
-// A function may be bound by more than one trait — one bound per type
-// parameter in v1 — and may perform more than one effect, listing them all
-// in its row. Traits are discharged at the call by the argument types;
-// effects are discharged by handlers, one per effect, nested.
+// A function may be bound by more than one trait — on separate type
+// parameters, or several on one, joined by `+` — and may perform more than
+// one effect, listing them all in its row. Traits are discharged at the
+// call by the argument types; effects are discharged by handlers, one per
+// effect, nested.
 
 // ── Several traits ──────────────────────────────────────────────────────
 
@@ -28,6 +29,11 @@ fn show_with_width<+T: Show, +N: Width>(label: T, n: N) -> String {
         | x => (x, " digits)") | add
 }
 
+// Two bounds on one parameter: `n` is both shown and measured.
+fn framed<+N: Show + Width>(n: N) -> String {
+    <(<n | show, " is ") | add | x => (x, <n | width | int_to_str) | add | x => (x, " wide") | add
+}
+
 // ── Several effects ─────────────────────────────────────────────────────
 
 effect Exn { fn fail(message: String) -> i64; }
@@ -45,6 +51,7 @@ command main | (exit: i32) / {IO} {
     // multiple traits, resolved per argument type
     <(42, True) | pair | println;
     <("n", 1234) | show_with_width | println;
+    <1234 | framed | println;
 
     // multiple effects, discharged by nested handlers — the inner handles
     // Exn, the outer Reader. Either order works; each handler answers its

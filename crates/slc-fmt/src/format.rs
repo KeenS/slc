@@ -628,7 +628,7 @@ impl Formatter {
         Ok(concat(docs))
     }
 
-    /// `<+T: Show, E>`, or nothing. `<-T>` opens with the one token `<-`.
+    /// `<+T: Show + Ord, E>`, or nothing. `<-T>` opens with the one token `<-`.
     fn type_params(&mut self) -> R<Doc> {
         let open = match self.kind() {
             Some(T::Lt) => T::Lt,
@@ -641,8 +641,12 @@ impl Formatter {
                 docs.push(f.bump());
             }
             docs.push(f.name("a type parameter")?);
-            while f.at(&T::Colon) {
+            // `T: Show + Ord`.
+            if f.at(&T::Colon) {
                 docs.extend([f.bump(), text(" "), f.name("a trait bound")?]);
+                while f.at(&T::Plus) {
+                    docs.extend([text(" "), f.bump(), text(" "), f.name("a trait bound")?]);
+                }
             }
             Ok(plain(concat(docs)))
         })?;

@@ -1287,6 +1287,20 @@ takes its width from the others, so with
 `trait Combine { fn combine(self: Self, other: Self) -> Self; }`,
 `<(1, x) | combine` for `x: i32` is `i32`'s `combine`.
 
+A parameter may be bound by several traits, joined by `+`:
+
+```
+fn largest<+T: Ord + Display>(a: T, b: T) -> String {
+    match (<(a, b) | gt) { True => <a | fmt, False => <b | fmt }
+}
+```
+
+Each bound is its own dictionary, passed in the order written, so a second
+bound costs what a second bounded parameter would. An impl is bound the same
+way, `impl<+T: Ord + Display> Show for Pair<T>`. The `+` can only join inside
+the bounds — the next parameter's sign comes after a `,` — and a second `:`
+is refused with the spelling that was meant.
+
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and

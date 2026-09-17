@@ -79,13 +79,6 @@ runtime behaviour.
   scopes imports by unit. Settle the mapping from `mod name` to a path, and
   what a diagnostic calls a span in such a unit, in a design note first.
 
-- **More than one bound on a type parameter.** `<+T: Show + Ord>` does not
-  parse; the parser reads `T: Show` and notes the rest as deferred, and the
-  only way to ask for two traits is two parameters. The registry and the
-  dictionary passing are per `(parameter, trait)` already, so this is
-  chiefly syntax and the order dictionaries are passed in. `slc fmt` and
-  `slant-mode` mirror the grammar and change with it.
-
 ## Deferred, for discussion
 
 Each of these needs a decision before it is work. Once one is made it goes
@@ -116,8 +109,7 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
 - **What traits still lack.** A trait is a set of signatures: no default
   methods, no associated types, no supertraits. Each is ordinary in Rust,
   whose flavour the surface keeps; whether each earns its place here, given
-  that dispatch is resolved entirely at compile time, is undecided. "More
-  than one bound on a type parameter" is the part already agreed.
+  that dispatch is resolved entirely at compile time, is undecided.
 
 - **Integer operations.** The four widths have arithmetic and comparison
   and nothing else: no bitwise or shift operations, and no conversion from
