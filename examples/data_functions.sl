@@ -83,20 +83,20 @@ fn overshoot_of(out: i64) <- Size {
 command main | (exit: i32) / {IO} {
     // Positive: data flows inward through the calls and back out.
     let p = <(Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
-    <p.x | println;                                   // 10
-    <p | classify | overshoot | println;                // 100 = 10 * 20 - 100
+    <p.x | println; // 10
+    <p | classify | overshoot | println; // 100 = 10 * 20 - 100
 
     // Negative: the same computations, written in the order the value
     // travels. A consumer written with `<-` flows like the function it
     // equally is.
-    <Point { x: 10, y: 20 } | area_of | println;        // 200
+    <Point { x: 10, y: 20 } | area_of | println; // 200
 
     let r = <Point { x: 1, y: 2 } | reflect;
-    <r.x | println;                                   // 2
+    <r.x | println; // 2
 
     // `classify_to` sends a `Size` on and `overshoot_of` consumes one: the
     // enum passes between them without a name.
-    <150 | classify_to | overshoot_of | println;       // 50
+    <150 | classify_to | overshoot_of | println; // 50
 
     <0 | exit>
 }

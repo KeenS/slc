@@ -9,7 +9,10 @@ fn ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
 
 fn twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {IO} {
     handle (<(<1 | callback, <2 | callback) | add) {
-        build(): resume => { <"build at demand" | println; <10 | resume }
+        build(): resume => {
+            <"build at demand" | println;
+            <10 | resume
+        },
     }
 }
 

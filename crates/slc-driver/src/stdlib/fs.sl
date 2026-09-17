@@ -27,22 +27,34 @@ mod fs {
     }
 
     // The whole file, or why not.
-    pub command read<E>(path: String) | (ok: (-String / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
+    pub command read<E>(path: String) | (
+        ok: (-String / {..E})
+        & failed: (-String / {..E})
+    ) / {Fs, ..E} {
         <path | read_file | (ok & failed)>
     }
 
     // Replace a file's contents, or say why not.
-    pub command write<E>(path: String, contents: String) | (ok: (-unit / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
+    pub command write<E>(path: String, contents: String) | (
+        ok: (-unit / {..E})
+        & failed: (-String / {..E})
+    ) / {Fs, ..E} {
         <(path, contents) | write_file | (ok & failed)>
     }
 
     // A handle to read line by line, or why not.
-    pub command open<E>(path: String) | (opened: (-File / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
+    pub command open<E>(path: String) | (
+        opened: (-File / {..E})
+        & failed: (-String / {..E})
+    ) / {Fs, ..E} {
         <path | open_file | (opened & failed)>
     }
 
     // The next line, or the end of the file.
-    pub command read_line<E>(file: File) | (line: (-String / {..E}) & end: (-unit / {..E})) / {Fs, ..E} {
+    pub command read_line<E>(file: File) | (
+        line: (-String / {..E})
+        & end: (-unit / {..E})
+    ) / {Fs, ..E} {
         <file | read_line_of | (line & end)>
     }
 
@@ -62,18 +74,22 @@ mod fs {
     // else it performs.
     pub fn real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
         handle <(,) | program {
-            read_file(path): resume => <path | __read_file | (
-                fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            write_file(path, contents): resume => <(path, contents) | __write_file | (
-                fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            open_file(path): resume => <path | __open_file | (
-                fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            read_line_of(file): resume => <file | __read_line | (
-                fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) }
-            ) | resume,
+            read_file(path): resume => <path
+                | __read_file
+                | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
+                | resume,
+            write_file(path, contents): resume => <(path, contents)
+                | __write_file
+                | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
+                | resume,
+            open_file(path): resume => <path
+                | __open_file
+                | (fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) })
+                | resume,
+            read_line_of(file): resume => <file
+                | __read_line
+                | (fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) })
+                | resume,
             close_file(file): resume => <(<file | __close_file) | resume,
             file_exists(path): resume => <(<path | __file_exists) | resume,
         }
@@ -86,18 +102,22 @@ mod fs {
     // own continuation was captured outside the handler.
     pub command real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
         handle program {
-            read_file(path): resume => <path | __read_file | (
-                fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            write_file(path, contents): resume => <(path, contents) | __write_file | (
-                fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            open_file(path): resume => <path | __open_file | (
-                fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) }
-            ) | resume,
-            read_line_of(file): resume => <file | __read_line | (
-                fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) }
-            ) | resume,
+            read_file(path): resume => <path
+                | __read_file
+                | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
+                | resume,
+            write_file(path, contents): resume => <(path, contents)
+                | __write_file
+                | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
+                | resume,
+            open_file(path): resume => <path
+                | __open_file
+                | (fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) })
+                | resume,
+            read_line_of(file): resume => <file
+                | __read_line
+                | (fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) })
+                | resume,
             close_file(file): resume => <(<file | __close_file) | resume,
             file_exists(path): resume => <(<path | __file_exists) | resume,
         }

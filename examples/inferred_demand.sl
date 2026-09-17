@@ -6,16 +6,30 @@ fn twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
     <(<1 | callback, <2 | callback) | add
 }
 
-fn answer() -> i64 / {IO} { <"called" | println; 42 }
+fn answer() -> i64 / {IO} {
+    <"called" | println;
+    42
+}
 
 command main | (exit: i32) / {IO} {
-    let discard = fn(value) { <{ build(); value } | ignore };
+    let discard = fn(value) {
+        <{
+            build();
+            value
+        } | ignore
+    };
     <fn(input: i64) { input } | discard | println;
 
     let repeat = fn(value) {
-        let pending = { build(); value };
+        let pending = {
+            build();
+            value
+        };
         handle (<pending | twice) {
-            build(): resume => { <"demand" | println; <0 | resume }
+            build(): resume => {
+                <"demand" | println;
+                <0 | resume
+            },
         }
     };
     <fn(input: i64) { input } | repeat | println;

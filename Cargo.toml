@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/slc-core",
     "crates/slc-syntax",
+    "crates/slc-fmt",
     "crates/slc-check",
     "crates/slc-runtime",
     "crates/slc-driver",

@@ -37,11 +37,17 @@ mod list {
 
     // Indexing can find nothing, so it offers its outcomes to continuations,
     // the way the lookup builtins do.
-    pub command nth<+T, E>(xs: List<T>, i: i64) | (found: (-T / {..E}) & missing: (-String / {..E})) / {..E} {
+    pub command nth<+T, E>(xs: List<T>, i: i64) | (
+        found: (-T / {..E})
+        & missing: (-String / {..E})
+    ) / {..E} {
         match xs {
             Nil => <"nothing at that index" | missing>,
             Cons(h, rest) => {
-                match (<(i, 0) | eq) { True => { <h | found> }, _ => { <(rest, <(i, 1) | sub) | nth | (found & missing)> } }
+                match (<(i, 0) | eq) {
+                    True => { <h | found> },
+                    _ => { <(rest, <(i, 1) | sub) | nth | (found & missing)> },
+                }
             },
         }
     }

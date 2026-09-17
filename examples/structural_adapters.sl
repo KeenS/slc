@@ -31,16 +31,31 @@ command main | (exit: i32) / {IO} {
     let original = Box { value: make() };
     let delayed: Box<Delayed<(-i64 -> -i64 / {Use}), {Build}>> = original;
     <"stored" | println;
-    let+ ready = handle { let+ value = delayed.value; value } {
-        build(): resume => { <"build now" | println; <10 | resume }
+    let+ ready = handle {
+        let+ value = delayed.value;
+        value
+    } {
+        build(): resume => {
+            <"build now" | println;
+            <10 | resume
+        },
     };
     <"ready" | println;
     <handle (<1 | ready) {
-        use_value(input): resume => { <"use" | println; <input | resume }
+        use_value(input): resume => {
+            <"use" | println;
+            <input | resume
+        },
     } | println;
     <handle (<2 | delayed.value) {
-        build(): resume => { <"build again" | println; <20 | resume },
-        use_value(input): resume => { <"use" | println; <input | resume }
+        build(): resume => {
+            <"build again" | println;
+            <20 | resume
+        },
+        use_value(input): resume => {
+            <"use" | println;
+            <input | resume
+        },
     } | println;
     <0 | exit>
 }

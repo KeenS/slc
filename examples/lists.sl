@@ -27,16 +27,14 @@ fn sum(xs: List<i64>) -> i64 {
 
 command main | (exit: i32) / {IO} {
     let xs = List::Cons(1, List::Cons(2, List::Cons(39, List::Nil)));
-    <xs | length | println;                    // 3
-    <xs | sum | println;                       // 42
-    <(double, xs) | map | sum | println;          // 84
-    <(xs, xs) | append | sum | println;           // 84
+    <xs | length | println; // 3
+    <xs | sum | println; // 42
+    <(double, xs) | map | sum | println; // 84
+    <(xs, xs) | append | sum | println; // 84
 
     // nth offers its outcomes, so the miss gets an arm of its own: a row
     // slot wants a consumer, and `select` is what builds one.
-    <mu i64 { out <= <(xs, 2) | nth | (out & select String { m => <0 | out> })> }
-        | println;                                                            // 39
-    <mu i64 { out <= <(xs, 9) | nth | (out & select String { m => <0 | out> })> }
-        | println;                                                            // 0
+    <mu i64 { out <= <(xs, 2) | nth | (out & select String { m => <0 | out> })> } | println; // 39
+    <mu i64 { out <= <(xs, 9) | nth | (out & select String { m => <0 | out> })> } | println; // 0
     <0 | exit>
 }

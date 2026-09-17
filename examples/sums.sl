@@ -41,7 +41,7 @@ command main | (exit: i32) / {IO} {
     <::2("last") | rank | println;
     <::0(3) | show | println;
     <mu String {
-        s <= <42 | classify | (select i64 { n => <"small" | s> } & select String { t => <t | s> })>
+        s <= <42 | classify | (select i64 { n => <"small" | s> } & select String { t => <t | s> })>,
     } | println;
     <0 | exit>
 }

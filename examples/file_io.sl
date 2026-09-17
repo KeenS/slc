@@ -47,24 +47,32 @@ command main | (exit: i32) / {IO} {
             },
         };
 
-        let first = mu { k <=
-            <file | fs::read_line | (k & select unit { end => { <"empty file" | println; <1 | exit> } })>
+        let first = mu {
+            k <= <file | fs::read_line | (k & select unit {
+                end => {
+                    <"empty file" | println;
+                    <1 | exit>
+                },
+            })>,
         };
         <("first line: ", first) | add | println;
 
         // The failure path: exactly one of the two consumers runs, and
         // this file does not exist. Both leave through the composed door,
         // so the open file above is closed on these paths too.
-        <"examples/missing.sl" | fs::open | (select File {
+        <"examples/missing.sl" | fs::open | (
+            select File {
                 unexpected => {
                     <"unexpectedly opened" | println;
                     <1 | exit>
                 },
-            } & select String {
+            }
+            & select String {
                 message => {
                     <("cannot open: ", message) | add | println;
                     <0 | exit>
                 },
-            })>
+            }
+        )>
     })>
 }

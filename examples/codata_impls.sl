@@ -32,7 +32,10 @@ trait Describe {
 
 impl Describe for Config {
     fn describe(self: Config) -> String {
-        <(self.name, " with ") | add | x => (x, <self.retries | fmt) | add | x => (x, " retries") | add
+        <(self.name, " with ")
+            | add
+            | x => (x, <self.retries | fmt) | add
+            | x => (x, " retries") | add
     }
 }
 

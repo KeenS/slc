@@ -139,8 +139,15 @@ fn main() -> ExitCode {
 
     let usage = || {
         eprintln!("usage: slc run [--fuel N] <file.sl>");
+        eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
     };
+    if let Some(fmt_at) = args.iter().position(|a| a == "fmt") {
+        return match format_files(&args[fmt_at + 1..]) {
+            Some(code) => code,
+            None => usage(),
+        };
+    }
     let Some(run_at) = args.iter().position(|a| a == "run") else {
         return usage();
     };
@@ -184,6 +191,46 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `slc fmt`: rewrite each file in the one layout. `--check` writes nothing
+/// and fails if any file would change, for CI; `--stdout` prints the result
+/// instead, for an editor. `None` when the arguments make no sense.
+fn format_files(args: &[String]) -> Option<ExitCode> {
+    let (flags, files): (Vec<&String>, Vec<&String>) =
+        args.iter().partition(|a| a.starts_with("--"));
+    let check = flags.iter().any(|f| *f == "--check");
+    let stdout = flags.iter().any(|f| *f == "--stdout");
+    let known = flags.iter().all(|f| *f == "--check" || *f == "--stdout");
+    if files.is_empty() || !known || (check && stdout) {
+        return None;
+    }
+    let mut failed = false;
+    for file in files {
+        let result = std::fs::read_to_string(file)
+            .map_err(|e| format!("cannot read {file}: {e}"))
+            .and_then(|source| {
+                let formatted =
+                    slc_fmt::format_source(&source).map_err(|e| format!("{file}: {e}"))?;
+                Ok((source, formatted))
+            })
+            .and_then(|(source, formatted)| {
+                if stdout {
+                    print!("{formatted}");
+                } else if source != formatted && check {
+                    return Err(format!("{file} is not formatted: run `slc fmt {file}`"));
+                } else if source != formatted {
+                    std::fs::write(file, formatted)
+                        .map_err(|e| format!("cannot write {file}: {e}"))?;
+                }
+                Ok(())
+            });
+        if let Err(message) = result {
+            eprintln!("error: {message}");
+            failed = true;
+        }
+    }
+    Some(if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS })
 }
 
 /// Keep only the first declaration for each top-level name, per namespace:

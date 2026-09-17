@@ -12,7 +12,7 @@ fn manhattan(p: Point) -> i64 {
 
 command main | (exit: i32) / {IO} {
     let t = (10, 20, 30);
-    <(t.0, t.1) | add | x => (x, t.2) | add | println;            // 60
-    <Point { x: 1, y: 2, z: 3 } | manhattan | println;   // 6
+    <(t.0, t.1) | add | x => (x, t.2) | add | println; // 60
+    <Point { x: 1, y: 2, z: 3 } | manhattan | println; // 6
     <0 | exit>
 }

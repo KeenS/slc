@@ -3,7 +3,12 @@ fn returning_sink(value: i64) -> (,) / {IO} {
 }
 
 fn printing_consumer(exit: -i32) -> (-i64 / {IO}) {
-    select i64 { value => { <value | println; <0 | exit> } }
+    select i64 {
+        value => {
+            <value | println;
+            <0 | exit>
+        },
+    }
 }
 
 command main | (exit: -i32) / {IO} {

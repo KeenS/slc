@@ -29,11 +29,11 @@ fn double(n: i64) -> i64 { <(n, 2) | mul }
 
 command main | (exit: i32) / {IO} {
     let s = <10 | count_from;
-    <s.head | println;                            // 10
-    <s.tail.head | println;                       // 11
-    <s.tail.tail.tail.head | println;             // 13
-    <(<(double, s) | stream::map).tail.head | println;   // 22
-    <(s, 3) | take | fmt | println;                   // "[10, 11, 12]"
-    <(<7 | repeat, 2) | take | fmt | println;           // "[7, 7]"
+    <s.head | println; // 10
+    <s.tail.head | println; // 11
+    <s.tail.tail.tail.head | println; // 13
+    <(<(double, s) | stream::map).tail.head | println; // 22
+    <(s, 3) | take | fmt | println; // "[10, 11, 12]"
+    <(<7 | repeat, 2) | take | fmt | println; // "[7, 7]"
     <0 | exit>
 }

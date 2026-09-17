@@ -20,7 +20,10 @@ menu Fallible / {Exn} {
 fn checked(n: i64) -> Fallible {
     mu Fallible {
         value <= <(match (<(n, 0) | ge) { True => n, False => <"negative" | throw }) | value>,
-        doubled <= <(match (<(n, 0) | ge) { True => <(n, 2) | mul, False => <"negative" | throw }) | doubled>,
+        doubled <= <(match (<(n, 0) | ge) {
+            True => <(n, 2) | mul,
+            False => <"negative" | throw,
+        }) | doubled>,
     }
 }
 
@@ -52,7 +55,10 @@ form Validated / {Exn} {
 
 fn admit() -> Validated {
     select Validated {
-        Validated { age, out } => <(match (<(age, 18) | ge) { True => age, False => <"too young" | throw }) | out>,
+        Validated { age, out } => <(match (<(age, 18) | ge) {
+            True => age,
+            False => <"too young" | throw,
+        }) | out>,
     }
 }
 

@@ -9,7 +9,7 @@ command main | (exit: i32) / {IO} {
     <text | println;
 
     let stored: Handler<i64, i64, {Reader<i64>}, {}> = handler Reader {
-        read(): resume => <7 | resume
+        read(): resume => <7 | resume,
     };
     <(with stored handle get()) | println;
     <0 | exit>

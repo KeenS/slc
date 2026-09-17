@@ -20,7 +20,15 @@ version = "0.1.0"
 dependencies = [
  "slc-check",
  "slc-core",
+ "slc-fmt",
  "slc-runtime",
+ "slc-syntax",
+]
+
+[[package]]
+name = "slc-fmt"
+version = "0.1.0"
+dependencies = [
  "slc-syntax",
 ]
 

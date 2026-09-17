@@ -6,7 +6,7 @@
 // impl is chosen once, by whoever knew the concrete type.
 
 trait Show { fn show(self: Self) -> String; }
-impl Show for i64  { fn show(self: i64)  -> String { <self | int_to_str } }
+impl Show for i64 { fn show(self: i64) -> String { <self | int_to_str } }
 impl Show for Bool { fn show(self: Bool) -> String { match self { True => "T", False => "F" } } }
 
 // Polymorphic: `show` here projects from `twice`'s dictionary parameter.
@@ -15,8 +15,8 @@ fn twice<+T: Show>(x: T) -> String { <(<x | show, <x | show) | add }
 fn relay<+T: Show>(x: T) -> String { <("[", <x | twice) | add | y => (y, "]") | add }
 
 command main | (exit: i32) / {IO} {
-    <42 | show | println;      // 42  — concrete receiver, a direct impl call
-    <7 | relay | println;      // [77] — i64 dictionary threaded through relay→twice
-    <True | relay | println;   // [TT] — Bool dictionary, same code
+    <42 | show | println; // 42  — concrete receiver, a direct impl call
+    <7 | relay | println; // [77] — i64 dictionary threaded through relay→twice
+    <True | relay | println; // [TT] — Bool dictionary, same code
     <0 | exit>
 }

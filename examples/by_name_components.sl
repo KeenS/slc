@@ -19,19 +19,28 @@ command main | (exit: i32) / {IO} {
 
     let alias = saved.callback;
     let first = handle (<1 | alias) {
-        build(): resume => { <"record build" | println; <10 | resume }
+        build(): resume => {
+            <"record build" | println;
+            <10 | resume
+        },
     };
     <first | println;
     let second = handle (<2 | alias) {
-        build(): resume => { <"record build" | println; <20 | resume }
+        build(): resume => {
+            <"record build" | println;
+            <20 | resume
+        },
     };
     <second | println;
 
     let third = handle (match choice {
         ::0(callback) => <3 | callback,
-        ::1(value) => value
+        ::1(value) => value,
     }) {
-        build(): resume => { <"choice build" | println; <30 | resume }
+        build(): resume => {
+            <"choice build" | println;
+            <30 | resume
+        },
     };
     <third | println;
     <0 | exit>

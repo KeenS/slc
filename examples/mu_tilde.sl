@@ -27,33 +27,59 @@ command main | (exit: i32) / {IO} {
     //    a positive type, and an atom is the degenerate product — one shape,
     //    one component — so its one arm binds the whole value with a plain
     //    name. This is `μ̃n. println(n) ∥ … ⟩`, spelled in the surface.
-    mu (,) { next <= {
-    let show = select i64 { n => { <n | println; <(,) | next> } };
+    mu (,) {
+        next <= {
+            let show = select i64 {
+                n => {
+                    <n | println;
+                    <(,) | next>
+                },
+            };
 
-    // Cutting a value against it substitutes: `n` is `42` inside the arm.
-    <doubled | show>
-    } };
+            // Cutting a value against it substitutes: `n` is `42` inside the arm.
+            <doubled | show>
+        },
+    };
 
     // 3. A binder that ignores its value is the same co-term with `_` for a
     //    name — and it is what sequencing lowers to. `e₁; e₂` runs `e₁`, binds
     //    its value to a name nobody mentions, and runs `e₂`; the two lines
     //    below are that, taken apart.
-    mu (,) { next <= {
-        let discard = select String { _ => { <"the value was consumed" | println; <(,) | next> } };
-        <"thrown away" | discard>
-    } };
+    mu (,) {
+        next <= {
+            let discard = select String {
+                _ => {
+                    <"the value was consumed" | println;
+                    <(,) | next>
+                },
+            };
+            <"thrown away" | discard>
+        },
+    };
 
     // 4. More than one binder is the multiplicative μ̃. A product has one
     //    shape too, but several components, and they arrive together in one
     //    command sharing its context — which is what `;` means.
-    mu (,) { next <= {
-        let report = select (i64, i64) { (left, right) => { <(left, right) | add | println; <(,) | next> } };
-        <(10, 7) | report>
-    } };
+    mu (,) {
+        next <= {
+            let report = select (i64, i64) {
+                (left, right) => {
+                    <(left, right) | add | println;
+                    <(,) | next>
+                },
+            };
+            <(10, 7) | report>
+        },
+    };
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
-    <50 | twice | select i64 { n => { <n | println; <0 | exit> } }>
+    <50 | twice | select i64 {
+        n => {
+            <n | println;
+            <0 | exit>
+        },
+    }>
 }
 
 // The labelled μ̃ — `μ̃[ L(x…). c … ]`, one branch per variant of an `enum` —

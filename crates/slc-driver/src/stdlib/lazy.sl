@@ -7,7 +7,10 @@ mod lazy {
 
     pub fn of_delayed<-T, E>(computation: Delayed<T, ..E>) -> Lazy<T, ..E> {
         mu Lazy<T, ..E> {
-            force <= { let+ value = computation; <value | force> },
+            force <= {
+                let+ value = computation;
+                <value | force>
+            },
         }
     }
 

@@ -5,7 +5,7 @@ mod control {
 
     pub fn reset<+A, +R, E>(program: ((,) -> R / {Shift<A, R, ..E>, ..E})) -> R / {..E} {
         handle (<(,) | program) {
-            shift(callback): resume => <resume | callback
+            shift(callback): resume => <resume | callback,
         }
     }
 }

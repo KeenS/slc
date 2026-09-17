@@ -11,5 +11,6 @@ path = "src/main.rs"
 [dependencies]
 slc-core = { path = "../slc-core" }
 slc-syntax = { path = "../slc-syntax" }
+slc-fmt = { path = "../slc-fmt" }
 slc-check = { path = "../slc-check" }
 slc-runtime = { path = "../slc-runtime" }

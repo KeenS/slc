@@ -37,10 +37,12 @@ command main | (exit: i32) / {IO} {
     // The by-name idiom. `fresh` is a lambda, hence a value — and every use
     // runs its own capture.
     let fresh = fn {
-        mu { k <= {
-            <"capturing" | println;
-            <fn(x: i64) { x } | k>
-        } }
+        mu {
+            k <= {
+                <"capturing" | println;
+                <fn(x: i64) { x } | k>
+            },
+        }
     };
     <((<(,) | fresh)(1), 1) | add | println;
     <((<(,) | fresh)(4), 1) | add | println;

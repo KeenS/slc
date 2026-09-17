@@ -41,30 +41,33 @@ command main | (exit: i32) / {IO} {
     let all = handle pick() {
         flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
-    <all | println;                                        // H T
+    <all | println; // H T
 
     let crossed = handle pick_under_reset() {
         flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
-    <crossed | println;                                    // H T
+    <crossed | println; // H T
 
     // A clause cuts into the continuations it is handed: it runs below its
     // handler, on frames they share.
     let verdict = handle (mu String { k <= <(5, k, k) | judge> }) {
-        judge(n, ok, bad) => match (<(n, 3) | gt) { True => <"big" | ok>, False => <"small" | bad> },
+        judge(n, ok, bad) => match (<(n, 3) | gt) {
+            True => <"big" | ok>,
+            False => <"small" | bad>,
+        },
     };
-    <verdict | println;                                    // big
+    <verdict | println; // big
 
     let stopped = handle (mu String { out <= <(<out | check) | out> }) {
         config(): resume => <-1 | resume,
     };
-    <stopped | println;                                    // negative, stopping early
+    <stopped | println; // negative, stopping early
 
     // What `reset` does not handle passes through to the handler around it.
     let n = handle (reset read_twice()) {
         config(): resume => <21 | resume,
     };
-    <n | println;                                          // 42
+    <n | println; // 42
 
     <0 | exit>
 }

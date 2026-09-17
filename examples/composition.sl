@@ -71,7 +71,7 @@ command main | (exit: i32) / {IO} {
     match app {
         App { title, config } => {
             <title | println;
-            <config.name | println;
+            <config.name | println
         },
     };
 

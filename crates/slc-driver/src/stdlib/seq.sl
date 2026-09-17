@@ -83,21 +83,28 @@ mod seq {
 
     pub fn take<+T, E>(s: Seq<T, ..E>, n: i64) -> Seq<T, ..E> {
         mu Seq {
-            next <= match (<(n, 0) | le) { True => {
-                <Step::Done | next>
-            }, _ => {
-                match s.next {
-                    Step::Done => <Step::Done | next>,
-                    Step::Yield(h, rest) => <Step::Yield(h, <(rest, <(n, 1) | sub) | take) | next>,
-                }
-            } },
+            next <= match (<(n, 0) | le) {
+                True => {
+                    <Step::Done | next>
+                },
+                _ => {
+                    match s.next {
+                        Step::Done => <Step::Done | next>,
+                        Step::Yield(h, rest) => <Step::Yield(h, <(rest, <(n, 1) | sub) | take)
+                            | next>,
+                    }
+                },
+            },
         }
     }
 
     // The other bridge: a stream, cut where a value stops passing. The
     // result can end, so it is a `Seq` — the type says what the function
     // does.
-    pub fn take_while<+T, E>(keep: (T -> Bool / {..E}), s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
+    pub fn take_while<+T, E>(
+        keep: (T -> Bool / {..E}),
+        s: Delayed<Stream<T, ..E>, ..E>,
+    ) -> Seq<T, ..E> {
         mu Seq {
             next <= match <s.head | keep {
                 True => <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>,
