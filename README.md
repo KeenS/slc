@@ -32,6 +32,25 @@ Comments and blank lines are kept. It only ever changes whitespace and the
 separators the grammar leaves optional, and it refuses to write a file unless
 its output parses to the same program.
 
+## Editor support
+
+[`editors/emacs/slant-mode.el`](editors/emacs/slant-mode.el) is an Emacs major
+mode for `.sl` files: highlighting, comment and string syntax, imenu, and
+indentation that agrees with `slc fmt`.
+
+```elisp
+(add-to-list 'load-path "/path/to/slc/editors/emacs")
+(require 'slant-mode)
+(setq slant-slc-command "/path/to/slc/target/release/slc") ; if `slc` is not on PATH
+(setq slant-format-on-save t)                              ; optional
+```
+
+`C-c C-f` formats the buffer through `slc fmt`. The mode's tests run with
+
+```sh
+emacs -Q --batch -L editors/emacs -l editors/emacs/slant-mode-tests.el -f ert-run-tests-batch-and-exit
+```
+
 ## Documentation
 
 - [examples/README.md](examples/README.md) — runnable feature examples and expected output
