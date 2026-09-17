@@ -95,9 +95,9 @@ function are not a substitute for the phase distinction.
 
 ## Validation
 
-`examples/delayed_and_lazy.sl` covers typed storage, eager alias forcing,
+`examples/laziness/delayed_and_lazy.sl` covers typed storage, eager alias forcing,
 repeated use, conversion and a `Lazy` returning an effectful function.
-`examples/lazy_effect_phases.sl` retains explicit factories and positive
+`examples/laziness/lazy_effect_phases.sl` retains explicit factories and positive
 wrappers as a comparison. Both have exact-output tests.
 
 `crates/slc-driver/tests/delayed_phases.rs` additionally checks missing
@@ -112,4 +112,4 @@ values, and primitive argument and callback demand. Preliminary declaration
 inference supplies missing polarities for effect placement; the final check
 rejects unresolved or changed choices before lowering. The same discipline
 therefore governs effect rows and runtime delay marking. The runnable
-`examples/inferred_demand.sl` has an exact-output regression.
+`examples/laziness/inferred_demand.sl` has an exact-output regression.

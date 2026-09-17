@@ -27,38 +27,41 @@ fn run_example(name: &str) -> (String, String, bool) {
 #[test]
 fn updated_feature_examples_have_exact_outputs() {
     for (name, expected) in [
-        ("handler_forwarding.sl", "complete: 30\nforwarded: 42\n"),
-        ("escaping_exits.sl", "stored without running\ntick on activation\n42\n"),
-        ("handler_answers.sl", "resumed: answer: 42\n"),
-        ("consumer_returns.sl", "1\nreturned from sink\nconsumer constructed\n2\n"),
-        ("stream_effects.sl", "built, not demanded\n[10, 20, 30]\n[100, 200, 300]\n[2, 4]\n"),
+        ("effects/handler_forwarding.sl", "complete: 30\nforwarded: 42\n"),
+        ("effects/escaping_exits.sl", "stored without running\ntick on activation\n42\n"),
+        ("effects/handler_answers.sl", "resumed: answer: 42\n"),
+        ("duality/consumer_returns.sl", "1\nreturned from sink\nconsumer constructed\n2\n"),
         (
-            "by_name_components.sl",
+            "laziness/stream_effects.sl",
+            "built, not demanded\n[10, 20, 30]\n[100, 200, 300]\n[2, 4]\n",
+        ),
+        (
+            "laziness/by_name_components.sl",
             "positive field\nstored\nrecord build\n11\nrecord build\n22\nchoice build\n33\n",
         ),
         (
-            "delayed_bundle.sl",
+            "laziness/delayed_bundle.sl",
             "stored\nbuild for value\n10\nbuild for callback\nprojected, not activated\nbuild again\nuse callback\n41\n",
         ),
         (
-            "flow_evaluation.sl",
+            "laziness/flow_evaluation.sl",
             "0\n0\n0\nbuild at demand\nbuild at demand\n23\nbuild at demand\nbuild at demand\n23\nbuild at demand\nbuild at demand\n23\n",
         ),
-        ("yielding_commands.sl", "14\n-14\n42\n"),
-        ("handler_values.sl", "140\n72\n42\n"),
-        ("generic_effects.sl", "42\nhello\n7\n"),
-        ("composable_capture.sl", "30\n"),
+        ("duality/yielding_commands.sl", "14\n-14\n42\n"),
+        ("effects/handler_values.sl", "140\n72\n42\n"),
+        ("effects/generic_effects.sl", "42\nhello\n7\n"),
+        ("effects/composable_capture.sl", "30\n"),
         (
-            "structural_adapters.sl",
+            "duality/structural_adapters.sl",
             "7\n42\nstored\nbuild now\nready\nuse\n11\nbuild again\nuse\n22\n",
         ),
-        ("inferred_demand.sl", "0\ndemand\ndemand\n3\nstored\ncalled\n42\ncalled\n42\n"),
+        ("laziness/inferred_demand.sl", "0\ndemand\ndemand\n3\nstored\ncalled\n42\ncalled\n42\n"),
         (
-            "delayed_and_lazy.sl",
+            "laziness/delayed_and_lazy.sl",
             "build now\nready\nuse\nuse\n11\n12\nbuild again\n23\nlazy build\nlazy ready\nlazy use\n34\n",
         ),
         (
-            "lazy_effect_phases.sl",
+            "laziness/lazy_effect_phases.sl",
             "factory build\nfactory ready\nfirst use\n11\nsecond use\n12\nlazy build\nlazy ready\nthird use\n23\nfourth use\n24\nlazy rebuild\nfifth use\n35\n",
         ),
     ] {
@@ -73,12 +76,12 @@ fn updated_feature_examples_have_exact_outputs() {
 fn repository_example_suite_has_expected_results() {
     let expected = [
         (
-            "arithmetic.sl",
+            "basics/arithmetic.sl",
             Expected { success: true, stdout: &["5", "6", "42", "10", "-5"], stderr: &[] },
         ),
-        ("logical_units.sl", Expected { success: true, stdout: &["(,)"], stderr: &[] }),
+        ("duality/logical_units.sl", Expected { success: true, stdout: &["(,)"], stderr: &[] }),
         (
-            "sums.sl",
+            "basics/sums.sl",
             Expected {
                 success: true,
                 stdout: &["number 7", "text hi", "second, yes", "third last", "3", "big"],
@@ -86,7 +89,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "composition.sl",
+            "duality/composition.sl",
             Expected {
                 success: true,
                 stdout: &["demo", "slant", "2", "2", "7", "quit"],
@@ -94,7 +97,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "comparison.sl",
+            "basics/comparison.sl",
             Expected {
                 success: true,
                 stdout: &["true", "true", "true", "true", "true", "true"],
@@ -102,7 +105,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "pipeline.sl",
+            "duality/pipeline.sl",
             Expected {
                 success: true,
                 stdout: &["42", "14", "42", "11", "11", "20", "7", "13", "13"],
@@ -110,7 +113,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "codata_impls.sl",
+            "duality/codata_impls.sl",
             Expected {
                 success: true,
                 stdout: &[
@@ -128,7 +131,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "latent_effects.sl",
+            "effects/latent_effects.sl",
             Expected {
                 success: true,
                 stdout: &["21", "42", "-1", "-1", "70", "700", "21", "-1"],
@@ -136,7 +139,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "effects.sl",
+            "effects/effects.sl",
             Expected {
                 success: true,
                 stdout: &["-1", "5", "1070", "HH HT TH TT", "[4, 2]", "[]", "42"],
@@ -144,15 +147,15 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "dictionaries.sl",
+            "basics/dictionaries.sl",
             Expected { success: true, stdout: &["42", "[77]", "[TT]"], stderr: &[] },
         ),
         (
-            "data_functions.sl",
+            "duality/data_functions.sl",
             Expected { success: true, stdout: &["10", "100", "200", "2", "50"], stderr: &[] },
         ),
         (
-            "file_io.sl",
+            "programs/file_io.sl",
             Expected {
                 success: true,
                 stdout: &[
@@ -165,7 +168,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "connectives.sl",
+            "duality/connectives.sl",
             Expected {
                 success: true,
                 // `,`, then `;` three ways, then `|`, `&`, a menu's two items, and
@@ -175,7 +178,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "classical.sl",
+            "duality/classical.sl",
             Expected {
                 success: true,
                 // The refutation is taken *after* `lem()` answered: the jump
@@ -184,9 +187,9 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("command.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
+        ("duality/command.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
-            "io.sl",
+            "effects/io.sl",
             Expected {
                 success: true,
                 stdout: &[
@@ -199,16 +202,16 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "stdlib.sl",
+            "basics/stdlib.sl",
             Expected {
                 success: true,
                 stdout: &["3", "3", "0", "3", "[1, 2, 3]", "[3, 1, 2]"],
                 stderr: &[],
             },
         ),
-        ("hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
+        ("basics/hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
         (
-            "json_parser.sl",
+            "programs/json_parser.sl",
             Expected {
                 success: true,
                 stdout: &[
@@ -222,23 +225,23 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("lambda.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
+        ("basics/lambda.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
-            "lists.sl",
+            "basics/lists.sl",
             Expected { success: true, stdout: &["3", "42", "84", "84", "39", "0"], stderr: &[] },
         ),
         (
-            "command_falls_through.sl",
+            "errors/command_falls_through.sl",
             Expected {
                 success: false,
                 stdout: &[],
                 stderr: &["type:", "must reach a continuation"],
             },
         ),
-        ("match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
-        ("mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
+        ("basics/match_exhaustive.sl", Expected { success: true, stdout: &["red"], stderr: &[] }),
+        ("duality/mu_escape.sl", Expected { success: true, stdout: &["42"], stderr: &[] }),
         (
-            "delimited.sl",
+            "effects/delimited.sl",
             Expected {
                 success: true,
                 // Each resumption's jump lands in that resumption, with or
@@ -248,7 +251,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "delimited_error.sl",
+            "errors/delimited_error.sl",
             Expected {
                 success: false,
                 stdout: &["5\n"],
@@ -256,40 +259,46 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "form.sl",
+            "duality/form.sl",
             Expected { success: true, stdout: &["answer", "42", "relabelled!", "7"], stderr: &[] },
         ),
         (
-            "menu.sl",
+            "duality/menu.sl",
             Expected { success: true, stdout: &["3", "slant", "slant!", "3"], stderr: &[] },
         ),
         (
-            "mu_tilde.sl",
+            "duality/mu_tilde.sl",
             Expected {
                 success: true,
                 stdout: &["42", "42", "the value was consumed", "17", "100"],
                 stderr: &[],
             },
         ),
-        ("nested_calls.sl", Expected { success: true, stdout: &["320"], stderr: &[] }),
+        ("basics/nested_calls.sl", Expected { success: true, stdout: &["320"], stderr: &[] }),
         (
-            "multi.sl",
+            "effects/multi.sl",
             Expected {
                 success: true,
                 stdout: &["42, yes", "n (4 digits)", "50", "-1"],
                 stderr: &[],
             },
         ),
-        ("namespaces.sl", Expected { success: true, stdout: &["75", "420", "0"], stderr: &[] }),
-        ("pair.sl", Expected { success: true, stdout: &["30"], stderr: &[] }),
         (
-            "patterns.sl",
+            "basics/namespaces.sl",
+            Expected { success: true, stdout: &["75", "420", "0"], stderr: &[] },
+        ),
+        ("basics/pair.sl", Expected { success: true, stdout: &["30"], stderr: &[] }),
+        (
+            "basics/patterns.sl",
             Expected { success: true, stdout: &["13", "71", "11", "25", "2"], stderr: &[] },
         ),
-        ("projection.sl", Expected { success: true, stdout: &["60", "6"], stderr: &[] }),
-        ("polarity.sl", Expected { success: true, stdout: &["3", "positive"], stderr: &[] }),
+        ("basics/projection.sl", Expected { success: true, stdout: &["60", "6"], stderr: &[] }),
         (
-            "polarity_error.sl",
+            "duality/polarity.sl",
+            Expected { success: true, stdout: &["3", "positive"], stderr: &[] },
+        ),
+        (
+            "errors/polarity_error.sl",
             Expected {
                 success: false,
                 stdout: &[],
@@ -297,7 +306,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "seq.sl",
+            "laziness/seq.sl",
             Expected {
                 success: true,
                 stdout: &[
@@ -311,9 +320,9 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("select.sl", Expected { success: true, stdout: &["1", "42", "100"], stderr: &[] }),
+        ("duality/select.sl", Expected { success: true, stdout: &["1", "42", "100"], stderr: &[] }),
         (
-            "stream.sl",
+            "laziness/stream.sl",
             Expected {
                 success: true,
                 stdout: &["10", "11", "13", "22", "[10, 11, 12]", "[7, 7]"],
@@ -321,11 +330,11 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "strings.sl",
+            "basics/strings.sl",
             Expected { success: true, stdout: &["Hello, world!", "H", "world"], stderr: &[] },
         ),
         (
-            "tree_search.sl",
+            "programs/tree_search.sl",
             Expected {
                 success: true,
                 // The first search never visits 4: the hit jumps out.
@@ -344,7 +353,7 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
-            "two_styles.sl",
+            "duality/two_styles.sl",
             Expected {
                 success: true,
                 // The value-first half and the continuation-first half print

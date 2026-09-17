@@ -14,7 +14,7 @@
 // the operation arrives at the handler the runtime installs around it.
 // Nothing else about it is special — a program that installs its own handler
 // sits nearer the operation and answers first, which is how output is
-// mocked (`examples/io.sl`).
+// mocked (`examples/effects/io.sl`).
 //
 // `println` and `print` are the friendly front: they render a value through
 // `Display`, below, and then perform `write_line`/`write` with the text.

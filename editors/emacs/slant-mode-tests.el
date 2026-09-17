@@ -93,7 +93,8 @@
 (ert-deftest slant-indentation-agrees-with-slc-fmt ()
   "Every source `slc fmt' keeps formatted is laid out as the mode indents."
   (let ((files (append
-                (directory-files (expand-file-name "examples" slant-tests--root) t "\\.sl\\'")
+                (directory-files-recursively
+                 (expand-file-name "examples" slant-tests--root) "\\.sl\\'")
                 (directory-files-recursively
                  (expand-file-name "crates/slc-driver/src" slant-tests--root) "\\.sl\\'"))))
     (should (> (length files) 50))

@@ -18,9 +18,9 @@ cargo test
 ## Formatting
 
 ```sh
-cargo run -- fmt examples/hello.sl           # rewrite in place
+cargo run -- fmt examples/basics/hello.sl           # rewrite in place
 cargo run -- fmt --check examples/*.sl       # write nothing; fail if any file would change
-cargo run -- fmt --stdout examples/hello.sl  # print the result, for an editor
+cargo run -- fmt --stdout examples/basics/hello.sl  # print the result, for an editor
 ```
 
 `slc fmt` gives Slant source one layout: four-space indentation, lines within

@@ -5,7 +5,7 @@
 //
 // Run it to see the diagnostic:
 //
-//   slc run examples/polarity_error.sl
+//   slc run examples/errors/polarity_error.sl
 
 // A value cannot be a continuation parameter: control cannot leave through
 // something that is not a consumer. (`k` gives the body a real continuation

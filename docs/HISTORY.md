@@ -155,7 +155,7 @@ example suite.
 - The example suite runs every example with expected output and exit status.
   `linearity_error.sl` and `polarity_error.sl` are the two intentional
   failures; every other example succeeds.
-- `examples/connectives.sl` writes all four connectives in both polarities.
+- `examples/duality/connectives.sl` writes all four connectives in both polarities.
 - Diagnostics carry source locations, and driver tests pin the entry-point
   rules: missing `main`, malformed `main`, exit codes, and output ordering.
 

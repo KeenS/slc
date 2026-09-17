@@ -31,11 +31,11 @@ command main | (exit: i32) / {IO} {
         // Whole-file reading. `k` is the continuation of the `let`,
         // captured by `mu` — the language's `call/cc` — so the program
         // stays flat.
-        let source = mu { k <= <"examples/hello.sl" | fs::read | (k & complain)> };
+        let source = mu { k <= <"examples/basics/hello.sl" | fs::read | (k & complain)> };
         <source | print;
 
         // Line reading, through a file.
-        let file = mu { k <= <"examples/hello.sl" | fs::open | (k & complain)> };
+        let file = mu { k <= <"examples/basics/hello.sl" | fs::open | (k & complain)> };
 
         // From here on, `exit` *is* "close the file, then leave": the
         // arm's `exit` is the outer one. The earlier `complain` still holds

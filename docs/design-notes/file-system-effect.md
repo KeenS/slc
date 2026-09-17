@@ -40,7 +40,7 @@ fn canned<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {..E} {
 }
 ```
 
-`real` reads `examples/hello.sl`, routes a missing file to `failed`, and
+`real` reads `examples/basics/hello.sl`, routes a missing file to `failed`, and
 `canned` answers without the disk; what the program performs besides `Fs`
 passes through both.
 
@@ -50,7 +50,7 @@ passes through both.
    encoding above remains useful, but first-class handler values are now
    implemented: `handler { … }` constructs one and `with h handle c`
    installs it. `DESIGN.md` specifies `Handler<A, B, E, F>`; the
-   `examples/handler_values.sl` example stores, selects and composes them.
+   `examples/effects/handler_values.sl` example stores, selects and composes them.
 2. **`fs` declares `Fs`,** one operation per primitive: reading a file,
    writing one, opening one, reading a line, closing, and asking whether a
    path exists. An operation answers with its outcome as a sum, one
@@ -83,7 +83,7 @@ that behavior visible to the checker rather than silently erasing the effect.
 
 - A declaration that touches files says `{Fs}` in its row rather than `{IO}`,
   and something between it and `main` installs a handler for `Fs`.
-- `examples/file_io.sl` is rewritten to install the handler; its output does
+- `examples/programs/file_io.sl` is rewritten to install the handler; its output does
   not change. A new example, or a test, reads a file through a mock.
 - The primitives still charge `{IO}`: only a handler calls them.
 - `DESIGN.md`'s `IO` section loses its stale reason that an operation cannot

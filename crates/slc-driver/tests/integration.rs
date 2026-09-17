@@ -1032,7 +1032,7 @@ fn negative_fn_and_local_mu_capture_do_not_conflict() {
 fn json_parser_with_source(literal: &str, file: &str) -> (String, String, bool) {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/json_parser.sl"
+        "/../../examples/programs/json_parser.sl"
     ))
     .unwrap();
     let start = source.find("let source = ").unwrap();
@@ -1049,7 +1049,7 @@ fn json_parser_preserves_output_and_exit_status() {
     // of a pair of continuations. Its output and exit status are unchanged.
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/json_parser.sl"
+        "/../../examples/programs/json_parser.sl"
     ))
     .unwrap();
     let path = std::env::temp_dir().join("slc_test_json_unchanged.sl");
@@ -1107,7 +1107,7 @@ fn json_parser_rejects_malformed_edge_cases() {
 fn json_parser_rejects_malformed_input() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/json_parser.sl"
+        "/../../examples/programs/json_parser.sl"
     ))
     .unwrap();
     let start = source.find("let source = ").unwrap();
@@ -1757,7 +1757,7 @@ fn traits_dispatch_on_menu_and_form_receivers() {
 fn json_parser_rejects_trailing_characters() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/json_parser.sl"
+        "/../../examples/programs/json_parser.sl"
     ))
     .unwrap();
     let start = source.find("let source = ").unwrap();
@@ -1774,7 +1774,7 @@ fn json_parser_rejects_trailing_characters() {
 fn json_parser_rejects_trailing_comma() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/json_parser.sl"
+        "/../../examples/programs/json_parser.sl"
     ))
     .unwrap();
     let start = source.find("let source = ").unwrap();

@@ -185,7 +185,7 @@ command main | (exit: -i32) {
 
 ### Why this is not the `Request`-enum pattern
 
-`examples/connectives.sl` already writes codata as a sum of requests a
+`examples/duality/connectives.sl` already writes codata as a sum of requests a
 provider answers:
 
 ```sl

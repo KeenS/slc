@@ -110,7 +110,7 @@ fn config() -> Config {
 
 // ─── (,) and (;) ─── the units of the multiplicatives:
 // the empty product, and its dual, the consumer that accepts it. The additive
-// units are `(|)` and `(&)` (examples/logical_units.sl).
+// units are `(|)` and `(&)` (examples/duality/logical_units.sl).
 
 fn done(k: -(;)) <- unit {
     <(,) | k>

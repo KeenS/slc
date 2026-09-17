@@ -18,7 +18,7 @@ where a function takes a consumer and gives a consumer back and nothing
 returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
 `fn f(k: -B) <- A`, `match` against `select`, a call against a cut, and a
 `let` against the consumer that the rest of the program becomes.
-`examples/two_styles.sl` writes one program both ways.
+`examples/duality/two_styles.sl` writes one program both ways.
 
 Code in this document is of two kinds. A fragment marks what it leaves out
 with `…`. A complete program declares `main` and leaves nothing out, and the
@@ -90,7 +90,7 @@ styles are written the same:
 <shape | area_of | label_of | out>
 ```
 
-`examples/two_styles.sl` is that program, twice.
+`examples/duality/two_styles.sl` is that program, twice.
 
 The same adapter is available wherever a value meets a declared type. A
 consumer transformer stored in a menu item declared `(i64 -> String)`, a returning function
@@ -157,7 +157,7 @@ arguments; capability rows are checked invariantly rather than mapped.
 Exact matching remains the first choice. These are elaborated adapters,
 not an unrestricted equality law under every type constructor.
 
-`examples/structural_adapters.sl` demonstrates stored and recursive values
+`examples/duality/structural_adapters.sl` demonstrates stored and recursive values
 and the separate construction and activation phases. Implementation details
 and the validation obligations are in `docs/design-notes/structural-adapters.md`.
 
@@ -366,7 +366,7 @@ consumes it is its dual — the positive request. In
 `<Request::Retries(answer) | provider>` the provider is the consumer and the
 request is the value.
 
-`examples/polarity.sl` writes all four; `examples/polarity_error.sl` writes
+`examples/duality/polarity.sl` writes all four; `examples/errors/polarity_error.sl` writes
 the two a `command` rejects.
 
 A type the checker has not solved yet still has a polarity once it meets a
@@ -517,7 +517,7 @@ pattern has nowhere to leave through — the group as a whole is the bundle
 pattern, and its leaves are the names of the exits.
 
 `let … else` is out of scope: a binder that may fail is a `match`.
-`examples/patterns.sl` writes all of it.
+`examples/basics/patterns.sl` writes all of it.
 
 ### When a `let` computes
 
@@ -668,7 +668,7 @@ consumers and the chain is a command. Yielding is an adapter that captures
 the result continuation and composes each callback into it, not a change to
 `select`: its arms still end in commands. The selected callback's forcing
 and activation effects remain under the handlers around the yielding call;
-unselected callbacks are not demanded. `examples/yielding_commands.sl`
+unselected callbacks are not demanded. `examples/duality/yielding_commands.sl`
 compares this syntax with an explicit `mu`. The file-system handlers use
 yielding exits to resume with outcomes without hand-written captures.
 
@@ -814,7 +814,7 @@ own typed operations; incompatible answers at the same installation are
 rejected. A thunk with no capture also works. Unhandled `control::shift` is
 an effect error, including under bare `reset`. Always write the qualified
 `control::reset` call: unqualified `reset e` retains its delimiter meaning.
-`examples/delimited.sl` runs all of it; `examples/delimited_error.sl` is the
+`examples/effects/delimited.sl` runs all of it; `examples/errors/delimited_error.sl` is the
 refused jump.
 
 ## 7. Additive data
@@ -957,7 +957,7 @@ arrives at them:
   an item whose answer is itself a menu with a nested copattern —
   `tail: head: out` — and the arms sharing an outer destructor group into
   an inner menu, which must again cover every item
-  (`examples/stream.sl`).
+  (`examples/laziness/stream.sl`).
 - **`match` — a branch table applied to a named scrutinee, on either side.**
   Over an enum value it takes data apart; over a continuation of a menu type
   (`k: -Config`) it takes the *request* apart: `.item(out) => e` binds the
@@ -1034,7 +1034,7 @@ value's type — the checker turns `.i` and `.field` into the component index �
 and reads that component. Nesting is significant: `(a, (b, c))` has two
 components, so its `.1` is `(b, c)`, while `(a, b, c)` has three. A record's
 field is read by binding the record's fields under its label, so a record of
-one field is read the same way. `examples/projection.sl` uses both forms.
+one field is read the same way. `examples/basics/projection.sl` uses both forms.
 
 Building data does not demand its negative components. A record field and a
 tuple component follow the same by-name rule, as do a named variant's payload
@@ -1044,7 +1044,7 @@ handler around that application. Its row must fit the declared component
 type, even when a handler surrounds construction. Positive components still
 compute during construction, in written order. `let+` on a constructor
 evaluates that constructor, not recursively its negative components.
-`examples/by_name_components.sl` shows both polarities and repeated demand.
+`examples/laziness/by_name_components.sl` shows both polarities and repeated demand.
 
 Projecting from a delayed bundle first runs the computation that produces
 the bundle, under the handlers around the projection. Repeating the
@@ -1053,7 +1053,7 @@ cache the result. Projection then retrieves the chosen item without forcing
 it if it is itself delayed. Thus constructing a bundle may require `Build`
 while applying its retrieved callback separately requires `Use`. An effect
 handler that resumes construction several times completes the pending
-projection in each resumption. `examples/delayed_bundle.sl` demonstrates the
+projection in each resumption. `examples/laziness/delayed_bundle.sl` demonstrates the
 construction and item-demand boundaries.
 
 ### Explicit connective types
@@ -1228,7 +1228,7 @@ fn show(out: -String) <- +i64 {
 ```
 
 That is the surface spelling of the core's value abstraction `μ̃x. c` — the
-same binder `let` lowers to, written directly; `examples/mu_tilde.sl` writes
+same binder `let` lowers to, written directly; `examples/duality/mu_tilde.sl` writes
 that one co-term every way the surface offers. So `select` builds the consumer
 of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
@@ -1305,7 +1305,7 @@ effect Exn    { fn throw(message: String) -> i64; }
 effect Reader { fn config() -> i64; }
 effect Choose { fn flip() -> Bool; }
 
-// `checked_div`, `scaled` and `pick` perform them, as in `examples/effects.sl`.
+// `checked_div`, `scaled` and `pick` perform them, as in `examples/effects/effects.sl`.
 command main | (exit: i32) / {IO} {
     let safe = handle (<(10, 0) | checked_div) {
         throw(message) => -1,                       // never resumes: an exception
@@ -1385,7 +1385,7 @@ whole-effect coverage are the same as for inline `handle`. An explicit
 forwarding handler retains its forwarded effects in `F` rather than claiming
 to discharge them in `E`. Reusing a handler does not cache bodies or answers.
 Handlers can be stored in lists, selected at runtime and composed by nesting
-installations; `examples/handler_values.sl` demonstrates all three. Inline
+installations; `examples/effects/handler_values.sl` demonstrates all three. Inline
 `handle body { clauses }` uses the same clause-tree installation mechanism.
 
 An operation is a free function, the dynamic mirror of a trait method: a
@@ -1453,7 +1453,7 @@ consistency requirement and forward the typed effect outward.
 
 A literal `handler Reader { clauses }` infers its arguments; an annotation
 such as `Handler<i64, i64, {Reader<i64>}, {}>` constrains them. Merely changing
-that annotation cannot change its capabilities. `examples/generic_effects.sl`
+that annotation cannot change its capabilities. `examples/effects/generic_effects.sl`
 demonstrates independent instantiations and stored handlers. The implementation
 and additional checks are described in `docs/design-notes/generic-effects.md`.
 
@@ -1482,7 +1482,7 @@ A handler the program installs sits nearer the operation than the
 runtime's, and answers first, which is how a program mocks its own output;
 a clause runs *below* its own prompt, so what the clause itself performs
 escapes outward to the next handler — the runtime's — and a tap can both
-report the write and forward it. `examples/io.sl` writes all three.
+report the write and forward it. `examples/effects/io.sl` writes all three.
 
 The file operations are an effect of their own, the `fs` module's `Fs`, and
 can be mocked the way `println` can. `fs::read`, `write`, `open`,
@@ -1682,7 +1682,7 @@ Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
 per-use behaviour is wanted, write it: `fn { mu { k <= … } }` is a
 value, and visibly re-runs its capture at each use.
-`examples/polymorphism.sl` shows all three: the generic declaration, the
+`examples/basics/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
 
 ### Generic declarations
@@ -1735,7 +1735,7 @@ for its answer, not a delayed computation. For negative `T`,
 `lazy::of_delayed` and `lazy::to_delayed` convert between the two interfaces
 without running the computation at conversion time. Both preserve
 call-by-name: repeated demands repeat construction. Neither caches results.
-`examples/delayed_and_lazy.sl` contrasts the interfaces and their handlers.
+`examples/laziness/delayed_and_lazy.sl` contrasts the interfaces and their handlers.
 
 So a consumer travels bare everywhere a value does: an enum payload
 (`Refutes(-i64)`), a record field, a `fn` value parameter — passing a
@@ -1782,7 +1782,7 @@ still a menu of exits — but not into a joint `(A ; B)`, an arrow, or a `dual`,
 which states its own polarity.
 
 Writing the implied sign stays legal: an explicit sign is a constraint, and
-on the diagonal it is one the position already meets. `examples/polarity.sl`
+on the diagonal it is one the position already meets. `examples/duality/polarity.sl`
 writes all four cells out, because the four cells are its subject.
 
 ```sl
@@ -1899,7 +1899,7 @@ The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,
 `list.sl:53:57`. Only the units a program reaches are loaded: the prelude always, and each
 module named by a path or a `use`, with the modules those name in turn — so a
-program that touches no module is checked against the prelude alone. `examples/stdlib.sl` draws on the second layer only.
+program that touches no module is checked against the prelude alone. `examples/basics/stdlib.sl` draws on the second layer only.
 
 **`Seq<T>` is the one that pays for menus in ordinary code.** `List` is
 data and `Stream` is codata that never ends; a `Seq` is a menu whose single
@@ -1922,7 +1922,7 @@ terminating program as long as something downstream stops asking:
 Beside it: `seq::of_list`/`seq::to_list` and `seq::of_stream` for the bridges,
 `seq::map`, `seq::filter`, `seq::take`, and `seq::take_while`, which cuts a stream
 where a value stops passing and therefore answers a `Seq` — the type saying
-what the function does. `examples/seq.sl` runs all of it. A `Seq` carries
+what the function does. `examples/laziness/seq.sl` runs all of it. A `Seq` carries
 the row its steps perform when demanded, `Seq<T, ..E>`, so `seq::map` with an
 effectful function answers at once and its effects happen where the steps are
 demanded — under whatever handler is around `seq::to_list`. There is no
@@ -2000,7 +2000,7 @@ The arm's `exit` is the outer one. A later direct `| exit>` uses the wrapper,
 but a consumer created earlier still captures the old exit. Shadowing does
 not rewrite closures or captured continuations. Build failure consumers
 used after acquisition around the wrapped exit as well;
-`examples/file_io.sl` routes its post-acquisition success and failure paths
+`examples/programs/file_io.sl` routes its post-acquisition success and failure paths
 this way. Unrestricted control supplies no automatic resource guarantee.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range
@@ -2398,7 +2398,7 @@ fn lem() -> Choice {
 }
 ```
 
-`examples/classical.sl` runs both. The types above go through the shifts of
+`examples/duality/classical.sl` runs both. The types above go through the shifts of
 §8 — `-(-i64)` *is* `+i64`: `dne` is the identity, and `<42 | dne` is `42`.
 Involution does not make an integer executable: putting a positive atom on
 the consumer side of a cut is rejected after inference, whether named or
@@ -2432,7 +2432,7 @@ error value: the continuation that is activated *is* the outcome.
 `enum` of outcomes and sending it to a single continuation adds a wrapper
 without adding information — and it costs something, because the row can say
 what a single continuation cannot: which outcomes each operation actually has.
-In `examples/json_parser.sl` every parser takes `failed`, but only the
+In `examples/programs/json_parser.sl` every parser takes `failed`, but only the
 top-level one takes `parsed`, so no inner parser can report success by
 mistake. Keep an `enum` for data that a program *holds*; outcomes that a
 program *reaches* are a row.

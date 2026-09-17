@@ -60,7 +60,7 @@ mod fs {
 
     // Spend the handle: a later read through it fails. Composing a close
     // onto an exit closes paths routed through that wrapper, not earlier
-    // captured exits; see `examples/file_io.sl`.
+    // captured exits; see `examples/programs/file_io.sl`.
     pub fn close(file: File) -> (,) / {Fs} {
         <file | close_file
     }

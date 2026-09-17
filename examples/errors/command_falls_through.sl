@@ -7,7 +7,7 @@
 // many, is up to the program; only reaching one is required.) Run it to see
 // the diagnostic:
 //
-//   slc run examples/command_falls_through.sl
+//   slc run examples/errors/command_falls_through.sl
 
 command bad(x: i32) | (k: i32) {
     x

@@ -90,6 +90,7 @@ effect arguments. `crates/slc-driver/tests/generic_effects.rs` covers typed
 operations, stored and forwarding handlers, incompatible interception,
 module scopes, nested capture, callback construction, multiple resumptions,
 unrelated effects, answer mismatches and unhandled capture under bare
-`reset`. Runnable examples `generic_effects.sl` and `composable_capture.sl`
+`reset`. Runnable examples `examples/effects/generic_effects.sl` and
+`examples/effects/composable_capture.sl`
 have exact-output tests. Existing source-level tests protect non-generic
 effects.

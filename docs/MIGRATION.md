@@ -27,7 +27,7 @@ For returning, multi-shot capture, pass a thunk to `control::reset` and use
 abortive jumps and does not handle `Shift`. The callback's resumption
 annotation must retain its effects, such as `(i64 -> i64 / {IO})`; resumptions
 are no longer incorrectly treated as pure when their continuations perform
-effects. See `examples/composable_capture.sl` and `examples/generic_effects.sl`.
+effects. See `examples/effects/composable_capture.sl` and `examples/effects/generic_effects.sl`.
 
 ## Inferred demand and nullary calls
 
@@ -52,7 +52,7 @@ Use `answer()` or `<(,) | answer` when a result is wanted. Parameterless
 consumer transformers still name their direct consumers; naming is not
 activation. Positive inputs now also run before computed final consumers,
 consistently with ordinary stages and explicitly eager inputs. See
-`examples/inferred_demand.sl` and the `flow_evaluation` regressions.
+`examples/laziness/inferred_demand.sl` and the `flow_evaluation` regressions.
 
 ## Returning command exits
 
@@ -76,7 +76,7 @@ let result = <path | __read_file | (
 The chain can continue through `| println`. Every exit must return the same
 type: do not mix a returning callback with a consumer. `select` remains
 non-returning. `fs::real` and `fs::real_command` now use this adapter rather
-than explicit `mu` captures. See `examples/yielding_commands.sl`.
+than explicit `mu` captures. See `examples/duality/yielding_commands.sl`.
 
 ## Stored handlers
 
@@ -86,7 +86,7 @@ The type is `Handler<A, B, E, F>`: body, answer, handled effects, residual
 effects. A `return` clause can change `A` to `B` even for a pure body.
 `handler` and `with` are reserved syntax, and `Handler` is a built-in type
 name; rename conflicting declarations. The old composition example's
-`Handler` form is now `CommandSink`. See `examples/handler_values.sl`.
+`Handler` form is now `CommandSink`. See `examples/effects/handler_values.sl`.
 
 ## Lists
 
@@ -626,7 +626,7 @@ fn greet(name: String) -> (,) / {IO} { <("hello, ", name) | add | println }
 
 A program can now handle its own output: a `handle` with a `write_line`
 clause sits nearer the operation than the runtime's handler and answers
-first. See `examples/io.sl`.
+first. See `examples/effects/io.sl`.
 
 This bites where it did not before because a pipeline stage now charges
 its effects at all: `<x | throw` was silently free, and only the old call
@@ -1464,7 +1464,7 @@ must retain `Build`, even if a handler surrounds the record or choice
 construction. Handle each later demand instead. To retain eager construction
 of the callback, write `let+ callback = make();` separately and store
 `callback`; an eager binding of the containing record is not a recursive force.
-See `examples/by_name_components.sl` for a complete runnable example.
+See `examples/laziness/by_name_components.sl` for a complete runnable example.
 
 ### Projection demands a delayed bundle
 
@@ -1481,7 +1481,7 @@ let second = handle pending.0 { build(): resume => <20 | resume };
 
 Here `build()` returns an integer; `first` is `10`, and `second` is `20`.
 The bundle's construction row is required at projection, while a negative
-item retains its own row for later demand. See `examples/delayed_bundle.sl`
+item retains its own row for later demand. See `examples/laziness/delayed_bundle.sl`
 for both effect boundaries in a complete program.
 
 ## Removed constructs
@@ -1541,7 +1541,7 @@ accept that type too. Suspended effectful command blocks use
 in `((;) / {..E})`. In exit groups `Delayed` already denotes a negative
 computation, so no implicit dual is added.
 
-`examples/delayed_and_lazy.sl` is a runnable migration example.
+`examples/laziness/delayed_and_lazy.sl` is a runnable migration example.
 
 Before turning a `;` adapter, explicitly force an effectfully delayed
 computation under its construction handler. Turning such a computation

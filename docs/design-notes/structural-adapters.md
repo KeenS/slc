@@ -54,7 +54,7 @@ Double reversal and adapting before versus after wrapping have exact-output
 regressions. Negative tests retain forcing and activation rows and refuse
 opaque lifting, capability changes, and growing recursive specialization.
 
-`examples/structural_adapters.sl` is an exact-output acceptance example.
+`examples/duality/structural_adapters.sl` is an exact-output acceptance example.
 These regressions are not a general proof of observational equivalence in
 the presence of control; the language's mechanized soundness and coherence
 arguments remain open.
