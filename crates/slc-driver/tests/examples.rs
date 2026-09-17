@@ -263,6 +263,19 @@ fn repository_example_suite_has_expected_results() {
             Expected { success: true, stdout: &["answer", "42", "relabelled!", "7"], stderr: &[] },
         ),
         (
+            "programs/mealy_machine.sl",
+            Expected {
+                success: true,
+                stdout: &[
+                    "alarm",
+                    "turn",
+                    "[alarm, open, refund, turn, alarm]",
+                    "[alarm, wait, open, turn, alarm]",
+                ],
+                stderr: &[],
+            },
+        ),
+        (
             "duality/menu.sl",
             Expected { success: true, stdout: &["3", "slant", "slant!", "3"], stderr: &[] },
         ),
