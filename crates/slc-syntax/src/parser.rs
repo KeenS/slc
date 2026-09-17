@@ -781,7 +781,17 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Mod, "`mod`")?;
         let name = self.expect_ident("module name")?;
-        self.expect(TokenKind::LBrace, "`{` after the module name")?;
+        // `mod name;` — the module's body is a file of its own. The driver
+        // splices that file's tokens in, in place of the `;`, before the
+        // whole program is parsed; read alone, as a formatter reads a file,
+        // the declaration is a module with nothing in it yet.
+        if self.eat(&TokenKind::Semicolon) {
+            return Ok(Node {
+                span: t.span,
+                kind: Decl::Mod { name, is_public, decls: Vec::new() },
+            });
+        }
+        self.expect(TokenKind::LBrace, "`{` or `;` after the module name")?;
         let mut decls = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
             if self.peek().is_none() {

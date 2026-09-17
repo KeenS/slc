@@ -25,9 +25,12 @@ reusable, and trait dispatch is resolved entirely at compile time.
 The queue the redesign approved is complete. Generic effects, composable
 capture, and structural stage adapters are specified in `DESIGN.md`, with
 runnable examples and regression coverage. The known design limits below
-remain. What `Next` and `Deferred` hold now is what writing programs in the
-language turned up — the formatter, the editor mode, and the examples under
-`examples/programs/` — rather than anything the redesign left undone.
+remain. What `Deferred` holds now is what writing programs in the language
+turned up — the formatter, the editor mode, and the examples under
+`examples/programs/` — rather than anything the redesign left undone. The
+part of it that needed no decision is built: located syntax errors,
+`slc check`, several bounds on a type parameter, and programs of more than
+one file are in `DESIGN.md`.
 
 Call-by-name is the settled direction for delayed computation: every demand
 runs it afresh under the handlers around that demand. Future changes must keep
@@ -70,14 +73,7 @@ New or changed syntax also needs runnable examples with exact-output tests;
 compiling complete `DESIGN.md` programs alone does not establish their
 runtime behaviour.
 
-- **Programs of more than one file.** `slc run` takes one source, and the
-  only other units are the prelude and `stdlib/`, compiled into the driver.
-  `mod` names a scope but cannot name a file, so a program grows only
-  downward: `examples/programs/json_parser.sl` is 350 lines for want of
-  anywhere else to put them. A module should be loadable from a file beside
-  the program, as a source unit like the library's — resolution already
-  scopes imports by unit. Settle the mapping from `mod name` to a path, and
-  what a diagnostic calls a span in such a unit, in a design note first.
+No queued implementation tasks.
 
 ## Deferred, for discussion
 

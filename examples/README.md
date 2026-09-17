@@ -86,6 +86,7 @@ Practical code, written the way the language wants it written.
 - [`file_io.sl`](programs/file_io.sl) — Input and output through continuations
 - [`json_parser.sl`](programs/json_parser.sl) — A continuation-based JSON parser
 - [`mealy_machine.sl`](programs/mealy_machine.sl) — A Mealy machine, as a `menu`: the input alphabet is the menu, and a state is a `mu`
+- [`multi_file/`](programs/multi_file/main.sl) — A program in more than one file: `mod name;`, and the directory tree as the module tree
 - [`regex_derivative.sl`](programs/regex_derivative.sl) — Regular expressions by Brzozowski derivatives, as a `menu`: a regex is what answers `nullable` and `derive`
 - [`tree_search.sl`](programs/tree_search.sl) — Non-local jump: searching a tree
 

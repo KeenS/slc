@@ -2089,10 +2089,11 @@ error as a checker's does: `parse error: there is no `+` operator … (at 3:8
 unterminated string's does, so only its first line is quoted; and one with no
 extent, at the end of input, names no place rather than a wrong one.
 
-The program's syntax is checked on its own, before the library is appended
-to it (see "Standard library"). Read together, a string the program leaves
-open would close on the prelude's first quote, and a brace on its last, and
-the error would be reported in a file the author did not write.
+Every source unit — the program's file, each module file, each library
+file (§10) — is lexed on its own, and a program's files have their syntax
+checked on their own. Read as one text, a string the program left open
+would close on the prelude's first quote, and a brace on its last, and the
+error would be reported in a file the author did not write.
 
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
@@ -2184,10 +2185,50 @@ first segment and keeps the rest, so `inner::deep()` works from a sibling and
 for later passes — that is how builtins stay global. Two `use` declarations
 bringing in the same name are an error.
 
-Modules are single-file, visibility follows the private-by-default rule above,
-and `main` must be declared at
-the root — a `main` inside a module is `m::main`, which the entry point does
-not accept.
+Visibility follows the private-by-default rule above, and `main` must be
+declared at the root — a `main` inside a module is `m::main`, which the entry
+point does not accept.
+
+### A module in a file of its own
+
+A `mod` with no body names a file that holds the module's body:
+
+```sl
+mod geometry;          // the declarations of `geometry` are in geometry.sl
+pub mod report;        // public, as `pub mod report { … }` is
+```
+
+The file holds the declarations themselves, with no `mod geometry { … }`
+around them: the name is given once, where the module is declared. Nothing
+else about the module changes — privacy, paths, `use` and globs are as
+above — because a module in a file is a module.
+
+The directory tree is the module tree:
+
+| declared in                  | `mod name;` is         |
+|------------------------------|------------------------|
+| the program, `dir/main.sl`   | `dir/name.sl`          |
+| a module file, `dir/m.sl`    | `dir/m/name.sl`        |
+| inline, inside `mod a { … }` | one `a/` further down  |
+
+There is no search path and no way to name a file elsewhere: a program is
+the files under its own directory. A `mod name;` whose file is missing is
+reported at the declaration with the path that was tried, and a file reached
+twice is refused rather than declared twice.
+
+A module file is a *source unit*, as each library file is. It is lexed on
+its own — so nothing one file leaves open can close in another — and its
+syntax is checked on its own; then its tokens take the place of the `;`,
+between a `{` and a `}`, and the parser reads one ordinary program. That is
+why a `menu` declared in one file is known in the others (§7), and why
+imports behave as they do across files: a variant import is scoped to the
+unit that wrote it, so a file's `use Shape::*;` pins bare names for that
+file alone. A diagnostic in the program's own file is `line:column`; in any
+other unit it names the file, `src/geometry.sl:4:9`.
+
+`slc run` and `slc check` take the program — the root. `slc fmt` is per file,
+and formats a module file like any other. `docs/design-notes/file-modules.md`
+records the alternatives.
 
 ### Variant imports
 

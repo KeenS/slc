@@ -37,6 +37,14 @@ fn a_negative_function_keeps_its_arrow_and_its_menu_of_exits() {
 }
 
 #[test]
+fn a_module_in_a_file_of_its_own_is_one_line() {
+    assert_eq!(
+        fmt("pub  mod geometry ;\nmod outer{mod inner;}"),
+        "pub mod geometry;\nmod outer { mod inner; }\n"
+    );
+}
+
+#[test]
 fn several_bounds_are_joined_by_spaced_pluses() {
     assert_eq!(
         fmt("fn f<+T:Ord+Display,-K:Show>(x:T)->T{x}\nimpl<+T:Ord+Loud>Loud for Pair<T>{}"),

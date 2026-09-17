@@ -71,26 +71,29 @@ fn library_for(program: &str) -> Vec<(&'static str, &'static str)> {
 
 /// The combined source and where each unit starts in it, so a span — a char
 /// offset into the whole — can be named by its unit, line, and column.
+///
+/// The units, in order: the program's own file; each module file it
+/// reaches through `mod name;`, as it is reached; then the library units it
+/// needs. Every unit goes through the same pipeline as the program's text.
 struct SourceMap {
     text: String,
-    /// `(name, char offset of the unit's first char)`, in order.
+    /// `(name as a diagnostic gives it, char offset of the unit's first
+    /// char)`, in order. The first is the program's own file.
     units: Vec<(String, usize)>,
 }
 
 impl SourceMap {
-    /// The program's text under `program`, then each library unit it
-    /// needs, each on a line of its own. The program comes first so its
-    /// spans — and its diagnostics' line numbers — are untouched.
-    fn new(program: &str, source: String) -> Self {
-        let library = library_for(&source);
-        let mut text = source;
-        let mut units = vec![(program.to_string(), 0)];
-        for (name, unit) in library {
-            text.push('\n');
-            units.push((name.to_string(), text.chars().count()));
-            text.push_str(unit);
+    /// Append a unit on a line of its own, and say where it starts. The
+    /// program comes first, so its spans — and its diagnostics' line
+    /// numbers — are untouched.
+    fn push_unit(&mut self, name: String, unit: &str) -> usize {
+        if !self.units.is_empty() {
+            self.text.push('\n');
         }
-        SourceMap { text, units }
+        let from = self.text.chars().count();
+        self.units.push((name, from));
+        self.text.push_str(unit);
+        from
     }
 
     /// The char offsets at which each library unit starts — the boundaries
@@ -118,10 +121,10 @@ impl SourceMap {
             .map(|i| before[i..].chars().count())
             .unwrap_or(before.chars().count() + 1);
         let snippet = &self.text[start..end];
-        if unit == self.units[0].0 {
+        if from == 0 {
             format!("{line}:{column} `{snippet}`")
         } else {
-            format!("{unit}.sl:{line}:{column} `{snippet}`")
+            format!("{unit}:{line}:{column} `{snippet}`")
         }
     }
 }
@@ -290,15 +293,129 @@ fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Pro
 /// diagnostic that quotes several lines of source is itself several lines.
 type Diagnostics = Vec<String>;
 
-fn check_syntax(map: &SourceMap) -> Result<slc_syntax::ast::Program, Diagnostics> {
-    let tokens = slc_syntax::lexer::lex(&map.text)
-        .map_err(|e| vec![format!("{}{}", e.message, map.locate_syntax(e.span))])?;
+use slc_syntax::token::{Span, Token, TokenKind};
+
+/// Lex one unit on its own and shift its spans to where its text sits in
+/// the combined source. No unit's lexing can see another's text, so a
+/// string one file leaves open cannot close on the next file's first quote.
+fn lex_unit(map: &SourceMap, unit: &str, from: usize) -> Result<Vec<Token>, Diagnostics> {
+    let shift = |span: Span| Span { start: span.start + from, end: span.end + from };
+    let tokens = slc_syntax::lexer::lex(unit)
+        .map_err(|e| vec![format!("{}{}", e.message, map.locate_syntax(shift(e.span)))])?;
+    Ok(tokens.into_iter().map(|t| Token { kind: t.kind, span: shift(t.span) }).collect())
+}
+
+fn parse_units(
+    map: &SourceMap,
+    tokens: Vec<Token>,
+) -> Result<slc_syntax::ast::Program, Diagnostics> {
     slc_syntax::parser::parse(tokens).map_err(|errors| {
         errors
             .iter()
             .map(|e| format!("parse error: {}{}", e.message, map.locate_syntax(e.span)))
             .collect::<Vec<_>>()
     })
+}
+
+/// A program's own files, loading: the map they are appended to, and the
+/// files already in it.
+struct Loader {
+    map: SourceMap,
+    loaded: std::collections::HashSet<PathBuf>,
+}
+
+impl Loader {
+    /// Load a source file as the next unit and return its tokens, with each
+    /// `mod name;` replaced by `mod name {`, that file's tokens, and `}` —
+    /// so the parser sees one ordinary program, and reads every unit's
+    /// `menu`s before it parses any of them.
+    ///
+    /// `children` is where this file's own `mod name;` are looked for:
+    /// beside the program, and in `dir/m/` for a module file `dir/m.sl`. An
+    /// inline `mod a { … }` adds `a/`. See
+    /// `docs/design-notes/file-modules.md`.
+    fn load(
+        &mut self,
+        path: &std::path::Path,
+        children: &std::path::Path,
+    ) -> Result<Vec<Token>, Diagnostics> {
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| vec![format!("cannot read {}: {e}", path.display())])?;
+        let from = self.map.push_unit(path.display().to_string(), &source);
+        let tokens = lex_unit(&self.map, &source, from)?;
+        // The file's syntax is checked on its own, so a brace it leaves
+        // open is reported here and not wherever the next unit closes it.
+        parse_units(&self.map, tokens.clone())?;
+
+        let mut out = Vec::with_capacity(tokens.len());
+        // One entry per open `{`: the inline module it opens, if it opens one.
+        let mut nesting: Vec<Option<&str>> = Vec::new();
+        for (i, token) in tokens.iter().enumerate() {
+            let declares = |at: usize| match (tokens.get(at).map(|t| &t.kind), tokens.get(at + 1)) {
+                (Some(TokenKind::Mod), Some(Token { kind: TokenKind::Ident(name), .. })) => {
+                    Some(name)
+                }
+                _ => None,
+            };
+            match &token.kind {
+                TokenKind::LBrace => {
+                    nesting.push(i.checked_sub(2).and_then(declares).map(String::as_str));
+                }
+                TokenKind::RBrace => {
+                    nesting.pop();
+                }
+                TokenKind::Semicolon => {
+                    if let Some(name) = i.checked_sub(2).and_then(declares) {
+                        let mut dir = children.to_path_buf();
+                        dir.extend(nesting.iter().flatten());
+                        let file = dir.join(format!("{name}.sl"));
+                        let declared =
+                            Span { start: tokens[i - 2].span.start, end: token.span.end };
+                        let at = self.map.locate_syntax(declared);
+                        if !file.is_file() {
+                            return Err(vec![format!(
+                                "module `{name}` is declared in a file of its own, and there is \
+                                 no {}{at}",
+                                file.display()
+                            )]);
+                        }
+                        if !self.loaded.insert(file.clone()) {
+                            return Err(vec![format!(
+                                "{} is already loaded: a file is one module, declared once{at}",
+                                file.display()
+                            )]);
+                        }
+                        let body = self.load(&file, &dir.join(name))?;
+                        out.push(Token { kind: TokenKind::LBrace, span: token.span });
+                        out.extend(body);
+                        out.push(Token { kind: TokenKind::RBrace, span: token.span });
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            out.push(token.clone());
+        }
+        Ok(out)
+    }
+}
+
+/// Every unit of a program, as one token stream and the map that names its
+/// spans: the program's file and the module files it reaches, then the
+/// library units those need.
+fn load_program(path: &std::path::Path) -> Result<(SourceMap, Vec<Token>), Diagnostics> {
+    let mut loader = Loader {
+        map: SourceMap { text: String::new(), units: Vec::new() },
+        loaded: std::collections::HashSet::from([path.to_path_buf()]),
+    };
+    let beside = path.parent().unwrap_or(std::path::Path::new(""));
+    let mut tokens = loader.load(path, beside)?;
+    let mut map = loader.map;
+    for (name, unit) in library_for(&map.text) {
+        let from = map.push_unit(format!("{name}.sl"), unit);
+        tokens.extend(lex_unit(&map, unit, from)?);
+    }
+    Ok((map, tokens))
 }
 
 /// `slc check`: every compiler phase over each file, and no run — what an
@@ -340,7 +457,7 @@ struct Compiled {
     defs: Vec<(String, slc_core::term::Term)>,
 }
 
-fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
+fn run_file(path: &std::path::Path, fuel: usize) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
     let compile_guard = compile_span.enter();
     let Compiled { program, traits, defs } =
@@ -368,19 +485,10 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
 
 /// The compiler's phases, in the order `DESIGN.md` gives them: parse, type,
 /// polarity, exhaustiveness, lowering. Each stops the ones after it.
-fn compile_file(path: &PathBuf) -> Result<Compiled, Diagnostics> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| vec![format!("cannot read {}: {e}", path.display())])?;
-    let name = path.display().to_string();
-    // The program's syntax is checked on its own before the library is
-    // appended. Read together, a string the program leaves open would close
-    // on the prelude's first quote, and a brace it leaves open on the
-    // prelude's last — and the error would be reported there, in a file the
-    // author did not write.
-    check_syntax(&SourceMap { text: source.clone(), units: vec![(name.clone(), 0)] })?;
-    let map = SourceMap::new(&name, source);
+fn compile_file(path: &std::path::Path) -> Result<Compiled, Diagnostics> {
+    let (map, tokens) = load_program(path)?;
     let format_span = |span| map.locate(span);
-    let program = check_syntax(&map)?;
+    let program = parse_units(&map, tokens)?;
 
     // The program's own definitions shadow the prelude's: globals install
     // in declaration order with the last one winning, and the prelude is

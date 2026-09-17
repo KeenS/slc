@@ -347,6 +347,14 @@ fn repository_example_suite_has_expected_results() {
             Expected { success: true, stdout: &["Hello, world!", "H", "world"], stderr: &[] },
         ),
         (
+            "programs/multi_file/main.sl",
+            Expected {
+                success: true,
+                stdout: &["circle of area 75", "rectangle of area 42"],
+                stderr: &[],
+            },
+        ),
+        (
             "programs/regex_derivative.sl",
             Expected {
                 success: true,

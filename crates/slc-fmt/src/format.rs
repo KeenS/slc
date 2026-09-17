@@ -459,8 +459,15 @@ impl Formatter {
             Some(T::Command) => self.command_decl()?,
             Some(T::Const) => self.const_decl()?,
             Some(T::Mod) => {
-                let head = vec![self.bump(), text(" "), self.name("a module name")?, text(" ")];
-                self.with_items(head, &mut |f| f.decl().map(plain))?
+                let mut head = vec![self.bump(), text(" "), self.name("a module name")?];
+                // `mod name;`, a module in a file of its own.
+                if self.at(&T::Semicolon) {
+                    head.push(self.bump());
+                    concat(head)
+                } else {
+                    head.push(text(" "));
+                    self.with_items(head, &mut |f| f.decl().map(plain))?
+                }
             }
             Some(T::Use) => self.use_decl()?,
             Some(T::Trait) => {
