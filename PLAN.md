@@ -70,14 +70,6 @@ New or changed syntax also needs runnable examples with exact-output tests;
 compiling complete `DESIGN.md` programs alone does not establish their
 runtime behaviour.
 
-- **Located syntax errors.** A lex or parse error is printed bare — `error:
-  parse error: …` — while every later phase names `line:column` and quotes
-  the span. The errors already carry spans; the driver drops them. Report
-  them through the same `SourceMap::locate` the other phases use. With it,
-  correct the guidance that names things that are gone: the messages for
-  `if`, `&&` and `||` suggest `match c { true => … }`, and there is no `true`
-  — the prelude's variants are `True` and `False`.
-
 - **Programs of more than one file.** `slc run` takes one source, and the
   only other units are the prelude and `stdlib/`, compiled into the driver.
   `mod` names a scope but cannot name a file, so a program grows only

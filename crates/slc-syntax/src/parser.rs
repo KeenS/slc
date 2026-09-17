@@ -1521,7 +1521,7 @@ impl Parser {
         if matches!(self.peek_kind(), Some(TokenKind::AmpAmp | TokenKind::PipePipe)) {
             return Err(ParseError {
                 message: "there is no `&&` or `||`: a choice on a `bool` is a `match`, \
-                          `match a { true => b, _ => false }`"
+                          `match a { True => b, _ => False }`"
                     .into(),
                 span,
             });
@@ -2229,7 +2229,7 @@ impl Parser {
             // word stays a token only so that writing it says so.
             Some(TokenKind::If) => Err(ParseError {
                 message: "there is no `if`: match on the condition, \
-                          `match c { true => …, _ => … }`"
+                          `match c { True => …, _ => … }`"
                     .into(),
                 span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
             }),

@@ -2068,8 +2068,17 @@ The compiler applies these phases in order:
 A phase stops before later phases once it reports a diagnostic. Consequently,
 `parse` diagnostics take precedence over all checker diagnostics; `type`
 diagnostics take precedence over polarity and exhaustiveness; and
-so on. Within one phase, diagnostics are source-ordered. Checker diagnostics
-include `line:column` positions and source excerpts.
+so on. Within one phase, diagnostics are source-ordered. Every diagnostic
+names its `line:column` and quotes the source it is about — a lex or parse
+error as a checker's does: `parse error: there is no `+` operator … (at 3:8
+`+`)`. A syntax error's span can run to the end of the file, as an
+unterminated string's does, so only its first line is quoted; and one with no
+extent, at the end of input, names no place rather than a wrong one.
+
+The program's syntax is checked on its own, before the library is appended
+to it (see "Standard library"). Read together, a string the program leaves
+open would close on the prelude's first quote, and a brace on its last, and
+the error would be reported in a file the author did not write.
 
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.

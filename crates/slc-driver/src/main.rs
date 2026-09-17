@@ -126,6 +126,23 @@ impl SourceMap {
     }
 }
 
+impl SourceMap {
+    /// ` (at line:column \`snippet\`)` for a lex or parse error. A syntax
+    /// error's span can run to the end of the file — an unterminated string
+    /// does — so only its first line is quoted. One with no extent, as at
+    /// the end of input, has no place to name, and none is claimed.
+    fn locate_syntax(&self, span: slc_syntax::token::Span) -> String {
+        if span.end <= span.start {
+            return String::new();
+        }
+        let located = self.locate(span);
+        match located.split_once('\n') {
+            Some((first_line, _)) => format!(" (at {first_line}…`)"),
+            None => format!(" (at {located})"),
+        }
+    }
+}
+
 const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) / {IO} { ... }`: a command with no value \
      parameters and one continuation, the exit status";
 
@@ -260,19 +277,34 @@ fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Pro
     program
 }
 
+/// Lex and parse a source map's text, reporting what is wrong with where.
+fn check_syntax(map: &SourceMap) -> Result<slc_syntax::ast::Program, String> {
+    let tokens = slc_syntax::lexer::lex(&map.text)
+        .map_err(|e| format!("{}{}", e.message, map.locate_syntax(e.span)))?;
+    slc_syntax::parser::parse(tokens).map_err(|errors| {
+        errors
+            .iter()
+            .map(|e| format!("parse error: {}{}", e.message, map.locate_syntax(e.span)))
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+}
+
 fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
     let _compile_guard = compile_span.enter();
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let map = SourceMap::new(&path.display().to_string(), source);
-    let source = &map.text;
+    let name = path.display().to_string();
+    // The program's syntax is checked on its own before the library is
+    // appended. Read together, a string the program leaves open would close
+    // on the prelude's first quote, and a brace it leaves open on the
+    // prelude's last — and the error would be reported there, in a file the
+    // author did not write.
+    check_syntax(&SourceMap { text: source.clone(), units: vec![(name.clone(), 0)] })?;
+    let map = SourceMap::new(&name, source);
     let format_span = |span| map.locate(span);
-
-    let tokens = slc_syntax::lexer::lex(source).map_err(|e| e.message)?;
-    let program = slc_syntax::parser::parse(tokens).map_err(|errors| {
-        errors.iter().map(|e| format!("parse error: {}", e.message)).collect::<Vec<_>>().join("\n")
-    })?;
+    let program = check_syntax(&map)?;
 
     // The program's own definitions shadow the prelude's: globals install
     // in declaration order with the last one winning, and the prelude is
