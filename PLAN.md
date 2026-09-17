@@ -22,9 +22,12 @@ instruction stream, its continuation first-class data (`DESIGN.md` §11). So
 effect handlers are multi-shot, captured continuations are cheap and
 reusable, and trait dispatch is resolved entirely at compile time.
 
-The approved implementation queue is complete. Generic effects, composable
+The queue the redesign approved is complete. Generic effects, composable
 capture, and structural stage adapters are specified in `DESIGN.md`, with
-runnable examples and regression coverage. The known design limits below remain.
+runnable examples and regression coverage. The known design limits below
+remain. What `Next` and `Deferred` hold now is what writing programs in the
+language turned up — the formatter, the editor mode, and the examples under
+`examples/programs/` — rather than anything the redesign left undone.
 
 Call-by-name is the settled direction for delayed computation: every demand
 runs it afresh under the handlers around that demand. Future changes must keep
@@ -67,8 +70,71 @@ New or changed syntax also needs runnable examples with exact-output tests;
 compiling complete `DESIGN.md` programs alone does not establish their
 runtime behaviour.
 
-No queued implementation tasks.
+- **Located syntax errors.** A lex or parse error is printed bare — `error:
+  parse error: …` — while every later phase names `line:column` and quotes
+  the span. The errors already carry spans; the driver drops them. Report
+  them through the same `SourceMap::locate` the other phases use. With it,
+  correct the guidance that names things that are gone: the messages for
+  `if`, `&&` and `||` suggest `match c { true => … }`, and there is no `true`
+  — the prelude's variants are `True` and `False`.
+
+- **Programs of more than one file.** `slc run` takes one source, and the
+  only other units are the prelude and `stdlib/`, compiled into the driver.
+  `mod` names a scope but cannot name a file, so a program grows only
+  downward: `examples/programs/json_parser.sl` is 350 lines for want of
+  anywhere else to put them. A module should be loadable from a file beside
+  the program, as a source unit like the library's — resolution already
+  scopes imports by unit. Settle the mapping from `mod name` to a path, and
+  what a diagnostic calls a span in such a unit, in a design note first.
+
+- **`slc check`.** Checking a program means running it. A subcommand that
+  stops after the checks — types, polarity, exhaustiveness, rows — and
+  reports what they found is what an editor integration needs, and what a
+  test of an ill-typed program wants to say. `run_file` already has the
+  seam: everything before lowering.
+
+- **More than one bound on a type parameter.** `<+T: Show + Ord>` does not
+  parse; the parser reads `T: Show` and notes the rest as deferred, and the
+  only way to ask for two traits is two parameters. The registry and the
+  dictionary passing are per `(parameter, trait)` already, so this is
+  chiefly syntax and the order dictionaries are passed in. `slc fmt` and
+  `slant-mode` mirror the grammar and change with it.
 
 ## Deferred, for discussion
 
-Nothing is awaiting discussion.
+Each of these needs a decision before it is work. Once one is made it goes
+to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
+
+- **Floats: finish them or refuse them.** A float literal lexes, parses, and
+  matches as a pattern, but there is no float base type, and the checker
+  gives the literal the type of unit — so `let x = 1.5;` is accepted and
+  means nothing. Either floats become a base type with their arithmetic and
+  `Display`, or the literal is refused the way `if` is, with a message that
+  says so. The half-state is the one wrong answer.
+
+- **Building strings.** Text is assembled a pair at a time —
+  `<("a", b) | add | x => (x, "c") | add` — and it is the most repeated shape
+  in the examples; the prelude's `Display` for tuples is eight copies of it.
+  The `format` builtin only joins its arguments with spaces and nothing uses
+  it. The question is what the surface should offer instead: an
+  interpolating literal, a variadic `concat`, or a `Display`-driven builder
+  — and whether that is syntax or only library.
+
+- **Collections beyond `List`.** The one container is a linked list, and the
+  one indexed thing is a `String`, so every lookup is linear and there is no
+  map, set, or array. What is open is where they belong — builtin types
+  with builtin operations, as `String` is, or library types over some
+  smaller primitive — and what an indexed structure means on the negative
+  side, where `Stream` and `Seq` already mirror `List`.
+
+- **What traits still lack.** A trait is a set of signatures: no default
+  methods, no associated types, no supertraits. Each is ordinary in Rust,
+  whose flavour the surface keeps; whether each earns its place here, given
+  that dispatch is resolved entirely at compile time, is undecided. "More
+  than one bound on a type parameter" is the part already agreed.
+
+- **Integer operations.** The four widths have arithmetic and comparison
+  and nothing else: no bitwise or shift operations, and no conversion from
+  one width to another, so a value cannot move between `i32` and `i64`.
+  `stdlib/num.sl` offers `min`, `max` and `abs`, over `i64` alone. Decide
+  the set, and whether conversions are functions or a trait.
