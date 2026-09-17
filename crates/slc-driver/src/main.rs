@@ -156,9 +156,17 @@ fn main() -> ExitCode {
 
     let usage = || {
         eprintln!("usage: slc run [--fuel N] <file.sl>");
+        eprintln!("       slc check <file.sl>...");
         eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
     };
+    if let Some(check_at) = args.iter().position(|a| a == "check") {
+        let files = &args[check_at + 1..];
+        if files.is_empty() || files.iter().any(|f| f.starts_with("--")) {
+            return usage();
+        }
+        return check_files(files);
+    }
     if let Some(fmt_at) = args.iter().position(|a| a == "fmt") {
         return match format_files(&args[fmt_at + 1..]) {
             Some(code) => code,
@@ -278,23 +286,91 @@ fn shadow_prelude(mut program: slc_syntax::ast::Program) -> slc_syntax::ast::Pro
 }
 
 /// Lex and parse a source map's text, reporting what is wrong with where.
-fn check_syntax(map: &SourceMap) -> Result<slc_syntax::ast::Program, String> {
+/// What a compiler phase found wrong: one entry per diagnostic, since a
+/// diagnostic that quotes several lines of source is itself several lines.
+type Diagnostics = Vec<String>;
+
+fn check_syntax(map: &SourceMap) -> Result<slc_syntax::ast::Program, Diagnostics> {
     let tokens = slc_syntax::lexer::lex(&map.text)
-        .map_err(|e| format!("{}{}", e.message, map.locate_syntax(e.span)))?;
+        .map_err(|e| vec![format!("{}{}", e.message, map.locate_syntax(e.span))])?;
     slc_syntax::parser::parse(tokens).map_err(|errors| {
         errors
             .iter()
             .map(|e| format!("parse error: {}{}", e.message, map.locate_syntax(e.span)))
             .collect::<Vec<_>>()
-            .join("\n")
     })
+}
+
+/// `slc check`: every compiler phase over each file, and no run — what an
+/// editor asks on every save, and what a program that would not stop can
+/// still be asked. A file with no `main` is a library and checks; a `main`
+/// of the wrong shape is refused as `run` would refuse it.
+fn check_files(files: &[String]) -> ExitCode {
+    let mut failed = false;
+    for file in files {
+        // Checking recurses as deeply as the program nests, like the run.
+        let path = PathBuf::from(file);
+        let result = std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let compiled = compile_file(&path)?;
+                if declares_main(&compiled.program) {
+                    validate_main(&compiled.program).map_err(|message| vec![message])?;
+                }
+                Ok(())
+            })
+            .expect("failed to start the checker")
+            .join()
+            .unwrap_or_else(|_| Err::<(), Diagnostics>(vec!["checking ran out of stack".into()]));
+        if let Err(diagnostics) = result {
+            for diagnostic in diagnostics {
+                eprintln!("error: {file}: {diagnostic}");
+            }
+            failed = true;
+        }
+    }
+    if failed { ExitCode::FAILURE } else { ExitCode::SUCCESS }
+}
+
+/// A program through every compiler phase: what `check` reports on and
+/// `run` goes on to evaluate.
+struct Compiled {
+    program: slc_syntax::ast::Program,
+    traits: slc_syntax::traits::TraitInfo,
+    defs: Vec<(String, slc_core::term::Term)>,
 }
 
 fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
-    let _compile_guard = compile_span.enter();
+    let compile_guard = compile_span.enter();
+    let Compiled { program, traits, defs } =
+        compile_file(path).map_err(|diagnostics| diagnostics.join("\n"))?;
+    // The whole program compiles to one flat chunk: every definition's
+    // closures index it, so they must share it, and it stays installed for
+    // the setup and the run.
+    let (chunk, roots) = slc_runtime::compile::compile_program(&defs);
+    drop(compile_guard);
+    drop(compile_span);
+
+    validate_main(&program)?;
+    let main_root = roots
+        .iter()
+        .find(|(name, _)| name == "main")
+        .map(|(_, root)| *root)
+        .ok_or("no `main`: define `command main | (exit: -i32) / {IO} { ... }`")?;
+    let eval_span = slc_core::span!("eval");
+    let _eval_guard = eval_span.enter();
+
+    slc_runtime::chunk::with_chunk(chunk, || {
+        run_program(&program, &traits, &roots, main_root, fuel)
+    })
+}
+
+/// The compiler's phases, in the order `DESIGN.md` gives them: parse, type,
+/// polarity, exhaustiveness, lowering. Each stops the ones after it.
+fn compile_file(path: &PathBuf) -> Result<Compiled, Diagnostics> {
     let source = std::fs::read_to_string(path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        .map_err(|e| vec![format!("cannot read {}: {e}", path.display())])?;
     let name = path.display().to_string();
     // The program's syntax is checked on its own before the library is
     // appended. Read together, a string the program leaves open would close
@@ -319,7 +395,6 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
                 .iter()
                 .map(|e| format!("resolve: {} (at {})", e.message, format_span(e.span)))
                 .collect::<Vec<_>>()
-                .join("\n")
         },
     )?;
 
@@ -330,7 +405,6 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
             .iter()
             .map(|e| format!("trait: {} (at {})", e.message, format_span(e.span)))
             .collect::<Vec<_>>()
-            .join("\n")
     })?;
 
     // Type, polarity, and exhaustiveness checking. Checking also
@@ -342,21 +416,18 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
             .iter()
             .map(|d| format!("type: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
-            .join("\n")
     })?;
     slc_check::polarity::check_program(&program).map_err(|diags| {
         diags
             .iter()
             .map(|d| format!("polarity: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
-            .join("\n")
     })?;
     slc_check::exhaustive::check_exhaustiveness(&program).map_err(|diags| {
         diags
             .iter()
             .map(|d| format!("exhaustiveness: {} (at {})", d.message, format_span(d.span)))
             .collect::<Vec<_>>()
-            .join("\n")
     })?;
 
     // Effects are rows in the types just checked: what they refuse is
@@ -365,31 +436,12 @@ fn run_file(path: &PathBuf, fuel: usize) -> Result<RunOutcome, String> {
         return Err(row_diagnostics
             .iter()
             .map(|d| format!("effect: {} (at {})", d.message, format_span(d.span)))
-            .collect::<Vec<_>>()
-            .join("\n"));
+            .collect::<Vec<_>>());
     }
 
     let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
-        .map_err(|e| format!("lowering: {e}"))?;
-    // The whole program compiles to one flat chunk: every definition's
-    // closures index it, so they must share it, and it stays installed for
-    // the setup and the run.
-    let (chunk, roots) = slc_runtime::compile::compile_program(&defs);
-    drop(_compile_guard);
-    drop(compile_span);
-
-    validate_main(&program)?;
-    let main_root = roots
-        .iter()
-        .find(|(name, _)| name == "main")
-        .map(|(_, root)| *root)
-        .ok_or("no `main`: define `command main | (exit: -i32) / {IO} { ... }`")?;
-    let eval_span = slc_core::span!("eval");
-    let _eval_guard = eval_span.enter();
-
-    slc_runtime::chunk::with_chunk(chunk, || {
-        run_program(&program, &traits, &roots, main_root, fuel)
-    })
+        .map_err(|e| vec![format!("lowering: {e}")])?;
+    Ok(Compiled { program, traits, defs })
 }
 
 /// Run a compiled program: install its globals, then run `main` through its
@@ -492,6 +544,15 @@ fn run_program(
         )),
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Whether the program declares a `main` at all: a file that does not is a
+/// library, which `check` accepts and `run` cannot start.
+fn declares_main(program: &slc_syntax::ast::Program) -> bool {
+    use slc_syntax::ast::Decl;
+    program.decls.iter().any(|decl| {
+        matches!(&decl.kind, Decl::Command { name, .. } | Decl::Fn { name, .. } if name == "main")
+    })
 }
 
 /// A program is a command, so its entry point is a `command`: it takes no values

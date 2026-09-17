@@ -15,6 +15,18 @@ cargo build
 cargo test
 ```
 
+## Running and checking
+
+```sh
+cargo run -- run examples/basics/hello.sl     # compile and run
+cargo run -- check examples/*/*.sl            # every compiler phase, and no run
+```
+
+`slc check` reports what `run` would report before evaluating — parse, type,
+polarity, exhaustiveness and lowering diagnostics, each with its file, line
+and column — and exits non-zero if any file fails. A file with no `main`
+checks as a library.
+
 ## Formatting
 
 ```sh

@@ -79,12 +79,6 @@ runtime behaviour.
   scopes imports by unit. Settle the mapping from `mod name` to a path, and
   what a diagnostic calls a span in such a unit, in a design note first.
 
-- **`slc check`.** Checking a program means running it. A subcommand that
-  stops after the checks — types, polarity, exhaustiveness, rows — and
-  reports what they found is what an editor integration needs, and what a
-  test of an ill-typed program wants to say. `run_file` already has the
-  seam: everything before lowering.
-
 - **More than one bound on a type parameter.** `<+T: Show + Ord>` does not
   parse; the parser reads `T: Show` and notes the rest as deferred, and the
   only way to ask for two traits is two parameters. The registry and the

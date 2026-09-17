@@ -2083,6 +2083,13 @@ the error would be reported in a file the author did not write.
 Runtime failures are not compiler diagnostics. They are reported after
 evaluation begins and do not participate in this precedence order.
 
+`slc check <file.sl>...` applies the phases and stops: it reports what `run`
+would report before evaluating, and evaluates nothing, so a program that
+would not stop can still be checked. Each diagnostic is prefixed with its
+file, and one failing file fails the command. A file that declares no `main`
+is a library and checks; a `main` of the wrong shape is refused as `run`
+refuses it (§9).
+
 Some slips get a message of their own rather than the mismatch they cause. A
 handler clause binding the wrong number of parameters reports the operation's
 arity and the number bound; a clause returning a different type reports the
