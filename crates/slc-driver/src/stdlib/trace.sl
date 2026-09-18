@@ -10,12 +10,10 @@
 //
 //     ("answer", 42) | trace::tap | out>
 
-mod trace {
-    // A tap: log a label and the value passing through, then forward it. What
-    // passes through is printed, so it has `Display`.
-    pub command tap<+T: Display, E>(label: String, x: T) | (k: (-T / {..E})) / {IO, ..E} {
-        <label | println;
-        <x | println;
-        <x | k>
-    }
+// A tap: log a label and the value passing through, then forward it. What
+// passes through is printed, so it has `Display`.
+pub command tap<+T: Display, E>(label: String, x: T) | (k: (-T / {..E})) / {IO, ..E} {
+    <label | println;
+    <x | println;
+    <x | k>
 }

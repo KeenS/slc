@@ -5,29 +5,27 @@
 // the text held by the current state. `push` is the Display-driven wrapper.
 // There is no mutable cell or special syntax.
 
-mod string {
-    pub menu Builder {
-        append: (String -> Builder),
-        finish: String,
-    }
+pub menu Builder {
+    append: (String -> Builder),
+    finish: String,
+}
 
-    fn from(text: String, part: String) -> Builder {
-        let text = <(text, part) | add;
-        mu Builder {
-            append <= <fn(part: String) { <(text, part) | from } | append>,
-            finish <= <text | finish>,
-        }
+fn from(text: String, part: String) -> Builder {
+    let text = <(text, part) | add;
+    mu Builder {
+        append <= <fn(part: String) { <(text, part) | from } | append>,
+        finish <= <text | finish>,
     }
+}
 
-    pub fn new() -> Builder {
-        mu Builder {
-            append <= <fn(part: String) { <("", part) | from } | append>,
-            finish <= <"" | finish>,
-        }
+pub fn new() -> Builder {
+    mu Builder {
+        append <= <fn(part: String) { <("", part) | from } | append>,
+        finish <= <"" | finish>,
     }
+}
 
-    // `Display` makes the builder useful for values as well as literal text.
-    pub fn push<+T: Display>(builder: Builder, value: T) -> Builder {
-        <value | fmt | builder.append
-    }
+// `Display` makes the builder useful for values as well as literal text.
+pub fn push<+T: Display>(builder: Builder, value: T) -> Builder {
+    <value | fmt | builder.append
 }

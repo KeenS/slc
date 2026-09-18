@@ -20,96 +20,93 @@
 // The module carries the context, so nothing here repeats it: `seq::map`,
 // not `map_seq`.
 
-mod seq {
-    use list::List::*;
-    use stream::Stream;
+use list::List::*;
+use stream::Stream;
 
-    pub enum Step<+T, E> {
-        Done,
-        Yield(T, Seq<T, ..E>),
+pub enum Step<+T, E> {
+    Done,
+    Yield(T, Seq<T, ..E>),
+}
+
+pub menu Seq<+T, E> / {..E} {
+    next: Step<T, ..E>,
+}
+
+pub fn of_list<+T>(xs: list::List<T>) -> Seq<T> {
+    mu Seq {
+        next <= match xs {
+            Nil => <Step::Done | next>,
+            Cons(h, rest) => <Step::Yield(h, <rest | of_list) | next>,
+        },
     }
+}
 
-    pub menu Seq<+T, E> / {..E} {
-        next: Step<T, ..E>,
+// The bridge back to data, as `stream::take` is for `Stream`. A `Seq`
+// that never answers `Done` does not come back; `take` it first.
+pub fn to_list<+T, E>(s: Seq<T, ..E>) -> list::List<T> / {..E} {
+    match s.next {
+        Step::Done => Nil,
+        Step::Yield(h, rest) => Cons(h, <rest | to_list),
     }
+}
 
-    pub fn of_list<+T>(xs: list::List<T>) -> Seq<T> {
-        mu Seq {
-            next <= match xs {
-                Nil => <Step::Done | next>,
-                Cons(h, rest) => <Step::Yield(h, <rest | of_list) | next>,
+// Every stream is a sequence that never ends.
+pub fn of_stream<+T, E>(s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
+    mu Seq {
+        next <= <Step::Yield(s.head, <s.tail | of_stream) | next>,
+    }
+}
+
+pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E> {
+    mu Seq {
+        next <= match s.next {
+            Step::Done => <Step::Done | next>,
+            Step::Yield(h, rest) => <Step::Yield(<h | f, <(f, rest) | map) | next>,
+        },
+    }
+}
+
+// A dropped element is not a step of the result, so the arm demands
+// the rest itself rather than answering — the loop lives in the demand.
+pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T, ..E>) -> Seq<T, ..E> {
+    mu Seq {
+        next <= match s.next {
+            Step::Done => <Step::Done | next>,
+            Step::Yield(h, rest) => match <h | keep {
+                True => <Step::Yield(h, <(keep, rest) | filter) | next>,
+                _ => <(<(keep, rest) | filter).next | next>,
             },
-        }
+        },
     }
+}
 
-    // The bridge back to data, as `stream::take` is for `Stream`. A `Seq`
-    // that never answers `Done` does not come back; `take` it first.
-    pub fn to_list<+T, E>(s: Seq<T, ..E>) -> list::List<T> / {..E} {
-        match s.next {
-            Step::Done => Nil,
-            Step::Yield(h, rest) => Cons(h, <rest | to_list),
-        }
-    }
-
-    // Every stream is a sequence that never ends.
-    pub fn of_stream<+T, E>(s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
-        mu Seq {
-            next <= <Step::Yield(s.head, <s.tail | of_stream) | next>,
-        }
-    }
-
-    pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E> {
-        mu Seq {
-            next <= match s.next {
-                Step::Done => <Step::Done | next>,
-                Step::Yield(h, rest) => <Step::Yield(<h | f, <(f, rest) | map) | next>,
+pub fn take<+T, E>(s: Seq<T, ..E>, n: i64) -> Seq<T, ..E> {
+    mu Seq {
+        next <= match (<(n, 0) | le) {
+            True => {
+                <Step::Done | next>
             },
-        }
-    }
-
-    // A dropped element is not a step of the result, so the arm demands
-    // the rest itself rather than answering — the loop lives in the demand.
-    pub fn filter<+T, E>(keep: (T -> Bool / {..E}), s: Seq<T, ..E>) -> Seq<T, ..E> {
-        mu Seq {
-            next <= match s.next {
-                Step::Done => <Step::Done | next>,
-                Step::Yield(h, rest) => match <h | keep {
-                    True => <Step::Yield(h, <(keep, rest) | filter) | next>,
-                    _ => <(<(keep, rest) | filter).next | next>,
-                },
+            _ => {
+                match s.next {
+                    Step::Done => <Step::Done | next>,
+                    Step::Yield(h, rest) => <Step::Yield(h, <(rest, <(n, 1) | sub) | take) | next>,
+                }
             },
-        }
+        },
     }
+}
 
-    pub fn take<+T, E>(s: Seq<T, ..E>, n: i64) -> Seq<T, ..E> {
-        mu Seq {
-            next <= match (<(n, 0) | le) {
-                True => {
-                    <Step::Done | next>
-                },
-                _ => {
-                    match s.next {
-                        Step::Done => <Step::Done | next>,
-                        Step::Yield(h, rest) => <Step::Yield(h, <(rest, <(n, 1) | sub) | take)
-                            | next>,
-                    }
-                },
-            },
-        }
-    }
-
-    // The other bridge: a stream, cut where a value stops passing. The
-    // result can end, so it is a `Seq` — the type says what the function
-    // does.
-    pub fn take_while<+T, E>(
-        keep: (T -> Bool / {..E}),
-        s: Delayed<Stream<T, ..E>, ..E>,
-    ) -> Seq<T, ..E> {
-        mu Seq {
-            next <= match <s.head | keep {
-                True => <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>,
-                _ => <Step::Done | next>,
-            },
-        }
+// The other bridge: a stream, cut where a value stops passing. The
+// result can end, so it is a `Seq` — the type says what the function
+// does.
+pub fn take_while<+T, E>(
+    keep: (T -> Bool / {..E}),
+    s: Delayed<Stream<T, ..E>, ..E>,
+) -> Seq<T, ..E> {
+    mu Seq {
+        next <= match <s.head | keep {
+            True => <Step::Yield(s.head, <(keep, s.tail) | take_while) | next>,
+            _ => <Step::Done | next>,
+        },
     }
 }

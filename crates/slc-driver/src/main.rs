@@ -8,8 +8,9 @@ enum RunOutcome {
 /// The library, as source units appended after the program: the prelude
 /// first — ordinary declarations every program sees unasked — then each
 /// stdlib module, which a program reaches only through `use`. Every unit
-/// goes through the same pipeline as user code. See `prelude.sl` and
-/// `stdlib/` for what belongs where.
+/// goes through the same pipeline as user code. The prelude is the root
+/// unit; every other library file is implicitly wrapped in a module named
+/// after the file. See `prelude.sl` and `stdlib/` for what belongs where.
 const LIBRARY: &[(&str, &str)] = &[
     ("prelude", include_str!("prelude.sl")),
     ("string", include_str!("stdlib/string.sl")),
@@ -414,7 +415,21 @@ fn load_program(path: &std::path::Path) -> Result<(SourceMap, Vec<Token>), Diagn
     let mut map = loader.map;
     for (name, unit) in library_for(&map.text) {
         let from = map.push_unit(format!("{name}.sl"), unit);
-        tokens.extend(lex_unit(&map, unit, from)?);
+        let unit_tokens = lex_unit(&map, unit, from)?;
+        if name == "prelude" {
+            tokens.extend(unit_tokens);
+        } else {
+            // Library files follow the same default-module convention as
+            // `mod name;` files: `stdlib/name.sl` supplies `mod name`.
+            let span = Span { start: from, end: from };
+            tokens.extend([
+                Token { kind: TokenKind::Mod, span },
+                Token { kind: TokenKind::Ident(name.to_owned()), span },
+                Token { kind: TokenKind::LBrace, span },
+            ]);
+            tokens.extend(unit_tokens);
+            tokens.push(Token { kind: TokenKind::RBrace, span });
+        }
     }
     Ok((map, tokens))
 }

@@ -1897,7 +1897,10 @@ program's own declaration of a prelude name shadows it.
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
 appended after the prelude, and nothing in it is in scope until named: a
 module is reached by its path, `list::length`, or a name is brought in bare
-with `use`. Each module marks what it offers `pub`; the rest is its own.
+with `use`. Each file supplies the body of the module named by its file stem,
+so `stdlib/list.sl` is loaded as `mod list { … }`; the source does not repeat
+that wrapper. `prelude.sl` is the root-scope exception. Each module marks what
+it offers `pub`; the rest is its own.
 
 | module | what it offers |
 |---|---|
@@ -2171,7 +2174,9 @@ the path it names, so `geometry::Shape::Circle` is refused when `Shape` is
 private, not only when some `Circle` is.
 
 The library's modules are declared in their own source units, appended
-after the program. Imports are scoped to the unit that wrote them: a
+after the program. Every library file except `prelude.sl` is implicitly
+wrapped in a module named after its file stem. Imports are scoped to the unit
+that wrote them: a
 library file's `use Enum::*;` pins names in that file only, and a program's
 imports never reach into the library. The root scope, though, is one scope
 over every unit, so a library unit imports names only inside its `mod` —

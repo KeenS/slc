@@ -4,9 +4,7 @@
 // A `command` with two exits says the same thing as control; this is the
 // value form of it, for when the choice has to be kept rather than taken.
 
-mod either {
-    pub enum Either<+L, +R> {
-        Left(L),
-        Right(R),
-    }
+pub enum Either<+L, +R> {
+    Left(L),
+    Right(R),
 }

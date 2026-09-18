@@ -24,6 +24,11 @@ mod geometry;` is public as `pub mod geometry { … }` is. Everything else
 about the module — privacy, paths, `use`, globs — is §10's, unchanged: a
 module in a file is a module.
 
+The standard library uses the same body-only convention. `stdlib/list.sl` is
+loaded as if it were `mod list { … }`, and `stdlib/string.sl` as if it were
+`mod string { … }`. `prelude.sl` is the exception: it is appended at the root
+because its declarations are visible to every program without an import.
+
 ## Which file
 
 Rust's rule, because the surface is Rust-flavoured and the rule is known:
@@ -48,9 +53,10 @@ map naming the unit a span falls in and resolution scoping variant imports
 by unit. A module file is one more unit, between the program and the
 library.
 
-What differs is where its declarations belong: not at the root, as a
-library unit's `mod list { … }` is, but inside the `mod` that named it. So
-the driver works on tokens. Each unit is lexed **on its own**, its spans
+What differs is where its declarations belong: not at the root, but inside
+the `mod` that named it. Library files use the same synthetic wrapper: every
+library unit except the prelude is loaded as `mod <file-stem> { … }`. So the
+driver works on tokens. Each unit is lexed **on its own**, its spans
 shifted to where its text sits in the combined source; then the `;` of
 `mod name;` is replaced by `{`, the file's tokens, and `}`. The parser sees
 one ordinary program — which matters, because it reads every `menu` in the
