@@ -45,6 +45,9 @@ impl Display for i64 {
     fn fmt(self: i64) -> String { <self | int_to_str }
 }
 
+impl Display for i8 { fn fmt(self: i8) -> String { <self | __display } }
+impl Display for u8 { fn fmt(self: u8) -> String { <self | __display } }
+impl Display for f32 { fn fmt(self: f32) -> String { <self | __display } }
 impl Display for f64 { fn fmt(self: f64) -> String { <self | __display } }
 
 impl Display for String {
@@ -75,43 +78,60 @@ fn print<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write }
 
 trait Add { fn add(self: Self, other: Self) -> Self; }
 impl Add for i64 { fn add(self: i64, other: i64) -> i64 { <(self, other) | __add } }
+impl Add for i8 { fn add(self: i8, other: i8) -> i8 { <(self, other) | __add } }
 impl Add for i32 { fn add(self: i32, other: i32) -> i32 { <(self, other) | __add } }
+impl Add for u8 { fn add(self: u8, other: u8) -> u8 { <(self, other) | __add } }
 impl Add for u64 { fn add(self: u64, other: u64) -> u64 { <(self, other) | __add } }
 impl Add for u32 { fn add(self: u32, other: u32) -> u32 { <(self, other) | __add } }
+impl Add for f32 { fn add(self: f32, other: f32) -> f32 { <(self, other) | __add } }
 impl Add for f64 { fn add(self: f64, other: f64) -> f64 { <(self, other) | __add } }
 impl Add for String { fn add(self: String, other: String) -> String { <(self, other) | __add } }
 
 trait Sub { fn sub(self: Self, other: Self) -> Self; }
 impl Sub for i64 { fn sub(self: i64, other: i64) -> i64 { <(self, other) | __sub } }
+impl Sub for i8 { fn sub(self: i8, other: i8) -> i8 { <(self, other) | __sub } }
 impl Sub for i32 { fn sub(self: i32, other: i32) -> i32 { <(self, other) | __sub } }
+impl Sub for u8 { fn sub(self: u8, other: u8) -> u8 { <(self, other) | __sub } }
 impl Sub for u64 { fn sub(self: u64, other: u64) -> u64 { <(self, other) | __sub } }
 impl Sub for u32 { fn sub(self: u32, other: u32) -> u32 { <(self, other) | __sub } }
+impl Sub for f32 { fn sub(self: f32, other: f32) -> f32 { <(self, other) | __sub } }
 impl Sub for f64 { fn sub(self: f64, other: f64) -> f64 { <(self, other) | __sub } }
 
 trait Mul { fn mul(self: Self, other: Self) -> Self; }
 impl Mul for i64 { fn mul(self: i64, other: i64) -> i64 { <(self, other) | __mul } }
+impl Mul for i8 { fn mul(self: i8, other: i8) -> i8 { <(self, other) | __mul } }
 impl Mul for i32 { fn mul(self: i32, other: i32) -> i32 { <(self, other) | __mul } }
+impl Mul for u8 { fn mul(self: u8, other: u8) -> u8 { <(self, other) | __mul } }
 impl Mul for u64 { fn mul(self: u64, other: u64) -> u64 { <(self, other) | __mul } }
 impl Mul for u32 { fn mul(self: u32, other: u32) -> u32 { <(self, other) | __mul } }
+impl Mul for f32 { fn mul(self: f32, other: f32) -> f32 { <(self, other) | __mul } }
 impl Mul for f64 { fn mul(self: f64, other: f64) -> f64 { <(self, other) | __mul } }
 
 trait Div { fn div(self: Self, other: Self) -> Self; }
 impl Div for i64 { fn div(self: i64, other: i64) -> i64 { <(self, other) | __div } }
+impl Div for i8 { fn div(self: i8, other: i8) -> i8 { <(self, other) | __div } }
 impl Div for i32 { fn div(self: i32, other: i32) -> i32 { <(self, other) | __div } }
+impl Div for u8 { fn div(self: u8, other: u8) -> u8 { <(self, other) | __div } }
 impl Div for u64 { fn div(self: u64, other: u64) -> u64 { <(self, other) | __div } }
 impl Div for u32 { fn div(self: u32, other: u32) -> u32 { <(self, other) | __div } }
+impl Div for f32 { fn div(self: f32, other: f32) -> f32 { <(self, other) | __div } }
 impl Div for f64 { fn div(self: f64, other: f64) -> f64 { <(self, other) | __div } }
 
 trait Rem { fn rem(self: Self, other: Self) -> Self; }
 impl Rem for i64 { fn rem(self: i64, other: i64) -> i64 { <(self, other) | __rem } }
+impl Rem for i8 { fn rem(self: i8, other: i8) -> i8 { <(self, other) | __rem } }
 impl Rem for i32 { fn rem(self: i32, other: i32) -> i32 { <(self, other) | __rem } }
+impl Rem for u8 { fn rem(self: u8, other: u8) -> u8 { <(self, other) | __rem } }
 impl Rem for u64 { fn rem(self: u64, other: u64) -> u64 { <(self, other) | __rem } }
 impl Rem for u32 { fn rem(self: u32, other: u32) -> u32 { <(self, other) | __rem } }
+impl Rem for f32 { fn rem(self: f32, other: f32) -> f32 { <(self, other) | __rem } }
 impl Rem for f64 { fn rem(self: f64, other: f64) -> f64 { <(self, other) | __rem } }
 
 trait Neg { fn neg(self: Self) -> Self; }
 impl Neg for i64 { fn neg(self: i64) -> i64 { <self | __neg } }
+impl Neg for i8 { fn neg(self: i8) -> i8 { <self | __neg } }
 impl Neg for i32 { fn neg(self: i32) -> i32 { <self | __neg } }
+impl Neg for f32 { fn neg(self: f32) -> f32 { <self | __neg } }
 impl Neg for f64 { fn neg(self: f64) -> f64 { <self | __neg } }
 
 trait Eq {
@@ -122,9 +142,17 @@ impl Eq for i64 {
     fn eq(self: i64, other: i64) -> Bool { <(self, other) | __eq }
     fn ne(self: i64, other: i64) -> Bool { <(self, other) | __ne }
 }
+impl Eq for i8 {
+    fn eq(self: i8, other: i8) -> Bool { <(self, other) | __eq }
+    fn ne(self: i8, other: i8) -> Bool { <(self, other) | __ne }
+}
 impl Eq for i32 {
     fn eq(self: i32, other: i32) -> Bool { <(self, other) | __eq }
     fn ne(self: i32, other: i32) -> Bool { <(self, other) | __ne }
+}
+impl Eq for u8 {
+    fn eq(self: u8, other: u8) -> Bool { <(self, other) | __eq }
+    fn ne(self: u8, other: u8) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u64 {
     fn eq(self: u64, other: u64) -> Bool { <(self, other) | __eq }
@@ -133,6 +161,10 @@ impl Eq for u64 {
 impl Eq for u32 {
     fn eq(self: u32, other: u32) -> Bool { <(self, other) | __eq }
     fn ne(self: u32, other: u32) -> Bool { <(self, other) | __ne }
+}
+impl Eq for f32 {
+    fn eq(self: f32, other: f32) -> Bool { <(self, other) | __eq }
+    fn ne(self: f32, other: f32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for f64 {
     fn eq(self: f64, other: f64) -> Bool { <(self, other) | __eq }
@@ -163,11 +195,23 @@ impl Ord for i64 {
     fn le(self: i64, other: i64) -> Bool { <(self, other) | __le }
     fn ge(self: i64, other: i64) -> Bool { <(self, other) | __ge }
 }
+impl Ord for i8 {
+    fn lt(self: i8, other: i8) -> Bool { <(self, other) | __lt }
+    fn gt(self: i8, other: i8) -> Bool { <(self, other) | __gt }
+    fn le(self: i8, other: i8) -> Bool { <(self, other) | __le }
+    fn ge(self: i8, other: i8) -> Bool { <(self, other) | __ge }
+}
 impl Ord for i32 {
     fn lt(self: i32, other: i32) -> Bool { <(self, other) | __lt }
     fn gt(self: i32, other: i32) -> Bool { <(self, other) | __gt }
     fn le(self: i32, other: i32) -> Bool { <(self, other) | __le }
     fn ge(self: i32, other: i32) -> Bool { <(self, other) | __ge }
+}
+impl Ord for u8 {
+    fn lt(self: u8, other: u8) -> Bool { <(self, other) | __lt }
+    fn gt(self: u8, other: u8) -> Bool { <(self, other) | __gt }
+    fn le(self: u8, other: u8) -> Bool { <(self, other) | __le }
+    fn ge(self: u8, other: u8) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u64 {
     fn lt(self: u64, other: u64) -> Bool { <(self, other) | __lt }
@@ -180,6 +224,12 @@ impl Ord for u32 {
     fn gt(self: u32, other: u32) -> Bool { <(self, other) | __gt }
     fn le(self: u32, other: u32) -> Bool { <(self, other) | __le }
     fn ge(self: u32, other: u32) -> Bool { <(self, other) | __ge }
+}
+impl Ord for f32 {
+    fn lt(self: f32, other: f32) -> Bool { <(self, other) | __lt }
+    fn gt(self: f32, other: f32) -> Bool { <(self, other) | __gt }
+    fn le(self: f32, other: f32) -> Bool { <(self, other) | __le }
+    fn ge(self: f32, other: f32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for f64 {
     fn lt(self: f64, other: f64) -> Bool { <(self, other) | __lt }

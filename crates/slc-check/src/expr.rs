@@ -243,14 +243,12 @@ fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> 
     if probe.unify(expected, actual).is_ok() {
         return true;
     }
-    expr.is_some_and(is_integer_literal)
-        && is_numeric(&env.uni.apply(expected))
-        && is_numeric(actual)
+    expr.is_some_and(|expr| numeric_literals_fit(expr, &env.uni.apply(expected), actual))
 }
 
 /// A tuple written in place, weighed component by component against a
-/// callee's parameters: an integer literal then takes the width its own
-/// slot requires, not the one the whole product happens to have. Like
+/// callee's parameters: a numeric literal then takes the width or precision
+/// its own slot requires, not the one the whole product happens to have. Like
 /// `would_fit`, this commits nothing.
 fn fits_piecewise(env: &Env, params: &[Type], actual: &Type, shape: &Expr) -> bool {
     let Expr::Pair(items) = shape else { return false };
@@ -268,10 +266,7 @@ fn fits_piecewise(env: &Env, params: &[Type], actual: &Type, shape: &Expr) -> bo
         if commutes(&probe, param, actual) {
             continue;
         }
-        if is_integer_literal(&item.kind)
-            && is_numeric(&probe.uni.apply(param))
-            && is_numeric(actual)
-        {
+        if numeric_literals_fit(&item.kind, &probe.uni.apply(param), actual) {
             continue;
         }
         return false;
@@ -1957,6 +1952,7 @@ fn check_pattern(
     let actual = pattern_type(pattern);
     if let Some(actual) = actual
         && &actual != expected
+        && !numeric_pattern_fits(pattern, expected, &actual)
     {
         diags.push(Diagnostic {
             message: format!("pattern has type {actual}; scrutinee has type {expected}"),
@@ -2075,9 +2071,9 @@ fn check_pattern(
 /// Does a value written as `expr`, inferred as `actual`, fit a port that
 /// requires `expected`?
 ///
-/// An integer literal takes the integer type its port requires — `0 | exit`
-/// sends an `i32` — and is `+i64` only when nothing constrains it. Every
-/// other value must match its port exactly.
+/// A numeric literal takes the numeric type its port requires — `0 | exit`
+/// sends an `i32` — and is `+i64`/`+f64` only when nothing constrains it.
+/// Every other value must match its port exactly.
 fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     // A value that never arrives constrains nothing.
     if actual == &Type::BOTTOM {
@@ -2086,8 +2082,8 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     if env.uni.unify(expected, actual).is_ok() {
         return true;
     }
-    // An integer literal takes the width its port requires.
-    is_integer_literal(expr) && is_numeric(&env.uni.apply(expected)) && is_numeric(actual)
+    // A numeric literal takes the width or precision its port requires.
+    numeric_literals_fit(expr, &env.uni.apply(expected), actual)
 }
 
 fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<usize> {
@@ -2189,8 +2185,35 @@ fn is_integer_literal(expr: &Expr) -> bool {
     matches!(expr, Expr::Int(_))
 }
 
-fn is_numeric(ty: &Type) -> bool {
-    matches!(ty, Type::Pos(Base::I32 | Base::I64 | Base::U32 | Base::U64))
+fn is_integer_type(ty: &Type) -> bool {
+    matches!(ty, Type::Pos(Base::I8 | Base::I32 | Base::I64 | Base::U8 | Base::U32 | Base::U64))
+}
+
+fn is_float_type(ty: &Type) -> bool {
+    matches!(ty, Type::Pos(Base::F32 | Base::F64))
+}
+
+fn numeric_literals_fit(expr: &Expr, expected: &Type, actual: &Type) -> bool {
+    match expr {
+        Expr::Int(_) => is_integer_type(expected) && is_integer_type(actual),
+        Expr::Float(_) => is_float_type(expected) && is_float_type(actual),
+        _ => false,
+    }
+}
+
+fn numeric_pattern_fits(
+    pattern: &slc_syntax::ast::Pattern,
+    expected: &Type,
+    actual: &Type,
+) -> bool {
+    matches!(
+        pattern,
+        slc_syntax::ast::Pattern::Int(_)
+            | slc_syntax::ast::Pattern::Float(_)
+            | slc_syntax::ast::Pattern::Range { .. }
+            | slc_syntax::ast::Pattern::Or(_)
+    ) && ((is_integer_type(expected) && is_integer_type(actual))
+        || (is_float_type(expected) && is_float_type(actual)))
 }
 
 /// A declaration's continuation row is positional and invariant: the

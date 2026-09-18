@@ -506,9 +506,12 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
         TypeExpr::Apply(name, _) => Err(LowerError::UnknownType(name.clone())),
         TypeExpr::Base(s) => match s.as_str() {
             "i32" => Ok(Type::Pos(Base::I32)),
+            "i8" => Ok(Type::Pos(Base::I8)),
             "i64" => Ok(Type::Pos(Base::I64)),
+            "u8" => Ok(Type::Pos(Base::U8)),
             "u32" => Ok(Type::Pos(Base::U32)),
             "u64" => Ok(Type::Pos(Base::U64)),
+            "f32" => Ok(Type::Pos(Base::F32)),
             "f64" => Ok(Type::Pos(Base::F64)),
             "String" | "str" => Ok(Type::Pos(Base::Str)),
             "char" => Ok(Type::Pos(Base::Char)),

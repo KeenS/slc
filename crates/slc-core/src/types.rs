@@ -4,9 +4,12 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Base {
     I32,
+    I8,
     I64,
+    U8,
     U32,
     U64,
+    F32,
     F64,
     Str,
     Char,

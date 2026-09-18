@@ -2052,16 +2052,18 @@ written negatively is not itself the question: `v | k` sends `v` to something
 that consumes it, and for a function that something is a call stack.
 
 An integer literal takes the integer type its port requires — `<0 | exit>`
-sends an `i32` — and is `+i64` when nothing constrains it. Every other value
-must match its port exactly: there is no implicit widening or narrowing of a
-value that is not a literal.
+sends an `i32` — and is `+i64` when nothing constrains it. The integer
+primitives are `i8`, `i32`, `i64`, `u8`, `u32`, and `u64`; a floating-point
+literal similarly takes `f32` or `f64` from its port and is `+f64` when
+unconstrained. Every other value must match its port exactly: there is no
+implicit widening or narrowing of a value that is not a literal.
 
-A floating-point literal is an `f64` value. It has the `Display`, `Add`,
-`Sub`, `Mul`, `Div`, `Rem`, `Neg`, `Eq`, and `Ord` implementations supplied by
-the prelude; arithmetic uses the runtime's IEEE-754 `f64` operations. A
-floating-point literal does not coerce to an integer type, and an integer
-literal does not coerce to `f64`. Float patterns, including inclusive ranges,
-match `f64` values. A string literal is `+String`, a character literal is
+The numeric primitives have the `Display`, `Add`, `Sub`, `Mul`, `Div`, `Rem`,
+`Eq`, and `Ord` implementations supplied by the prelude; signed integers and
+floats also have `Neg`. A floating-point literal does not coerce to an integer
+type, and an integer literal does not coerce to a floating-point type. Numeric
+patterns, including inclusive ranges, take the numeric type of their
+scrutinee. A string literal is `+String`, a character literal is
 `+char`. `True` and `False` are not literals but the
 variants of the prelude's `enum Bool`. `(,)` is the
 unit value, of type `(,)`; an empty block is the same.

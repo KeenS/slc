@@ -490,9 +490,12 @@ impl Parser {
         let name = self.name()?;
         Ok(match name.as_str() {
             "i32" => Type::Pos(Base::I32),
+            "i8" => Type::Pos(Base::I8),
             "i64" => Type::Pos(Base::I64),
+            "u8" => Type::Pos(Base::U8),
             "u32" => Type::Pos(Base::U32),
             "u64" => Type::Pos(Base::U64),
+            "f32" => Type::Pos(Base::F32),
             "f64" => Type::Pos(Base::F64),
             "String" => Type::Pos(Base::Str),
             "char" => Type::Pos(Base::Char),

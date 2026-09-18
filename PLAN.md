@@ -131,7 +131,7 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   whose flavour the surface keeps; whether each earns its place here, given
   that dispatch is resolved entirely at compile time, is undecided.
 
-- **Integer operations.** The four widths have arithmetic and comparison
+- **Integer operations.** The six widths have arithmetic and comparison
   and nothing else: no bitwise or shift operations, and no conversion from
   one width to another, so a value cannot move between `i32` and `i64`.
   `stdlib/num.sl` offers `min`, `max` and `abs`, over `i64` alone. Decide

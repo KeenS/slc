@@ -87,6 +87,14 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
+        (
+            "basics/primitive_widths.sl",
+            Expected {
+                success: true,
+                stdout: &["1.25", "7", "9", "3", "7", "3.75", "f32 exact", "f32 range"],
+                stderr: &[],
+            },
+        ),
         ("duality/logical_units.sl", Expected { success: true, stdout: &["(,)"], stderr: &[] }),
         (
             "basics/sums.sl",

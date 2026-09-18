@@ -9,9 +9,12 @@ impl std::fmt::Display for Base {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Base::I32 => write!(f, "i32"),
+            Base::I8 => write!(f, "i8"),
             Base::I64 => write!(f, "i64"),
+            Base::U8 => write!(f, "u8"),
             Base::U32 => write!(f, "u32"),
             Base::U64 => write!(f, "u64"),
+            Base::F32 => write!(f, "f32"),
             Base::F64 => write!(f, "f64"),
             Base::Str => write!(f, "String"),
             Base::Char => write!(f, "char"),
