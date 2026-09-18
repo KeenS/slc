@@ -109,6 +109,7 @@ pub fn infer_expr(
             Ok(consumed.dual())
         }
         Expr::Int(_) => Ok(Type::Pos(slc_core::types::Base::I32)),
+        Expr::Float(_) => Ok(Type::Pos(slc_core::types::Base::F64)),
         Expr::Str(_) => Ok(Type::Pos(slc_core::types::Base::Str)),
         Expr::Char(_) => Ok(Type::Pos(slc_core::types::Base::Char)),
         Expr::Ident(name) => declarations.get(name).cloned().ok_or_else(|| {

@@ -56,13 +56,24 @@ pub fn apply_builtin(
         })),
         "__neg" => match args.first() {
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
-            _ => Err(BuiltinError::TypeMismatch("neg expects an integer argument".into())),
+            Some(Value::Float(n)) => Ok(Value::Float(-n)),
+            _ => Err(BuiltinError::TypeMismatch("neg expects an integer or float argument".into())),
         },
         "__add" | "__sub" | "__mul" | "__div" | "__rem" => {
             if name == "__add"
                 && let (Some(Value::Str(a)), Some(Value::Str(b))) = (args.first(), args.get(1))
             {
                 return Ok(Value::Str(format!("{a}{b}")));
+            }
+            if let (Some(Value::Float(a)), Some(Value::Float(b))) = (args.first(), args.get(1)) {
+                let r = match name {
+                    "__add" => a + b,
+                    "__sub" => a - b,
+                    "__mul" => a * b,
+                    "__div" => a / b,
+                    _ => a % b,
+                };
+                return Ok(Value::Float(r));
             }
             let (a, b) = two_ints(name, args)?;
             let r = match name {
@@ -93,6 +104,7 @@ pub fn apply_builtin(
         "__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge" => {
             let r = match (args.first(), args.get(1)) {
                 (Some(Value::Int(a)), Some(Value::Int(b))) => Some(cmp_op(name, *a, *b)),
+                (Some(Value::Float(a)), Some(Value::Float(b))) => Some(cmp_op(name, *a, *b)),
                 (Some(Value::Char(a)), Some(Value::Char(b))) => Some(cmp_op(name, *a, *b)),
                 (Some(Value::Str(a)), Some(Value::Str(b))) => Some(cmp_op(name, a, b)),
                 (Some(a), Some(b)) => match (crate::value::as_bool(a), crate::value::as_bool(b)) {
@@ -103,7 +115,7 @@ pub fn apply_builtin(
             };
             let r = r.ok_or_else(|| {
                 BuiltinError::TypeMismatch(format!(
-                    "{name} expects two matching integer, char, String, or Bool arguments"
+                    "{name} expects two matching numeric, char, String, or Bool arguments"
                 ))
             })?;
             Ok(crate::value::bool_value(r))

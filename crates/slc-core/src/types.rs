@@ -7,6 +7,7 @@ pub enum Base {
     I64,
     U32,
     U64,
+    F64,
     Str,
     Char,
     Unit,

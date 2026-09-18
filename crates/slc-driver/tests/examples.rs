@@ -79,6 +79,14 @@ fn repository_example_suite_has_expected_results() {
             "basics/arithmetic.sl",
             Expected { success: true, stdout: &["5", "6", "42", "10", "-5"], stderr: &[] },
         ),
+        (
+            "basics/floats.sl",
+            Expected {
+                success: true,
+                stdout: &["1.5", "3.75", "2.75", "-1.5", "true", "matched", "ranged"],
+                stderr: &[],
+            },
+        ),
         ("duality/logical_units.sl", Expected { success: true, stdout: &["(,)"], stderr: &[] }),
         (
             "basics/sums.sl",

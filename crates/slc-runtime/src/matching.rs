@@ -59,7 +59,7 @@ fn parse_runtime_pattern_inner(
             RuntimePattern::Wildcard
         }
         Some('#') => {
-            let text = take_while(chars, |c| c.is_ascii_digit() || *c == '-' || *c == '.');
+            let text = take_pattern_number(chars);
             let rest = parse_runtime_pattern_tail(chars);
             match (text.parse::<i64>().ok(), text.parse::<f64>().ok(), rest) {
                 (Some(start), _, Some(RuntimePattern::Literal(Value::Int(end)))) => {
@@ -74,7 +74,7 @@ fn parse_runtime_pattern_inner(
             }
         }
         Some('%') => {
-            let text = take_while(chars, |c| c.is_ascii_digit() || *c == '-' || *c == '.');
+            let text = take_pattern_number(chars);
             let rest = parse_runtime_pattern_tail(chars);
             match (text.parse::<f64>().ok(), rest) {
                 (Some(start), Some(RuntimePattern::Literal(Value::Float(end)))) => {
@@ -236,6 +236,23 @@ fn take_while<F: Fn(&char) -> bool>(
     out
 }
 
+/// Read one numeric pattern endpoint, leaving `..` for the range parser.
+fn take_pattern_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut out = String::new();
+    while let Some(&c) = chars.peek() {
+        if c == '.' && chars.clone().nth(1) == Some('.') {
+            break;
+        }
+        if c.is_ascii_digit() || c == '-' || c == '.' {
+            out.push(c);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 pub(crate) fn pattern_matches(
     pattern: &RuntimePattern,
     value: &Value,
@@ -287,6 +304,11 @@ pub(crate) fn pattern_matches(
                 RuntimePattern::Literal(Value::Char(s)),
                 RuntimePattern::Literal(Value::Char(e)),
                 Value::Char(v),
+            ) => v >= s && v <= e,
+            (
+                RuntimePattern::Literal(Value::Float(s)),
+                RuntimePattern::Literal(Value::Float(e)),
+                Value::Float(v),
             ) => v >= s && v <= e,
             _ => false,
         },

@@ -213,7 +213,7 @@ impl Value {
         match self {
             Value::Adapted { value, .. } => value.type_of(),
             Value::Int(_) => Type::Pos(slc_core::types::Base::I64),
-            Value::Float(_) => Type::Pos(slc_core::types::Base::Unit),
+            Value::Float(_) => Type::Pos(slc_core::types::Base::F64),
             Value::Str(_) => Type::Pos(slc_core::types::Base::Str),
             Value::Char(_) => Type::Pos(slc_core::types::Base::Char),
             Value::File(_) => Type::Pos(slc_core::types::Base::File),

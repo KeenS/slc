@@ -1959,7 +1959,7 @@ natural spelling for a consumer transformer whose inputs are all
 continuations.
 
 **Builtins** are what the language cannot express — I/O, arithmetic on
-machine integers, string internals — and they follow the same rule the
+machine numbers, string internals — and they follow the same rule the
 language does: **a builtin whose outcome
 is a single value is an ordinary function; a builtin whose outcome is not —
 it can fail, or find nothing — takes continuations and denotes a command.**
@@ -2054,8 +2054,13 @@ sends an `i32` — and is `+i64` when nothing constrains it. Every other value
 must match its port exactly: there is no implicit widening or narrowing of a
 value that is not a literal.
 
-A floating-point literal is untyped for now, a string literal is `+String`, a
-character literal is `+char`. `True` and `False` are not literals but the
+A floating-point literal is an `f64` value. It has the `Display`, `Add`,
+`Sub`, `Mul`, `Div`, `Rem`, `Neg`, `Eq`, and `Ord` implementations supplied by
+the prelude; arithmetic uses the runtime's IEEE-754 `f64` operations. A
+floating-point literal does not coerce to an integer type, and an integer
+literal does not coerce to `f64`. Float patterns, including inclusive ranges,
+match `f64` values. A string literal is `+String`, a character literal is
+`+char`. `True` and `False` are not literals but the
 variants of the prelude's `enum Bool`. `(,)` is the
 unit value, of type `(,)`; an empty block is the same.
 

@@ -493,6 +493,7 @@ impl Parser {
             "i64" => Base::I64,
             "u32" => Base::U32,
             "u64" => Base::U64,
+            "f64" => Base::F64,
             "String" => Base::Str,
             "char" => Base::Char,
             "unit" => Base::Unit,

@@ -1820,7 +1820,7 @@ fn is_constant_initializer(e: &Expr, env: &Env) -> bool {
 fn literal_type(e: &Expr) -> Option<Type> {
     Some(match e {
         Expr::Int(_) => Type::Pos(Base::I64),
-        Expr::Float(_) => Type::ONE,
+        Expr::Float(_) => Type::Pos(Base::F64),
         Expr::Str(_) => Type::Pos(Base::Str),
         Expr::Char(_) => Type::Pos(Base::Char),
         _ => return None,
@@ -1833,7 +1833,7 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
         Pattern::Int(_) => Type::Pos(Base::I64),
         Pattern::Str(_) => Type::Pos(Base::Str),
         Pattern::Char(_) => Type::Pos(Base::Char),
-        Pattern::Float(_) => Type::ONE,
+        Pattern::Float(_) => Type::Pos(Base::F64),
         Pattern::Range { start, .. } => pattern_type(start)?,
         Pattern::Or(alternatives) => {
             let first = pattern_type(alternatives.first()?)?;

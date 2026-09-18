@@ -111,13 +111,6 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   is already recognisable — its parse error is at the end of input, with no
   extent — and `--fuel` bounds one that does not stop.
 
-- **Floats: finish them or refuse them.** A float literal lexes, parses, and
-  matches as a pattern, but there is no float base type, and the checker
-  gives the literal the type of unit — so `let x = 1.5;` is accepted and
-  means nothing. Either floats become a base type with their arithmetic and
-  `Display`, or the literal is refused the way `if` is, with a message that
-  says so. The half-state is the one wrong answer.
-
 - **Building strings.** Text is assembled a pair at a time —
   `<("a", b) | add | x => (x, "c") | add` — and it is the most repeated shape
   in the examples; the prelude's `Display` for tuples is eight copies of it.

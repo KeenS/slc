@@ -509,6 +509,7 @@ pub fn lower_type(t: &TypeExpr) -> Result<Type, LowerError> {
             "i64" => Ok(Type::Pos(Base::I64)),
             "u32" => Ok(Type::Pos(Base::U32)),
             "u64" => Ok(Type::Pos(Base::U64)),
+            "f64" => Ok(Type::Pos(Base::F64)),
             "String" | "str" => Ok(Type::Pos(Base::Str)),
             "char" => Ok(Type::Pos(Base::Char)),
             "unit" => Ok(Type::Pos(Base::Unit)),
