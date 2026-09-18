@@ -459,20 +459,6 @@ impl Unification {
             (Type::Var(_), _) | (_, Type::Var(_)) => {
                 Err(TypeError::Mismatch { expected: expected.clone(), actual: actual.clone() })
             }
-            // `(,)` and `+unit` are one type written twice: `(,)` is the only
-            // value of either.
-            (Type::Tensor(xs), Type::Pos(crate::types::Base::Unit))
-            | (Type::Pos(crate::types::Base::Unit), Type::Tensor(xs))
-                if xs.is_empty() =>
-            {
-                Ok(Type::ONE)
-            }
-            (Type::Par(xs), Type::Neg(crate::types::Base::Unit))
-            | (Type::Neg(crate::types::Base::Unit), Type::Par(xs))
-                if xs.is_empty() =>
-            {
-                Ok(Type::BOTTOM)
-            }
             // A row is compared, not unified: the value's must fit inside the
             // slot's. A type without one performs nothing.
             (Type::Delayed(inner_a, row_a), Type::Delayed(inner_b, row_b)) => {
@@ -1019,15 +1005,6 @@ mod tests {
         // `A -> B` is `(dual(A) ; B)`, and `dual` is semantic: the wrapped variable
         // meets `-bool` by becoming `+bool` — the argument itself.
         assert_eq!(u.apply(&a), Type::Pos(Base::Char));
-    }
-
-    #[test]
-    fn the_two_spellings_of_unit_are_one_type() {
-        // `(,)` is the unit, and the written type `unit` is `+unit`; a value of
-        // one is a value of the other.
-        let mut u = Unification::new();
-        assert!(u.unify(&Type::ONE, &Type::Pos(Base::Unit)).is_ok());
-        assert!(u.unify(&Type::Neg(Base::Unit), &Type::BOTTOM).is_ok());
     }
 
     #[test]

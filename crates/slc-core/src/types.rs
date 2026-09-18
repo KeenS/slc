@@ -10,7 +10,6 @@ pub enum Base {
     F64,
     Str,
     Char,
-    Unit,
     /// An open file handle, produced by `fs::open` and consumed by
     /// `fs::close`.
     File,

@@ -1140,6 +1140,8 @@ pair is a pair of punctuation marks.
   `(&)` is ⊤'s unique value. No unit has a name besides its spelling, and
   the core has all four: 1, 0, ⊤ and ⊥.
 
+  `unit` is only a surface alias for `(,)`; it is not a fifth atomic type.
+
 ### Negative multiplicative construction
 
 The consumer of a product is built the same way, by `select`. A product has

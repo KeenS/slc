@@ -61,7 +61,6 @@ impl Display for i32 { fn fmt(self: i32) -> String { <self | __display } }
 impl Display for u32 { fn fmt(self: u32) -> String { <self | __display } }
 impl Display for u64 { fn fmt(self: u64) -> String { <self | __display } }
 impl Display for char { fn fmt(self: char) -> String { <self | __display } }
-impl Display for unit { fn fmt(self: unit) -> String { "(,)" } }
 impl Display for File { fn fmt(self: File) -> String { <self | __display } }
 
 // Printing renders through `Display`, then performs `IO`'s operation.

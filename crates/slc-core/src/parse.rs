@@ -357,11 +357,11 @@ impl Parser {
             }
             Some('+') => {
                 self.pos += 1;
-                Ok(Type::Pos(self.base()?))
+                self.atom()
             }
             Some('-') => {
                 self.pos += 1;
-                Ok(Type::Neg(self.base()?))
+                Ok(self.atom()?.dual())
             }
             Some('(') => {
                 self.pos += 1;
@@ -486,18 +486,18 @@ impl Parser {
         }
     }
 
-    fn base(&mut self) -> Result<Base, ParseError> {
+    fn atom(&mut self) -> Result<Type, ParseError> {
         let name = self.name()?;
         Ok(match name.as_str() {
-            "i32" => Base::I32,
-            "i64" => Base::I64,
-            "u32" => Base::U32,
-            "u64" => Base::U64,
-            "f64" => Base::F64,
-            "String" => Base::Str,
-            "char" => Base::Char,
-            "unit" => Base::Unit,
-            "File" => Base::File,
+            "i32" => Type::Pos(Base::I32),
+            "i64" => Type::Pos(Base::I64),
+            "u32" => Type::Pos(Base::U32),
+            "u64" => Type::Pos(Base::U64),
+            "f64" => Type::Pos(Base::F64),
+            "String" => Type::Pos(Base::Str),
+            "char" => Type::Pos(Base::Char),
+            "unit" => Type::ONE,
+            "File" => Type::Pos(Base::File),
             _ => return Err(self.error(&format!("unknown base type `{name}`"))),
         })
     }
