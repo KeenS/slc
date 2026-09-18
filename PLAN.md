@@ -111,14 +111,6 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   is already recognisable — its parse error is at the end of input, with no
   extent — and `--fuel` bounds one that does not stop.
 
-- **Building strings.** Text is assembled a pair at a time —
-  `<("a", b) | add | x => (x, "c") | add` — and it is the most repeated shape
-  in the examples; the prelude's `Display` for tuples is eight copies of it.
-  The `format` builtin only joins its arguments with spaces and nothing uses
-  it. The question is what the surface should offer instead: an
-  interpolating literal, a variadic `concat`, or a `Display`-driven builder
-  — and whether that is syntax or only library.
-
 - **Collections beyond `List`.** The one container is a linked list, and the
   one indexed thing is a `String`, so every lookup is linear and there is no
   map, set, or array. What is open is where they belong — builtin types

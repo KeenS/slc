@@ -12,6 +12,7 @@ enum RunOutcome {
 /// `stdlib/` for what belongs where.
 const LIBRARY: &[(&str, &str)] = &[
     ("prelude", include_str!("prelude.sl")),
+    ("string", include_str!("stdlib/string.sl")),
     ("num", include_str!("stdlib/num.sl")),
     ("list", include_str!("stdlib/list.sl")),
     ("option", include_str!("stdlib/option.sl")),

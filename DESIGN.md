@@ -1902,6 +1902,7 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | module | what it offers |
 |---|---|
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
@@ -1910,6 +1911,15 @@ with `use`. Each module marks what it offers `pub`; the rest is its own.
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
+
+String assembly is a library operation, not a new literal or variadic syntax.
+`string::new()` returns a `string::Builder`, whose `append` menu item answers
+with a function from a `String` to the next builder, while `finish` answers
+with the accumulated `String`. `string::push` renders any `Display` value and
+uses `append`. Each builder is persistent: its menu arms close over one
+accumulated value, so adding returns a new state and a shared prefix can safely
+branch. [`examples/programs/string_builder.sl`](examples/programs/string_builder.sl)
+shows the complete program.
 
 The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,

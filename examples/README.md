@@ -88,6 +88,7 @@ Practical code, written the way the language wants it written.
 - [`mealy_machine.sl`](programs/mealy_machine.sl) — A Mealy machine, as a `menu`: the input alphabet is the menu, and a state is a `mu`
 - [`multi_file/`](programs/multi_file/main.sl) — A program in more than one file: `mod name;`, and the directory tree as the module tree
 - [`regex_derivative.sl`](programs/regex_derivative.sl) — Regular expressions by Brzozowski derivatives, as a `menu`: a regex is what answers `nullable` and `derive`
+- [`string_builder.sl`](programs/string_builder.sl) — A persistent string builder, expressed as a `menu` whose closed-over state is the accumulated text
 - [`tree_search.sl`](programs/tree_search.sl) — Non-local jump: searching a tree
 
 ## [`errors/`](errors) — Programs that are refused

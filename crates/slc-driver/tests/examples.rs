@@ -292,6 +292,10 @@ fn repository_example_suite_has_expected_results() {
             },
         ),
         (
+            "programs/string_builder.sl",
+            Expected { success: true, stdout: &["left: 42", "right"], stderr: &[] },
+        ),
+        (
             "duality/menu.sl",
             Expected { success: true, stdout: &["3", "slant", "slant!", "3"], stderr: &[] },
         ),
