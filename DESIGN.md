@@ -1907,7 +1907,7 @@ it offers `pub`; the rest is its own.
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
-| `num` | `min`, `max`, `abs` |
+| `num` | `min`, `max`, `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `Delayed<T, E>` |

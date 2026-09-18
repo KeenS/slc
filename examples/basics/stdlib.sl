@@ -28,6 +28,11 @@ command main | (exit: i32) / {IO} {
 
     // Reached by path, nothing imported: the module's name is the prefix.
     <(3, 7) | num::min | println; // 3
+    <(18, -24) | num::gcd | println; // 6
+    <(18, -24) | num::lcm | println; // 72
+    <-7 | num::signum | println; // -1
+    <-4 | num::is_even | println; // true
+    <(17, 5) | num::div_rem | fmt | println; // (3, 2)
     <(<1 | stream::count_from, 3) | stream::take | fmt | println; // "[1, 2, 3]"
 
     // `fmt` on a list is the prelude's `Display` at the stdlib's `List`:

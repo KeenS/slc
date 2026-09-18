@@ -123,8 +123,8 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   whose flavour the surface keeps; whether each earns its place here, given
   that dispatch is resolved entirely at compile time, is undecided.
 
-- **Integer operations.** The six widths have arithmetic and comparison
-  and nothing else: no bitwise or shift operations, and no conversion from
-  one width to another, so a value cannot move between `i32` and `i64`.
-  `stdlib/num.sl` offers `min`, `max` and `abs`, over `i64` alone. Decide
-  the set, and whether conversions are functions or a trait.
+- **Integer width conversions.** Arithmetic and comparison cover the six
+  widths, and `stdlib/num.sl` supplies common derived operations over `i64`:
+  `min`, `max`, `abs`, sign and parity predicates, Euclidean `gcd`/`lcm`,
+  and `div_rem`. A value still cannot move between `i32` and `i64`; decide
+  whether conversions are functions or a trait.
