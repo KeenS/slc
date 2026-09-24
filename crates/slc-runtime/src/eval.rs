@@ -165,12 +165,14 @@ pub(crate) fn collect_args(name: &str, v: &Value, out: &mut Vec<Value>) {
 /// The number of arguments each builtin expects.
 pub(crate) fn builtin_arity(name: &str) -> usize {
     match name {
-        "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg" | "__hash"
-        | "__file_exists" => 1,
+        "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg"
+        | "char_to_code" | "__file_exists" | "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8"
+        | "__to_u32" | "__to_u64" => 1,
         "__index" => 2,
         "__close_file" => 1,
         "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__eq" | "__ne" | "__lt" | "__gt"
-        | "__le" | "__ge" | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
+        | "__le" | "__ge" | "__wrapping_mul" | "__xor" | "str_concat" | "str_eq"
+        | "skip_digits" | "skip_ws" => 2,
         "substring" => 3,
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.

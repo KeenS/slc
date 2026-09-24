@@ -116,8 +116,4 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   whether each earns its place here, given that dispatch is resolved
   entirely at compile time, is undecided.
 
-- **Integer width conversions.** Arithmetic and comparison cover the six
-  widths, and `stdlib/num.sl` supplies common derived operations over `i64`:
-  `min`, `max`, `abs`, sign and parity predicates, Euclidean `gcd`/`lcm`,
-  and `div_rem`. A value still cannot move between `i32` and `i64`; decide
-  whether conversions are functions or a trait.
+

@@ -27,6 +27,21 @@ impl std::fmt::Display for BuiltinError {
 
 impl std::error::Error for BuiltinError {}
 
+/// The inclusive range of a width-conversion builtin. `u64` stops at
+/// `i64::MAX`: the machine word is signed, and a larger magnitude has
+/// nowhere to sit.
+fn integer_destination(name: &str) -> Option<(&'static str, i64, i64)> {
+    Some(match name {
+        "__to_i8" => ("i8", i64::from(i8::MIN), i64::from(i8::MAX)),
+        "__to_i32" => ("i32", i64::from(i32::MIN), i64::from(i32::MAX)),
+        "__to_i64" => ("i64", i64::MIN, i64::MAX),
+        "__to_u8" => ("u8", 0, i64::from(u8::MAX)),
+        "__to_u32" => ("u32", 0, i64::from(u32::MAX)),
+        "__to_u64" => ("u64", 0, i64::MAX),
+        _ => return None,
+    })
+}
+
 fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
     match name {
         "__eq" => a == b,
@@ -54,6 +69,23 @@ pub fn apply_builtin(
             Some(v) => v.display(),
             None => String::new(),
         })),
+        // Beneath `Into`. Every integer is one signed word, so the check is
+        // the destination's range. A `u64` reaches as far as `i64` does.
+        "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64" => {
+            let Some(Value::Int(n)) = args.first() else {
+                return Err(BuiltinError::TypeMismatch(format!(
+                    "{name} expects an integer argument"
+                )));
+            };
+            let (width, lo, hi) =
+                integer_destination(name).expect("a width builtin names its range");
+            if *n < lo || *n > hi {
+                return Err(BuiltinError::ArithmeticOverflow(format!(
+                    "{n} does not fit in {width}"
+                )));
+            }
+            Ok(Value::Int(*n))
+        }
         "__neg" => match args.first() {
             Some(Value::Int(n)) => Ok(Value::Int(-n)),
             Some(Value::Float(n)) => Ok(Value::Float(-n)),
@@ -278,53 +310,18 @@ pub fn apply_builtin(
             (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(crate::value::bool_value(a == b)),
             _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
         },
-        // Beneath the prelude's `Hash`. The high bit is clear: Slant's `rem`
-        // is the signed remainder of the machine word, so a negative hash
-        // would not be a slot in `0 .. width`.
-        "__hash" => hash_value(args.first()),
+        // The machine word's product in the ring of 64-bit patterns. Checked
+        // `mul` refuses the overflow this wraps.
+        "__wrapping_mul" => {
+            let (a, b) = two_ints(name, args)?;
+            Ok(Value::Int(a.wrapping_mul(b)))
+        }
+        "__xor" => {
+            let (a, b) = two_ints(name, args)?;
+            Ok(Value::Int(a ^ b))
+        }
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
-}
-
-/// Golden-ratio odd constant. Multiplying by it spreads nearby words.
-const HASH_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
-/// FNV-1a 64-bit offset basis and prime, over Unicode scalar values.
-const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
-const FNV_PRIME: u64 = 0x100_0000_01B3;
-
-fn hash_word(n: u64) -> i64 {
-    (n.wrapping_mul(HASH_MIX) & 0x7FFF_FFFF_FFFF_FFFF) as i64
-}
-
-fn hash_str(s: &str) -> i64 {
-    let mut acc = FNV_OFFSET;
-    for c in s.chars() {
-        acc ^= u64::from(u32::from(c));
-        acc = acc.wrapping_mul(FNV_PRIME);
-    }
-    (acc & 0x7FFF_FFFF_FFFF_FFFF) as i64
-}
-
-fn hash_value(value: Option<&Value>) -> Result<Value, BuiltinError> {
-    let hashed = match value {
-        Some(Value::Int(n)) => hash_word(*n as u64),
-        Some(Value::Char(c)) => hash_word(u64::from(u32::from(*c))),
-        Some(Value::Str(s)) => hash_str(s),
-        Some(v) => match crate::value::as_bool(v) {
-            Some(bit) => hash_word(u64::from(bit)),
-            None => {
-                return Err(BuiltinError::TypeMismatch(
-                    "__hash expects an integer, char, String, or Bool".into(),
-                ));
-            }
-        },
-        None => {
-            return Err(BuiltinError::TypeMismatch(
-                "__hash expects an integer, char, String, or Bool".into(),
-            ));
-        }
-    };
-    Ok(Value::Int(hashed))
 }
 
 fn two_ints(name: &str, args: &[Value]) -> Result<(i64, i64), BuiltinError> {
@@ -350,22 +347,16 @@ mod tests {
     }
 
     #[test]
-    fn hash_is_stable_non_negative_and_agrees_on_equal_values() {
+    fn wrapping_mul_keeps_the_low_bits_and_xor_mixes_them() {
         let mut buf = Vec::new();
-        let mut hash = |value: Value| apply_builtin("__hash", &[value], &mut buf).unwrap();
-        let zero = hash(Value::Int(0));
-        let one = hash(Value::Int(1));
-        let neg = hash(Value::Int(-1));
-        assert!(matches!(zero, Value::Int(h) if h >= 0));
-        assert!(matches!(neg, Value::Int(h) if h >= 0));
-        assert_ne!(zero, one);
-        assert_ne!(neg, one);
-        assert_eq!(hash(Value::Str("ab".into())), hash(Value::Str("ab".into())));
-        assert_ne!(hash(Value::Str("ab".into())), hash(Value::Str("ba".into())));
-        assert_ne!(hash(crate::value::bool_value(false)), hash(crate::value::bool_value(true)));
-        assert_ne!(hash(Value::Char('a')), hash(Value::Char('b')));
-        // The empty string is the masked FNV offset basis, not the mix of 0.
-        assert_ne!(hash(Value::Str(String::new())), zero);
+        let product =
+            apply_builtin("__wrapping_mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf)
+                .unwrap();
+        assert_eq!(product, Value::Int(i64::MAX.wrapping_mul(2)));
+        let mixed = apply_builtin("__xor", &[Value::Int(-1), Value::Int(0x41)], &mut buf).unwrap();
+        assert_eq!(mixed, Value::Int(-1 ^ 0x41));
+        let code = apply_builtin("char_to_code", &[Value::Char('a')], &mut buf).unwrap();
+        assert_eq!(code, Value::Int('a' as i64));
     }
 
     #[test]
@@ -427,6 +418,19 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let r = apply_builtin("__mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
         assert!(matches!(r, Err(BuiltinError::ArithmeticOverflow(_))));
+    }
+
+    #[test]
+    fn a_width_conversion_keeps_a_value_that_fits_and_refuses_one_that_does_not() {
+        let mut buf: Vec<u8> = Vec::new();
+        let kept = apply_builtin("__to_i32", &[Value::Int(40_000)], &mut buf).unwrap();
+        assert_eq!(kept, Value::Int(40_000));
+        let widened = apply_builtin("__to_i64", &[Value::Int(-3)], &mut buf).unwrap();
+        assert_eq!(widened, Value::Int(-3));
+        let narrow = apply_builtin("__to_i8", &[Value::Int(200)], &mut buf);
+        assert!(matches!(narrow, Err(BuiltinError::ArithmeticOverflow(m)) if m.contains("i8")));
+        let negative = apply_builtin("__to_u64", &[Value::Int(-1)], &mut buf);
+        assert!(matches!(negative, Err(BuiltinError::ArithmeticOverflow(m)) if m.contains("u64")));
     }
 }
 

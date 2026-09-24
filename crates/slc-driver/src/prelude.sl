@@ -134,6 +134,43 @@ impl Neg for i32 { fn neg(self: i32) -> i32 { <self | __neg } }
 impl Neg for f32 { fn neg(self: f32) -> f32 { <self | __neg } }
 impl Neg for f64 { fn neg(self: f64) -> f64 { <self | __neg } }
 
+// A value moves between integer widths by `Into`. The expected type picks
+// the destination. The number is kept when it fits there; otherwise the
+// conversion overflows, as `add` does. There is no truncating cast.
+trait Into<+U> {
+    fn into(self: Self) -> U;
+}
+impl Into<i32> for i8 { fn into(self: i8) -> i32 { <self | __to_i32 } }
+impl Into<i64> for i8 { fn into(self: i8) -> i64 { <self | __to_i64 } }
+impl Into<u8> for i8 { fn into(self: i8) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i8 { fn into(self: i8) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i8 { fn into(self: i8) -> u64 { <self | __to_u64 } }
+impl Into<i8> for i32 { fn into(self: i32) -> i8 { <self | __to_i8 } }
+impl Into<i64> for i32 { fn into(self: i32) -> i64 { <self | __to_i64 } }
+impl Into<u8> for i32 { fn into(self: i32) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i32 { fn into(self: i32) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i32 { fn into(self: i32) -> u64 { <self | __to_u64 } }
+impl Into<i8> for i64 { fn into(self: i64) -> i8 { <self | __to_i8 } }
+impl Into<i32> for i64 { fn into(self: i64) -> i32 { <self | __to_i32 } }
+impl Into<u8> for i64 { fn into(self: i64) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i64 { fn into(self: i64) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i64 { fn into(self: i64) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u8 { fn into(self: u8) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u8 { fn into(self: u8) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u8 { fn into(self: u8) -> i64 { <self | __to_i64 } }
+impl Into<u32> for u8 { fn into(self: u8) -> u32 { <self | __to_u32 } }
+impl Into<u64> for u8 { fn into(self: u8) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u32 { fn into(self: u32) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u32 { fn into(self: u32) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u32 { fn into(self: u32) -> i64 { <self | __to_i64 } }
+impl Into<u8> for u32 { fn into(self: u32) -> u8 { <self | __to_u8 } }
+impl Into<u64> for u32 { fn into(self: u32) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u64 { fn into(self: u64) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u64 { fn into(self: u64) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u64 { fn into(self: u64) -> i64 { <self | __to_i64 } }
+impl Into<u8> for u64 { fn into(self: u64) -> u8 { <self | __to_u8 } }
+impl Into<u32> for u64 { fn into(self: u64) -> u32 { <self | __to_u32 } }
+
 trait Eq {
     fn eq(self: Self, other: Self) -> Bool;
     fn ne(self: Self, other: Self) -> Bool;
@@ -256,22 +293,62 @@ impl Ord for Bool {
     fn ge(self: Bool, other: Bool) -> Bool { <(self, other) | __ge }
 }
 
+// The machine word's product in the ring of its 64-bit patterns, and the
+// exclusive or of two such words. Checked `mul` refuses what this wraps.
+fn wrapping_mul(a: i64, b: i64) -> i64 { <(a, b) | __wrapping_mul }
+fn xor(a: i64, b: i64) -> i64 { <(a, b) | __xor }
+
 // A non-negative `u64` derived from the value. Equal values hash equal.
-// The mix is `__hash`: a fold written here would have to cross integer
-// widths, and that conversion is still open. The high bit is clear, so
-// `rem` of a hash by a width is a slot in `0 .. width`.
+// The mix multiplies the word by the bit pattern of `0x9E3779B97F4A7C15`
+// and clears the high bit, so `rem` of a hash is a slot in `0 .. width`.
+// A `String` is FNV-1a over its scalar values, from `char_to_code`.
+fn sign_bit() -> i64 { <(-9_223_372_036_854_775_807, 1) | sub }
+
+fn clear_sign(n: i64) -> i64 {
+    match (<(n, 0) | lt) {
+        True => <(n, sign_bit()) | sub,
+        False => n,
+    }
+}
+
+fn hash_mix(n: i64) -> u64 {
+    <(<(<(n, -7_046_029_254_386_353_131) | wrapping_mul) | clear_sign) | into
+}
+
+fn hash_chars(s: String, i: i64, acc: i64) -> i64 {
+    match (<(i, <s | str_len) | lt) {
+        True => {
+            let code = <(<(s, i) | index) | char_to_code;
+            let folded = <(<(acc, code) | xor, 1_099_511_628_211) | wrapping_mul;
+            <(s, <(i, 1) | add, folded) | hash_chars
+        },
+        False => acc,
+    }
+}
+
 trait Hash {
     fn hash(self: Self) -> u64;
 }
-impl Hash for i64 { fn hash(self: i64) -> u64 { <self | __hash } }
-impl Hash for i8 { fn hash(self: i8) -> u64 { <self | __hash } }
-impl Hash for i32 { fn hash(self: i32) -> u64 { <self | __hash } }
-impl Hash for u64 { fn hash(self: u64) -> u64 { <self | __hash } }
-impl Hash for u8 { fn hash(self: u8) -> u64 { <self | __hash } }
-impl Hash for u32 { fn hash(self: u32) -> u64 { <self | __hash } }
-impl Hash for char { fn hash(self: char) -> u64 { <self | __hash } }
-impl Hash for String { fn hash(self: String) -> u64 { <self | __hash } }
-impl Hash for Bool { fn hash(self: Bool) -> u64 { <self | __hash } }
+impl Hash for i64 { fn hash(self: i64) -> u64 { <self | hash_mix } }
+impl Hash for i8 { fn hash(self: i8) -> u64 { <self | into | hash_mix } }
+impl Hash for i32 { fn hash(self: i32) -> u64 { <self | into | hash_mix } }
+impl Hash for u64 { fn hash(self: u64) -> u64 { <self | into | hash_mix } }
+impl Hash for u8 { fn hash(self: u8) -> u64 { <self | into | hash_mix } }
+impl Hash for u32 { fn hash(self: u32) -> u64 { <self | into | hash_mix } }
+impl Hash for char { fn hash(self: char) -> u64 { <self | char_to_code | hash_mix } }
+impl Hash for String {
+    fn hash(self: String) -> u64 {
+        <(<(<(self, 0, -3_750_763_034_362_895_579) | hash_chars) | clear_sign) | into
+    }
+}
+impl Hash for Bool {
+    fn hash(self: Bool) -> u64 {
+        match self {
+            False => <0 | hash_mix,
+            True => <1 | hash_mix,
+        }
+    }
+}
 
 // The character of a `String` at a position, failing at run time when the
 // position is out of range; `char_at` offers that outcome to a continuation.

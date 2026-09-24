@@ -18,7 +18,7 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const INTO: &str = "trait Into<+U> { fn into(self: Self) -> U; }\n";
+const INTO: &str = "trait Present<+U> { fn present(self: Self) -> U; }\n";
 
 #[test]
 fn two_destinations_and_a_forwarded_bound() {
@@ -27,14 +27,14 @@ fn two_destinations_and_a_forwarded_bound() {
         &format!(
             "{INTO}
 enum Wrap {{ Held(i64) }}
-impl Into<i64> for Wrap {{
-    fn into(self: Wrap) -> i64 {{ match self {{ Held(n) => n }} }}
+impl Present<i64> for Wrap {{
+    fn present(self: Wrap) -> i64 {{ match self {{ Held(n) => n }} }}
 }}
-impl Into<String> for Wrap {{
-    fn into(self: Wrap) -> String {{ match self {{ Held(n) => <n | int_to_str }} }}
+impl Present<String> for Wrap {{
+    fn present(self: Wrap) -> String {{ match self {{ Held(n) => <n | int_to_str }} }}
 }}
-fn number(w: Wrap) -> i64 {{ <w | into }}
-fn to_text<+T: Into<String>>(x: T) -> String {{ <x | into }}
+fn number(w: Wrap) -> i64 {{ <w | present }}
+fn to_text<+T: Present<String>>(x: T) -> String {{ <x | present }}
 command main | (exit: i32) / {{IO}} {{
     <Held(7) | number | println;
     <Held(7) | to_text | println;
@@ -52,8 +52,8 @@ fn an_unconstrained_call_is_refused() {
         "open",
         &format!(
             "{INTO}
-impl Into<i64> for i64 {{ fn into(self: i64) -> i64 {{ self }} }}
-fn ambiguous(n: i64) -> i64 {{ let x = <n | into; 0 }}
+impl Present<i64> for i64 {{ fn present(self: i64) -> i64 {{ self }} }}
+fn ambiguous(n: i64) -> i64 {{ let x = <n | present; 0 }}
 command main | (exit: i32) / {{IO}} {{ <0 | exit> }}"
         ),
     );
@@ -67,8 +67,8 @@ fn impls_at_the_same_arguments_overlap() {
         "overlap",
         &format!(
             "{INTO}
-impl Into<i64> for i64 {{ fn into(self: i64) -> i64 {{ self }} }}
-impl Into<i64> for i64 {{ fn into(self: i64) -> i64 {{ self }} }}
+impl Present<i64> for i64 {{ fn present(self: i64) -> i64 {{ self }} }}
+impl Present<i64> for i64 {{ fn present(self: i64) -> i64 {{ self }} }}
 command main | (exit: i32) / {{IO}} {{ <0 | exit> }}"
         ),
     );
@@ -82,7 +82,7 @@ fn an_impl_supplies_the_traits_arguments() {
         "arity",
         &format!(
             "{INTO}
-impl Into for i64 {{ fn into(self: i64) -> i64 {{ self }} }}
+impl Present for i64 {{ fn present(self: i64) -> i64 {{ self }} }}
 command main | (exit: i32) / {{IO}} {{ <0 | exit> }}"
         ),
     );
@@ -96,10 +96,21 @@ fn an_impl_method_matches_the_substituted_signature() {
         "signature",
         &format!(
             "{INTO}
-impl Into<i64> for i64 {{ fn into(self: i64) -> String {{ \"no\" }} }}
+impl Present<i64> for i64 {{ fn present(self: i64) -> String {{ \"no\" }} }}
 command main | (exit: i32) / {{IO}} {{ <0 | exit> }}"
         ),
     );
     assert!(!ok);
     assert!(stderr.contains("returns i64") && stderr.contains("returns String"), "{stderr}");
+}
+
+#[test]
+fn a_value_that_does_not_fit_its_width_is_refused() {
+    let (ok, _, stderr) = run(
+        "narrow",
+        "fn as_i8(n: i64) -> i8 { <n | into }
+         command main | (exit: i32) / {IO} { <200 | as_i8 | println; <0 | exit> }",
+    );
+    assert!(!ok);
+    assert!(stderr.contains("200 does not fit in i8"), "{stderr}");
 }

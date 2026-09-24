@@ -34,6 +34,10 @@ fn updated_feature_examples_have_exact_outputs() {
 7
 7
 4
+40000
+9
+200
+-3
 ",
         ),
         (

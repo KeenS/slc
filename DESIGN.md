@@ -1911,7 +1911,9 @@ as in Rust) with impls for `i64`, `String`, `Bool`, and the unit, tuples and
 choices up to eight components, rendered as they are written — and
 `to_string<T: Display>`; `enum Bool { False, True }`, the type every yes-or-no
 answer has; arithmetic and comparison as the traits `Add`, `Sub`, `Mul`,
-`Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `Hash`,
+`Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `Into<U>`,
+moving a value between integer widths; `wrapping_mul` and `xor` on the
+machine word; `char_to_code`, a character's scalar value; `Hash`,
 answering a non-negative `u64` for the integer widths, `char`, `Bool`, and
 `String`; `index`,
 a `String`'s character at a position; and `not`, which negates a `Bool`,
@@ -1956,12 +1958,14 @@ own: supplying a key and receiving a value is a function, and `Stream` and
 `Seq` remain the negative sequences. `dual(Map<K, V>)` is a consumer of that
 map. [`examples/basics/maps.sl`](examples/basics/maps.sl) runs it.
 
-`Hash` answers a non-negative `u64`. Equal values hash equal. The mix is the
-builtin `__hash`: a word is multiplied by the odd constant `0x9E3779B97F4A7C15`
-and the high bit is cleared, and a `String` is FNV-1a over its scalar values
-with the same clear. The high bit stays clear because `rem` is the signed
-remainder of the machine word, so a negative hash would not be a slot in
-`0 .. width`. The integer widths, `char`, `Bool`, and `String` have impls.
+`Hash` answers a non-negative `u64`. Equal values hash equal. The mix is
+ordinary prelude code: `wrapping_mul` by the bit pattern of
+`0x9E3779B97F4A7C15`, then the high bit cleared. A `String` is FNV-1a over
+its scalar values — `char_to_code`, folded in with `xor` and `wrapping_mul`
+by the FNV prime — and the same clear. The high bit stays clear because
+`rem` is the signed remainder of the machine word, so a negative hash would
+not be a slot in `0 .. width`. The integer widths, `char`, `Bool`, and
+`String` have impls.
 [`examples/basics/hash.sl`](examples/basics/hash.sl) runs them.
 
 `Array<T>` is an immutable array: a 4-way trie of positive elements. `Array4<T>`
@@ -2134,7 +2138,12 @@ sends an `i32` — and is `+i64` when nothing constrains it. The integer
 primitives are `i8`, `i32`, `i64`, `u8`, `u32`, and `u64`; a floating-point
 literal similarly takes `f32` or `f64` from its port and is `+f64` when
 unconstrained. Every other value must match its port exactly: there is no
-implicit widening or narrowing of a value that is not a literal.
+implicit widening or narrowing of a value that is not a literal. A
+conversion between widths is the prelude's `Into<+U>`, one impl for every
+pair of the six integer widths. The expected type selects the destination.
+The number is kept when it fits there; a value that does not fit is an
+arithmetic overflow, as `add` overflowing is. There is no truncating cast.
+Every integer is one signed word, so a `u64` reaches as far as `i64` does.
 
 The numeric primitives have the `Display`, `Add`, `Sub`, `Mul`, `Div`, `Rem`,
 `Eq`, and `Ord` implementations supplied by the prelude; signed integers and
