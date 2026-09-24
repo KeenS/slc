@@ -171,7 +171,7 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
 }
 
 /// Type parameters with their trait bounds.
-type TypeParams = (Vec<String>, Vec<(String, String)>, Vec<(String, ParamPolarity)>);
+type TypeParams = (Vec<String>, Vec<TraitBound>, Vec<(String, ParamPolarity)>);
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -665,14 +665,14 @@ impl Parser {
             // parameter's sign comes after a `,`.
             if self.eat(&TokenKind::Colon) {
                 loop {
-                    let trait_name = self.expect_ident("a trait bound")?;
-                    bounds.push((name.clone(), trait_name));
+                    let (trait_name, args) = self.parse_trait_application("a trait bound")?;
+                    bounds.push(TraitBound { param: name.clone(), trait_name, args });
                     if !self.eat(&TokenKind::Plus) {
                         break;
                     }
                 }
                 if self.peek_kind() == Some(&TokenKind::Colon) {
-                    let first = &bounds[bounds.len() - 1].1;
+                    let first = &bounds[bounds.len() - 1].trait_name;
                     return Err(ParseError {
                         message: format!(
                             "bounds are joined by `+`, not by another `:` — write \
@@ -883,6 +883,15 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Trait, "`trait`")?;
         let name = self.expect_ident("trait name")?;
+        let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
+        if !bounds.is_empty() {
+            return Err(ParseError {
+                message: "a trait's type parameters carry no bounds; the bound goes on the \
+                          function or the impl that uses the trait"
+                    .into(),
+                span: t.span,
+            });
+        }
         self.expect(TokenKind::LBrace, "`{` after the trait name")?;
         let mut methods = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
@@ -894,7 +903,61 @@ impl Parser {
             }
             methods.push(self.parse_trait_method()?);
         }
-        Ok(Node { span: t.span, kind: Decl::Trait { name, is_public, methods } })
+        Ok(Node {
+            span: t.span,
+            kind: Decl::Trait { name, is_public, type_params, type_param_signs, methods },
+        })
+    }
+
+    /// `Into<i64>`: a trait name and the type arguments it is applied to.
+    /// No `<…>` means the trait takes nothing beside `Self`.
+    fn parse_trait_application(
+        &mut self,
+        what: &str,
+    ) -> Result<(String, Vec<TypeExpr>), ParseError> {
+        let name = self.expect_ident(what)?;
+        let args = if matches!(self.peek_kind(), Some(TokenKind::Lt | TokenKind::ReverseArrow)) {
+            self.parse_type_arguments()?.into_iter().map(|arg| arg.kind).collect()
+        } else {
+            Vec::new()
+        };
+        Ok((name, args))
+    }
+
+    /// The `<…>` of a type or trait application, including a first argument
+    /// whose `<-` the lexer made one token.
+    fn parse_type_arguments(&mut self) -> Result<Vec<Node<TypeExpr>>, ParseError> {
+        let negated_first = self.peek_kind() == Some(&TokenKind::ReverseArrow);
+        let sign_start = self.tokens.get(self.pos).map(|t| t.span.start).unwrap_or(0);
+        self.pos += 1;
+        let mut args = Vec::new();
+        loop {
+            if args.is_empty() && negated_first {
+                let inner = self.parse_type()?;
+                let span = Span { start: sign_start + 1, end: inner.span.end };
+                args.push(Node { kind: TypeExpr::Negative(Box::new(inner)), span });
+            } else if matches!(self.peek_kind(), Some(TokenKind::DotDot | TokenKind::LBrace)) {
+                let row_start = self.span_start();
+                let row = if self.eat(&TokenKind::DotDot) {
+                    let mut row = EffectRow::default();
+                    row.tails.push(self.expect_ident("a row variable after `..`")?);
+                    row
+                } else {
+                    self.pos += 1;
+                    self.parse_row_body()?
+                };
+                let span = Span { start: row_start, end: self.span_end() };
+                args.push(Node { kind: TypeExpr::Row(row), span });
+            } else {
+                args.push(self.parse_type()?);
+            }
+            if self.eat(&TokenKind::Comma) {
+                continue;
+            }
+            self.expect(TokenKind::Gt, "`>` after type arguments")?;
+            break;
+        }
+        Ok(args)
     }
 
     /// A method signature: a `fn` or `command` header ending in `;`.
@@ -950,7 +1013,7 @@ impl Parser {
         // impl<...> bounds are parsed and kept on the methods, not the header,
         // in v1: a generic impl's methods carry the bound.
         let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
-        let trait_name = self.expect_ident("a trait name")?;
+        let (trait_name, trait_args) = self.parse_trait_application("a trait name")?;
         self.expect(TokenKind::For, "`for` in an `impl`")?;
         let for_type = self.parse_type()?.kind;
         self.expect(TokenKind::LBrace, "`{` after the impl header")?;
@@ -968,6 +1031,7 @@ impl Parser {
             span: t.span,
             kind: Decl::Impl {
                 trait_name,
+                trait_args,
                 type_params,
                 type_param_signs,
                 bounds,
@@ -1320,41 +1384,7 @@ impl Parser {
                 // `List<-i64>` lexes its `<-` as one token: the bracket and
                 // the first argument's sign.
                 if matches!(self.peek_kind(), Some(TokenKind::Lt | TokenKind::ReverseArrow)) {
-                    let negated_first = self.peek_kind() == Some(&TokenKind::ReverseArrow);
-                    let sign_start = self.tokens[self.pos].span.start;
-                    self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        if args.is_empty() && negated_first {
-                            let inner = self.parse_type()?;
-                            let span = Span { start: sign_start + 1, end: inner.span.end };
-                            args.push(Node { kind: TypeExpr::Negative(Box::new(inner)), span });
-                        } else if matches!(
-                            self.peek_kind(),
-                            Some(TokenKind::DotDot | TokenKind::LBrace)
-                        ) {
-                            // A row argument: `..E`, or a row written out,
-                            // `{IO, ..E}`.
-                            let row_start = self.span_start();
-                            let row = if self.eat(&TokenKind::DotDot) {
-                                let mut row = EffectRow::default();
-                                row.tails.push(self.expect_ident("a row variable after `..`")?);
-                                row
-                            } else {
-                                self.pos += 1;
-                                self.parse_row_body()?
-                            };
-                            let span = Span { start: row_start, end: self.span_end() };
-                            args.push(Node { kind: TypeExpr::Row(row), span });
-                        } else {
-                            args.push(self.parse_type()?);
-                        }
-                        if self.eat(&TokenKind::Comma) {
-                            continue;
-                        }
-                        self.expect(TokenKind::Gt, "`>` after type arguments")?;
-                        break;
-                    }
+                    let args = self.parse_type_arguments()?;
                     TypeExpr::Apply(s, args)
                 } else if s == "bool" {
                     return Err(ParseError {
@@ -3200,7 +3230,35 @@ mod tests {
             panic!("expected a fn")
         };
         assert_eq!(type_param_signs, &[("T".to_string(), Negative)]);
-        assert_eq!(bounds, &[("T".to_string(), "Show".to_string())]);
+        assert_eq!(
+            bounds,
+            &[TraitBound { param: "T".into(), trait_name: "Show".into(), args: vec![] }]
+        );
+    }
+
+    #[test]
+    fn a_trait_takes_type_parameters_and_a_bound_may_apply_it() {
+        let p = parse_str(
+            "trait Into<+U> { fn into(self: Self) -> U; }
+             fn f<+T: Into<String> + Show>(x: T) -> String { x }
+             impl Into<i64> for i64 { fn into(self: i64) -> i64 { self } }",
+        );
+        let Decl::Trait { type_params, type_param_signs, methods, .. } = &p.decls[0].kind else {
+            panic!("expected a trait")
+        };
+        assert_eq!(type_params, &["U".to_string()]);
+        assert_eq!(type_param_signs, &[("U".to_string(), ParamPolarity::Positive)]);
+        assert!(matches!(&methods[0].return_type, Some(TypeExpr::Base(name)) if name == "U"));
+        let Decl::Fn { bounds, .. } = &p.decls[1].kind else { panic!("expected a fn") };
+        assert_eq!(bounds[0].trait_name, "Into");
+        assert!(matches!(&bounds[0].args[..], [TypeExpr::Base(name)] if name == "String"));
+        assert_eq!(bounds[1].trait_name, "Show");
+        assert!(bounds[1].args.is_empty());
+        let Decl::Impl { trait_name, trait_args, .. } = &p.decls[2].kind else {
+            panic!("expected an impl")
+        };
+        assert_eq!(trait_name, "Into");
+        assert!(matches!(&trait_args[..], [TypeExpr::Base(name)] if name == "i64"));
     }
 
     #[test]

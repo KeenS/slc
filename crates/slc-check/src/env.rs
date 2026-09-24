@@ -9,6 +9,18 @@ use slc_syntax::lower::lower_type;
 use slc_syntax::traits::TraitInfo;
 use std::collections::HashMap;
 
+/// A bound the enclosing declaration established: `T: Into<String>` is the
+/// rigid variable of `T`, the trait, the arguments, and the key those
+/// arguments render as in the dictionary parameter's name.
+#[derive(Debug, Clone)]
+pub(crate) struct BoundInScope {
+    pub(crate) var: usize,
+    pub(crate) trait_name: String,
+    pub(crate) type_param: String,
+    pub(crate) args: Vec<Type>,
+    pub(crate) arg_key: String,
+}
+
 /// A local binding: its type, and — for a `let` of a value form — the
 /// variables it generalizes. Every use instantiates those afresh; a
 /// monomorphic binding generalizes nothing.
@@ -18,13 +30,22 @@ pub(crate) struct Binding {
     pub(crate) generalized: std::rc::Rc<Vec<usize>>,
 }
 
+/// One bound of a call awaiting its dictionary: the trait, the type that
+/// must satisfy it, and the types the trait is applied to.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingBound {
+    pub(crate) trait_name: String,
+    pub(crate) var: Type,
+    pub(crate) args: Vec<Type>,
+}
+
 /// One bounded call awaiting its dictionaries: where it stands, who it
 /// calls, and each bound with the type standing for its parameter.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingDicts {
     pub(crate) span: slc_syntax::token::Span,
     pub(crate) callee: String,
-    pub(crate) bounds: Vec<(String, Type)>,
+    pub(crate) bounds: Vec<PendingBound>,
 }
 
 /// One use of a declaration's type parameter awaiting the type it is given:
@@ -60,14 +81,19 @@ pub(crate) struct PendingPar {
     pub(crate) components: Vec<Type>,
 }
 
-/// One trait-method call awaiting its `Self`: a negative method's `Self`
-/// appears only in what it consumes, so the cut fixes it after the call.
+/// One trait-method call awaiting its `Self` or its trait arguments. A
+/// negative method's `Self` appears only in what it consumes, and a trait
+/// parameter may appear only in what the call produces, so both are fixed
+/// after the call, by the cut or by the type the call is expected to have.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingMethod {
     pub(crate) span: slc_syntax::token::Span,
     pub(crate) method: String,
     pub(crate) trait_name: String,
     pub(crate) self_ty: Type,
+    /// One fresh variable per trait parameter, in declaration order.
+    pub(crate) trait_args: Vec<Type>,
+    pub(crate) trait_param_names: Vec<String>,
 }
 
 /// Why a row constraint with a concrete or rigid bound was recorded, for the
@@ -115,11 +141,10 @@ pub(crate) struct Env<'a> {
     pub(crate) consumed: Option<Type>,
     /// The program's traits and impls.
     pub(crate) traits: &'a TraitInfo,
-    /// Bounds in scope: a rigid type-variable index, the trait it is known to
-    /// satisfy, and the type parameter's name — from the enclosing
-    /// declaration's `<T: Trait>`. The name identifies the dictionary
-    /// parameter a bounded call forwards or a method call projects from.
-    pub(crate) bounds: Vec<(usize, String, String)>,
+    /// Bounds in scope, from the enclosing declaration's `<T: Trait<…>>`.
+    /// The parameter's name and the rendered arguments identify the
+    /// dictionary a bounded call forwards or a method call projects from.
+    pub(crate) bounds: Vec<BoundInScope>,
     /// The enclosing declaration's type parameters, each mapped to the rigid
     /// variable standing for it. A written type in *body* position — a
     /// lambda's annotation, a `let`'s, a scrutinee's — resolves through this

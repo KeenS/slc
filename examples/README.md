@@ -14,6 +14,7 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`dictionaries.sl`](basics/dictionaries.sl) — Traits with no runtime method value: dispatch is resolved at compile time
 - [`hash.sl`](basics/hash.sl) — `Hash`: a non-negative `u64` for a value
 - [`hello.sl`](basics/hello.sl) — The simplest Slant program
+- [`into.sl`](basics/into.sl) — A trait parameter, solved by the type the call is expected to produce
 - [`lambda.sl`](basics/lambda.sl) — Lambda abstraction and immediate application
 - [`lists.sl`](basics/lists.sl) — Lists — an ordinary recursive enum, defined in the prelude
 - [`maps.sl`](basics/maps.sl) — Ordered maps: a persistent AVL tree in the library

@@ -21,10 +21,10 @@ pub struct FunctionSignature {
     /// The name each parameter is declared under, positionally, for the
     /// diagnostic of an argument that does not fit it.
     pub param_names: Vec<String>,
-    /// Trait bounds, as (type-parameter variable index, trait name): the
-    /// signature uses `Type::Var(i)` for its i-th type parameter, so a bound
-    /// `<T: Show>` on the 0th parameter is `(0, "Show")`.
-    pub bounds: Vec<(usize, String)>,
+    /// Trait bounds. The signature uses `Type::Var(i)` for its i-th type
+    /// parameter, so `<T: Into<String>>` on the 0th parameter names `Into`
+    /// and the argument types, which may themselves be type parameters.
+    pub bounds: Vec<SignatureBound>,
     /// The polarity each type parameter declares, as (template variable
     /// index, parameter name, polarity): a call gives `<+T>` positive types
     /// only, and `<-T>` negative ones.
@@ -37,6 +37,15 @@ pub struct FunctionSignature {
     /// `fn add` is a declaration, and is checked as one.
     pub builtin: bool,
     pub nullary_value: bool,
+}
+
+/// One bound in a signature: which type parameter, which trait, and the
+/// types that trait is applied to. `<T: Show>` applies `Show` to nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SignatureBound {
+    pub param: usize,
+    pub trait_name: String,
+    pub args: Vec<Type>,
 }
 
 /// The standard library.
@@ -226,11 +235,23 @@ pub(crate) fn function_types(
             )
         })
         .collect::<HashMap<_, _>>();
-    fn resolve_bounds(type_params: &[String], bounds: &[(String, String)]) -> Vec<(usize, String)> {
+    fn resolve_bounds(
+        type_params: &[String],
+        bounds: &[slc_syntax::ast::TraitBound],
+        enums: &Declarations,
+    ) -> Vec<SignatureBound> {
+        let mut next_template = 0;
         bounds
             .iter()
-            .filter_map(|(var, tr)| {
-                type_params.iter().position(|p| p == var).map(|i| (i, tr.clone()))
+            .filter_map(|bound| {
+                type_params.iter().position(|param| param == &bound.param).map(|index| {
+                    let args = bound
+                        .args
+                        .iter()
+                        .map(|ty| signature_type(Some(ty), type_params, enums, &mut next_template))
+                        .collect();
+                    SignatureBound { param: index, trait_name: bound.trait_name.clone(), args }
+                })
             })
             .collect()
     }
@@ -280,7 +301,7 @@ pub(crate) fn function_types(
                         param_names: params.iter().map(parameter_name).collect(),
                         continuations: params.iter().map(|p| p.is_continuation).collect(),
                         result: Some(result),
-                        bounds: resolve_bounds(type_params, bounds),
+                        bounds: resolve_bounds(type_params, bounds, enums),
                         signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
                         nullary_value: params.is_empty()
@@ -314,7 +335,7 @@ pub(crate) fn function_types(
                         param_names: declared.iter().map(|p| parameter_name(p)).collect(),
                         continuations,
                         result: Some(Type::BOTTOM),
-                        bounds: resolve_bounds(type_params, bounds),
+                        bounds: resolve_bounds(type_params, bounds, enums),
                         signs: resolve_signs(type_params, type_param_signs),
                         builtin: false,
                         nullary_value: false,
@@ -411,7 +432,15 @@ pub(crate) fn instantiate(
         result: signature.result.as_ref().map(|ty| freshen(ty, &mut seen, &mut rows, uni)),
         row: freshen_row(&signature.row, &mut seen, &mut rows, uni),
         param_names: signature.param_names.clone(),
-        bounds: signature.bounds.clone(),
+        bounds: signature
+            .bounds
+            .iter()
+            .map(|bound| SignatureBound {
+                param: bound.param,
+                trait_name: bound.trait_name.clone(),
+                args: bound.args.iter().map(|ty| freshen(ty, &mut seen, &mut rows, uni)).collect(),
+            })
+            .collect(),
         signs: signature.signs.clone(),
         builtin: signature.builtin,
         nullary_value: signature.nullary_value,

@@ -1303,6 +1303,28 @@ way, `impl<+T: Ord + Display> Show for Pair<T>`. The `+` can only join inside
 the bounds — the next parameter's sign comes after a `,` — and a second `:`
 is refused with the spelling that was meant.
 
+A trait may take type parameters, written as any declaration's are. `Self`
+stays the value that flows in. The parameters are fixed by the types the
+call meets: an argument that has one, or — when the parameter appears only
+in what the call produces — the type that result is expected to have.
+
+```sl
+trait Into<+U> { fn into(self: Self) -> U; }
+impl Into<i64> for Wrap { fn into(self: Wrap) -> i64 { … } }
+impl Into<String> for Wrap { fn into(self: Wrap) -> String { … } }
+
+fn number(w: Wrap) -> i64 { <w | into }
+```
+
+`number` returns `i64`, so `<w | into` is `Into<i64>`. The same call in a
+function that returns `String` is the other impl. A call that nothing
+constrains has no destination and is refused. One impl is allowed per
+trait, its arguments, and the implementing type, so the two impls above
+are distinct. A bound carries the arguments, `<+T: Into<String>>`, and is
+its own dictionary. An impl may quantify too: `impl<+T> Into<T> for Id<T>`
+covers every `Id`.
+[`examples/basics/into.sl`](examples/basics/into.sl) runs it.
+
 A method may be a `command`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits in v1, bounds are
 on positive type parameters, and associated types, default methods, and

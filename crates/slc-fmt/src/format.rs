@@ -471,12 +471,19 @@ impl Formatter {
             }
             Some(T::Use) => self.use_decl()?,
             Some(T::Trait) => {
-                let head = vec![self.bump(), text(" "), self.name("a trait name")?, text(" ")];
+                let head = vec![
+                    self.bump(),
+                    text(" "),
+                    self.name("a trait name")?,
+                    self.type_params()?,
+                    text(" "),
+                ];
                 self.with_items(head, &mut |f| f.trait_method().map(plain))?
             }
             Some(T::Impl) => {
                 let mut head = vec![self.bump(), self.type_params()?, text(" ")];
-                head.extend([self.name("a trait name")?, text(" "), self.expect(&T::For)?]);
+                // `Into<i64>` is the trait applied to its arguments.
+                head.extend([self.ty()?, text(" "), self.expect(&T::For)?]);
                 head.extend([text(" "), self.ty()?, text(" ")]);
                 self.with_items(vec![header(head, &[1])], &mut |f| f.decl().map(plain))?
             }
@@ -648,11 +655,11 @@ impl Formatter {
                 docs.push(f.bump());
             }
             docs.push(f.name("a type parameter")?);
-            // `T: Show + Ord`.
+            // `T: Show + Into<i64>`. A bound is the trait and its arguments.
             if f.at(&T::Colon) {
-                docs.extend([f.bump(), text(" "), f.name("a trait bound")?]);
+                docs.extend([f.bump(), text(" "), f.ty()?]);
                 while f.at(&T::Plus) {
-                    docs.extend([text(" "), f.bump(), text(" "), f.name("a trait bound")?]);
+                    docs.extend([text(" "), f.bump(), text(" "), f.ty()?]);
                 }
             }
             Ok(plain(concat(docs)))

@@ -111,10 +111,10 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   is already recognisable — its parse error is at the end of input, with no
   extent — and `--fuel` bounds one that does not stop.
 
-- **What traits still lack.** A trait is a set of signatures: no default
-  methods, no associated types, no supertraits. Each is ordinary in Rust,
-  whose flavour the surface keeps; whether each earns its place here, given
-  that dispatch is resolved entirely at compile time, is undecided.
+- **What traits still lack.** Default methods, associated types, and
+  supertraits. Each is ordinary in Rust, whose flavour the surface keeps;
+  whether each earns its place here, given that dispatch is resolved
+  entirely at compile time, is undecided.
 
 - **Integer width conversions.** Arithmetic and comparison cover the six
   widths, and `stdlib/num.sl` supplies common derived operations over `i64`:

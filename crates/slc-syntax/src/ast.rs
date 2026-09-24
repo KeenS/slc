@@ -532,7 +532,7 @@ pub enum Decl {
         /// A row variable declares none.
         type_param_signs: Vec<(String, ParamPolarity)>,
         /// Trait bounds on the type parameters: `(T, Show)` for `<T: Show>`.
-        bounds: Vec<(String, String)>,
+        bounds: Vec<TraitBound>,
         polarity: FunctionPolarity,
         params: Vec<Param>,
         return_type: Option<TypeExpr>,
@@ -555,7 +555,7 @@ pub enum Decl {
         /// The polarity each type parameter declares, `<+T>` or `<-T>`.
         /// A row variable declares none.
         type_param_signs: Vec<(String, ParamPolarity)>,
-        bounds: Vec<(String, String)>,
+        bounds: Vec<TraitBound>,
         value_params: Vec<Param>,
         continuation_params: Vec<Param>,
         return_type: Option<TypeExpr>,
@@ -593,7 +593,8 @@ pub enum Decl {
         ty: TypeExpr,
         value: Node<Expr>,
     },
-    /// A trait: a named set of method signatures over an implicit `Self`.
+    /// A trait: a named set of method signatures over an implicit `Self`,
+    /// and any type parameters the trait itself takes (`trait Into<+U>`).
     Trait {
         name: String,
         /// `pub` — visible outside the module that declares it. A
@@ -601,18 +602,24 @@ pub enum Decl {
         /// and the modules nested inside it; a top-level declaration, which
         /// is in no module, is visible everywhere.
         is_public: bool,
+        /// `Into<+U>`'s `U`, in order. Empty when the trait is only `Self`.
+        type_params: Vec<String>,
+        /// The polarity each type parameter declares, `<+U>` or `<-U>`.
+        type_param_signs: Vec<(String, ParamPolarity)>,
         methods: Vec<TraitMethod>,
     },
     /// An `impl Trait for Type { … }`: the methods that make `Type` satisfy
     /// `Trait`. Each method is a `Fn` or `Command` declaration with a body.
     Impl {
         trait_name: String,
+        /// `Into<i64>`'s arguments. Empty when the trait takes none.
+        trait_args: Vec<TypeExpr>,
         /// `impl<+T: Show>` type parameters and bounds, shared by the methods.
         type_params: Vec<String>,
         /// The polarity each type parameter declares, `<+T>` or `<-T>`.
         /// A row variable declares none.
         type_param_signs: Vec<(String, ParamPolarity)>,
-        bounds: Vec<(String, String)>,
+        bounds: Vec<TraitBound>,
         for_type: TypeExpr,
         methods: Vec<Node<Decl>>,
     },
@@ -636,6 +643,15 @@ pub struct EffectOp {
     pub name: String,
     pub params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
+}
+
+/// One bound on a type parameter: `T: Into<String>` is `Into` applied to
+/// `String`, and `T: Show` is `Show` applied to nothing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraitBound {
+    pub param: String,
+    pub trait_name: String,
+    pub args: Vec<TypeExpr>,
 }
 
 /// One method signature in a trait, headed like a `fn` or a `command` but

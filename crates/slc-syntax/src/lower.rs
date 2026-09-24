@@ -315,6 +315,16 @@ pub fn dict_param_name(trait_name: &str, type_param: &str) -> String {
     format!("__dict_{trait_name}_{type_param}")
 }
 
+/// The same name when the trait is applied: `T: Into<String>` is not
+/// `T: Into<i64>`, so each application has its own parameter.
+pub fn dict_param_name_for(trait_name: &str, arg_key: &str, type_param: &str) -> String {
+    if arg_key.is_empty() {
+        dict_param_name(trait_name, type_param)
+    } else {
+        format!("__dict_{trait_name}_{arg_key}_{type_param}")
+    }
+}
+
 /// The global dictionary name for a concrete `(trait, type key)`.
 pub fn dict_global_name(trait_name: &str, key: &str) -> String {
     format!("__dict_{trait_name}_{key}")
@@ -345,9 +355,14 @@ fn dict_projection(dict_var: &str, index: usize, count: usize) -> Term {
 /// Wrap a bounded declaration's body in its dictionary parameters, outermost
 /// and in declared-bound order, so a call supplies them before the value
 /// arguments.
-fn bind_dict_params(bounds: &[(String, String)], mut term: Term) -> Term {
-    for (type_param, trait_name) in bounds.iter().rev() {
-        term = Term::Lam(dict_param_name(trait_name, type_param), Box::new(term));
+fn bind_dict_params(bounds: &[crate::ast::TraitBound], mut term: Term) -> Term {
+    for bound in bounds.iter().rev() {
+        let name = dict_param_name_for(
+            &bound.trait_name,
+            &crate::traits::rendered_args(&bound.args),
+            &bound.param,
+        );
+        term = Term::Lam(name, Box::new(term));
     }
     term
 }

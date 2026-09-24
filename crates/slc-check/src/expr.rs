@@ -11,7 +11,7 @@ use crate::env::{Env, constant_types};
 use crate::signatures::{FunctionSignature, function_types, instantiate};
 use slc_core::types::{Base, Type};
 use slc_core::typing::contains_var;
-use slc_syntax::ast::{Decl, Expr, Named, Node, ParamPolarity, Program, TypeExpr};
+use slc_syntax::ast::{Decl, Expr, Named, Node, ParamPolarity, Program, TraitBound, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
 use slc_syntax::traits::TraitInfo;
@@ -113,54 +113,74 @@ pub fn check_program_with_rows(
     }
 }
 
-/// The type key a resolved type dispatches on — matching the runtime's key
-/// and `slc_syntax::traits::type_key`.
-fn type_key(ty: &Type) -> Option<String> {
-    match ty {
-        Type::Pos(b) | Type::Neg(b) => Some(format!("{b}")),
-        Type::Named(n, _) => Some(n.clone()),
-        Type::Dual(t) | Type::Rowed(t, _) | Type::Delayed(t, _) => type_key(t),
-        Type::Tensor(items) => Some(slc_syntax::traits::anonymous_key("tuple", items.len())),
-        Type::Sum(items) if !items.is_empty() => {
-            Some(slc_syntax::traits::anonymous_key("choice", items.len()))
-        }
-        _ => None,
-    }
-}
-
-/// Check that `target` satisfies `trait_name`: a ground type must have an
-/// impl; a bound rigid variable is covered by the enclosing declaration; an
-/// unsolved variable at a monomorphic call cannot be discharged.
+/// Check that `target` satisfies `trait_name` applied to `args`: a ground
+/// type must have an impl; a bound rigid variable is covered by the enclosing
+/// declaration; an unsolved variable at a monomorphic call cannot be discharged.
 fn discharge_bound(
     trait_name: &str,
     target: &Type,
+    args: &[Type],
     callee: &str,
     span: Span,
     env: &Env,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if let Type::Var(v) = target {
-        if env.bounds.iter().any(|(bv, bt, _)| bv == v && bt == trait_name) {
+    let target = env.uni.apply(target);
+    let args: Vec<Type> = args.iter().map(|arg| env.uni.apply(arg)).collect();
+    if let Type::Var(v) = &target {
+        if env.bounds.iter().any(|bound| {
+            bound.var == *v && bound.trait_name == trait_name && types_agree(&bound.args, &args)
+        }) {
             return;
         }
         diags.push(Diagnostic {
             message: format!(
-                "`{callee}` needs `{trait_name}` for a type parameter, but the caller's \
-                 type is not known to satisfy it"
+                "`{callee}` needs `{}` for a type parameter, but the caller's type is not \
+                 known to satisfy it",
+                trait_applied(trait_name, &args)
             ),
             span,
         });
         return;
     }
-    match type_key(target) {
-        Some(key) if env.traits.has_impl(trait_name, &key) => {}
-        Some(key) => {
-            diags.push(Diagnostic { message: format!("no `impl {trait_name} for {key}`"), span })
+    if let Err(message) = env.traits.select(trait_name, &target, &args) {
+        diags.push(Diagnostic { message, span });
+    }
+}
+
+fn types_agree(left: &[Type], right: &[Type]) -> bool {
+    left.len() == right.len() && left.iter().zip(right).all(|(a, b)| a == b)
+}
+
+/// `Into<i64>`, or the trait alone when it takes no arguments. Polarity
+/// marks are dropped, the way an impl header writes the type.
+fn trait_applied(trait_name: &str, args: &[Type]) -> String {
+    if args.is_empty() {
+        return trait_name.to_string();
+    }
+    let args = args
+        .iter()
+        .map(|ty| match ty {
+            Type::Pos(base) | Type::Neg(base) => base.to_string(),
+            other => other.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{trait_name}<{args}>")
+}
+
+fn has_open_var(ty: &Type, env: &Env) -> bool {
+    match &env.uni.apply(ty) {
+        Type::Var(v) => !env.uni.is_rigid(*v),
+        Type::Named(_, args)
+        | Type::Tensor(args)
+        | Type::Par(args)
+        | Type::With(args)
+        | Type::Sum(args) => args.iter().any(|arg| has_open_var(arg, env)),
+        Type::Dual(inner) | Type::Rowed(inner, _) | Type::Delayed(inner, _) => {
+            has_open_var(inner, env)
         }
-        None => diags.push(Diagnostic {
-            message: format!("`{trait_name}` cannot be required of {target}"),
-            span,
-        }),
+        _ => false,
     }
 }
 
@@ -176,13 +196,13 @@ fn check_trait_method_call(
     diags: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let sig = env.traits.method_sig(method)?.clone();
-    let trait_name = env.traits.method_owner.get(method)?.clone();
     let self_ty = env.uni.fresh_var();
+    let opened = open_trait(method, self_ty.clone(), env)?;
     let params: Vec<&slc_syntax::ast::Param> =
         sig.value_params.iter().chain(sig.continuation_params.iter()).collect();
     for (arg, param) in args.iter().zip(params.iter()) {
         let Some(expected) =
-            param.ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+            param.ty.as_ref().and_then(|ty| resolve_subst(ty, &opened.subst, enums))
         else {
             check_expr(arg, enums, env, diags);
             continue;
@@ -197,30 +217,17 @@ fn check_trait_method_call(
             });
         }
     }
-    // Discharge `Self: Trait` against what the first argument fixed it to.
+    // Discharge `Self: Trait` against what the arguments fixed it to. A
+    // method whose `Self` appears only in what it consumes, or whose trait
+    // parameter appears only in what it produces, learns the rest from the
+    // context, which is checked after this call. Dispatch waits.
     let target = env.uni.apply(&self_ty);
-    // A method whose `Self` appears only in what it *consumes* — a negative
-    // method, `fn deliver(out: -String) <- Self` — learns it from the cut
-    // the call stands in, which is checked after this call. Dispatch waits.
-    let open = matches!(&target, Type::Var(v)
-        if !env.bounds.iter().any(|(bv, bt, _)| bv == v && bt == &trait_name));
-    if open {
-        env.pending_methods.push(crate::env::PendingMethod {
-            span,
-            method: method.to_string(),
-            trait_name: trait_name.clone(),
-            self_ty: self_ty.clone(),
-        });
-    } else {
-        resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
-    }
-    // A command method returns bottom; a fn method returns its (Self-subst)
-    // result type — the consumer of it, for a negative method.
+    settle_method(method, &opened, &target, span, env, diags);
     if sig.is_command {
         return Some(Type::BOTTOM);
     }
     match &sig.return_type {
-        Some(ty) => resolve_with_self(ty, &self_ty, enums).map(|t| {
+        Some(ty) => resolve_subst(ty, &opened.subst, enums).map(|t| {
             let t = match sig.polarity {
                 slc_syntax::ast::FunctionPolarity::Negative => t.dual(),
                 slc_syntax::ast::FunctionPolarity::Positive => t,
@@ -229,6 +236,65 @@ fn check_trait_method_call(
         }),
         None => Some(Type::ONE),
     }
+}
+
+/// `Self` and one fresh variable per trait parameter. The variables are what
+/// the call's arguments and its expected type solve.
+struct OpenedMethod {
+    trait_name: String,
+    names: Vec<String>,
+    args: Vec<Type>,
+    subst: HashMap<String, Type>,
+}
+
+fn open_trait(method: &str, self_ty: Type, env: &mut Env) -> Option<OpenedMethod> {
+    let trait_name = env.traits.method_owner.get(method)?.clone();
+    let names = env.traits.params_of(&trait_name).to_vec();
+    let signs = env.traits.trait_param_signs.get(&trait_name).cloned().unwrap_or_default();
+    let mut subst = HashMap::from([("Self".to_string(), self_ty)]);
+    let mut args = Vec::new();
+    for name in &names {
+        let var = env.uni.fresh_var();
+        // `<+U>` says which way the parameter faces, even before the call's
+        // context picks the type. A `let` of the call can then see a value.
+        if let (Type::Var(index), Some((_, sign))) =
+            (&var, signs.iter().find(|(param, _)| param == name))
+        {
+            env.rigid_signs.insert(*index, *sign);
+        }
+        subst.insert(name.clone(), var.clone());
+        args.push(var);
+    }
+    Some(OpenedMethod { trait_name, names, args, subst })
+}
+
+/// Resolve the call now when `Self` and every trait argument are known.
+/// Otherwise keep it until the declaration's type is finished: that is when
+/// a result type, or a cut, has had its say.
+fn settle_method(
+    method: &str,
+    opened: &OpenedMethod,
+    self_ty: &Type,
+    span: Span,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let self_ty = env.uni.apply(self_ty);
+    let args: Vec<Type> = opened.args.iter().map(|arg| env.uni.apply(arg)).collect();
+    let self_open = matches!(&self_ty, Type::Var(v) if !env.uni.is_rigid(*v));
+    let args_open = args.iter().any(|arg| has_open_var(arg, env));
+    if self_open || args_open {
+        env.pending_methods.push(crate::env::PendingMethod {
+            span,
+            method: method.to_string(),
+            trait_name: opened.trait_name.clone(),
+            self_ty,
+            trait_args: opened.args.clone(),
+            trait_param_names: opened.names.clone(),
+        });
+        return;
+    }
+    resolve_method_dispatch(method, &opened.trait_name, &self_ty, &args, span, env, diags);
 }
 
 /// Would these meet, if we tried? The attempt runs on a copy of the
@@ -292,7 +358,6 @@ fn check_method_stage(
     diags: &mut Vec<Diagnostic>,
 ) -> Option<(Type, bool)> {
     let sig = env.traits.method_sig(method)?.clone();
-    let trait_name = env.traits.method_owner.get(method)?.clone();
     if sig.polarity == slc_syntax::ast::FunctionPolarity::Negative
         && !sig.is_command
         && let [out] = sig.value_params.as_slice()
@@ -303,7 +368,8 @@ fn check_method_stage(
         // cut it stands in fixes, so dispatch waits for that.
         if target.is_negative() && !target.is_positive() {
             let self_ty = env.uni.fresh_var();
-            let takes = out.ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))?;
+            let opened = open_trait(method, self_ty.clone(), env)?;
+            let takes = out.ty.as_ref().and_then(|ty| resolve_subst(ty, &opened.subst, enums))?;
             let takes = env.uni.apply(&takes);
             let expects =
                 if takes.is_positive() && !takes.is_negative() { takes.dual() } else { takes };
@@ -316,49 +382,50 @@ fn check_method_stage(
                     span,
                 });
             }
-            env.pending_methods.push(crate::env::PendingMethod {
-                span,
-                method: method.to_string(),
-                trait_name,
-                self_ty: self_ty.clone(),
-            });
+            settle_method(method, &opened, &self_ty, span, env, diags);
             let returns = sig
                 .return_type
                 .as_ref()
-                .and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+                .and_then(|ty| resolve_subst(ty, &opened.subst, enums))
                 .unwrap_or(self_ty);
             return Some((env.uni.apply(&returns).dual(), false));
         }
-        resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
-        let takes = out.ty.as_ref().and_then(|ty| resolve_with_self(ty, &target, enums))?;
+        let opened = open_trait(method, target.clone(), env)?;
+        settle_method(method, &opened, &target, span, env, diags);
+        let takes = out.ty.as_ref().and_then(|ty| resolve_subst(ty, &opened.subst, enums))?;
         let takes = env.uni.apply(&takes);
         let flows_on =
             if takes.is_negative() && !takes.is_positive() { takes.dual() } else { takes };
         return Some((flows_on, true));
     }
+    let self_var = env.uni.fresh_var();
+    let opened = open_trait(method, self_var, env)?;
     let target = match sig.value_params.len() {
         // A method of several parameters takes them as one group: `Self`
         // is read off the components its parameters give that type.
-        width if width >= 2 => {
-            receiver_of_group(method, &sig.value_params, receiver, shape, span, enums, env, diags)?
-        }
-        _ => env.uni.apply(receiver),
-    };
-    if matches!(&target, Type::Var(variable) if !env.uni.is_rigid(*variable)) {
-        env.pending_methods.push(crate::env::PendingMethod {
+        width if width >= 2 => receiver_of_group(
+            method,
+            &sig.value_params,
+            receiver,
+            shape,
             span,
-            method: method.to_string(),
-            trait_name,
-            self_ty: target.clone(),
-        });
-    } else {
-        resolve_method_dispatch(method, &trait_name, &target, span, env, diags);
-    }
+            &opened.subst,
+            enums,
+            env,
+            diags,
+        )?,
+        _ => {
+            let target = env.uni.apply(receiver);
+            let _ = env.uni.unify(opened.subst.get("Self").expect("Self"), &target);
+            target
+        }
+    };
+    settle_method(method, &opened, &target, span, env, diags);
     if sig.is_command {
         return Some((Type::BOTTOM, false));
     }
     match &sig.return_type {
-        Some(ty) => resolve_with_self(ty, &target, enums).map(|t| (env.uni.apply(&t), false)),
+        Some(ty) => resolve_subst(ty, &opened.subst, enums).map(|t| (env.uni.apply(&t), false)),
         None => Some((Type::ONE, false)),
     }
 }
@@ -374,6 +441,7 @@ fn receiver_of_group(
     receiver: &Type,
     shape: &Expr,
     span: Span,
+    subst: &HashMap<String, Type>,
     enums: &Declarations,
     env: &mut Env,
     diags: &mut Vec<Diagnostic>,
@@ -396,7 +464,7 @@ fn receiver_of_group(
         }
         _ => vec![None; params.len()],
     };
-    let self_ty = env.uni.fresh_var();
+    let self_ty = subst.get("Self").cloned().unwrap_or_else(|| env.uni.fresh_var());
     let mut order: Vec<usize> = (0..params.len()).collect();
     order.sort_by_key(|&i| written[i].is_some_and(is_integer_literal));
     // Only literals give `Self`: it is the default integer, as a bare
@@ -410,7 +478,7 @@ fn receiver_of_group(
     }
     for index in order {
         let Some(expected) =
-            params[index].ty.as_ref().and_then(|ty| resolve_with_self(ty, &self_ty, enums))
+            params[index].ty.as_ref().and_then(|ty| resolve_subst(ty, subst, enums))
         else {
             continue;
         };
@@ -441,44 +509,68 @@ fn resolve_method_dispatch(
     method: &str,
     trait_name: &str,
     target: &Type,
+    trait_args: &[Type],
     span: Span,
     env: &mut Env,
     diags: &mut Vec<Diagnostic>,
 ) {
-    discharge_bound(trait_name, target, method, span, env, diags);
-    let resolution = match target {
-        Type::Var(v) => env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == trait_name).map(
-            |(_, _, type_param)| {
+    let target = env.uni.apply(target);
+    let trait_args: Vec<Type> = trait_args.iter().map(|arg| env.uni.apply(arg)).collect();
+    discharge_bound(trait_name, &target, &trait_args, method, span, env, diags);
+    let resolution = match &target {
+        Type::Var(v) => env
+            .bounds
+            .iter()
+            .find(|bound| {
+                bound.var == *v
+                    && bound.trait_name == trait_name
+                    && types_agree(&bound.args, &trait_args)
+            })
+            .map(|bound| {
                 let methods = env.traits.traits.get(trait_name);
                 let count = methods.map(|m| m.len()).unwrap_or(1);
                 let index =
                     methods.and_then(|m| m.iter().position(|tm| tm.name == method)).unwrap_or(0);
                 slc_syntax::lower::MethodDispatch::Dict {
-                    dict_var: slc_syntax::lower::dict_param_name(trait_name, type_param),
+                    dict_var: slc_syntax::lower::dict_param_name_for(
+                        trait_name,
+                        &bound.arg_key,
+                        &bound.type_param,
+                    ),
                     index,
                     count,
                 }
-            },
-        ),
-        _ => type_key(target)
-            .and_then(|key| env.traits.method_impls.get(method).and_then(|m| m.get(&key)))
-            .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone())),
+            }),
+        _ => env.traits.select(trait_name, &target, &trait_args).ok().and_then(|matched| {
+            env.traits
+                .method_impls
+                .get(method)
+                .and_then(|impls| impls.get(&matched.key))
+                .map(|mangled| slc_syntax::lower::MethodDispatch::Static(mangled.clone()))
+        }),
     };
     // A static dispatch into a bounded impl — `impl<+T: Display> Display for
     // List<T>` — supplies one dictionary per impl bound, read off the
-    // receiver's type arguments.
+    // receiver and the impl's substitution.
     if let Some(slc_syntax::lower::MethodDispatch::Static(_)) = &resolution
-        && let Some(key) = type_key(target)
-        && let Some(impl_bounds) =
-            env.traits.impl_bounds.get(&(trait_name.to_string(), key)).cloned()
+        && let Ok(matched) = env.traits.select(trait_name, &target, &trait_args)
+        && !matched.bounds.is_empty()
     {
-        let receiver_args = scrutinee_args(target).to_vec();
         let mut dict_args = Vec::new();
-        for (position, bound_trait) in &impl_bounds {
-            let Some(arg) = receiver_args.get(*position) else { continue };
-            let arg = env.uni.apply(arg);
-            discharge_bound(bound_trait, &arg, method, span, env, diags);
-            if let Some(dict) = dict_for(bound_trait, &arg, env, span, diags) {
+        for bound in &matched.bounds {
+            let Some(arg) = scrutinee_args(&target).get(bound.position).cloned() else { continue };
+            let arg = env.uni.apply(&arg);
+            let bound_args = {
+                let Some(enums) = env.declarations else { continue };
+                bound
+                    .args
+                    .iter()
+                    .map(|ty| instantiate_bound_arg(ty, &matched.subst, enums))
+                    .collect::<Option<Vec<_>>>()
+                    .unwrap_or_default()
+            };
+            discharge_bound(&bound.trait_name, &arg, &bound_args, method, span, env, diags);
+            if let Some(dict) = dict_for(&bound.trait_name, &arg, &bound_args, env, span, diags) {
                 dict_args.push(dict);
             }
         }
@@ -491,23 +583,69 @@ fn resolve_method_dispatch(
     }
 }
 
-/// Resolve a method's written type, mapping `Self` to the call's Self
-/// variable and everything else through the ordinary declaration resolver.
-fn resolve_with_self(ty: &TypeExpr, self_ty: &Type, enums: &Declarations) -> Option<Type> {
+/// A bound argument written on an impl, with the impl's type parameters
+/// replaced by the types this use gave them.
+fn instantiate_bound_arg(
+    ty: &TypeExpr,
+    subst: &HashMap<String, Type>,
+    enums: &Declarations,
+) -> Option<Type> {
+    resolve_subst(ty, subst, enums)
+}
+
+/// Resolve a method's written type. `subst` holds `Self` and the trait's
+/// parameters; every other name goes through the ordinary declaration resolver.
+fn resolve_subst(
+    ty: &TypeExpr,
+    subst: &HashMap<String, Type>,
+    enums: &Declarations,
+) -> Option<Type> {
     use slc_syntax::ast::TypeExpr as T;
     match ty {
-        T::Base(name) if name == "Self" => Some(self_ty.clone()),
-        T::Positive(inner) => resolve_with_self(&inner.kind, self_ty, enums),
+        T::Base(name) => subst.get(name).cloned().or_else(|| enums.resolve(ty)),
+        T::Positive(inner) => resolve_subst(&inner.kind, subst, enums),
         T::Negative(inner) if !inner.kind.is_bottom() => {
-            Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual())
+            Some(resolve_subst(&inner.kind, subst, enums)?.dual())
         }
-        T::Dual(inner) => Some(resolve_with_self(&inner.kind, self_ty, enums)?.dual()),
+        T::Dual(inner) => Some(resolve_subst(&inner.kind, subst, enums)?.dual()),
         T::Effectful(inner, row) => Some(Type::rowed(
-            resolve_with_self(&inner.kind, self_ty, enums)?,
-            enums.resolve_row(row, |_| None, |ty| resolve_with_self(ty, self_ty, enums))?,
+            resolve_subst(&inner.kind, subst, enums)?,
+            enums.resolve_row(row, |_| None, |ty| resolve_subst(ty, subst, enums))?,
+        )),
+        T::Apply(name, args) => {
+            if let Some(found) = subst.get(name) {
+                return Some(found.clone());
+            }
+            let args = args
+                .iter()
+                .map(|arg| resolve_subst(&arg.kind, subst, enums))
+                .collect::<Option<Vec<_>>>()?;
+            if enums.is_negative_decl(name) {
+                Some(Type::Dual(Box::new(Type::Named(name.clone(), args))))
+            } else if enums.declares(name) {
+                Some(Type::Named(name.clone(), args))
+            } else {
+                None
+            }
+        }
+        T::Tensor(items) => Some(Type::Tensor(subst_components(items, subst, enums)?)),
+        T::Par(items) => Some(Type::Par(subst_components(items, subst, enums)?)),
+        T::With(items) => Some(Type::With(subst_components(items, subst, enums)?)),
+        T::Sum(items) => Some(Type::Sum(subst_components(items, subst, enums)?)),
+        T::Fun(a, b) => Some(Type::arrow(
+            resolve_subst(&a.kind, subst, enums)?,
+            resolve_subst(&b.kind, subst, enums)?,
         )),
         _ => enums.resolve(ty),
     }
+}
+
+fn subst_components(
+    items: &[Node<TypeExpr>],
+    subst: &HashMap<String, Type>,
+    enums: &Declarations,
+) -> Option<Vec<Type>> {
+    items.iter().map(|item| resolve_subst(&item.kind, subst, enums)).collect()
 }
 
 /// The type a `select`'s arms name, when one of them does: a record pattern
@@ -1007,10 +1145,22 @@ fn check_trait_signatures(
     names.sort();
     for name in names {
         let span = traits.spans.get(name).copied().unwrap_or(Span { start: 0, end: 0 });
-        let rigid_self = HashMap::from([("Self", env.uni.fresh_rigid())]);
+        let mut owned = HashMap::from([("Self".to_string(), env.uni.fresh_rigid())]);
+        for param in traits.params_of(name) {
+            owned.insert(param.clone(), env.uni.fresh_rigid());
+        }
+        let rigid: HashMap<&str, Type> =
+            owned.iter().map(|(param, ty)| (param.as_str(), ty.clone())).collect();
         for method in &traits.traits[name] {
+            for param in method.value_params.iter().chain(method.continuation_params.iter()) {
+                if let Some(written) = &param.ty
+                    && resolve_rigid(written, &rigid, enums).is_none()
+                {
+                    unresolved_parameter_type(param, span, enums, diags);
+                }
+            }
             if let Some(written) = &method.return_type
-                && resolve_rigid(written, &rigid_self, enums).is_none()
+                && resolve_rigid(written, &rigid, enums).is_none()
             {
                 unresolved_return_type(
                     &format!("method `{}`", method.name),
@@ -1055,21 +1205,34 @@ fn resolve_in_body(ty: &TypeExpr, env: &Env, enums: &Declarations) -> Option<Typ
 
 /// What a declaration's body-scope replaced, to be restored after it: the
 /// bounds in scope, and the type parameters' rigid variables.
-type OuterScope = (Vec<(usize, String, String)>, HashMap<String, Type>);
+type OuterScope = (Vec<crate::env::BoundInScope>, HashMap<String, Type>);
 
-/// Put a declaration's bounds in scope for its body, as (rigid-variable
-/// index, trait, type-parameter name), and return the previous set to
-/// restore afterward.
+/// Put a declaration's bounds in scope for its body, and return the previous
+/// set to restore afterward.
 fn record_bounds(
-    bounds: &[(String, String)],
+    bounds: &[TraitBound],
     rigid_vars: &HashMap<&str, Type>,
+    enums: &Declarations,
     env: &mut Env,
 ) -> OuterScope {
     let outer = env.bounds.clone();
-    for (var, trait_name) in bounds {
-        if let Some(Type::Var(v)) = rigid_vars.get(var.as_str()) {
-            env.bounds.push((*v, trait_name.clone(), var.clone()));
-        }
+    for bound in bounds {
+        let Some(Type::Var(v)) = rigid_vars.get(bound.param.as_str()) else { continue };
+        let Some(args) = bound
+            .args
+            .iter()
+            .map(|ty| resolve_rigid(ty, rigid_vars, enums))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        env.bounds.push(crate::env::BoundInScope {
+            var: *v,
+            trait_name: bound.trait_name.clone(),
+            type_param: bound.param.clone(),
+            args,
+            arg_key: slc_syntax::traits::rendered_args(&bound.args),
+        });
     }
     // The body resolves written types through these too, so an annotation
     // inside it names the declaration's parameter rather than a fresh one.
@@ -1222,10 +1385,29 @@ fn resolve_pending_dicts(env: &mut Env, enums: &Declarations, diags: &mut Vec<Di
     }
     for pending in std::mem::take(&mut env.pending_methods) {
         let target = env.uni.apply(&pending.self_ty);
+        let args: Vec<Type> = pending.trait_args.iter().map(|arg| env.uni.apply(arg)).collect();
+        let open: Vec<&str> = args
+            .iter()
+            .zip(&pending.trait_param_names)
+            .filter(|(ty, _)| has_open_var(ty, env))
+            .map(|(_, name)| name.as_str())
+            .collect();
+        if !open.is_empty() {
+            let names = open.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ");
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{}` needs a type for {names}; nothing fixes what it produces",
+                    pending.method
+                ),
+                span: pending.span,
+            });
+            continue;
+        }
         resolve_method_dispatch(
             &pending.method,
             &pending.trait_name,
             &target,
+            &args,
             pending.span,
             env,
             diags,
@@ -1233,10 +1415,21 @@ fn resolve_pending_dicts(env: &mut Env, enums: &Declarations, diags: &mut Vec<Di
     }
     for pending in std::mem::take(&mut env.pending_dicts) {
         let mut dict_args = Vec::new();
-        for (trait_name, var) in &pending.bounds {
-            let target = env.uni.apply(var);
-            discharge_bound(trait_name, &target, &pending.callee, pending.span, env, diags);
-            if let Some(dict) = dict_for(trait_name, &target, env, pending.span, diags) {
+        for bound in &pending.bounds {
+            let target = env.uni.apply(&bound.var);
+            let args: Vec<Type> = bound.args.iter().map(|arg| env.uni.apply(arg)).collect();
+            discharge_bound(
+                &bound.trait_name,
+                &target,
+                &args,
+                &pending.callee,
+                pending.span,
+                env,
+                diags,
+            );
+            if let Some(dict) =
+                dict_for(&bound.trait_name, &target, &args, env, pending.span, diags)
+            {
                 dict_args.push(dict);
             }
         }
@@ -1457,7 +1650,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let rows_from = env.uni.row_constraints().len();
             let body_row = env.uni.fresh_row();
             let outer_row = env.current_row.replace(body_row);
-            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
+            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, enums, env);
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
@@ -1568,7 +1761,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let rows_from = env.uni.row_constraints().len();
             let body_row = env.uni.fresh_row();
             let outer_row = env.current_row.replace(body_row);
-            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, env);
+            let (outer_bounds, outer_rigid) = record_bounds(bounds, &rigid_vars, enums, env);
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
                 match p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums)) {
@@ -1863,26 +2056,34 @@ fn scrutinee_args(scrutinee: &Type) -> &[Type] {
 fn dict_for(
     bound_trait: &str,
     ty: &Type,
+    trait_args: &[Type],
     env: &mut Env,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) -> Option<slc_syntax::lower::DictExpr> {
-    if let Type::Var(v) = ty {
-        return env.bounds.iter().find(|(bv, bt, _)| bv == v && bt == bound_trait).map(
-            |(_, _, tp)| slc_syntax::lower::DictExpr {
-                name: slc_syntax::lower::dict_param_name(bound_trait, tp),
+    let ty = env.uni.apply(ty);
+    let trait_args: Vec<Type> = trait_args.iter().map(|arg| env.uni.apply(arg)).collect();
+    if let Type::Var(v) = &ty {
+        return env
+            .bounds
+            .iter()
+            .find(|bound| {
+                bound.var == *v
+                    && bound.trait_name == bound_trait
+                    && types_agree(&bound.args, &trait_args)
+            })
+            .map(|bound| slc_syntax::lower::DictExpr {
+                name: slc_syntax::lower::dict_param_name_for(
+                    bound_trait,
+                    &bound.arg_key,
+                    &bound.type_param,
+                ),
                 args: Vec::new(),
-            },
-        );
+            });
     }
-    let key = type_key(ty)?;
-    if !env.traits.has_impl(bound_trait, &key) {
-        return None;
-    }
+    let matched = env.traits.select(bound_trait, &ty, &trait_args).ok()?;
     let mut args = Vec::new();
-    if let Some(impl_bounds) =
-        env.traits.impl_bounds.get(&(bound_trait.to_string(), key.clone())).cloned()
-    {
+    if !matched.bounds.is_empty() {
         // Construction applies the impl's methods to the inner
         // dictionaries; a multi-method dictionary is a tuple, which an
         // application cannot thread through.
@@ -1890,23 +2091,48 @@ fn dict_for(
         if methods > 1 {
             diags.push(Diagnostic {
                 message: format!(
-                    "`{bound_trait}` has several methods, and its impl for `{key}` is \
-                     bounded; constructing that dictionary is not supported yet"
+                    "`{bound_trait}` has several methods, and its impl for `{}` is bounded; \
+                     constructing that dictionary is not supported yet",
+                    matched.key
                 ),
                 span,
             });
             return None;
         }
-        let ty_args = scrutinee_args(ty).to_vec();
-        for (position, inner_trait) in impl_bounds {
-            let inner_ty = env.uni.apply(ty_args.get(position)?);
-            args.push(dict_for(&inner_trait, &inner_ty, env, span, diags)?);
+        for bound in &matched.bounds {
+            let inner_ty = env.uni.apply(scrutinee_args(&ty).get(bound.position)?);
+            let inner_args = {
+                let enums = env.declarations?;
+                bound
+                    .args
+                    .iter()
+                    .map(|ty| instantiate_bound_arg(ty, &matched.subst, enums))
+                    .collect::<Option<Vec<_>>>()?
+            };
+            args.push(dict_for(&bound.trait_name, &inner_ty, &inner_args, env, span, diags)?);
         }
     }
     Some(slc_syntax::lower::DictExpr {
-        name: slc_syntax::lower::dict_global_name(bound_trait, &key),
+        name: slc_syntax::lower::dict_global_name(bound_trait, &matched.key),
         args,
     })
+}
+
+fn pending_bounds(
+    signature: &FunctionSignature,
+    seen: &HashMap<usize, Type>,
+) -> Vec<crate::env::PendingBound> {
+    signature
+        .bounds
+        .iter()
+        .filter_map(|bound| {
+            seen.get(&bound.param).map(|var| crate::env::PendingBound {
+                trait_name: bound.trait_name.clone(),
+                var: var.clone(),
+                args: bound.args.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Fresh unification variables for a declaration's type parameters, ready
@@ -3436,17 +3662,10 @@ fn check_expr_unapplied(
                 // dict parameter when the bound is forwarded.
                 record_signs(&signature, &seen, name, e.span, env);
                 if !signature.bounds.is_empty() {
-                    let bounds = signature
-                        .bounds
-                        .iter()
-                        .filter_map(|(param_index, trait_name)| {
-                            seen.get(param_index).map(|var| (trait_name.clone(), var.clone()))
-                        })
-                        .collect();
                     env.pending_dicts.push(crate::env::PendingDicts {
                         span: e.span,
                         callee: name.clone(),
-                        bounds,
+                        bounds: pending_bounds(&signature, &seen),
                     });
                 }
                 return signature.result.map(|ty| env.uni.apply(&ty));
@@ -4541,17 +4760,10 @@ fn check_expr_unapplied(
                     // bounded function does.
                     record_signs(&signature, &seen, name, stages[index].span, env);
                     if !signature.bounds.is_empty() {
-                        let bounds = signature
-                            .bounds
-                            .iter()
-                            .filter_map(|(position, trait_name)| {
-                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
-                            })
-                            .collect();
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,
                             callee: name.clone(),
-                            bounds,
+                            bounds: pending_bounds(&signature, &seen),
                         });
                     }
                     row_stage = Some(index);
@@ -4662,17 +4874,10 @@ fn check_expr_unapplied(
                     }
                     record_signs(&signature, &seen, name, stages[index].span, env);
                     if !signature.bounds.is_empty() {
-                        let bounds = signature
-                            .bounds
-                            .iter()
-                            .filter_map(|(position, trait_name)| {
-                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
-                            })
-                            .collect();
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,
                             callee: name.clone(),
-                            bounds,
+                            bounds: pending_bounds(&signature, &seen),
                         });
                     }
                     acc = signature.result.map(|ty| env.uni.apply(&ty)).unwrap_or(Type::ONE);
@@ -4884,17 +5089,10 @@ fn check_expr_unapplied(
                         let signature = env.functions.get(name).expect("checked above");
                         let (signature, seen) = instantiate(signature, &mut env.uni);
                         record_signs(&signature, &seen, name, stages[index].span, env);
-                        let bounds = signature
-                            .bounds
-                            .iter()
-                            .filter_map(|(position, trait_name)| {
-                                seen.get(position).map(|var| (trait_name.clone(), var.clone()))
-                            })
-                            .collect();
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,
                             callee: name.clone(),
-                            bounds,
+                            bounds: pending_bounds(&signature, &seen),
                         });
                         signed = match signature.result {
                             Some(result) if !signature.params.is_empty() => Type::rowed(
@@ -5695,6 +5893,44 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn a_trait_parameter_is_solved_by_the_type_the_call_produces() {
+        assert!(
+            check(
+                "enum Wrap { Held(i64) }
+                 trait Into<+U> { fn into(self: Self) -> U; }
+                 impl Into<i64> for Wrap {
+                     fn into(self: Wrap) -> i64 { match self { Held(n) => n } }
+                 }
+                 impl Into<String> for Wrap {
+                     fn into(self: Wrap) -> String {
+                         match self { Held(n) => <n | int_to_str }
+                     }
+                 }
+                 fn number(w: Wrap) -> i64 { <w | into }
+                 fn text(w: Wrap) -> String { <w | into }
+                 fn to_text<+T: Into<String>>(x: T) -> String { <x | into }
+                 command main | (exit: -i32) / {IO} { <0 | exit> }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn an_unconstrained_trait_parameter_is_refused() {
+        let diags = check(
+            "enum Wrap { Held(i64) }
+             trait Into<+U> { fn into(self: Self) -> U; }
+             impl Into<i64> for Wrap {
+                 fn into(self: Wrap) -> i64 { match self { Held(n) => n } }
+             }
+             fn ambiguous(w: Wrap) -> i64 { let x = <w | into; 0 }
+             command main | (exit: -i32) / {IO} { <0 | exit> }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("needs a type for `U`")), "{diags:?}");
     }
 
     #[test]

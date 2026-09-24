@@ -47,8 +47,8 @@ fn a_module_in_a_file_of_its_own_is_one_line() {
 #[test]
 fn several_bounds_are_joined_by_spaced_pluses() {
     assert_eq!(
-        fmt("fn f<+T:Ord+Display,-K:Show>(x:T)->T{x}\nimpl<+T:Ord+Loud>Loud for Pair<T>{}"),
-        "fn f<+T: Ord + Display, -K: Show>(x: T) -> T { x }\nimpl<+T: Ord + Loud> Loud for Pair<T> {}\n"
+        fmt("fn f<+T:Ord+Into<i64>,-K:Show>(x:T)->T{x}\nimpl<+T:Ord+Loud>Into<T> for Pair<T>{}"),
+        "fn f<+T: Ord + Into<i64>, -K: Show>(x: T) -> T { x }\nimpl<+T: Ord + Loud> Into<T> for Pair<T> {}\n"
     );
 }
 
@@ -169,6 +169,10 @@ effect Reader<+T> { fn ask() -> T; }
 trait Show {
     fn show(self: Self) -> String;
     command emit(self: Self) | (out: String);
+}
+
+trait Into<+U> {
+    fn into(self: Self) -> U;
 }
 
 impl<+T: Show> Show for List<T> {

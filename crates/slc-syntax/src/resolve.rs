@@ -627,14 +627,16 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         | Decl::Menu { type_params, .. }
         | Decl::Form { type_params, .. }
         | Decl::Effect { type_params, .. }
+        | Decl::Trait { type_params, .. }
         | Decl::Impl { type_params, .. } => type_params.iter().cloned().collect(),
         _ => HashSet::new(),
     };
     scope.type_parameters.borrow_mut().push(parameters);
     match d {
-        Decl::Fn { name, params, return_type, body, effects, .. } => {
+        Decl::Fn { name, params, return_type, body, effects, bounds, .. } => {
             *name = scope.qualify(name);
             resolve_row(effects, stack);
+            resolve_bounds(bounds, stack);
             let mut bound = HashSet::new();
             for p in params.iter_mut() {
                 resolve_param(p, stack);
@@ -654,10 +656,12 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             return_type,
             body,
             effects,
+            bounds,
             ..
         } => {
             *name = scope.qualify(name);
             resolve_row(effects, stack);
+            resolve_bounds(bounds, stack);
             let mut bound = HashSet::new();
             for p in value_params.iter_mut().chain(continuation_params.iter_mut()) {
                 resolve_param(p, stack);
@@ -714,8 +718,12 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 }
             }
         }
-        Decl::Impl { trait_name, for_type, methods, .. } => {
+        Decl::Impl { trait_name, trait_args, for_type, bounds, methods, .. } => {
             *trait_name = resolve_name(trait_name, stack);
+            for arg in trait_args {
+                resolve_type(arg, stack);
+            }
+            resolve_bounds(bounds, stack);
             resolve_type(for_type, stack);
             for method in methods {
                 // A method is named by its trait, not by the module the impl
@@ -750,6 +758,15 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Decl::Mod { .. } | Decl::Use { .. } => {}
     }
     scope.type_parameters.borrow_mut().pop();
+}
+
+fn resolve_bounds(bounds: &mut [crate::ast::TraitBound], stack: &[Scope]) {
+    for bound in bounds {
+        bound.trait_name = resolve_name(&bound.trait_name, stack);
+        for arg in &mut bound.args {
+            resolve_type(arg, stack);
+        }
+    }
 }
 
 fn resolve_param(p: &mut Param, stack: &[Scope]) {

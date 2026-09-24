@@ -28,6 +28,15 @@ fn run_example(name: &str) -> (String, String, bool) {
 fn updated_feature_examples_have_exact_outputs() {
     for (name, expected) in [
         (
+            "basics/into.sl",
+            "\
+7
+7
+7
+4
+",
+        ),
+        (
             "basics/sets.sl",
             "\
 {m: 1}
