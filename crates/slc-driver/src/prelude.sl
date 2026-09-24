@@ -256,6 +256,23 @@ impl Ord for Bool {
     fn ge(self: Bool, other: Bool) -> Bool { <(self, other) | __ge }
 }
 
+// A non-negative `u64` derived from the value. Equal values hash equal.
+// The mix is `__hash`: a fold written here would have to cross integer
+// widths, and that conversion is still open. The high bit is clear, so
+// `rem` of a hash by a width is a slot in `0 .. width`.
+trait Hash {
+    fn hash(self: Self) -> u64;
+}
+impl Hash for i64 { fn hash(self: i64) -> u64 { <self | __hash } }
+impl Hash for i8 { fn hash(self: i8) -> u64 { <self | __hash } }
+impl Hash for i32 { fn hash(self: i32) -> u64 { <self | __hash } }
+impl Hash for u64 { fn hash(self: u64) -> u64 { <self | __hash } }
+impl Hash for u8 { fn hash(self: u8) -> u64 { <self | __hash } }
+impl Hash for u32 { fn hash(self: u32) -> u64 { <self | __hash } }
+impl Hash for char { fn hash(self: char) -> u64 { <self | __hash } }
+impl Hash for String { fn hash(self: String) -> u64 { <self | __hash } }
+impl Hash for Bool { fn hash(self: Bool) -> u64 { <self | __hash } }
+
 // The character of a `String` at a position, failing at run time when the
 // position is out of range; `char_at` offers that outcome to a continuation.
 fn index(s: String, i: i64) -> char { <(s, i) | __index }

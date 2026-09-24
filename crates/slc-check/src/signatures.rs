@@ -97,6 +97,9 @@ fn builtin_functions() -> Vec<Builtin> {
         function("__gt", vec![same.clone(), same.clone()], Some(bool_.clone())),
         function("__le", vec![same.clone(), same.clone()], Some(bool_.clone())),
         function("__ge", vec![same.clone(), same.clone()], Some(bool_.clone())),
+        // Beneath the prelude's `Hash`. One machine word in, a non-negative
+        // `u64` out — the high bit is clear so `rem` can be a slot index.
+        function("__hash", vec![same.clone()], Some(Type::Pos(U64))),
         function("str_len", vec![string.clone()], Some(i64.clone())),
         function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
         function("int_to_str", vec![i64.clone()], Some(string.clone())),

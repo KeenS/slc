@@ -111,13 +111,6 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   is already recognisable — its parse error is at the end of input, with no
   extent — and `--fuel` bounds one that does not stop.
 
-- **Collections beyond `List`.** The one container is a linked list, and the
-  one indexed thing is a `String`, so every lookup is linear and there is no
-  map, set, or array. What is open is where they belong — builtin types
-  with builtin operations, as `String` is, or library types over some
-  smaller primitive — and what an indexed structure means on the negative
-  side, where `Stream` and `Seq` already mirror `List`.
-
 - **What traits still lack.** A trait is a set of signatures: no default
   methods, no associated types, no supertraits. Each is ordinary in Rust,
   whose flavour the surface keeps; whether each earns its place here, given

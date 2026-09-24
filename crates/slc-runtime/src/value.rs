@@ -297,6 +297,7 @@ pub fn install_stdlib(env: &mut Env) {
         "__gt",
         "__le",
         "__ge",
+        "__hash",
         "str_len",
         "str_concat",
         "int_to_str",

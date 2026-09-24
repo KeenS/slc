@@ -9,11 +9,14 @@ one must give.
 The everyday language: literals, functions, data, patterns, traits, modules. Start with `hello.sl`.
 
 - [`arithmetic.sl`](basics/arithmetic.sl) — Arithmetic with surface operators
+- [`array.sl`](basics/array.sl) — An immutable array: a 4-way trie of `Array4` nodes
 - [`comparison.sl`](basics/comparison.sl) — Comparisons and boolean operators
 - [`dictionaries.sl`](basics/dictionaries.sl) — Traits with no runtime method value: dispatch is resolved at compile time
+- [`hash.sl`](basics/hash.sl) — `Hash`: a non-negative `u64` for a value
 - [`hello.sl`](basics/hello.sl) — The simplest Slant program
 - [`lambda.sl`](basics/lambda.sl) — Lambda abstraction and immediate application
 - [`lists.sl`](basics/lists.sl) — Lists — an ordinary recursive enum, defined in the prelude
+- [`maps.sl`](basics/maps.sl) — Ordered maps: a persistent AVL tree in the library
 - [`match_exhaustive.sl`](basics/match_exhaustive.sl) — Match exhaustiveness checking
 - [`namespaces.sl`](basics/namespaces.sl) — Modules: named scopes, flattened by resolution
 - [`nested_calls.sl`](basics/nested_calls.sl) — Nested calls compose with surface operators
@@ -21,6 +24,7 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`patterns.sl`](basics/patterns.sl) — A binder is a pattern
 - [`polymorphism.sl`](basics/polymorphism.sl) — Polymorphism: generic declarations, and `let` under the value restriction
 - [`projection.sl`](basics/projection.sl) — Projection: `.i` reads a tuple component, `.field` reads a record field
+- [`sets.sl`](basics/sets.sl) — HashMap, HashSet, and the ordered Set
 - [`stdlib.sl`](basics/stdlib.sl) — The library has two layers, and this program draws on the second
 - [`strings.sl`](basics/strings.sl) — String concatenation, indexing, and slicing
 - [`sums.sl`](basics/sums.sl) — Anonymous sums

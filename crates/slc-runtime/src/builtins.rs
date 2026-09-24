@@ -278,8 +278,53 @@ pub fn apply_builtin(
             (Some(Value::Str(a)), Some(Value::Str(b))) => Ok(crate::value::bool_value(a == b)),
             _ => Err(BuiltinError::TypeMismatch("str_eq expects two Strings".into())),
         },
+        // Beneath the prelude's `Hash`. The high bit is clear: Slant's `rem`
+        // is the signed remainder of the machine word, so a negative hash
+        // would not be a slot in `0 .. width`.
+        "__hash" => hash_value(args.first()),
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
+}
+
+/// Golden-ratio odd constant. Multiplying by it spreads nearby words.
+const HASH_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
+/// FNV-1a 64-bit offset basis and prime, over Unicode scalar values.
+const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;
+const FNV_PRIME: u64 = 0x100_0000_01B3;
+
+fn hash_word(n: u64) -> i64 {
+    (n.wrapping_mul(HASH_MIX) & 0x7FFF_FFFF_FFFF_FFFF) as i64
+}
+
+fn hash_str(s: &str) -> i64 {
+    let mut acc = FNV_OFFSET;
+    for c in s.chars() {
+        acc ^= u64::from(u32::from(c));
+        acc = acc.wrapping_mul(FNV_PRIME);
+    }
+    (acc & 0x7FFF_FFFF_FFFF_FFFF) as i64
+}
+
+fn hash_value(value: Option<&Value>) -> Result<Value, BuiltinError> {
+    let hashed = match value {
+        Some(Value::Int(n)) => hash_word(*n as u64),
+        Some(Value::Char(c)) => hash_word(u64::from(u32::from(*c))),
+        Some(Value::Str(s)) => hash_str(s),
+        Some(v) => match crate::value::as_bool(v) {
+            Some(bit) => hash_word(u64::from(bit)),
+            None => {
+                return Err(BuiltinError::TypeMismatch(
+                    "__hash expects an integer, char, String, or Bool".into(),
+                ));
+            }
+        },
+        None => {
+            return Err(BuiltinError::TypeMismatch(
+                "__hash expects an integer, char, String, or Bool".into(),
+            ));
+        }
+    };
+    Ok(Value::Int(hashed))
 }
 
 fn two_ints(name: &str, args: &[Value]) -> Result<(i64, i64), BuiltinError> {
@@ -302,6 +347,25 @@ mod tests {
             let r = apply_builtin("__display", &[value], &mut buf).unwrap();
             assert_eq!(r, Value::Str(text.into()));
         }
+    }
+
+    #[test]
+    fn hash_is_stable_non_negative_and_agrees_on_equal_values() {
+        let mut buf = Vec::new();
+        let mut hash = |value: Value| apply_builtin("__hash", &[value], &mut buf).unwrap();
+        let zero = hash(Value::Int(0));
+        let one = hash(Value::Int(1));
+        let neg = hash(Value::Int(-1));
+        assert!(matches!(zero, Value::Int(h) if h >= 0));
+        assert!(matches!(neg, Value::Int(h) if h >= 0));
+        assert_ne!(zero, one);
+        assert_ne!(neg, one);
+        assert_eq!(hash(Value::Str("ab".into())), hash(Value::Str("ab".into())));
+        assert_ne!(hash(Value::Str("ab".into())), hash(Value::Str("ba".into())));
+        assert_ne!(hash(crate::value::bool_value(false)), hash(crate::value::bool_value(true)));
+        assert_ne!(hash(Value::Char('a')), hash(Value::Char('b')));
+        // The empty string is the masked FNV offset basis, not the mix of 0.
+        assert_ne!(hash(Value::Str(String::new())), zero);
     }
 
     #[test]

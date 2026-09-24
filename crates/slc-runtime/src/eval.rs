@@ -165,7 +165,7 @@ pub(crate) fn collect_args(name: &str, v: &Value, out: &mut Vec<Value>) {
 /// The number of arguments each builtin expects.
 pub(crate) fn builtin_arity(name: &str) -> usize {
     match name {
-        "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg"
+        "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg" | "__hash"
         | "__file_exists" => 1,
         "__index" => 2,
         "__close_file" => 1,

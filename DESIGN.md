@@ -1889,7 +1889,9 @@ as in Rust) with impls for `i64`, `String`, `Bool`, and the unit, tuples and
 choices up to eight components, rendered as they are written — and
 `to_string<T: Display>`; `enum Bool { False, True }`, the type every yes-or-no
 answer has; arithmetic and comparison as the traits `Add`, `Sub`, `Mul`,
-`Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `index`,
+`Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `Hash`,
+answering a non-negative `u64` for the integer widths, `char`, `Bool`, and
+`String`; `index`,
 a `String`'s character at a position; and `not`, which negates a `Bool`,
 since there is no `!`. A
 program's own declaration of a prelude name shadows it.
@@ -1905,6 +1907,11 @@ it offers `pub`; the rest is its own.
 | module | what it offers |
 |---|---|
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `map` | `Map<K, V>`, an AVL tree: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, the outcome-offering `command get`, and `Display` (`{a: 1, b: 2}`) |
+| `set` | `Set<K>`, that tree with nothing beside the key: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, and `Display` (`{1, 2, 3}`) |
+| `hashmap` | `HashMap<K, V>`, a 4-way hash trie: the same operations, keyed by `Hash` and `Eq` |
+| `hashset` | `HashSet<K>`, that trie with nothing beside the key |
+| `array` | `Array<T>`, an immutable 4-way trie: `empty`, `push`, `length`, `of_list`, `to_list`, and the outcome-offering `get` and `update` (`[1, 2, 3]`). `Array4<T>` is one branch, with `slots`, `slot_get`, and `slot_update` |
 | `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem` |
@@ -1914,6 +1921,42 @@ it offers `pub`; the rest is its own.
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
+
+`Map<K, V>` is that tree, and it is library code the way `List` is. Keys and
+values are positive. A key is compared with `Ord`; two keys are the same when
+neither is less. That is equality only when `Ord` is a total order: a `NaN`
+compares that way with every float, so it collides with the node the search
+reaches. Each node stores its height, and `insert` and `remove` rebalance
+until a node leans by at most one. Both answer a new map and leave the map
+they were given unchanged. `get` can find nothing, so it is a `command`
+offering `found` and `missing`, as `list::nth` does. A map has no menu of its
+own: supplying a key and receiving a value is a function, and `Stream` and
+`Seq` remain the negative sequences. `dual(Map<K, V>)` is a consumer of that
+map. [`examples/basics/maps.sl`](examples/basics/maps.sl) runs it.
+
+`Hash` answers a non-negative `u64`. Equal values hash equal. The mix is the
+builtin `__hash`: a word is multiplied by the odd constant `0x9E3779B97F4A7C15`
+and the high bit is cleared, and a `String` is FNV-1a over its scalar values
+with the same clear. The high bit stays clear because `rem` is the signed
+remainder of the machine word, so a negative hash would not be a slot in
+`0 .. width`. The integer widths, `char`, `Bool`, and `String` have impls.
+[`examples/basics/hash.sl`](examples/basics/hash.sl) runs them.
+
+`Array<T>` is an immutable array: a 4-way trie of positive elements. `Array4<T>`
+is one branch, one to four slots, every slot occupied. A computed index is a
+match scanned from the first arm, so the branch stays four wide. The digits of
+an index in base four select the path. `push` and `update` answer a new array
+and leave the one they were given unchanged. `get` and `update` can miss, so
+each offers that outcome to a continuation, as `list::nth` does.
+[`examples/basics/array.sl`](examples/basics/array.sl) runs it.
+
+`HashMap<K, V>` is the unordered map. The path is the hash in base four, and
+each digit selects a slot of an `Array4`. A bitmap records which slots are
+occupied; the children are packed from the left in slot order. Keys that
+hash equal share a list. A key needs `Hash` and `Eq`, and equal keys must
+hash equal. `Set<K>` is `Map` with nothing stored beside the key, so its keys
+come out in order. `HashSet<K>` is `HashMap` in the same way.
+[`examples/basics/sets.sl`](examples/basics/sets.sl) runs all three.
 
 String assembly is a library operation, not a new literal or variadic syntax.
 `string::new()` returns a `string::Builder`, whose `append` menu item answers

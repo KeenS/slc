@@ -27,6 +27,121 @@ fn run_example(name: &str) -> (String, String, bool) {
 #[test]
 fn updated_feature_examples_have_exact_outputs() {
     for (name, expected) in [
+        (
+            "basics/sets.sl",
+            "\
+{m: 1}
+{m: 9, a: 2}
+2
+9
+-1
+true
+2
+{m: 9}
+{a: 9, c: 4}
+2
+true
+true
+false
+true
+{B: 2}
+2
+{a, b}
+{a}
+{1, 2, 3}
+[1, 2, 3]
+{1, 3}
+3
+",
+        ),
+        (
+            "basics/hash.sl",
+            "\
+0
+8438048531980770162
+7046029254386353131
+8438048531980770162
+8438048531980770162
+8288065088631931893
+1242035834245578762
+0
+2177342782468422677
+5472609002491880229
+620445648566982762
+620445648566982762
+623241706636955660
+",
+        ),
+        (
+            "basics/array.sl",
+            "\
+2
+[1, 2]
+2
+-1
+4
+[a, b, c, d]
+a
+d
+[a, b, z, d]
+[a, b, c, d]
+nothing at that index
+0
+[]
+20
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+1
+4
+5
+16
+17
+20
+-1
+-1
+100
+17
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 100, 18, 19, 20]
+65
+1
+64
+65
+",
+        ),
+        (
+            "basics/maps.sl",
+            "\
+true
+false
+true
+true
+true
+{m: 1}
+{a: 2, m: 1, z: 3}
+1
+nothing for that key
+{a: 2, m: 9, z: 3}
+{a: 2, m: 1, z: 3}
+{a: 2, b: 3}
+true
+false
+2
+{a: 2, b: 3}
+{b: 3}
+7
+3
+[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7)]
+3
+[(1, 1), (2, 2), (3, 3), (5, 5), (6, 6), (7, 7)]
+3
+[(1, 1), (2, 2), (3, 3), (5, 5), (7, 7)]
+3
+[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7)]
+3
+[(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7)]
+{}
+0
+",
+        ),
         ("effects/handler_forwarding.sl", "complete: 30\nforwarded: 42\n"),
         ("effects/escaping_exits.sl", "stored without running\ntick on activation\n42\n"),
         ("effects/handler_answers.sl", "resumed: answer: 42\n"),
