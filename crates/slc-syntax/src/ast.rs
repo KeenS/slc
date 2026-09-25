@@ -1,4 +1,4 @@
-//! Surface AST for Slant.
+//! Surface AST for SLC.
 
 use crate::token::Span;
 
@@ -606,6 +606,11 @@ pub enum Decl {
         type_params: Vec<String>,
         /// The polarity each type parameter declares, `<+U>` or `<-U>`.
         type_param_signs: Vec<(String, ParamPolarity)>,
+        /// `trait Ord: Eq + Hash` — parents, in the order written. A bound
+        /// on the child carries a dictionary for each parent too.
+        supers: Vec<SuperTrait>,
+        /// Associated types, `type Item;`. Each impl writes the type.
+        assocs: Vec<String>,
         methods: Vec<TraitMethod>,
     },
     /// An `impl Trait for Type { … }`: the methods that make `Type` satisfy
@@ -621,6 +626,8 @@ pub enum Decl {
         type_param_signs: Vec<(String, ParamPolarity)>,
         bounds: Vec<TraitBound>,
         for_type: TypeExpr,
+        /// `type Item = i64;`, in the order written.
+        assocs: Vec<(String, TypeExpr)>,
         methods: Vec<Node<Decl>>,
     },
     /// An effect: a named set of operations a computation may perform.
@@ -645,17 +652,36 @@ pub struct EffectOp {
     pub return_type: Option<TypeExpr>,
 }
 
+/// A parent trait: `trait Ord: Eq`. Arguments are the child's type
+/// parameters applied to the parent, `trait Foo<+U>: Bar<U>`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuperTrait {
+    pub trait_name: String,
+    pub args: Vec<TypeExpr>,
+}
+
 /// One bound on a type parameter: `T: Into<String>` is `Into` applied to
-/// `String`, and `T: Show` is `Show` applied to nothing.
+/// `String`, and `T: Show` is `Show` applied to nothing. `pins` names
+/// associated types the bound fixes, `T: Walk<Item = i64>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitBound {
     pub param: String,
     pub trait_name: String,
     pub args: Vec<TypeExpr>,
+    pub pins: Vec<AssocPin>,
 }
 
-/// One method signature in a trait, headed like a `fn` or a `command` but
-/// ending in `;` instead of a body. `Self` stands for the implementing type.
+/// `Item = i64` inside a trait bound. The dictionary is still the trait's;
+/// the pin is an equality checked where the parameter becomes a real type.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocPin {
+    pub name: String,
+    pub ty: TypeExpr,
+}
+
+/// One method of a trait. A signature ends in `;`. A body is the default an
+/// impl gets when it does not write the method. `Self` stands for the
+/// implementing type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraitMethod {
     pub name: String,
@@ -666,6 +692,8 @@ pub struct TraitMethod {
     pub value_params: Vec<Param>,
     pub continuation_params: Vec<Param>,
     pub return_type: Option<TypeExpr>,
+    /// The default body. `None` means each impl writes the method.
+    pub body: Option<Node<Expr>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

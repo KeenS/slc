@@ -1,7 +1,7 @@
 # Typed effects and composable capture
 
 Status: implemented, including source generic effects, invariant argument
-inference, scoped handler matching and the `control` library. `DESIGN.md`
+inference, scoped handler matching and the `control` library. `docs/design/effects.md`
 defines the language rules. Existing non-generic effects keep their source
 syntax and runtime behaviour.
 

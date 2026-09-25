@@ -66,6 +66,11 @@ pub enum MethodDispatch {
 pub struct DictExpr {
     pub name: String,
     pub args: Vec<DictExpr>,
+    /// How many methods the constructed dictionary holds. One method is the
+    /// function itself. Several methods are a tuple, and each method of a
+    /// bounded impl is applied to `args` before the tuple is built — a tuple
+    /// cannot be applied.
+    pub methods: usize,
 }
 
 /// What the checker resolved about a program's trait dispatch, handed to
@@ -395,10 +400,19 @@ fn call_groups(span: Span) -> Option<usize> {
 fn dict_term(dict: &DictExpr) -> Term {
     let base = Term::Var(dict.name.clone());
     if dict.args.is_empty() {
-        base
-    } else {
-        call_curried(base, dict.args.iter().map(dict_term).collect())
+        return base;
     }
+    let args: Vec<Term> = dict.args.iter().map(dict_term).collect();
+    if dict.methods <= 1 {
+        return call_curried(base, args);
+    }
+    Term::Tuple(
+        (0..dict.methods)
+            .map(|index| {
+                call_curried(dict_projection(&dict.name, index, dict.methods), args.clone())
+            })
+            .collect(),
+    )
 }
 
 /// The component index the checker resolved for a projection at `span`.

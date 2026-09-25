@@ -10,10 +10,13 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 
 - [`arithmetic.sl`](basics/arithmetic.sl) — Arithmetic with surface operators
 - [`array.sl`](basics/array.sl) — An immutable array: a 4-way trie of `Array4` nodes
+- [`associated.sl`](basics/associated.sl) — An associated type: the impl chooses it, and a bound may pin it
+- [`builders.sl`](basics/builders.sl) — Builders: the negative side of the maps and sets
 - [`comparison.sl`](basics/comparison.sl) — Comparisons and boolean operators
+- [`defaults.sl`](basics/defaults.sl) — A default method: `Eq` writes `eq`, and `ne` is its negation
 - [`dictionaries.sl`](basics/dictionaries.sl) — Traits with no runtime method value: dispatch is resolved at compile time
 - [`hash.sl`](basics/hash.sl) — `Hash`: a non-negative `u64` for a value
-- [`hello.sl`](basics/hello.sl) — The simplest Slant program
+- [`hello.sl`](basics/hello.sl) — The simplest SLC program
 - [`into.sl`](basics/into.sl) — `Into`: a trait parameter solved by the expected type, and integer width conversions
 - [`lambda.sl`](basics/lambda.sl) — Lambda abstraction and immediate application
 - [`lists.sl`](basics/lists.sl) — Lists — an ordinary recursive enum, defined in the prelude
@@ -29,11 +32,12 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`stdlib.sl`](basics/stdlib.sl) — The library has two layers, and this program draws on the second
 - [`strings.sl`](basics/strings.sl) — String concatenation, indexing, and slicing
 - [`sums.sl`](basics/sums.sl) — Anonymous sums
+- [`supertraits.sl`](basics/supertraits.sl) — A supertrait: `T: Rank` carries `Eq` and `Rank`
 - [`traits.sl`](basics/traits.sl) — Traits: ad-hoc polymorphism by dispatch on a value's type
 
 ## [`duality/`](duality) — Both sides of the mirror
 
-What is Slant's own: polarity, continuations as values, `mu` and `select`, menus and forms, and `|` as flow. Start with `two_styles.sl`.
+What is SLC's own: polarity, continuations as values, `mu` and `select`, menus and forms, and `|` as flow. Start with `two_styles.sl`.
 
 - [`classical.sl`](duality/classical.sl) — Classical control: double negation elimination and excluded middle
 - [`codata_impls.sl`](duality/codata_impls.sl) — Traits meet the negative side, in both directions

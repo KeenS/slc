@@ -19,6 +19,8 @@ pub(crate) struct BoundInScope {
     pub(crate) type_param: String,
     pub(crate) args: Vec<Type>,
     pub(crate) arg_key: String,
+    /// Associated types this bound pins, `Item = i64`.
+    pub(crate) pins: Vec<(String, Type)>,
 }
 
 /// A local binding: its type, and — for a `let` of a value form — the
@@ -37,6 +39,8 @@ pub(crate) struct PendingBound {
     pub(crate) trait_name: String,
     pub(crate) var: Type,
     pub(crate) args: Vec<Type>,
+    /// Pins, freshened with the call's template variables.
+    pub(crate) pins: Vec<(String, Type)>,
 }
 
 /// One bounded call awaiting its dictionaries: where it stands, who it

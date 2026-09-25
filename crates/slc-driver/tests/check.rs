@@ -38,7 +38,7 @@ fn a_program_that_would_not_stop_is_still_checked() {
 #[test]
 fn each_phase_reports_as_it_does_under_run() {
     for (name, source, expected) in [
-        ("parse", "fn f() -> i64 { if }", "parse error: there is no `if`"),
+        ("parse", "fn f() -> i64 { a && b }", "parse error:"),
         ("type", "fn f() -> i64 { \"text\" }", "type:"),
         (
             "exhaustive",

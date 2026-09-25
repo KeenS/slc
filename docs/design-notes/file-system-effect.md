@@ -1,8 +1,9 @@
 # The file system as an effect
 
-Status: implemented. `DESIGN.md`'s `IO` section and the `fs` module are the
-definition; this note records why the design was taken. Landing it also
-qualified an effect's operations and the effects rows name by their module,
+Status: implemented. The `IO` section of `docs/design/effects.md` and the
+`fs` module are the definition; this note records why the design was taken.
+Landing it also qualified an effect's operations and the effects rows name
+by their module,
 and typed a handler's clauses from the operations they answer.
 
 ## Why
@@ -49,7 +50,7 @@ passes through both.
 1. **Originally no new language feature; now superseded.** The function
    encoding above remains useful, but first-class handler values are now
    implemented: `handler { … }` constructs one and `with h handle c`
-   installs it. `DESIGN.md` specifies `Handler<A, B, E, F>`; the
+   installs it. `docs/design/effects.md` specifies `Handler<A, B, E, F>`; the
    `examples/effects/handler_values.sl` example stores, selects and composes them.
 2. **`fs` declares `Fs`,** one operation per primitive: reading a file,
    writing one, opening one, reading a line, closing, and asking whether a
@@ -86,7 +87,7 @@ that behavior visible to the checker rather than silently erasing the effect.
 - `examples/programs/file_io.sl` is rewritten to install the handler; its output does
   not change. A new example, or a test, reads a file through a mock.
 - The primitives still charge `{IO}`: only a handler calls them.
-- `DESIGN.md`'s `IO` section loses its stale reason that an operation cannot
+- The `IO` section loses its stale reason that an operation cannot
   carry an outcome, and `PLAN.md` its known limit "The file operations
   perform `IO` without an operation".
 

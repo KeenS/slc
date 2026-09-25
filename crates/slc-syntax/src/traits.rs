@@ -43,6 +43,10 @@ pub struct ImplHead {
     pub trait_args: Vec<TypeExpr>,
     pub type_params: Vec<String>,
     pub bounds: Vec<PositionedBound>,
+    /// Associated types, with `Self` and the trait's parameters already
+    /// replaced. What remains is the impl's own parameters.
+    pub assocs: Vec<(String, TypeExpr)>,
+    pub span: Span,
 }
 
 /// An impl selected for one use, with its type parameters instantiated.
@@ -69,9 +73,18 @@ pub struct TraitInfo {
     pub method_owner: HashMap<String, String>,
     /// Method name → (impl key → the mangled function implementing it).
     pub method_impls: HashMap<String, HashMap<String, String>>,
+    /// Trait name → the parents written on it, not yet closed under their
+    /// own parents. `Ord: Eq` stores `Eq`.
+    pub supers: HashMap<String, Vec<SuperTrait>>,
+    /// Trait name → its associated types, in declaration order.
+    pub assocs: HashMap<String, Vec<String>>,
     /// Trait name → its impls, for selection at a use. A bounded impl's
     /// bounds ride on the head: its dictionary is constructed from them.
     pub heads: HashMap<String, Vec<ImplHead>>,
+    /// Fresh spans assigned to copied default bodies, mapped back to the
+    /// span in the trait. Dispatch is recorded by span, so two copies cannot
+    /// share one.
+    pub span_origins: HashMap<Span, Span>,
 }
 
 impl TraitInfo {
@@ -123,6 +136,21 @@ impl TraitInfo {
             )),
         }
     }
+}
+
+/// The nominal type of a projection `Walk::Item<…>`: trait arguments, then
+/// the implementing type. An unreduced one is opaque and positive, the way
+/// a `data` name is, until an impl or a pin gives it a type.
+pub const ASSOC_MARK: &str = "$assoc$";
+
+pub fn assoc_type_name(trait_name: &str, item: &str) -> String {
+    format!("{ASSOC_MARK}{trait_name}${item}")
+}
+
+/// `Walk` and `Item` out of [`assoc_type_name`].
+pub fn parse_assoc_type_name(name: &str) -> Option<(&str, &str)> {
+    let rest = name.strip_prefix(ASSOC_MARK)?;
+    rest.rsplit_once('$')
 }
 
 /// `Into<i64>`, or the bare trait when it takes no arguments.
@@ -183,13 +211,48 @@ fn mangle(trait_name: &str, key: &str, method: &str) -> String {
 pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitError>> {
     let mut info = TraitInfo::default();
     let mut errors = Vec::new();
+    let mut spans = Spans::new();
 
     // Traits first: names, methods, and method-name uniqueness.
     for d in &program.decls {
-        if let Decl::Trait { name, methods, type_params, type_param_signs, .. } = &d.kind {
+        if let Decl::Trait {
+            name, methods, type_params, type_param_signs, supers, assocs, ..
+        } = &d.kind
+        {
             info.trait_params.insert(name.clone(), type_params.clone());
             info.trait_param_signs.insert(name.clone(), type_param_signs.clone());
+            info.supers.insert(name.clone(), supers.clone());
+            let mut seen_assocs = HashSet::new();
+            for item in assocs {
+                if !seen_assocs.insert(item.clone()) {
+                    errors.push(TraitError {
+                        message: format!("`{name}` declares the associated type `{item}` twice"),
+                        span: d.span,
+                    });
+                }
+                if item == "Self" || type_params.iter().any(|param| param == item) {
+                    errors.push(TraitError {
+                        message: format!(
+                            "`{item}` is a type parameter of `{name}`; an associated type takes \
+                             another name"
+                        ),
+                        span: d.span,
+                    });
+                }
+            }
+            info.assocs.insert(name.clone(), assocs.clone());
             for m in methods {
+                if let Some(body) = &m.body
+                    && calls_method(&body.kind, &m.name)
+                {
+                    errors.push(TraitError {
+                        message: format!(
+                            "`{}` is the default for `{name}`, and its body calls `{0}`",
+                            m.name
+                        ),
+                        span: body.span,
+                    });
+                }
                 if let Some(other) = info.method_owner.insert(m.name.clone(), name.clone()) {
                     errors.push(TraitError {
                         message: format!(
@@ -205,6 +268,14 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
             info.spans.insert(name.clone(), d.span);
         }
     }
+    for (name, parents) in &info.supers {
+        if let Some(cycle) = super_cycle(&info, name, parents) {
+            errors.push(TraitError {
+                message: format!("`{cycle}` is a supertrait of itself"),
+                span: info.spans.get(name).copied().unwrap_or(Span { start: 0, end: 0 }),
+            });
+        }
+    }
 
     // Impls: coherence, method rewriting, registry.
     let mut out = Vec::new();
@@ -218,8 +289,11 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                 type_param_signs,
                 bounds,
                 for_type,
+                assocs,
                 methods,
             } => {
+                let expanded = expand_bounds(bounds, &info);
+                let bounds = &expanded;
                 let Some(self_key) = type_key(for_type) else {
                     errors.push(TraitError {
                         message: "this type cannot carry an impl in v1".into(),
@@ -277,6 +351,40 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                 // arguments, so a call can read the element type off the
                 // receiver.
                 let positioned_bounds = position_bounds(for_type, bounds);
+                let trait_methods = info.traits.get(trait_name).cloned().unwrap_or_default();
+                let subst = trait_subst(for_type, &declared, trait_args);
+                let declared_assocs = info.assocs.get(trait_name).cloned().unwrap_or_default();
+                let mut seen_assocs = HashSet::new();
+                let mut bound_assocs = Vec::new();
+                for (item, rhs) in assocs {
+                    if !declared_assocs.iter().any(|name| name == item) {
+                        errors.push(TraitError {
+                            message: format!("`{trait_name}` has no associated type `{item}`"),
+                            span: d.span,
+                        });
+                        continue;
+                    }
+                    if !seen_assocs.insert(item.clone()) {
+                        errors.push(TraitError {
+                            message: format!("`{item}` is given twice on this impl"),
+                            span: d.span,
+                        });
+                        continue;
+                    }
+                    bound_assocs.push((item.clone(), substitute(rhs, &subst)));
+                }
+                for item in &declared_assocs {
+                    if !seen_assocs.contains(item) {
+                        errors.push(TraitError {
+                            message: format!(
+                                "`impl {} for {}` does not give `{item}`",
+                                applied_expr(trait_name, trait_args),
+                                type_expr_display(for_type)
+                            ),
+                            span: d.span,
+                        });
+                    }
+                }
                 let head = ImplHead {
                     key: key.clone(),
                     self_key,
@@ -284,9 +392,11 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                     trait_args: trait_args.clone(),
                     type_params: type_params.clone(),
                     bounds: positioned_bounds.clone(),
+                    assocs: bound_assocs.clone(),
+                    span: d.span,
                 };
-                let trait_methods = info.traits.get(trait_name).cloned().unwrap_or_default();
-                let subst = trait_subst(for_type, &declared, trait_args);
+                let subst = with_assocs(&subst, &bound_assocs);
+                let assocs_complete = declared_assocs.iter().all(|item| seen_assocs.contains(item));
                 let mut seen_methods = HashSet::new();
                 for method in methods {
                     let method_name = decl_name(&method.kind);
@@ -298,7 +408,11 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                         });
                         continue;
                     };
-                    if let Some(message) = method_mismatch(signature, &method.kind, &subst) {
+                    // A missing associated type leaves `Item` unsubstituted, so
+                    // the signature check would only repeat that error.
+                    if assocs_complete
+                        && let Some(message) = method_mismatch(signature, &method.kind, &subst)
+                    {
                         errors.push(TraitError { message, span: method.span });
                     }
                     seen_methods.insert(method_name.clone());
@@ -319,7 +433,10 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                     });
                 }
                 for signature in &trait_methods {
-                    if !seen_methods.contains(&signature.name) {
+                    if seen_methods.contains(&signature.name) {
+                        continue;
+                    }
+                    let Some(body) = &signature.body else {
                         errors.push(TraitError {
                             message: format!(
                                 "`impl {} for {}` does not implement `{}`",
@@ -329,15 +446,491 @@ pub fn elaborate(program: &Program) -> Result<(Program, TraitInfo), Vec<TraitErr
                             ),
                             span: d.span,
                         });
-                    }
+                        continue;
+                    };
+                    let method_name = signature.name.clone();
+                    let mangled = mangle(trait_name, &key, &method_name);
+                    info.method_impls
+                        .entry(method_name.clone())
+                        .or_default()
+                        .insert(key.clone(), mangled.clone());
+                    let inherited = default_method(signature, &subst, body.span, &mut spans);
+                    out.push(Node {
+                        span: body.span,
+                        kind: rename_decl(
+                            &inherited,
+                            &mangled,
+                            type_params,
+                            type_param_signs,
+                            bounds,
+                        ),
+                    });
                 }
                 info.heads.entry(trait_name.clone()).or_default().push(head);
             }
-            _ => out.push(d.clone()),
+            _ => out.push(expand_decl(d.clone(), &info)),
         }
     }
 
+    // A default is checked on its own, with `Self` a parameter known to
+    // satisfy the trait, so a broken body is reported even with no impl.
+    let trait_params = info.trait_params.clone();
+    let trait_signs = info.trait_param_signs.clone();
+    for (trait_name, methods) in &info.traits {
+        for method in methods {
+            let Some(body) = &method.body else { continue };
+            out.push(default_check(
+                trait_name,
+                method,
+                trait_params.get(trait_name).map(Vec::as_slice).unwrap_or(&[]),
+                trait_signs.get(trait_name).map(Vec::as_slice).unwrap_or(&[]),
+                info.assocs.get(trait_name).map(Vec::as_slice).unwrap_or(&[]),
+                body,
+                &mut spans,
+            ));
+        }
+    }
+    for decl in &mut out {
+        if let Decl::Fn { bounds, .. } | Decl::Command { bounds, .. } = &mut decl.kind {
+            *bounds = expand_bounds(bounds, &info);
+        }
+    }
+    info.span_origins = spans.origins;
+
     if errors.is_empty() { Ok((Program { decls: out }, info)) } else { Err(errors) }
+}
+
+/// The method an omitting impl inherits: the trait's signature with `Self`
+/// and the trait parameters substituted, and the default body likewise.
+fn default_method(
+    signature: &TraitMethod,
+    subst: &HashMap<&str, &TypeExpr>,
+    span: Span,
+    spans: &mut Spans,
+) -> Decl {
+    let value_params =
+        signature.value_params.iter().map(|param| subst_param(param, subst)).collect();
+    let continuation_params =
+        signature.continuation_params.iter().map(|param| subst_param(param, subst)).collect();
+    let mut body =
+        signature.body.clone().unwrap_or_else(|| Node { span, kind: Expr::Block(Vec::new()) });
+    subst_in_expr(&mut body, subst);
+    respan(&mut body, spans);
+    if signature.is_command {
+        Decl::Command {
+            name: signature.name.clone(),
+            is_public: false,
+            type_params: Vec::new(),
+            type_param_signs: Vec::new(),
+            bounds: Vec::new(),
+            value_params,
+            continuation_params,
+            return_type: None,
+            effects: EffectRow::default(),
+            body,
+        }
+    } else {
+        Decl::Fn {
+            name: signature.name.clone(),
+            is_public: false,
+            type_params: Vec::new(),
+            type_param_signs: Vec::new(),
+            bounds: Vec::new(),
+            polarity: signature.polarity,
+            params: value_params,
+            return_type: signature.return_type.as_ref().map(|ty| substitute(ty, subst)),
+            effects: EffectRow::default(),
+            body,
+        }
+    }
+}
+
+/// `fn __default_Eq_ne<+S: Eq>(self: S, other: S) -> Bool { … }`, so the
+/// default is checked at the trait. Nothing calls it.
+fn default_check(
+    trait_name: &str,
+    method: &TraitMethod,
+    trait_params: &[String],
+    trait_signs: &[(String, ParamPolarity)],
+    assocs: &[String],
+    body: &Node<Expr>,
+    spans: &mut Spans,
+) -> Node<Decl> {
+    let self_ty = TypeExpr::Base("S".to_string());
+    let param_tys: Vec<TypeExpr> =
+        trait_params.iter().map(|param| TypeExpr::Base(param.clone())).collect();
+    // A bare associated name in the default is the projection at `S`.
+    let mut proj_args: Vec<Node<TypeExpr>> =
+        param_tys.iter().map(|ty| Node { span: body.span, kind: ty.clone() }).collect();
+    proj_args.push(Node { span: body.span, kind: self_ty.clone() });
+    let projections: Vec<TypeExpr> = assocs
+        .iter()
+        .map(|item| TypeExpr::Apply(format!("{trait_name}::{item}"), proj_args.clone()))
+        .collect();
+    let mut subst: HashMap<&str, &TypeExpr> = HashMap::from([("Self", &self_ty)]);
+    for (name, ty) in trait_params.iter().zip(&param_tys) {
+        subst.insert(name.as_str(), ty);
+    }
+    for (item, proj) in assocs.iter().zip(&projections) {
+        subst.insert(item.as_str(), proj);
+    }
+    let inherited = default_method(method, &subst, body.span, spans);
+    let mut type_params = trait_params.to_vec();
+    type_params.push("S".to_string());
+    let mut type_param_signs = trait_signs.to_vec();
+    type_param_signs.push(("S".to_string(), ParamPolarity::Positive));
+    let bounds = vec![TraitBound {
+        param: "S".to_string(),
+        trait_name: trait_name.to_string(),
+        args: param_tys,
+        pins: Vec::new(),
+    }];
+    let name = format!("__default_{trait_name}_{}", method.name);
+    match inherited {
+        Decl::Fn { params, return_type, body, polarity, .. } => Node {
+            span: body.span,
+            kind: Decl::Fn {
+                name,
+                is_public: false,
+                type_params,
+                type_param_signs,
+                bounds,
+                polarity,
+                params,
+                return_type,
+                effects: EffectRow::default(),
+                body,
+            },
+        },
+        Decl::Command { value_params, continuation_params, body, .. } => Node {
+            span: body.span,
+            kind: Decl::Command {
+                name,
+                is_public: false,
+                type_params,
+                type_param_signs,
+                bounds,
+                value_params,
+                continuation_params,
+                return_type: None,
+                effects: EffectRow::default(),
+                body,
+            },
+        },
+        other => Node { span: body.span, kind: other },
+    }
+}
+
+fn subst_param(param: &Param, subst: &HashMap<&str, &TypeExpr>) -> Param {
+    let mut param = param.clone();
+    if let Some(ty) = &mut param.ty {
+        *ty = substitute(ty, subst);
+    }
+    param
+}
+
+fn subst_in_expr(expr: &mut Node<Expr>, subst: &HashMap<&str, &TypeExpr>) {
+    match &mut expr.kind {
+        Expr::Lambda { param_type, return_type, body, .. } => {
+            if let Some(ty) = param_type {
+                *ty = substitute(ty, subst);
+            }
+            if let Some(ty) = return_type {
+                *ty = substitute(ty, subst);
+            }
+            subst_in_expr(body, subst);
+        }
+        Expr::Let { ty, value, body, .. } => {
+            if let Some(ty) = ty {
+                *ty = substitute(ty, subst);
+            }
+            subst_in_expr(value, subst);
+            if let Some(body) = body {
+                subst_in_expr(body, subst);
+            }
+        }
+        Expr::Select { ty, arms } | Expr::CoMatch { ty, arms } => {
+            if let Some(ty) = ty {
+                ty.kind = substitute(&ty.kind, subst);
+            }
+            for arm in arms {
+                subst_in_expr(&mut arm.command, subst);
+            }
+        }
+        Expr::Mu { continuation_params, body } => {
+            for param in continuation_params {
+                *param = subst_param(param, subst);
+            }
+            subst_in_expr(body, subst);
+        }
+        Expr::Match { scrutinee, arms } => {
+            subst_in_expr(scrutinee, subst);
+            for arm in arms {
+                subst_in_expr(&mut arm.body, subst);
+            }
+        }
+        Expr::Call { callee, args } => {
+            subst_in_expr(callee, subst);
+            for arg in args {
+                subst_in_expr(arg, subst);
+            }
+        }
+        Expr::Pair(items)
+        | Expr::Bundle(items)
+        | Expr::Par(items)
+        | Expr::Block(items)
+        | Expr::Flow { stages: items, .. } => {
+            for item in items {
+                subst_in_expr(item, subst);
+            }
+        }
+        Expr::Inject { value, .. }
+        | Expr::Project { base: value, .. }
+        | Expr::Request { arg: value, .. } => subst_in_expr(value, subst),
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                subst_in_expr(value, subst);
+            }
+        }
+        Expr::Handle { body, clauses, ret, .. } => {
+            subst_in_expr(body, subst);
+            for clause in clauses {
+                subst_in_expr(&mut clause.body, subst);
+            }
+            if let Some((_, body)) = ret {
+                subst_in_expr(body, subst);
+            }
+        }
+        Expr::Handler { clauses, ret, .. } => {
+            for clause in clauses {
+                subst_in_expr(&mut clause.body, subst);
+            }
+            if let Some((_, body)) = ret {
+                subst_in_expr(body, subst);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            subst_in_expr(handler, subst);
+            subst_in_expr(body, subst);
+        }
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Ident(_) => {}
+    }
+}
+
+/// Fresh spans for copied defaults. Source spans stay in the low numbers;
+/// these start high, clear of the checker's own elaborated spans.
+struct Spans {
+    next: usize,
+    origins: HashMap<Span, Span>,
+}
+
+impl Spans {
+    fn new() -> Self {
+        Self { next: 1 << 48, origins: HashMap::new() }
+    }
+
+    fn fresh(&mut self, origin: Span) -> Span {
+        let start = self.next;
+        self.next += 2;
+        let span = Span { start, end: start + 1 };
+        self.origins.insert(span, origin);
+        span
+    }
+}
+
+fn respan(expr: &mut Node<Expr>, spans: &mut Spans) {
+    let origin = expr.span;
+    expr.span = spans.fresh(origin);
+    match &mut expr.kind {
+        Expr::Lambda { body, .. }
+        | Expr::Mu { body, .. }
+        | Expr::Inject { value: body, .. }
+        | Expr::Project { base: body, .. }
+        | Expr::Request { arg: body, .. } => respan(body, spans),
+        Expr::Let { value, body, .. } => {
+            respan(value, spans);
+            if let Some(body) = body {
+                respan(body, spans);
+            }
+        }
+        Expr::Call { callee, args } => {
+            respan(callee, spans);
+            for arg in args {
+                respan(arg, spans);
+            }
+        }
+        Expr::Pair(items)
+        | Expr::Bundle(items)
+        | Expr::Par(items)
+        | Expr::Block(items)
+        | Expr::Flow { stages: items, .. } => {
+            for item in items {
+                respan(item, spans);
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            respan(scrutinee, spans);
+            for arm in arms {
+                respan(&mut arm.body, spans);
+            }
+        }
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                respan(value, spans);
+            }
+        }
+        Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
+            for arm in arms {
+                respan(&mut arm.command, spans);
+            }
+        }
+        Expr::Handle { body, clauses, ret, .. } => {
+            respan(body, spans);
+            for clause in clauses {
+                respan(&mut clause.body, spans);
+            }
+            if let Some((_, body)) = ret {
+                respan(body, spans);
+            }
+        }
+        Expr::Handler { clauses, ret, .. } => {
+            for clause in clauses {
+                respan(&mut clause.body, spans);
+            }
+            if let Some((_, body)) = ret {
+                respan(body, spans);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            respan(handler, spans);
+            respan(body, spans);
+        }
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Ident(_) => {}
+    }
+}
+
+/// A default that calls its own method would dispatch to itself.
+fn calls_method(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Call { callee, args } => {
+            matches!(&callee.kind, Expr::Ident(called) if called == name)
+                || calls_method(&callee.kind, name)
+                || args.iter().any(|arg| calls_method(&arg.kind, name))
+        }
+        Expr::Flow { stages, from_value, .. } => stages.iter().enumerate().any(|(index, stage)| {
+            ((index > 0 || !from_value)
+                && matches!(&stage.kind, Expr::Ident(called) if called == name))
+                || calls_method(&stage.kind, name)
+        }),
+        Expr::Lambda { body, .. }
+        | Expr::Mu { body, .. }
+        | Expr::Inject { value: body, .. }
+        | Expr::Project { base: body, .. }
+        | Expr::Request { arg: body, .. } => calls_method(&body.kind, name),
+        Expr::Let { value, body, .. } => {
+            calls_method(&value.kind, name)
+                || body.as_ref().is_some_and(|body| calls_method(&body.kind, name))
+        }
+        Expr::Pair(items) | Expr::Bundle(items) | Expr::Par(items) | Expr::Block(items) => {
+            items.iter().any(|item| calls_method(&item.kind, name))
+        }
+        Expr::Match { scrutinee, arms } => {
+            calls_method(&scrutinee.kind, name)
+                || arms.iter().any(|arm| calls_method(&arm.body.kind, name))
+        }
+        Expr::Data { fields, .. } => {
+            fields.iter().any(|(_, value)| calls_method(&value.kind, name))
+        }
+        Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
+            arms.iter().any(|arm| calls_method(&arm.command.kind, name))
+        }
+        Expr::Handle { body, clauses, ret, .. } => {
+            calls_method(&body.kind, name)
+                || clauses.iter().any(|clause| calls_method(&clause.body.kind, name))
+                || ret.as_ref().is_some_and(|(_, body)| calls_method(&body.kind, name))
+        }
+        Expr::Handler { clauses, ret, .. } => {
+            clauses.iter().any(|clause| calls_method(&clause.body.kind, name))
+                || ret.as_ref().is_some_and(|(_, body)| calls_method(&body.kind, name))
+        }
+        Expr::WithHandler { handler, body } => {
+            calls_method(&handler.kind, name) || calls_method(&body.kind, name)
+        }
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Ident(_) => false,
+    }
+}
+
+/// Parents before the child, closed under their own parents. A cycle is
+/// reported separately and yields nothing here.
+pub fn ancestors(info: &TraitInfo, trait_name: &str) -> Vec<SuperTrait> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    fn walk(info: &TraitInfo, name: &str, out: &mut Vec<SuperTrait>, seen: &mut HashSet<String>) {
+        let Some(parents) = info.supers.get(name) else { return };
+        for parent in parents {
+            if !seen.insert(parent.trait_name.clone()) {
+                continue;
+            }
+            walk(info, &parent.trait_name, out, seen);
+            out.push(parent.clone());
+        }
+    }
+    walk(info, trait_name, &mut out, &mut seen);
+    out
+}
+
+fn super_cycle(info: &TraitInfo, name: &str, parents: &[SuperTrait]) -> Option<String> {
+    fn reaches(info: &TraitInfo, name: &str, target: &str, seen: &mut HashSet<String>) -> bool {
+        if name == target {
+            return true;
+        }
+        if !seen.insert(name.to_string()) {
+            return false;
+        }
+        info.supers.get(name).is_some_and(|parents| {
+            parents.iter().any(|parent| reaches(info, &parent.trait_name, target, seen))
+        })
+    }
+    parents.iter().find_map(|parent| {
+        let mut seen = HashSet::new();
+        reaches(info, &parent.trait_name, name, &mut seen).then(|| name.to_string())
+    })
+}
+
+/// `T: Ord` becomes `T: Eq, T: Ord` when `Ord: Eq`. Already-present bounds
+/// stay where they were written.
+fn expand_bounds(bounds: &[TraitBound], info: &TraitInfo) -> Vec<TraitBound> {
+    let mut out = Vec::new();
+    for bound in bounds {
+        let params = info.trait_params.get(&bound.trait_name).cloned().unwrap_or_default();
+        for parent in ancestors(info, &bound.trait_name) {
+            let subst: HashMap<&str, &TypeExpr> =
+                params.iter().zip(&bound.args).map(|(name, arg)| (name.as_str(), arg)).collect();
+            let extra = TraitBound {
+                param: bound.param.clone(),
+                trait_name: parent.trait_name.clone(),
+                args: parent.args.iter().map(|ty| substitute(ty, &subst)).collect(),
+                pins: Vec::new(),
+            };
+            if !out.contains(&extra) {
+                out.push(extra);
+            }
+        }
+        if !out.contains(bound) {
+            out.push(bound.clone());
+        }
+    }
+    out
+}
+
+fn expand_decl(mut decl: Node<Decl>, info: &TraitInfo) -> Node<Decl> {
+    match &mut decl.kind {
+        Decl::Fn { bounds, .. } | Decl::Command { bounds, .. } => {
+            *bounds = expand_bounds(bounds, info);
+        }
+        _ => {}
+    }
+    decl
 }
 
 fn decl_name(d: &Decl) -> String {
@@ -389,6 +982,18 @@ fn prepend(into: &mut Vec<String>, extra: &[String]) {
             into.insert(i, p.clone());
         }
     }
+}
+
+/// The signature substitution, plus each associated type the impl wrote.
+fn with_assocs<'a>(
+    base: &HashMap<&'a str, &'a TypeExpr>,
+    assocs: &'a [(String, TypeExpr)],
+) -> HashMap<&'a str, &'a TypeExpr> {
+    let mut subst = base.clone();
+    for (name, ty) in assocs {
+        subst.insert(name.as_str(), ty);
+    }
+    subst
 }
 
 fn prepend_bounds(into: &mut Vec<TraitBound>, extra: &[TraitBound]) {
@@ -561,7 +1166,7 @@ fn method_mismatch(
     }
 }
 
-fn substitute(ty: &TypeExpr, subst: &HashMap<&str, &TypeExpr>) -> TypeExpr {
+pub fn substitute(ty: &TypeExpr, subst: &HashMap<&str, &TypeExpr>) -> TypeExpr {
     match ty {
         TypeExpr::Base(name) => {
             subst.get(name.as_str()).copied().cloned().unwrap_or_else(|| ty.clone())

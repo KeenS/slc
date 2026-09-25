@@ -1,4 +1,4 @@
-//! `slc fmt`: one layout for Slant source.
+//! `slc fmt`: one layout for SLC source.
 //!
 //! Formatting decides whitespace, line breaks, and the separators the
 //! grammar leaves optional. It never changes what a program means, and it

@@ -707,8 +707,23 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
             resolve_type(ty, stack);
             resolve_expr(&mut value.kind, stack, locals);
         }
-        Decl::Trait { name, methods, .. } => {
+        Decl::Trait { name, methods, supers, assocs, .. } => {
             *name = scope.qualify(name);
+            for parent in supers.iter_mut() {
+                parent.trait_name = resolve_name(&parent.trait_name, stack);
+                for arg in &mut parent.args {
+                    resolve_type(arg, stack);
+                }
+            }
+            // `Self` and each associated name are types in signatures and
+            // default bodies. They stay bare: qualifying `Item` would make
+            // it a different name from the one the impl substitutes.
+            if let Some(params) = scope.type_parameters.borrow_mut().last_mut() {
+                params.insert("Self".to_string());
+                for item in assocs.iter() {
+                    params.insert(item.clone());
+                }
+            }
             for m in methods {
                 for p in m.value_params.iter_mut().chain(m.continuation_params.iter_mut()) {
                     resolve_param(p, stack);
@@ -716,15 +731,33 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                 if let Some(ty) = &mut m.return_type {
                     resolve_type(ty, stack);
                 }
+                if let Some(body) = &mut m.body {
+                    let mut bound = HashSet::new();
+                    for p in m.value_params.iter().chain(m.continuation_params.iter()) {
+                        bound.extend(pattern_binders(&p.pattern));
+                    }
+                    locals.push(bound);
+                    resolve_expr(&mut body.kind, stack, locals);
+                    locals.pop();
+                }
             }
         }
-        Decl::Impl { trait_name, trait_args, for_type, bounds, methods, .. } => {
+        Decl::Impl { trait_name, trait_args, for_type, bounds, assocs, methods, .. } => {
             *trait_name = resolve_name(trait_name, stack);
             for arg in trait_args {
                 resolve_type(arg, stack);
             }
             resolve_bounds(bounds, stack);
             resolve_type(for_type, stack);
+            // `Self` in `type Item = Self` is the implementing type. A trait
+            // parameter written by name stays bare when nothing declares it,
+            // and elaboration substitutes it for the argument the impl gave.
+            if let Some(params) = scope.type_parameters.borrow_mut().last_mut() {
+                params.insert("Self".to_string());
+            }
+            for (_, ty) in assocs.iter_mut() {
+                resolve_type(ty, stack);
+            }
             for method in methods {
                 // A method is named by its trait, not by the module the impl
                 // sits in: `fmt` stays `fmt` inside `mod list`, or the
@@ -765,6 +798,9 @@ fn resolve_bounds(bounds: &mut [crate::ast::TraitBound], stack: &[Scope]) {
         bound.trait_name = resolve_name(&bound.trait_name, stack);
         for arg in &mut bound.args {
             resolve_type(arg, stack);
+        }
+        for pin in &mut bound.pins {
+            resolve_type(&mut pin.ty, stack);
         }
     }
 }

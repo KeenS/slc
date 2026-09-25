@@ -1,4 +1,4 @@
-//! Runtime values for the Slant interpreter.
+//! Runtime values for the SLC interpreter.
 
 use slc_core::types::Type;
 use std::cell::RefCell;

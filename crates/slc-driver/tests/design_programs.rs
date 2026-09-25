@@ -1,10 +1,10 @@
-//! `DESIGN.md`'s complete programs compile.
+//! Complete programs in the language design compile.
 //!
-//! A code block in the document is either a fragment, which marks what it
-//! leaves out with `…`, or a complete program, which declares `main` and
-//! leaves nothing out. Every complete program is run here and must get past
-//! every check; what it does once it runs — a file it reads may not exist —
-//! is its own business.
+//! A code block in `DESIGN.md` or a part under `docs/design/` is either a
+//! fragment, which marks what it leaves out with `…`, or a complete program,
+//! which declares `main` and leaves nothing out. Every complete program is
+//! run here and must get past every check; what it does once it runs — a
+//! file it reads may not exist — is its own business.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -46,14 +46,40 @@ fn complete_programs(design: &str) -> Vec<(usize, String)> {
     programs
 }
 
+/// `DESIGN.md` and every markdown part under `docs/design/`, in path order.
+fn design_sources(root: &std::path::Path) -> Vec<(String, String)> {
+    let mut paths = vec![root.join("DESIGN.md")];
+    let mut parts: Vec<PathBuf> = std::fs::read_dir(root.join("docs/design"))
+        .expect("docs/design")
+        .map(|entry| entry.expect("a design part").path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    parts.sort();
+    paths.extend(parts);
+    paths
+        .into_iter()
+        .map(|path| {
+            let label = path.strip_prefix(root).unwrap_or(&path).display().to_string();
+            let text =
+                std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("{label}: {error}"));
+            (label, text)
+        })
+        .collect()
+}
+
 #[test]
 fn design_programs_compile() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let design = std::fs::read_to_string(root.join("DESIGN.md")).expect("DESIGN.md");
-    let programs = complete_programs(&design);
-    assert!(!programs.is_empty(), "DESIGN.md has no complete program to check");
-    for (line, program) in programs {
-        let path = std::env::temp_dir().join(format!("slc_design_program_{line}.sl"));
+    let mut programs = Vec::new();
+    for (label, design) in design_sources(&root) {
+        for (line, program) in complete_programs(&design) {
+            programs.push((label.clone(), line, program));
+        }
+    }
+    assert!(!programs.is_empty(), "the design has no complete program to check");
+    for (label, line, program) in programs {
+        let path = std::env::temp_dir()
+            .join(format!("slc_design_program_{}_{line}.sl", label.replace('/', "_")));
         std::fs::write(&path, &program).unwrap();
         let out = Command::new(env!("CARGO_BIN_EXE_slc"))
             .args(["run", path.to_str().unwrap()])
@@ -62,7 +88,7 @@ fn design_programs_compile() {
             .expect("failed to run slc");
         let stderr = String::from_utf8_lossy(&out.stderr);
         if let Some(stage) = COMPILE_ERRORS.iter().find(|stage| stderr.contains(*stage)) {
-            panic!("DESIGN.md:{line}: the program does not compile ({stage}):\n{stderr}");
+            panic!("{label}:{line}: the program does not compile ({stage}):\n{stderr}");
         }
     }
 }

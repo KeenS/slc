@@ -504,8 +504,9 @@ fn run_file(path: &std::path::Path, fuel: usize) -> Result<RunOutcome, String> {
     })
 }
 
-/// The compiler's phases, in the order `DESIGN.md` gives them: parse, type,
-/// polarity, exhaustiveness, lowering. Each stops the ones after it.
+/// The compiler's phases, in the order `docs/design/programs.md` gives them:
+/// parse, type, polarity, exhaustiveness, lowering. Each stops the ones after
+/// it.
 fn compile_file(path: &std::path::Path) -> Result<Compiled, Diagnostics> {
     let (map, tokens) = load_program(path)?;
     let format_span = |span| map.locate(span);

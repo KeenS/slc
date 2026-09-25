@@ -14,7 +14,7 @@ use slc_core::typing::contains_var;
 use slc_syntax::ast::{Decl, Expr, Named, Node, ParamPolarity, Program, TraitBound, TypeExpr};
 use slc_syntax::lower::lower_type;
 use slc_syntax::token::Span;
-use slc_syntax::traits::TraitInfo;
+use slc_syntax::traits::{TraitInfo, assoc_type_name, parse_assoc_type_name};
 use std::collections::HashMap;
 
 pub use crate::Diagnostic;
@@ -43,10 +43,17 @@ pub fn check_program_with_rows(
     traits: &TraitInfo,
 ) -> Result<(slc_syntax::lower::DispatchInfo, Vec<Diagnostic>), Vec<Diagnostic>> {
     let constants = constant_types(p);
-    let enums = enum_types(p);
+    let mut enums = enum_types(p);
+    for (trait_name, items) in &traits.assocs {
+        let params = traits.params_of(trait_name).len();
+        for item in items {
+            enums.note_projection(trait_name, item, params);
+        }
+    }
     let functions = function_types(p, &enums);
     let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions, traits);
+    env.elaboration_origins.clone_from(&traits.span_origins);
     env.declarations = Some(&enums);
     env.uni.set_negative_decls(enums.menus.iter().chain(enums.forms.iter()).cloned());
     env.uni.set_latent_decls(enums.menus.iter().chain(enums.forms.iter()).map(|name| {
@@ -71,6 +78,8 @@ pub fn check_program_with_rows(
         }
     }
     check_trait_signatures(traits, &enums, &mut env, &mut diags);
+    check_super_obligations(traits, &enums, &mut env, &mut diags);
+    check_assoc_bindings(traits, &enums, &mut env, &mut diags);
     for d in &p.decls {
         let mut preview = env.clone();
         check_decl(d, &enums, &mut preview, &mut Vec::new());
@@ -125,8 +134,8 @@ fn discharge_bound(
     env: &Env,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let target = env.uni.apply(target);
-    let args: Vec<Type> = args.iter().map(|arg| env.uni.apply(arg)).collect();
+    let target = normalize(&env.uni.apply(target), env);
+    let args: Vec<Type> = args.iter().map(|arg| normalize(&env.uni.apply(arg), env)).collect();
     if let Type::Var(v) = &target {
         if env.bounds.iter().any(|bound| {
             bound.var == *v && bound.trait_name == trait_name && types_agree(&bound.args, &args)
@@ -146,6 +155,95 @@ fn discharge_bound(
     if let Err(message) = env.traits.select(trait_name, &target, &args) {
         diags.push(Diagnostic { message, span });
     }
+}
+
+/// A bound's pins, once its parameter is a real type or another parameter
+/// that pins the same associated type.
+fn check_pins(
+    bound: &crate::env::PendingBound,
+    target: &Type,
+    args: &[Type],
+    callee: &str,
+    span: Span,
+    env: &Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if bound.pins.is_empty() {
+        return;
+    }
+    let target = normalize(&env.uni.apply(target), env);
+    let args: Vec<Type> = args.iter().map(|arg| normalize(&env.uni.apply(arg), env)).collect();
+    if let Type::Var(v) = &target {
+        if !env.uni.is_rigid(*v) {
+            return;
+        }
+        let have = env
+            .bounds
+            .iter()
+            .find(|scope| {
+                scope.var == *v
+                    && scope.trait_name == bound.trait_name
+                    && types_agree(&scope.args, &args)
+            })
+            .map(|scope| scope.pins.clone());
+        let Some(have) = have else { return };
+        for (item, expected) in &bound.pins {
+            let Some((_, pinned)) = have.iter().find(|(name, _)| name == item) else {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{callee}` needs `{}::{item}` to be {}, and this type parameter does \
+                         not pin it",
+                        bound.trait_name,
+                        normalize(expected, env)
+                    ),
+                    span,
+                });
+                continue;
+            };
+            let pinned = normalize(pinned, env);
+            let expected = normalize(expected, env);
+            if !same_type(env, &expected, &pinned) {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{callee}` needs `{}::{item}` to be {expected}, and this type \
+                         parameter pins {pinned}",
+                        bound.trait_name
+                    ),
+                    span,
+                });
+            }
+        }
+        return;
+    }
+    for (item, expected) in &bound.pins {
+        let mut proj = args.clone();
+        proj.push(target.clone());
+        let actual = normalize(&Type::Named(assoc_type_name(&bound.trait_name, item), proj), env);
+        if parse_assoc_type_name(match &actual {
+            Type::Named(name, _) => name.as_str(),
+            _ => "",
+        })
+        .is_some()
+        {
+            continue;
+        }
+        let expected = normalize(expected, env);
+        if !same_type(env, &expected, &actual) {
+            diags.push(Diagnostic {
+                message: format!(
+                    "`{callee}` needs `{}::{item}` to be {expected}, and {target} gives {actual}",
+                    bound.trait_name
+                ),
+                span,
+            });
+        }
+    }
+}
+
+/// Would these two types meet, without recording the meeting?
+fn same_type(env: &Env, expected: &Type, actual: &Type) -> bool {
+    let mut probe = env.uni.clone();
+    probe.unify(expected, actual).is_ok()
 }
 
 fn types_agree(left: &[Type], right: &[Type]) -> bool {
@@ -232,7 +330,7 @@ fn check_trait_method_call(
                 slc_syntax::ast::FunctionPolarity::Negative => t.dual(),
                 slc_syntax::ast::FunctionPolarity::Positive => t,
             };
-            env.uni.apply(&t)
+            normalize(&t, env)
         }),
         None => Some(Type::ONE),
     }
@@ -251,7 +349,7 @@ fn open_trait(method: &str, self_ty: Type, env: &mut Env) -> Option<OpenedMethod
     let trait_name = env.traits.method_owner.get(method)?.clone();
     let names = env.traits.params_of(&trait_name).to_vec();
     let signs = env.traits.trait_param_signs.get(&trait_name).cloned().unwrap_or_default();
-    let mut subst = HashMap::from([("Self".to_string(), self_ty)]);
+    let mut subst = HashMap::from([("Self".to_string(), self_ty.clone())]);
     let mut args = Vec::new();
     for name in &names {
         let var = env.uni.fresh_var();
@@ -264,6 +362,15 @@ fn open_trait(method: &str, self_ty: Type, env: &mut Env) -> Option<OpenedMethod
         }
         subst.insert(name.clone(), var.clone());
         args.push(var);
+    }
+    // A bare associated name is the projection at this `Self`. Reducing it
+    // waits until `Self` is a real type or a pinned parameter.
+    if let Some(items) = env.traits.assocs.get(&trait_name) {
+        for item in items {
+            let mut proj = args.clone();
+            proj.push(self_ty.clone());
+            subst.insert(item.clone(), Type::Named(assoc_type_name(&trait_name, item), proj));
+        }
     }
     Some(OpenedMethod { trait_name, names, args, subst })
 }
@@ -305,11 +412,13 @@ fn would_fit(env: &Env, expected: &Type, actual: &Type, expr: Option<&Expr>) -> 
     if actual == &Type::BOTTOM {
         return true;
     }
+    let expected = normalize(expected, env);
+    let actual = normalize(actual, env);
     let mut probe = env.uni.clone();
-    if probe.unify(expected, actual).is_ok() {
+    if probe.unify(&expected, &actual).is_ok() {
         return true;
     }
-    expr.is_some_and(|expr| numeric_literals_fit(expr, &env.uni.apply(expected), actual))
+    expr.is_some_and(|expr| numeric_literals_fit(expr, &env.uni.apply(&expected), &actual))
 }
 
 /// A tuple written in place, weighed component by component against a
@@ -358,6 +467,8 @@ fn check_method_stage(
     diags: &mut Vec<Diagnostic>,
 ) -> Option<(Type, bool)> {
     let sig = env.traits.method_sig(method)?.clone();
+    let receiver = normalize(receiver, env);
+    let receiver = &receiver;
     if sig.polarity == slc_syntax::ast::FunctionPolarity::Negative
         && !sig.is_command
         && let [out] = sig.value_params.as_slice()
@@ -388,7 +499,7 @@ fn check_method_stage(
                 .as_ref()
                 .and_then(|ty| resolve_subst(ty, &opened.subst, enums))
                 .unwrap_or(self_ty);
-            return Some((env.uni.apply(&returns).dual(), false));
+            return Some((normalize(&returns, env).dual(), false));
         }
         let opened = open_trait(method, target.clone(), env)?;
         settle_method(method, &opened, &target, span, env, diags);
@@ -425,7 +536,7 @@ fn check_method_stage(
         return Some((Type::BOTTOM, false));
     }
     match &sig.return_type {
-        Some(ty) => resolve_subst(ty, &opened.subst, enums).map(|t| (env.uni.apply(&t), false)),
+        Some(ty) => resolve_subst(ty, &opened.subst, enums).map(|t| (normalize(&t, env), false)),
         None => Some((Type::ONE, false)),
     }
 }
@@ -570,7 +681,7 @@ fn resolve_method_dispatch(
                     .unwrap_or_default()
             };
             discharge_bound(&bound.trait_name, &arg, &bound_args, method, span, env, diags);
-            if let Some(dict) = dict_for(&bound.trait_name, &arg, &bound_args, env, span, diags) {
+            if let Some(dict) = dict_for(&bound.trait_name, &arg, &bound_args, env) {
                 dict_args.push(dict);
             }
         }
@@ -615,6 +726,13 @@ fn resolve_subst(
         T::Apply(name, args) => {
             if let Some(found) = subst.get(name) {
                 return Some(found.clone());
+            }
+            if enums.projection_arity(name).is_some() {
+                let args = args
+                    .iter()
+                    .map(|arg| resolve_subst(&arg.kind, subst, enums))
+                    .collect::<Option<Vec<_>>>()?;
+                return enums.projected_type(name, args);
             }
             let args = args
                 .iter()
@@ -997,6 +1115,13 @@ fn resolve_rigid(
             ))
         }
         T::Apply(name, args) => {
+            if enums.projection_arity(name).is_some() {
+                let args = args
+                    .iter()
+                    .map(|a| resolve_rigid(&a.kind, rigid_vars, enums))
+                    .collect::<Option<Vec<_>>>()?;
+                return enums.projected_type(name, args);
+            }
             if !enums.args_match_kinds(name, args) {
                 return None;
             }
@@ -1055,6 +1180,7 @@ fn unresolved_type(
             "{what} requires `Delayed<T, E>` with a negative result type and an effect row; \
              positive results use `lazy::Lazy<T, E>`"
         ),
+        None if let Some(note) = projection_note(ty, enums) => format!("{what} {note}"),
         None => format!(
             "{what} names `{}`, which is not a declared type here; a library type is \
              `list::List`, or brought in with `use`",
@@ -1135,6 +1261,60 @@ fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagn
 /// A trait's method signatures outlive its declaration — elaboration keeps
 /// them and drops the rest — so what their return types name is checked
 /// here, with `Self` in scope.
+/// An impl of a child trait requires each parent for the same type.
+fn check_super_obligations(
+    traits: &TraitInfo,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut names: Vec<&String> = traits.heads.keys().collect();
+    names.sort();
+    for trait_name in names {
+        let parents = slc_syntax::traits::ancestors(traits, trait_name);
+        if parents.is_empty() {
+            continue;
+        }
+        let param_names = traits.trait_params.get(trait_name).map(Vec::as_slice).unwrap_or(&[]);
+        for head in &traits.heads[trait_name] {
+            let mut owned = HashMap::new();
+            for param in &head.type_params {
+                owned.insert(param.clone(), env.uni.fresh_rigid());
+            }
+            let rigid: HashMap<&str, Type> =
+                owned.iter().map(|(name, ty)| (name.as_str(), ty.clone())).collect();
+            let Some(self_ty) = resolve_rigid(&head.for_type, &rigid, enums) else {
+                continue;
+            };
+            for parent in &parents {
+                let subst: HashMap<&str, &slc_syntax::ast::TypeExpr> = param_names
+                    .iter()
+                    .zip(&head.trait_args)
+                    .map(|(name, arg)| (name.as_str(), arg))
+                    .collect();
+                let args = parent
+                    .args
+                    .iter()
+                    .map(|ty| {
+                        resolve_rigid(&slc_syntax::traits::substitute(ty, &subst), &rigid, enums)
+                    })
+                    .collect::<Option<Vec<_>>>();
+                let Some(args) = args else { continue };
+                if traits.select(&parent.trait_name, &self_ty, &args).is_err() {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "`impl {trait_name} for {self_ty}` requires `{}`, which is not \
+                             implemented for that type",
+                            parent.trait_name
+                        ),
+                        span: head.span,
+                    });
+                }
+            }
+        }
+    }
+}
+
 fn check_trait_signatures(
     traits: &TraitInfo,
     enums: &Declarations,
@@ -1148,6 +1328,13 @@ fn check_trait_signatures(
         let mut owned = HashMap::from([("Self".to_string(), env.uni.fresh_rigid())]);
         for param in traits.params_of(name) {
             owned.insert(param.clone(), env.uni.fresh_rigid());
+        }
+        // A bare associated name is the projection at this `Self`.
+        let mut proj_args: Vec<Type> =
+            traits.params_of(name).iter().filter_map(|param| owned.get(param).cloned()).collect();
+        proj_args.push(owned["Self"].clone());
+        for item in traits.assocs.get(name).map(Vec::as_slice).unwrap_or(&[]) {
+            owned.insert(item.clone(), Type::Named(assoc_type_name(name, item), proj_args.clone()));
         }
         let rigid: HashMap<&str, Type> =
             owned.iter().map(|(param, ty)| (param.as_str(), ty.clone())).collect();
@@ -1174,6 +1361,62 @@ fn check_trait_signatures(
     }
 }
 
+/// Each impl's associated types name real types. Elaboration has already
+/// substituted `Self` and the trait's parameters.
+fn check_assoc_bindings(
+    traits: &TraitInfo,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut names: Vec<&String> = traits.heads.keys().collect();
+    names.sort();
+    for trait_name in names {
+        for head in &traits.heads[trait_name] {
+            let mut owned = HashMap::new();
+            for param in &head.type_params {
+                owned.insert(param.clone(), env.uni.fresh_rigid());
+            }
+            let rigid: HashMap<&str, Type> =
+                owned.iter().map(|(name, ty)| (name.as_str(), ty.clone())).collect();
+            for (item, ty) in &head.assocs {
+                if resolve_rigid(ty, &rigid, enums).is_none() {
+                    unresolved_type(
+                        &format!("`{item}` on `impl {trait_name}`"),
+                        ty,
+                        head.span,
+                        enums,
+                        diags,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Why a projection did not resolve, when the name is one and the argument
+/// count is not the trait's parameters followed by the implementing type.
+fn projection_note(ty: &TypeExpr, enums: &Declarations) -> Option<String> {
+    let (name, written) = match ty {
+        TypeExpr::Base(name) => (name.as_str(), 0),
+        TypeExpr::Apply(name, args) => (name.as_str(), args.len()),
+        _ => return None,
+    };
+    let arity = enums.projection_arity(name)?;
+    if written == arity {
+        return None;
+    }
+    Some(if written == 0 {
+        format!("names `{name}` without the implementing type: write `{name}<…>`")
+    } else {
+        format!(
+            "applies `{name}` to {written} type argument{}, and it takes {arity}: the trait's \
+             arguments, then the implementing type",
+            if written == 1 { "" } else { "s" }
+        )
+    })
+}
+
 /// The name a written type leads with, for a message.
 fn type_display(ty: &TypeExpr) -> String {
     match ty {
@@ -1193,14 +1436,15 @@ fn type_display(ty: &TypeExpr) -> String {
 /// parameters come first, so `T` inside the body is the `T` the signature
 /// bound — rigid, and carrying its bounds — rather than a fresh name.
 fn resolve_in_body(ty: &TypeExpr, env: &Env, enums: &Declarations) -> Option<Type> {
-    if !env.rigid_vars.is_empty() {
+    let resolved = if !env.rigid_vars.is_empty() {
         let rigid: HashMap<&str, Type> =
             env.rigid_vars.iter().map(|(name, ty)| (name.as_str(), ty.clone())).collect();
-        if let Some(resolved) = resolve_rigid(ty, &rigid, enums) {
-            return Some(resolved);
-        }
-    }
-    enums.resolve(ty)
+        resolve_rigid(ty, &rigid, enums)
+    } else {
+        None
+    };
+    let resolved = resolved.or_else(|| enums.resolve(ty))?;
+    Some(normalize(&resolved, env))
 }
 
 /// What a declaration's body-scope replaced, to be restored after it: the
@@ -1226,12 +1470,20 @@ fn record_bounds(
         else {
             continue;
         };
+        let pins = bound
+            .pins
+            .iter()
+            .filter_map(|pin| {
+                resolve_rigid(&pin.ty, rigid_vars, enums).map(|ty| (pin.name.clone(), ty))
+            })
+            .collect();
         env.bounds.push(crate::env::BoundInScope {
             var: *v,
             trait_name: bound.trait_name.clone(),
             type_param: bound.param.clone(),
             args,
             arg_key: slc_syntax::traits::rendered_args(&bound.args),
+            pins,
         });
     }
     // The body resolves written types through these too, so an annotation
@@ -1427,9 +1679,8 @@ fn resolve_pending_dicts(env: &mut Env, enums: &Declarations, diags: &mut Vec<Di
                 env,
                 diags,
             );
-            if let Some(dict) =
-                dict_for(&bound.trait_name, &target, &args, env, pending.span, diags)
-            {
+            check_pins(bound, &target, &args, &pending.callee, pending.span, env, diags);
+            if let Some(dict) = dict_for(&bound.trait_name, &target, &args, env) {
                 dict_args.push(dict);
             }
         }
@@ -1655,18 +1906,25 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
                 match p.ty.as_ref().and_then(&rigid) {
-                    Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
+                    Some(ty) => {
+                        let ty = normalize(&ty, env);
+                        screen_projections(&ty, d.span, env, diags);
+                        bind_match_pattern(&p.pattern, &ty, enums, env);
+                    }
                     None => unresolved_parameter_type(p, d.span, enums, diags),
                 }
             }
             // A negative function produces the consumer of what follows its
             // `<-`, so that is what a `select` in its body consumes.
             let outer = env.consumed.take();
-            let declared = return_type.as_ref().and_then(&rigid);
+            let declared = return_type.as_ref().and_then(&rigid).map(|ty| normalize(&ty, env));
             if let Some(written) = return_type
                 && declared.is_none()
             {
                 unresolved_return_type(&format!("`{name}`"), written, d.span, enums, diags);
+            }
+            if let Some(declared) = &declared {
+                screen_projections(declared, d.span, env, diags);
             }
             env.consumed = (*polarity == slc_syntax::ast::FunctionPolarity::Negative)
                 .then(|| declared.clone())
@@ -1765,7 +2023,11 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             for p in value_params.iter().chain(continuation_params.iter()) {
                 match p.ty.as_ref().and_then(|ty| resolve_rigid(ty, &rigid_vars, enums)) {
-                    Some(ty) => bind_match_pattern(&p.pattern, &ty, enums, env),
+                    Some(ty) => {
+                        let ty = normalize(&ty, env);
+                        screen_projections(&ty, d.span, env, diags);
+                        bind_match_pattern(&p.pattern, &ty, enums, env);
+                    }
                     None => unresolved_parameter_type(p, d.span, enums, diags),
                 }
             }
@@ -2058,11 +2320,10 @@ fn dict_for(
     ty: &Type,
     trait_args: &[Type],
     env: &mut Env,
-    span: Span,
-    diags: &mut Vec<Diagnostic>,
 ) -> Option<slc_syntax::lower::DictExpr> {
-    let ty = env.uni.apply(ty);
-    let trait_args: Vec<Type> = trait_args.iter().map(|arg| env.uni.apply(arg)).collect();
+    let ty = normalize(&env.uni.apply(ty), env);
+    let trait_args: Vec<Type> =
+        trait_args.iter().map(|arg| normalize(&env.uni.apply(arg), env)).collect();
     if let Type::Var(v) = &ty {
         return env
             .bounds
@@ -2079,26 +2340,13 @@ fn dict_for(
                     &bound.type_param,
                 ),
                 args: Vec::new(),
+                methods: 1,
             });
     }
     let matched = env.traits.select(bound_trait, &ty, &trait_args).ok()?;
+    let methods = env.traits.traits.get(bound_trait).map(|m| m.len()).unwrap_or(1);
     let mut args = Vec::new();
     if !matched.bounds.is_empty() {
-        // Construction applies the impl's methods to the inner
-        // dictionaries; a multi-method dictionary is a tuple, which an
-        // application cannot thread through.
-        let methods = env.traits.traits.get(bound_trait).map(|m| m.len()).unwrap_or(1);
-        if methods > 1 {
-            diags.push(Diagnostic {
-                message: format!(
-                    "`{bound_trait}` has several methods, and its impl for `{}` is bounded; \
-                     constructing that dictionary is not supported yet",
-                    matched.key
-                ),
-                span,
-            });
-            return None;
-        }
         for bound in &matched.bounds {
             let inner_ty = env.uni.apply(scrutinee_args(&ty).get(bound.position)?);
             let inner_args = {
@@ -2109,12 +2357,13 @@ fn dict_for(
                     .map(|ty| instantiate_bound_arg(ty, &matched.subst, enums))
                     .collect::<Option<Vec<_>>>()?
             };
-            args.push(dict_for(&bound.trait_name, &inner_ty, &inner_args, env, span, diags)?);
+            args.push(dict_for(&bound.trait_name, &inner_ty, &inner_args, env)?);
         }
     }
     Some(slc_syntax::lower::DictExpr {
         name: slc_syntax::lower::dict_global_name(bound_trait, &matched.key),
         args,
+        methods,
     })
 }
 
@@ -2130,6 +2379,7 @@ fn pending_bounds(
                 trait_name: bound.trait_name.clone(),
                 var: var.clone(),
                 args: bound.args.clone(),
+                pins: bound.pins.clone(),
             })
         })
         .collect()
@@ -2294,6 +2544,150 @@ fn check_pattern(
     }
 }
 
+/// Replace a projection whose implementing type is known. A concrete impl
+/// gives its written type. A rigid parameter gives the type its bound pins,
+/// or stays the projection — one type for that parameter, trait, and
+/// arguments. An open variable stays until something solves it.
+fn normalize(ty: &Type, env: &Env) -> Type {
+    normalize_fuel(ty, env, 0)
+}
+
+fn normalize_fuel(ty: &Type, env: &Env, fuel: usize) -> Type {
+    if fuel > 32 {
+        return env.uni.apply(ty);
+    }
+    let ty = env.uni.apply(ty);
+    match ty {
+        Type::Named(name, args) => {
+            let args: Vec<Type> = args.iter().map(|arg| normalize_fuel(arg, env, fuel)).collect();
+            if let Some((trait_name, item)) = parse_assoc_type_name(&name)
+                && let Some(reduced) = reduce_assoc(trait_name, item, &args, env, fuel)
+            {
+                return reduced;
+            }
+            Type::Named(name, args)
+        }
+        Type::Tensor(items) => {
+            Type::Tensor(items.iter().map(|item| normalize_fuel(item, env, fuel)).collect())
+        }
+        Type::Par(items) => {
+            Type::Par(items.iter().map(|item| normalize_fuel(item, env, fuel)).collect())
+        }
+        Type::With(items) => {
+            Type::With(items.iter().map(|item| normalize_fuel(item, env, fuel)).collect())
+        }
+        Type::Sum(items) => {
+            Type::Sum(items.iter().map(|item| normalize_fuel(item, env, fuel)).collect())
+        }
+        Type::Dual(inner) => normalize_fuel(&inner, env, fuel).dual(),
+        Type::Rowed(inner, row) => Type::rowed(normalize_fuel(&inner, env, fuel), row),
+        Type::Delayed(inner, row) => Type::delayed(normalize_fuel(&inner, env, fuel), row),
+        other => other,
+    }
+}
+
+/// The type a projection stands for, when an impl or a pin gives it one.
+fn reduce_assoc(
+    trait_name: &str,
+    item: &str,
+    args: &[Type],
+    env: &Env,
+    fuel: usize,
+) -> Option<Type> {
+    let (self_ty, trait_args) = args.split_last()?;
+    let self_ty = env.uni.apply(self_ty);
+    let trait_args: Vec<Type> = trait_args.iter().map(|arg| env.uni.apply(arg)).collect();
+    match &self_ty {
+        Type::Var(v) if env.uni.is_rigid(*v) => {
+            let pinned = env
+                .bounds
+                .iter()
+                .find(|bound| {
+                    bound.var == *v
+                        && bound.trait_name == trait_name
+                        && types_agree(&bound.args, &trait_args)
+                })
+                .and_then(|bound| {
+                    bound.pins.iter().find(|(name, _)| name == item).map(|(_, ty)| ty.clone())
+                })?;
+            Some(normalize_fuel(&pinned, env, fuel + 1))
+        }
+        Type::Var(_) => None,
+        _ => {
+            let matched = env.traits.select(trait_name, &self_ty, &trait_args).ok()?;
+            let rhs = env.traits.heads.get(trait_name).and_then(|heads| {
+                heads.iter().find(|head| head.key == matched.key).and_then(|head| {
+                    head.assocs.iter().find(|(name, _)| name == item).map(|(_, ty)| ty.clone())
+                })
+            })?;
+            let enums = env.declarations?;
+            let ty = resolve_subst(&rhs, &matched.subst, enums)?;
+            Some(normalize_fuel(&ty, env, fuel + 1))
+        }
+    }
+}
+
+/// A projection left in a written type must be fixed: a bound on a rigid
+/// parameter, or an impl of a concrete type. An open variable waits.
+fn screen_projections(ty: &Type, span: Span, env: &Env, diags: &mut Vec<Diagnostic>) {
+    let ty = normalize(ty, env);
+    let Type::Named(name, args) = &ty else {
+        match &ty {
+            Type::Tensor(items) | Type::Par(items) | Type::With(items) | Type::Sum(items) => {
+                for item in items {
+                    screen_projections(item, span, env, diags);
+                }
+            }
+            Type::Dual(inner) | Type::Rowed(inner, _) | Type::Delayed(inner, _) => {
+                screen_projections(inner, span, env, diags);
+            }
+            _ => {}
+        }
+        return;
+    };
+    let Some((trait_name, item)) = parse_assoc_type_name(name) else {
+        for arg in args {
+            screen_projections(arg, span, env, diags);
+        }
+        return;
+    };
+    let Some(self_ty) = args.last() else { return };
+    let self_ty = env.uni.apply(self_ty);
+    let trait_args: Vec<Type> =
+        args[..args.len() - 1].iter().map(|arg| env.uni.apply(arg)).collect();
+    match &self_ty {
+        Type::Var(v) if env.uni.is_rigid(*v) => {
+            let covered = env.bounds.iter().any(|bound| {
+                bound.var == *v
+                    && bound.trait_name == trait_name
+                    && types_agree(&bound.args, &trait_args)
+            });
+            if !covered {
+                let param = env
+                    .rigid_vars
+                    .iter()
+                    .find_map(|(name, ty)| {
+                        matches!(ty, Type::Var(found) if *found == *v).then_some(name.as_str())
+                    })
+                    .unwrap_or("this type");
+                diags.push(Diagnostic {
+                    message: format!(
+                        "`{trait_name}::{item}` of `{param}` is not fixed; nothing implements \
+                         `{trait_name}` for it"
+                    ),
+                    span,
+                });
+            }
+        }
+        Type::Var(_) => {}
+        _ => {
+            if let Err(message) = env.traits.select(trait_name, &self_ty, &trait_args) {
+                diags.push(Diagnostic { message, span });
+            }
+        }
+    }
+}
+
 /// Does a value written as `expr`, inferred as `actual`, fit a port that
 /// requires `expected`?
 ///
@@ -2305,11 +2699,13 @@ fn fits(env: &mut Env, expected: &Type, actual: &Type, expr: &Expr) -> bool {
     if actual == &Type::BOTTOM {
         return true;
     }
-    if env.uni.unify(expected, actual).is_ok() {
+    let expected = normalize(expected, env);
+    let actual = normalize(actual, env);
+    if env.uni.unify(&expected, &actual).is_ok() {
         return true;
     }
     // A numeric literal takes the width or precision its port requires.
-    numeric_literals_fit(expr, &env.uni.apply(expected), actual)
+    numeric_literals_fit(expr, &env.uni.apply(&expected), &actual)
 }
 
 fn commute(env: &mut Env, expected: &Type, actual: &Type) -> Option<usize> {
@@ -2598,6 +2994,9 @@ fn check_let_binding(
         },
     });
     let annotation = ty.as_ref().and_then(|ty| resolve_in_body(ty, env, enums));
+    if let Some(annotation) = &annotation {
+        screen_projections(annotation, value.span, env, diags);
+    }
     if let Some(written) = ty
         && annotation.is_none()
     {
@@ -3668,7 +4067,7 @@ fn check_expr_unapplied(
                         bounds: pending_bounds(&signature, &seen),
                     });
                 }
-                return signature.result.map(|ty| env.uni.apply(&ty));
+                return signature.result.map(|ty| normalize(&ty, env));
             }
             // A local callee: a closure, or a binder whose type its uses
             // decide. `A -> B` is `(dual(A) ; B)`, so application peels a `;`, and
@@ -4880,7 +5279,7 @@ fn check_expr_unapplied(
                             bounds: pending_bounds(&signature, &seen),
                         });
                     }
-                    acc = signature.result.map(|ty| env.uni.apply(&ty)).unwrap_or(Type::ONE);
+                    acc = signature.result.map(|ty| normalize(&ty, env)).unwrap_or(Type::ONE);
                     flowing = None;
                     continue;
                 }

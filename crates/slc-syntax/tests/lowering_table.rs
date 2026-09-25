@@ -1,8 +1,8 @@
-//! Every row of the lowering table in `DESIGN.md` must correspond to an
-//! actual lowering implementation.
+//! Every row of the lowering table in the language design must correspond to
+//! an actual lowering implementation.
 //!
 //! The table gives each row a construct id. This test reads those ids out of
-//! the document and requires a fixture for each: a program that uses the
+//! `docs/design/` and requires a fixture for each: a program that uses the
 //! construct, and the core shape its lowering is documented to produce. A row
 //! that is added to the document without an implementation, or an id that is
 //! renamed, fails here.
@@ -108,12 +108,22 @@ const ROWS: &[Row] = &[
 ];
 
 fn documented_ids() -> Vec<String> {
-    let design = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../DESIGN.md"))
-        .expect("DESIGN.md");
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut parts: Vec<_> = std::fs::read_dir(root.join("docs/design"))
+        .expect("docs/design")
+        .map(|entry| entry.expect("a design part").path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    parts.sort();
+    let design = parts
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("a design part"))
+        .find(|text| text.contains("### Lowering table"))
+        .expect("the design has a lowering table");
     let table = design
         .split("### Lowering table")
         .nth(1)
-        .expect("DESIGN.md has a lowering table")
+        .expect("the lowering table has a body")
         .split("### Surface-to-core coverage")
         .next()
         .expect("the lowering table ends before the coverage table");
@@ -139,13 +149,13 @@ fn lowered(source: &str) -> String {
 #[test]
 fn every_documented_lowering_row_has_an_implementation() {
     let documented = documented_ids();
-    assert!(!documented.is_empty(), "no lowering-table rows were found in DESIGN.md");
+    assert!(!documented.is_empty(), "no lowering-table rows were found in the design");
 
     for id in &documented {
         let row = ROWS
             .iter()
             .find(|row| row.id == id)
-            .unwrap_or_else(|| panic!("DESIGN.md documents `{id}`, but no fixture covers it"));
+            .unwrap_or_else(|| panic!("the design documents `{id}`, but no fixture covers it"));
         let printed = lowered(row.source);
         assert!(
             printed.contains(row.core),

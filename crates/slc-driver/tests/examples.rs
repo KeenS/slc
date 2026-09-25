@@ -41,6 +41,47 @@ fn updated_feature_examples_have_exact_outputs() {
 ",
         ),
         (
+            "basics/defaults.sl",
+            "\
+false
+true
+false
+true
+",
+        ),
+        (
+            "basics/supertraits.sl",
+            "\
+false
+true
+1
+false
+",
+        ),
+        (
+            "basics/associated.sl",
+            "\
+3
+one
+8
+4
+0
+",
+        ),
+        (
+            "basics/builders.sl",
+            "\
+{a: 2, m: 1}
+{z: 9}
+{}
+{a: 2, m: 1}
+{a: 2, b: 4, m: 1}
+{1, 2}
+{m: 1, a: 2}
+{a, b}
+",
+        ),
+        (
             "basics/sets.sl",
             "\
 {m: 1}
@@ -303,9 +344,9 @@ fn repository_example_suite_has_expected_results() {
             Expected {
                 success: true,
                 stdout: &[
-                    "The simplest Slant program",
-                    "Hello, Slant!",
-                    "first line: // The simplest Slant program.",
+                    "The simplest SLC program",
+                    "Hello, SLC!",
+                    "first line: // The simplest SLC program.",
                     "cannot open: cannot open examples/missing.sl",
                 ],
                 stderr: &[],
@@ -365,7 +406,7 @@ fn repository_example_suite_has_expected_results() {
                 stderr: &[],
             },
         ),
-        ("basics/hello.sl", Expected { success: true, stdout: &["Hello, Slant!"], stderr: &[] }),
+        ("basics/hello.sl", Expected { success: true, stdout: &["Hello, SLC!"], stderr: &[] }),
         (
             "programs/json_parser.sl",
             Expected {

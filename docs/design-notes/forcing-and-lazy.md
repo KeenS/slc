@@ -1,8 +1,8 @@
 # Forcing, activation and `Lazy`
 
 Status: implemented, including computations whose polarity is inferred
-from subsequent uses. `DESIGN.md` defines the surface rules. All delayed
-evaluation is call-by-name, with no memoization or call-by-need.
+from subsequent uses. `docs/design/polarity.md` defines the surface rules.
+All delayed evaluation is call-by-name, with no memoization or call-by-need.
 
 ## Two interfaces, not literal duals
 

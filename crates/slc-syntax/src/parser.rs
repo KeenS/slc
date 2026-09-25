@@ -1,4 +1,4 @@
-//! Recursive descent parser for Slant.
+//! Recursive descent parser for SLC.
 
 use crate::ast::*;
 use crate::token::{Span, Token, TokenKind};
@@ -665,8 +665,8 @@ impl Parser {
             // parameter's sign comes after a `,`.
             if self.eat(&TokenKind::Colon) {
                 loop {
-                    let (trait_name, args) = self.parse_trait_application("a trait bound")?;
-                    bounds.push(TraitBound { param: name.clone(), trait_name, args });
+                    let (trait_name, args, pins) = self.parse_trait_bound()?;
+                    bounds.push(TraitBound { param: name.clone(), trait_name, args, pins });
                     if !self.eat(&TokenKind::Plus) {
                         break;
                     }
@@ -892,8 +892,10 @@ impl Parser {
                 span: t.span,
             });
         }
+        let supers = self.parse_supertraits()?;
         self.expect(TokenKind::LBrace, "`{` after the trait name")?;
         let mut methods = Vec::new();
+        let mut assocs = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
             if self.peek().is_none() {
                 return Err(ParseError {
@@ -901,12 +903,62 @@ impl Parser {
                     span: t.span,
                 });
             }
-            methods.push(self.parse_trait_method()?);
+            if self.peek_word("type") {
+                assocs.push(self.parse_assoc_decl()?);
+            } else {
+                methods.push(self.parse_trait_method()?);
+            }
         }
         Ok(Node {
             span: t.span,
-            kind: Decl::Trait { name, is_public, type_params, type_param_signs, methods },
+            kind: Decl::Trait {
+                name,
+                is_public,
+                type_params,
+                type_param_signs,
+                supers,
+                assocs,
+                methods,
+            },
         })
+    }
+
+    /// `type Item;` on a trait. The impl writes the type; a default here is
+    /// not part of this cut.
+    fn parse_assoc_decl(&mut self) -> Result<String, ParseError> {
+        self.pos += 1;
+        let name = self.expect_ident("an associated type")?;
+        if self.peek_kind() == Some(&TokenKind::Assign) {
+            return Err(ParseError {
+                message: format!(
+                    "an associated type is declared `type {name};` on the trait, and the impl \
+                     writes `type {name} = …`"
+                ),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            });
+        }
+        self.expect(TokenKind::Semicolon, "`;` after an associated type")?;
+        Ok(name)
+    }
+
+    fn peek_word(&self, word: &str) -> bool {
+        matches!(self.peek_kind(), Some(TokenKind::Ident(found)) if found == word)
+    }
+
+    /// `: Eq + Hash` after a trait's name. Absent when the trait has no parent.
+    fn parse_supertraits(&mut self) -> Result<Vec<SuperTrait>, ParseError> {
+        if !self.eat(&TokenKind::Colon) {
+            return Ok(Vec::new());
+        }
+        let mut supers = Vec::new();
+        loop {
+            let (trait_name, args) = self.parse_trait_application("a supertrait")?;
+            supers.push(SuperTrait { trait_name, args });
+            if !self.eat(&TokenKind::Plus) {
+                break;
+            }
+        }
+        Ok(supers)
     }
 
     /// `Into<i64>`: a trait name and the type arguments it is applied to.
@@ -924,6 +976,48 @@ impl Parser {
         Ok((name, args))
     }
 
+    /// `Walk<Item = i64>` or `Into<String>`: a bound's trait, its type
+    /// arguments, and the associated types it pins. A pin is `Name = Type`
+    /// among the arguments.
+    fn parse_trait_bound(&mut self) -> Result<(String, Vec<TypeExpr>, Vec<AssocPin>), ParseError> {
+        let name = self.expect_ident("a trait bound")?;
+        if !matches!(self.peek_kind(), Some(TokenKind::Lt | TokenKind::ReverseArrow)) {
+            return Ok((name, Vec::new(), Vec::new()));
+        }
+        let negated_first = self.peek_kind() == Some(&TokenKind::ReverseArrow);
+        let sign_start = self.tokens.get(self.pos).map(|t| t.span.start).unwrap_or(0);
+        self.pos += 1;
+        let mut args = Vec::new();
+        let mut pins = Vec::new();
+        loop {
+            if self.peek_pin() {
+                let pin = self.expect_ident("an associated type")?;
+                self.expect(TokenKind::Assign, "`=` in an associated-type pin")?;
+                let ty = self.parse_type()?.kind;
+                pins.push(AssocPin { name: pin, ty });
+            } else if args.is_empty() && pins.is_empty() && negated_first {
+                let inner = self.parse_type()?;
+                let span = Span { start: sign_start + 1, end: inner.span.end };
+                args.push(TypeExpr::Negative(Box::new(Node { kind: inner.kind, span })));
+            } else {
+                args.push(self.parse_type()?.kind);
+            }
+            if self.eat(&TokenKind::Comma) {
+                continue;
+            }
+            self.expect(TokenKind::Gt, "`>` after the trait's arguments")?;
+            break;
+        }
+        Ok((name, args, pins))
+    }
+
+    /// `Item = i64` inside `<…>`: a name and then `=`, which a type does not
+    /// begin with.
+    fn peek_pin(&self) -> bool {
+        matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+            && self.tokens.get(self.pos + 1).is_some_and(|t| t.kind == TokenKind::Assign)
+    }
+
     /// The `<…>` of a type or trait application, including a first argument
     /// whose `<-` the lexer made one token.
     fn parse_type_arguments(&mut self) -> Result<Vec<Node<TypeExpr>>, ParseError> {
@@ -936,6 +1030,18 @@ impl Parser {
                 let inner = self.parse_type()?;
                 let span = Span { start: sign_start + 1, end: inner.span.end };
                 args.push(Node { kind: TypeExpr::Negative(Box::new(inner)), span });
+            } else if self.peek_pin() {
+                let pin = match self.peek_kind() {
+                    Some(TokenKind::Ident(name)) => name.clone(),
+                    _ => "Item".to_string(),
+                };
+                return Err(ParseError {
+                    message: format!(
+                        "`{pin} = …` pins an associated type on a bound, \
+                         `<+T: Walk<{pin} = …>>`, not in this type"
+                    ),
+                    span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                });
             } else if matches!(self.peek_kind(), Some(TokenKind::DotDot | TokenKind::LBrace)) {
                 let row_start = self.span_start();
                 let row = if self.eat(&TokenKind::DotDot) {
@@ -960,7 +1066,7 @@ impl Parser {
         Ok(args)
     }
 
-    /// A method signature: a `fn` or `command` header ending in `;`.
+    /// A method: a `fn` or `command` header, then `;` or a default body.
     fn parse_trait_method(&mut self) -> Result<TraitMethod, ParseError> {
         match self.peek_kind() {
             Some(TokenKind::Fn) => {
@@ -977,7 +1083,7 @@ impl Parser {
                         Span { start: 0, end: 0 },
                     )?,
                 };
-                self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
+                let body = self.parse_method_body()?;
                 Ok(TraitMethod {
                     name,
                     is_command: false,
@@ -985,13 +1091,14 @@ impl Parser {
                     value_params,
                     continuation_params: Vec::new(),
                     return_type,
+                    body,
                 })
             }
             Some(TokenKind::Command) => {
                 self.pos += 1;
                 let name = self.expect_ident("method name")?;
                 let (value_params, continuation_params) = self.parse_command_params()?;
-                self.expect(TokenKind::Semicolon, "`;` after a method signature")?;
+                let body = self.parse_method_body()?;
                 Ok(TraitMethod {
                     name,
                     is_command: true,
@@ -999,12 +1106,27 @@ impl Parser {
                     value_params,
                     continuation_params,
                     return_type: None,
+                    body,
                 })
             }
             _ => Err(ParseError {
                 message: "a trait method is a `fn` or `command` signature".into(),
                 span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
             }),
+        }
+    }
+
+    /// `;` keeps the method required. A block is the default an impl inherits.
+    fn parse_method_body(&mut self) -> Result<Option<Node<Expr>>, ParseError> {
+        if self.eat(&TokenKind::Semicolon) {
+            Ok(None)
+        } else if self.peek_kind() == Some(&TokenKind::LBrace) {
+            Ok(Some(self.parse_block()?))
+        } else {
+            Err(ParseError {
+                message: "a method ends in `;`, or a `{ … }` body when the impl may omit it".into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            })
         }
     }
 
@@ -1018,6 +1140,7 @@ impl Parser {
         let for_type = self.parse_type()?.kind;
         self.expect(TokenKind::LBrace, "`{` after the impl header")?;
         let mut methods = Vec::new();
+        let mut assocs = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
             if self.peek().is_none() {
                 return Err(ParseError {
@@ -1025,7 +1148,11 @@ impl Parser {
                     span: t.span,
                 });
             }
-            methods.push(self.parse_decl()?);
+            if self.peek_word("type") {
+                assocs.push(self.parse_assoc_binding()?);
+            } else {
+                methods.push(self.parse_decl()?);
+            }
         }
         Ok(Node {
             span: t.span,
@@ -1036,9 +1163,20 @@ impl Parser {
                 type_param_signs,
                 bounds,
                 for_type,
+                assocs,
                 methods,
             },
         })
+    }
+
+    /// `type Item = i64;` on an impl.
+    fn parse_assoc_binding(&mut self) -> Result<(String, TypeExpr), ParseError> {
+        self.pos += 1;
+        let name = self.expect_ident("an associated type")?;
+        self.expect(TokenKind::Assign, "`=` and the type an associated type stands for")?;
+        let ty = self.parse_type()?.kind;
+        self.expect(TokenKind::Semicolon, "`;` after an associated type")?;
+        Ok((name, ty))
     }
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
@@ -1234,10 +1372,6 @@ impl Parser {
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 Ok(s)
-            }
-            Some(TokenKind::Return) => {
-                self.pos += 1;
-                Ok("return".to_string())
             }
             other => {
                 let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
@@ -1690,7 +1824,7 @@ impl Parser {
                         continue;
                     }
                     // `base.field` — projection of a record field by name.
-                    if matches!(field_name, Some(TokenKind::Ident(_)) | Some(TokenKind::Return)) {
+                    if matches!(field_name, Some(TokenKind::Ident(_))) {
                         let name = self.expect_name("field name")?;
                         let end = self.span_end();
                         let start = e.span.start;
@@ -1773,15 +1907,6 @@ impl Parser {
                 self.pos += 1;
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Char(c) })
             }
-            // `true` and `false` are gone; the tokens stay only so that
-            // writing one says what replaced it.
-            Some(TokenKind::Bool(b)) => Err(ParseError {
-                message: format!(
-                    "there is no `{}`: the prelude's `Bool` has the variants `True` and `False`",
-                    if b { "true" } else { "false" }
-                ),
-                span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
-            }),
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
                 let mut s = s;
@@ -1801,21 +1926,6 @@ impl Parser {
                     });
                 }
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Ident(s) })
-            }
-            Some(TokenKind::Return) => {
-                self.pos += 1;
-                if !self.no_struct_literal && self.peek_kind() == Some(&TokenKind::LBrace) {
-                    self.pos += 1;
-                    let fields = self.parse_data_expr_fields()?;
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: Expr::Data { name: "return".into(), fields },
-                    });
-                }
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::Ident("return".into()),
-                })
             }
             Some(TokenKind::Mu) => {
                 self.pos += 1;
@@ -2065,8 +2175,10 @@ impl Parser {
                         )?;
                         break;
                     }
-                    // `return(x) => body` or `op(params) resume => body`.
-                    if self.peek_kind() == Some(&TokenKind::Return) {
+                    // `return(x) => body` names the body's result. `return` is
+                    // otherwise an ordinary identifier.
+                    if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "return")
+                    {
                         if ret.is_some() {
                             return Err(ParseError {
                                 message: "a handler has only one `return` clause".into(),
@@ -2145,18 +2257,9 @@ impl Parser {
                     let pattern = self.parse_pattern()?;
                     // A request arm matches a continuation, so its demand
                     // reaches back: `.item(out) <= e`. A data arm flows
-                    // forward, `pattern => e`.
+                    // forward, `pattern => e`. An arm has no guard: a test
+                    // on what the pattern bound is a `match` inside the arm.
                     let copattern = pattern_is_copattern(&pattern);
-                    // An arm has no guard: a test on what the pattern bound
-                    // is a `match` inside the arm.
-                    if self.peek_kind() == Some(&TokenKind::If) {
-                        return Err(ParseError {
-                            message: "a `match` arm has no guard; test inside the arm, with \
-                                      a `match` on the condition"
-                                .into(),
-                            span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
-                        });
-                    }
                     if copattern {
                         if self.peek_kind() == Some(&TokenKind::FatArrow) {
                             return Err(ParseError {
@@ -2283,14 +2386,6 @@ impl Parser {
                     kind: Expr::Let { pattern, ty, value: Box::new(value), body, mode },
                 })
             }
-            // There is no `if`: a choice on a `bool` is a `match` on it. The
-            // word stays a token only so that writing it says so.
-            Some(TokenKind::If) => Err(ParseError {
-                message: "there is no `if`: match on the condition, \
-                          `match c { True => …, _ => … }`"
-                    .into(),
-                span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
-            }),
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // Inside parentheses a `{` can only open a record literal,
@@ -2633,13 +2728,6 @@ impl Parser {
                 self.pos += 1;
                 Ok(Pattern::Rest)
             }
-            Some(TokenKind::Bool(b)) => Err(ParseError {
-                message: format!(
-                    "there is no `{}`: the prelude's `Bool` has the variants `True` and `False`",
-                    if b { "true" } else { "false" }
-                ),
-                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
-            }),
             Some(TokenKind::LParen) => {
                 self.pos += 1;
                 // The nullary forms, as in expressions: `(,)` matches unit,
@@ -2821,7 +2909,7 @@ mod tests {
     fn a_match_arm_has_no_guard() {
         let tokens = lex("fn f(c: +i64) -> i64 { match c { _ if c > 0 => 1, _ => 2 } }").unwrap();
         let errors = parse(tokens).unwrap_err();
-        assert!(errors[0].message.contains("has no guard"), "got: {errors:?}");
+        assert!(errors[0].message.contains("expected `=>`"), "got: {errors:?}");
     }
 
     #[test]
@@ -3232,7 +3320,12 @@ mod tests {
         assert_eq!(type_param_signs, &[("T".to_string(), Negative)]);
         assert_eq!(
             bounds,
-            &[TraitBound { param: "T".into(), trait_name: "Show".into(), args: vec![] }]
+            &[TraitBound {
+                param: "T".into(),
+                trait_name: "Show".into(),
+                args: vec![],
+                pins: vec![],
+            }]
         );
     }
 
@@ -3284,15 +3377,16 @@ mod tests {
     }
 
     #[test]
-    fn the_builtin_boolean_spellings_are_refused() {
-        for (source, fragment) in [
-            ("fn f() -> Bool { true }", "there is no `true`"),
-            ("fn f(b: Bool) -> i64 { match b { false => 0, _ => 1 } }", "there is no `false`"),
-            ("fn f(b: bool) -> i64 { 0 }", "there is no `bool`"),
-        ] {
-            let errors = parse(lex(source).unwrap()).unwrap_err();
-            assert!(errors[0].message.contains(fragment), "{source}: {errors:?}");
-        }
+    fn the_type_bool_is_refused() {
+        let errors = parse(lex("fn f(b: bool) -> i64 { 0 }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("there is no `bool`"), "{errors:?}");
+    }
+
+    #[test]
+    fn released_words_are_identifiers() {
+        parse_str(
+            "fn if(true: i64, false: i64) -> i64 { let else = true; let return = false; else }",
+        );
     }
 
     #[test]
@@ -3365,13 +3459,6 @@ mod tests {
     fn parse_interaction() {
         let p = parse_str("fn f() -> i32 { mu { k <= <1 | k> } }");
         assert_eq!(p.decls.len(), 1);
-    }
-
-    #[test]
-    fn there_is_no_if() {
-        let errors =
-            parse(lex("fn f(b: Bool) -> i64 { if b { 1 } else { 2 } }").unwrap()).unwrap_err();
-        assert!(errors[0].message.contains("there is no `if`"), "got: {errors:?}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# Contributing to Slant
+# Contributing to SLC
 
 ## Getting started
 
@@ -7,13 +7,14 @@
 
 ## Workflow
 
-1. Design changes go in `docs/design-notes/` first, then `DESIGN.md`.
+1. Design changes go in `docs/design-notes/` first, then the part of the
+   design they belong to. `DESIGN.md` indexes those parts.
 2. `PLAN.md` holds what is open — limits, deferrals, and the `Next` queue.
-   Add planned work there; when it lands, the decision goes to `DESIGN.md`
+   Add planned work there; when it lands, the decision goes to the design
    and the plan entry is removed rather than kept as a record.
 3. Every commit should keep `cargo fmt --check`, `cargo clippy -- -D warnings`,
    and `cargo test` green.
-4. Slant source — the examples, the prelude, `stdlib/` — is kept formatted by
+4. SLC source — the examples, the prelude, `stdlib/` — is kept formatted by
    `slc fmt`, and `cargo test` fails when a file is not: run
    `cargo run -- fmt <file.sl>`.
 

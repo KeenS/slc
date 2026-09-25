@@ -65,11 +65,9 @@ fn an_error_at_the_end_of_input_claims_no_place_it_does_not_have() {
 
 #[test]
 fn guidance_for_what_is_gone_names_what_exists() {
-    // There is no `true` to match on: the prelude's variants are `True` and
-    // `False`, and the messages that send an author to `match` say so.
-    for (name, body, gone) in
-        [("if", "if x", "`if`"), ("and", "<a && b", "`&&`"), ("or", "<a || b", "`&&` or `||`")]
-    {
+    // `&&` and `||` are gone. The messages name the `Bool` variants `True`
+    // and `False`.
+    for (name, body, gone) in [("and", "<a && b", "`&&`"), ("or", "<a || b", "`&&` or `||`")] {
         let stderr = stderr_of(name, &format!("fn f(a: Bool, b: Bool) -> Bool {{ {body} }}"));
         assert!(stderr.contains(gone), "{stderr}");
         assert!(stderr.contains("True =>"), "{stderr}");

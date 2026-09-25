@@ -49,6 +49,10 @@ pub struct Declarations {
     /// Menu or form name → the position of the row parameter its own row
     /// names, `menu Seq<+T, E> / {..E}`: its latent row is that argument.
     latent_row_params: HashMap<String, usize>,
+    /// `Walk::Item` → the trait, the associated type, and how many type
+    /// arguments the trait takes. The projection is applied to those and
+    /// then to the implementing type.
+    projections: HashMap<String, (String, String, usize)>,
 }
 
 impl Declarations {
@@ -112,6 +116,7 @@ impl Declarations {
         let resolve = |inner: &TypeExpr| self.resolve_in(inner, params);
         let resolved = match ty {
             TypeExpr::Base(name) if params.contains_key(name) => Type::Param(params[name]),
+            TypeExpr::Base(name) if self.projections.contains_key(name) => return None,
             // A menu or a form name denotes the negative type itself; its
             // dual — the bare `Named` — is the positive type of its demands.
             TypeExpr::Base(name) if self.is_negative_decl(name) => {
@@ -123,6 +128,11 @@ impl Declarations {
             // A declaration applied to arguments; the argument count must
             // match the declaration's.
             TypeExpr::Apply(name, args) => {
+                if self.projection_arity(name).is_some() {
+                    let args =
+                        args.iter().map(|arg| resolve(&arg.kind)).collect::<Option<Vec<_>>>()?;
+                    return self.projected_type(name, args);
+                }
                 if self.effects.contains(name) || !self.args_match_kinds(name, args) {
                     return None;
                 }
@@ -185,6 +195,31 @@ impl Declarations {
             other => return lower_type(other).ok(),
         };
         Some(resolved)
+    }
+
+    /// Record `Trait::Item` as a projection. `params` is the trait's own
+    /// type-parameter count; the projection takes those and then `Self`.
+    pub(crate) fn note_projection(&mut self, trait_name: &str, item: &str, params: usize) {
+        self.projections.insert(
+            format!("{trait_name}::{item}"),
+            (trait_name.to_string(), item.to_string(), params),
+        );
+    }
+
+    /// How many arguments `Trait::Item` takes, when it is a projection:
+    /// the trait's parameters, plus the implementing type.
+    pub(crate) fn projection_arity(&self, name: &str) -> Option<usize> {
+        self.projections.get(name).map(|(_, _, params)| params + 1)
+    }
+
+    /// The nominal projection, when `args` is the trait's parameters plus
+    /// the implementing type.
+    pub(crate) fn projected_type(&self, name: &str, args: Vec<Type>) -> Option<Type> {
+        let (trait_name, item, params) = self.projections.get(name)?;
+        if args.len() != params + 1 {
+            return None;
+        }
+        Some(Type::Named(slc_syntax::traits::assoc_type_name(trait_name, item), args))
     }
 
     /// The variant names of a declared enum, in declaration order.

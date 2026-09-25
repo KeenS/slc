@@ -1,6 +1,6 @@
 # Modules in files of their own
 
-Status: implemented. `DESIGN.md` §10 is the definition; this note records
+Status: implemented. `docs/design/programs.md` is the definition; this note records
 what was chosen and why.
 
 ## Why
@@ -21,7 +21,7 @@ mod geometry;          // the declarations of `geometry` are in geometry.sl
 The file holds the module's *body*, not a `mod geometry { … }` around it: the
 name is the declaration's to give, once, where the module is declared. `pub
 mod geometry;` is public as `pub mod geometry { … }` is. Everything else
-about the module — privacy, paths, `use`, globs — is §10's, unchanged: a
+about the module — privacy, paths, `use`, globs — is that part's, unchanged: a
 module in a file is a module.
 
 The standard library uses the same body-only convention. `stdlib/list.sl` is

@@ -1,8 +1,9 @@
 # The λ̄μμ̃ Redesign: What It Settled
 
-This is the record of the redesign that realigned Slant with the classical
-λ̄μμ̃ calculus. It is history, not reference: `DESIGN.md` defines the
-language, and where the two disagree, `DESIGN.md` is right. `PLAN.md` holds
+This is the record of the redesign that realigned SLC with the classical
+λ̄μμ̃ calculus. It is history, not reference: `DESIGN.md` and the parts it
+indexes under `docs/design/` define the language, and where the two disagree,
+the design is right. `PLAN.md` holds
 what is still open. The commit history carries the same story with the
 reasoning per change.
 

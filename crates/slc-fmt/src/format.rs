@@ -252,7 +252,7 @@ impl Formatter {
     }
 
     fn is_name(kind: Option<&T>) -> bool {
-        matches!(kind, Some(T::Ident(_) | T::Return | T::Reset))
+        matches!(kind, Some(T::Ident(_) | T::Reset))
     }
 
     fn error<X>(&self, expected: &str) -> R<X> {
@@ -471,21 +471,23 @@ impl Formatter {
             }
             Some(T::Use) => self.use_decl()?,
             Some(T::Trait) => {
-                let head = vec![
-                    self.bump(),
-                    text(" "),
-                    self.name("a trait name")?,
-                    self.type_params()?,
-                    text(" "),
-                ];
-                self.with_items(head, &mut |f| f.trait_method().map(plain))?
+                let mut head =
+                    vec![self.bump(), text(" "), self.name("a trait name")?, self.type_params()?];
+                if self.at(&T::Colon) {
+                    head.extend([self.bump(), text(" "), self.ty()?]);
+                    while self.at(&T::Plus) {
+                        head.extend([text(" "), self.bump(), text(" "), self.ty()?]);
+                    }
+                }
+                head.push(text(" "));
+                self.with_items(head, &mut |f| f.trait_item())?
             }
             Some(T::Impl) => {
                 let mut head = vec![self.bump(), self.type_params()?, text(" ")];
                 // `Into<i64>` is the trait applied to its arguments.
                 head.extend([self.ty()?, text(" "), self.expect(&T::For)?]);
                 head.extend([text(" "), self.ty()?, text(" ")]);
-                self.with_items(vec![header(head, &[1])], &mut |f| f.decl().map(plain))?
+                self.with_items(vec![header(head, &[1])], &mut |f| f.impl_item())?
             }
             Some(T::Effect) => {
                 let mut head = vec![self.bump(), text(" "), self.name("an effect name")?];
@@ -584,6 +586,39 @@ impl Formatter {
         Ok(groups)
     }
 
+    /// `type Item;` or a method.
+    fn trait_item(&mut self) -> R<Laid> {
+        if self.at_word("type") {
+            let mut docs = vec![self.bump(), text(" "), self.name("an associated type")?];
+            docs.push(self.expect(&T::Semicolon)?);
+            return Ok(plain(concat(docs)));
+        }
+        self.trait_method().map(plain)
+    }
+
+    /// `type Item = i64;` or a method.
+    fn impl_item(&mut self) -> R<Laid> {
+        if self.at_word("type") {
+            let mut docs = vec![self.bump(), text(" "), self.name("an associated type")?];
+            docs.extend([
+                text(" "),
+                self.expect(&T::Assign)?,
+                text(" "),
+                self.ty()?,
+                self.expect(&T::Semicolon)?,
+            ]);
+            return Ok(plain(concat(docs)));
+        }
+        self.decl().map(plain)
+    }
+
+    fn at_word(&self, word: &str) -> bool {
+        match self.kind() {
+            Some(T::Ident(found)) => found == word,
+            _ => false,
+        }
+    }
+
     fn trait_method(&mut self) -> R<Doc> {
         let is_command = self.at(&T::Command);
         let mut docs = vec![self.bump(), text(" "), self.name("a method name")?];
@@ -593,8 +628,13 @@ impl Formatter {
             docs.extend([self.params()?, text(" "), self.arrow()?, text(" "), self.ty()?]);
             vec![3]
         };
-        docs.push(self.expect(&T::Semicolon)?);
-        Ok(header(docs, &groups))
+        if self.at(&T::Semicolon) {
+            docs.push(self.expect(&T::Semicolon)?);
+            Ok(header(docs, &groups))
+        } else {
+            docs.push(text(" "));
+            Ok(concat(vec![header(docs, &groups), self.block()?]))
+        }
     }
 
     /// An effect's operation: `fn op(params) -> T;`.
@@ -724,6 +764,16 @@ impl Formatter {
                     _ => return Ok(concat(docs)),
                 };
                 let args = self.bracketed((&open, &T::Gt), &[T::Comma], BARE_COMMAS, &mut |f| {
+                    // `Item = i64` pins an associated type on a bound.
+                    if matches!(f.kind(), Some(T::Ident(_))) && f.kind_at(1) == Some(&T::Assign) {
+                        return Ok(plain(concat(vec![
+                            f.bump(),
+                            text(" "),
+                            f.bump(),
+                            text(" "),
+                            f.ty()?,
+                        ])));
+                    }
                     match f.kind() {
                         // A row argument: `..E`, or a row written out.
                         Some(T::DotDot) => {
@@ -887,7 +937,7 @@ impl Formatter {
                 Ok(plain(concat(docs)))
             }
             Some(T::Int(_) | T::Float(_) | T::Str(_) | T::Char(_)) => Ok(plain(self.bump())),
-            Some(T::Ident(_) | T::Return) => {
+            Some(T::Ident(_)) => {
                 let name = self.path("a name")?;
                 if self.no_struct_literal || !self.at(&T::LBrace) {
                     return Ok(plain(name));

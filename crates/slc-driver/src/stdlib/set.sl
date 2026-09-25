@@ -1,6 +1,7 @@
 // `set`: the ordered set. It is `Map` with nothing stored beside the key, so
 // the keys come out in order. A key needs `Ord`, and the same total order
-// `Map` asks for.
+// `Map` asks for. `Builder` assembles one the way `map::Builder` does: `put`
+// takes the key alone.
 
 use list::List;
 use list::List::*;
@@ -73,4 +74,24 @@ impl<+K: Display + Ord> Display for Set<K> {
     fn fmt(self: Set<K>) -> String {
         (<("{", <self | to_list | fmt_keys) | add | x => (x, "}") | add)
     }
+}
+
+pub menu Builder<+K> {
+    put: (K -> Builder<K>),
+    finish: Set<K>,
+}
+
+fn holding<+K: Ord>(s: Set<K>) -> Builder<K> {
+    mu Builder {
+        put <= <fn(key: K) { <(<(s, key) | insert) | holding } | put>,
+        finish <= <s | finish>,
+    }
+}
+
+pub fn builder<+K: Ord>() -> Builder<K> {
+    <empty() | holding
+}
+
+pub fn put<+K: Ord>(b: Builder<K>, key: K) -> Builder<K> {
+    <key | b.put
 }

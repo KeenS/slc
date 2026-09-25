@@ -1,6 +1,6 @@
 # Rows in types
 
-Status: implemented. `DESIGN.md`'s effects section is the definition; this
+Status: implemented. `docs/design/effects.md` is the definition; this
 note records why the design was taken. Returned values and command exits
 must preserve their latent rows in their promised types. Neither constructing
 a consumer nor passing it runs it. The earlier constructor-charge and
@@ -33,7 +33,7 @@ from declarations and names. What names cannot follow is the known limit
   chain;
 - a delayed computation stored in a tuple, bundle, variant or record that
   performs anything is refused, and so is a delayed row with a variable
-  (`DESIGN.md` §4, "When a `let` computes").
+  (`docs/design/polarity.md`, "When a `let` computes").
 
 Each is a value whose behaviour when run is not visible from its name. A type
 travels with the value, so a row on the type follows it into a tuple, through a

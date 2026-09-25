@@ -273,9 +273,9 @@ fn blank_lines_are_kept_but_never_doubled() {
 
 #[test]
 fn source_that_does_not_parse_is_refused_and_says_why() {
-    let error = format_source("fn f() -> i64 { if x }").unwrap_err();
+    let error = format_source("fn f() -> i64 { a && b }").unwrap_err();
     assert!(
-        matches!(&error, FormatError::Syntax { message, .. } if message.contains("there is no `if`")),
+        matches!(&error, FormatError::Syntax { message, .. } if message.contains("&&")),
         "{error:?}"
     );
     assert!(matches!(format_source("fn f() -> i64 { \"open }"), Err(FormatError::Syntax { .. })));

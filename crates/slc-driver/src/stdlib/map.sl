@@ -10,9 +10,11 @@
 // every float, so it collides with the node the search reaches.
 //
 // `get` can find nothing, so it offers that outcome to a continuation, the
-// way `list::nth` does. Keys and values are positive, as a list's elements
-// are. Supplying a key and receiving a value is a function; `Stream` and
-// `Seq` stay the negative sequences.
+// way `list::nth` does. Keys and values are positive. `Builder` is the
+// negative way to assemble one: `put` answers the function to the next
+// builder, and `finish` answers the map that builder holds. The states are
+// persistent, so a shared prefix can diverge. `Stream` and `Seq` stay the
+// negative sequences.
 
 use list::List::*;
 
@@ -234,4 +236,31 @@ impl<+K: Display + Ord, +V: Display> Display for Map<K, V> {
     fn fmt(self: Map<K, V>) -> String {
         (<("{", <self | to_list | fmt_entries) | add | x => (x, "}") | add)
     }
+}
+
+// A builder is the map's negative side. Each state closes over one map.
+// Asking for `put` gives a function from an entry to the next state; asking
+// for `finish` gives the map that state holds.
+pub menu Builder<+K, +V> {
+    put: ((K, V) -> Builder<K, V>),
+    finish: Map<K, V>,
+}
+
+fn holding<+K: Ord, +V>(m: Map<K, V>) -> Builder<K, V> {
+    mu Builder {
+        put <= <fn(entry: (K, V)) {
+            match entry {
+                (key, value) => <(<(m, key, value) | insert) | holding,
+            }
+        } | put>,
+        finish <= <m | finish>,
+    }
+}
+
+pub fn builder<+K: Ord, +V>() -> Builder<K, V> {
+    <empty() | holding
+}
+
+pub fn put<+K: Ord, +V>(b: Builder<K, V>, key: K, value: V) -> Builder<K, V> {
+    <(key, value) | b.put
 }

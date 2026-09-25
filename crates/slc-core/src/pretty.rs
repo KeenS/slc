@@ -48,7 +48,14 @@ impl std::fmt::Display for Type {
             Type::Sum(xs) => connective(f, xs, " | ", "(|)"),
             Type::Param(i) => write!(f, "%{i}"),
             Type::Named(name, args) => {
-                write!(f, "{name}")?;
+                // A projection is stored under a nominal name. Print it as
+                // the path the program wrote: `Walk::Item<…>`.
+                let shown = name
+                    .strip_prefix("$assoc$")
+                    .and_then(|rest| rest.rsplit_once('$'))
+                    .map(|(trait_name, item)| format!("{trait_name}::{item}"))
+                    .unwrap_or_else(|| name.clone());
+                write!(f, "{shown}")?;
                 if let Some((first, rest)) = args.split_first() {
                     write!(f, "<{first}")?;
                     for arg in rest {

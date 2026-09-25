@@ -1,36 +1,33 @@
-# Slant: the standing plan
+# SLC: the standing plan
 
-Slant is a Rust-flavoured surface over a classical λ̄μμ̃ core. The redesign
+SLC is a Rust-flavoured surface over a classical λ̄μμ̃ core. The redesign
 that established it is finished and recorded in `docs/HISTORY.md`; the
-language itself is defined in `DESIGN.md`. This file is neither — it holds
+language itself is defined by `DESIGN.md` and the parts under
+`docs/design/`. This file is neither — it holds
 only what is still open: the known limits, the work queued next, and what is
 deferred for discussion.
 
-The contract that keeps it short: a decision, once made, goes to `DESIGN.md`
-and leaves this file. The plan is where work stops being open, not where it
-is remembered — so an entry here is a promise still outstanding, and nothing
-else belongs. Entries refer to each other by name, never by position.
+The contract that keeps it short: a decision, once made, goes to the design
+(`DESIGN.md` indexes the parts) and leaves this file. The plan is where work
+stops being open, not where it is remembered — so an entry here is a promise
+still outstanding, and nothing else belongs. Entries refer to each other by
+name, never by position.
 
 ## Status
 
 The acceptance suite covers the corrected runtime and effect rules as well
-as complete design programs. Traits (ad-hoc
-polymorphism) and algebraic effects with handlers are both shipped and
-specified in `DESIGN.md`, and the execution model has been rebuilt around
-them: the evaluator is an abstract machine over a closed, flat, de-Bruijn
-instruction stream, its continuation first-class data (`DESIGN.md` §11). So
-effect handlers are multi-shot, captured continuations are cheap and
-reusable, and trait dispatch is resolved entirely at compile time.
+as complete design programs. Traits (ad-hoc polymorphism) and algebraic
+effects with handlers are both shipped and specified in the design, and
+the execution model has been rebuilt around them: the evaluator is an
+abstract machine over a closed, flat, de-Bruijn instruction stream, its
+continuation first-class data (`docs/design/core.md`). So effect handlers are
+multi-shot, captured continuations are cheap and reusable, and trait
+dispatch is resolved entirely at compile time.
 
 The queue the redesign approved is complete. Generic effects, composable
-capture, and structural stage adapters are specified in `DESIGN.md`, with
+capture, and structural stage adapters are specified in the design, with
 runnable examples and regression coverage. The known design limits below
-remain. What `Deferred` holds now is what writing programs in the language
-turned up — the formatter, the editor mode, and the examples under
-`examples/programs/` — rather than anything the redesign left undone. The
-part of it that needed no decision is built: located syntax errors,
-`slc check`, several bounds on a type parameter, and programs of more than
-one file are in `DESIGN.md`.
+remain.
 
 Call-by-name is the settled direction for delayed computation: every demand
 runs it afresh under the handlers around that demand. Future changes must keep
@@ -38,7 +35,7 @@ the polarity-directed evaluation discipline and explicit eager evaluation;
 they do not replace it with a general call-by-value default. Call-by-need,
 memoized thunks and implicit result caching are out of scope, not deferred
 features. New features must preserve the separate forcing and activation
-rows and the demand-time handler boundaries specified in `DESIGN.md`.
+rows and the demand-time handler boundaries specified in the design.
 
 ## Known limits
 
@@ -62,7 +59,7 @@ rows and the demand-time handler boundaries specified in `DESIGN.md`.
   to the reduction rules, comparing two values nothing else constrains stays
   unchecked, and the untyped evaluator remains the backstop for whatever that
   gap hides. A type variable does carry the polarity of the generic parameters
-  it meets (`DESIGN.md` §4, "Polarity by position").
+  it meets (`docs/design/polarity.md`, "Polarity by position").
 
 ## Next
 
@@ -70,15 +67,45 @@ Each entry starts with regressions, then implementation and documentation,
 and passes `cargo fmt --check`, `cargo clippy --workspace --all-targets --
 -D warnings` and `cargo test --workspace` before it is considered complete.
 New or changed syntax also needs runnable examples with exact-output tests;
-compiling complete `DESIGN.md` programs alone does not establish their
+compiling complete programs from the design alone does not establish their
 runtime behaviour.
 
-No queued implementation tasks.
+- **Keyword lengths.** Every program the suite runs still runs, and prints
+  the same output, once its keywords are the spellings below. Writing an old
+  keyword is a parse error that names the new one, as a `+fn` prefix already
+  does.
+
+  A declaration is four letters. An expression that returns a value is two.
+  `let` stays three letters, with `let+` and `let-`, because it yields no
+  value. `mod` and `use` stay, because they only move names. `reset` stays,
+  because `control::reset` is a function of that name. The lambda `fn` stays.
+  `data`, `enum`, `menu`, `form`, and `impl` are already four letters. `pub`,
+  `for`, and `dual` are marks and a type former, and they stay.
+
+  Named `fn` becomes `func`. `command` becomes `proc`. `trait` becomes
+  `spec`. `effect` becomes `hook`. `const` becomes `def`, a definition, which
+  sits on neither side of the value and continuation mirror. `match` becomes
+  `of`. `handle` becomes `do`. `handler` becomes `op`. `with h handle e`
+  becomes `op h do e`.
+
+  `select` is removed. `mu` keeps the capture and the menu, written `<=`:
+  one arm `k <= c` captures the continuation, and `item: out <= c` answers a
+  menu. The consumer `select` built is the same keyword written `=>`, and
+  that is μ̃. A type in front of `<=` is what the expression produces. A type
+  in front of `=>` is what the consumer takes. Every arm in one pair of
+  braces uses the same arrow. A demand-answering `mu` always has an arm, so
+  braces with no arms are the consumer of the written type, today's
+  `select (|) {}`. `of` takes a scrutinee apart, and it keeps its own keyword.
+
+  The lexer, the parser's messages, the formatter, and the Emacs mode learn
+  the spellings. The prelude, the library, the examples, and the design
+  parts are rewritten in them, and `docs/MIGRATION.md` records the old word
+  beside the new one.
 
 ## Deferred, for discussion
 
 Each of these needs a decision before it is work. Once one is made it goes
-to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
+to the design, and whatever it leaves to build moves up to `Next`.
 
 - **A REPL.** Feasible, and what it turns on is settled by two decisions
   rather than by work. The work is known: values kept between entries index
@@ -110,10 +137,3 @@ to `DESIGN.md`, and whatever it leaves to build moves up to `Next`.
   at run time, so no continuation crosses entries. An entry left incomplete
   is already recognisable — its parse error is at the end of input, with no
   extent — and `--fuel` bounds one that does not stop.
-
-- **What traits still lack.** Default methods, associated types, and
-  supertraits. Each is ordinary in Rust, whose flavour the surface keeps;
-  whether each earns its place here, given that dispatch is resolved
-  entirely at compile time, is undecided.
-
-

@@ -1072,7 +1072,8 @@ match a { True => x, False => match b { True => y, False => z } }   // new
 ```
 
 An `if` with no `else` yielded unit on the false path; write that arm
-explicitly, `_ => (,)`.
+explicitly, `_ => (,)`. The words `if`, `else`, `true`, and `false` are
+ordinary names. The statement is what is gone.
 
 ## `!` is the prelude's `not`
 
@@ -1280,8 +1281,9 @@ let r = handle use_inside() { … };         // new: `use_inside` returns; the j
 
 ## `reset` is a reserved word
 
-`reset e` delimits a computation without handling it (`DESIGN.md` §6), so
-`reset` no longer names a variable, a function, a field or an operation:
+`reset e` delimits a computation without handling it
+(`docs/design/control.md`), so `reset` no longer names a variable, a
+function, a field or an operation:
 
 ```sl
 let reset = 0;           // old

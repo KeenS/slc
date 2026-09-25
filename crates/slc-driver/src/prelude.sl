@@ -1,4 +1,4 @@
-// The Slant prelude: what every program sees without asking.
+// The SLC prelude: what every program sees without asking.
 //
 // The driver appends this unit to the program before parsing — the user's
 // source comes first, so its spans and line numbers are untouched — and
@@ -173,7 +173,7 @@ impl Into<u32> for u64 { fn into(self: u64) -> u32 { <self | __to_u32 } }
 
 trait Eq {
     fn eq(self: Self, other: Self) -> Bool;
-    fn ne(self: Self, other: Self) -> Bool;
+    fn ne(self: Self, other: Self) -> Bool { <(<(self, other) | eq) | not }
 }
 impl Eq for i64 {
     fn eq(self: i64, other: i64) -> Bool { <(self, other) | __eq }

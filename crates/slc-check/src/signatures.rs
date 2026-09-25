@@ -46,6 +46,9 @@ pub(crate) struct SignatureBound {
     pub param: usize,
     pub trait_name: String,
     pub args: Vec<Type>,
+    /// `Item = i64`. A pin that does not resolve is dropped; the declaration
+    /// is refused where the type is written.
+    pub pins: Vec<(String, Type)>,
 }
 
 /// The standard library.
@@ -178,6 +181,20 @@ fn parameter_name(param: &slc_syntax::ast::Param) -> String {
     param.name().map(str::to_string).unwrap_or_else(|| "_".into())
 }
 
+/// A written type as a template, or nothing when it names no type. Pins use
+/// this so an unknown pin is omitted rather than turned into a fresh
+/// variable that would match every type.
+fn signature_type_resolved(
+    ty: &TypeExpr,
+    generics: &[String],
+    enums: &Declarations,
+) -> Option<Type> {
+    let params: std::collections::HashMap<String, usize> =
+        generics.iter().enumerate().map(|(i, g)| (g.clone(), i)).collect();
+    let vars: Vec<Type> = (0..generics.len()).map(Type::Var).collect();
+    enums.resolve_in(ty, &params).map(|ty| ty.instantiate(&vars))
+}
+
 /// A written type as a signature sees it: declaration names resolved, and a
 /// generic name a template variable, instantiated afresh at every call. A
 /// type that resolves to nothing gets its own template variable — unknown to
@@ -259,7 +276,20 @@ pub(crate) fn function_types(
                         .iter()
                         .map(|ty| signature_type(Some(ty), type_params, enums, &mut next_template))
                         .collect();
-                    SignatureBound { param: index, trait_name: bound.trait_name.clone(), args }
+                    let pins = bound
+                        .pins
+                        .iter()
+                        .filter_map(|pin| {
+                            signature_type_resolved(&pin.ty, type_params, enums)
+                                .map(|ty| (pin.name.clone(), ty))
+                        })
+                        .collect();
+                    SignatureBound {
+                        param: index,
+                        trait_name: bound.trait_name.clone(),
+                        args,
+                        pins,
+                    }
                 })
             })
             .collect()
@@ -448,6 +478,11 @@ pub(crate) fn instantiate(
                 param: bound.param,
                 trait_name: bound.trait_name.clone(),
                 args: bound.args.iter().map(|ty| freshen(ty, &mut seen, &mut rows, uni)).collect(),
+                pins: bound
+                    .pins
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), freshen(ty, &mut seen, &mut rows, uni)))
+                    .collect(),
             })
             .collect(),
         signs: signature.signs.clone(),

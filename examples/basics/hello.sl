@@ -1,6 +1,6 @@
-// The simplest Slant program.
+// The simplest SLC program.
 
 command main | (exit: i32) / {IO} {
-    <"Hello, Slant!" | println;
+    <"Hello, SLC!" | println;
     <0 | exit>
 }
