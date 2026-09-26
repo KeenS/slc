@@ -9,8 +9,8 @@
 // A key needs `Hash` and `Eq`. Equal keys must hash equal; the checker
 // cannot see that.
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 enum Node<+K, +V> {
     Leaf(K, V),

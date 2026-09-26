@@ -35,7 +35,7 @@ fn a_menus_row_is_its_row_argument() {
         proc main | (exit: -i32) / {{IO}} {{
             let l = <(fn {{ let u = tick(); 5 }}) | later;
             <\"built\" | println;
-            let v = do l.value {{ tick(): resume => {{ <\"tick\" | println; <(,) | resume }} }};
+            let v = do l.value hn {{ tick(): resume => {{ <\"tick\" | println; <(,) | resume }} }};
             <v | println;
             <0 | exit>
         }}"
@@ -50,7 +50,7 @@ fn a_lazy_sequence_performs_where_it_is_demanded() {
     let body = |demand: &str| {
         format!(
             "{TICK}
-            use list::List::*;
+            cite list::List::*;
             func noisy(n: i64) -> i64 / {{Tick}} {{ let u = tick(); <(n, 2) | mul }}
 
             proc main | (exit: -i32) / {{IO}} {{
@@ -63,7 +63,7 @@ fn a_lazy_sequence_performs_where_it_is_demanded() {
     let (ok, stdout, stderr) = run(
         "seq_handled",
         &body(
-            "let l = do (<s | seq::to_list) { tick(): resume => { <\"tick\" | println; <(,) | resume } };
+            "let l = do (<s | seq::to_list) hn { tick(): resume => { <\"tick\" | println; <(,) | resume } };
             <l | fmt | println;",
         ),
     );

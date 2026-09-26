@@ -10,9 +10,9 @@
 // dual of a trait — a trait hands a value the functions it provides, an
 // effect hands a computation the answers it demands.
 
-use list::List;
-use list::List::*;
-use list::map;
+cite list::List;
+cite list::List::*;
+cite list::map;
 
 hook Exn { func throw(message: String) -> i64; }
 hook Reader { func config() -> i64; }
@@ -56,34 +56,34 @@ func emit(out: i64) <- i64 / {Reader} {
 
 proc main | (exit: i32) / {IO} {
     // never resumes — the exception replaces the computation
-    let safe = do (<(10, 0) | checked_div) { throw(m) => -1 };
+    let safe = do (<(10, 0) | checked_div) hn { throw(m) => -1 };
     <safe | println; // -1
 
-    let ok = do (<(10, 2) | checked_div) { throw(m) => -1 };
+    let ok = do (<(10, 2) | checked_div) hn { throw(m) => -1 };
     <ok | println; // 5
 
     // resumes once, then does work after the resume
-    let r = do (<7 | scaled) { config(): resume => <(<10 | resume, 1000) | add };
+    let r = do (<7 | scaled) hn { config(): resume => <(<10 | resume, 1000) | add };
     <r | println; // 7*10 + 1000 = 1070
 
     // resumes twice, combining both branches of every choice
-    let all = do pick() {
+    let all = do pick() hn {
         flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <all | println; // "HH HT TH TT"
 
     // the row of `map(half, …)` is `half`'s row, forwarded — handled here
-    let halves = do (<(half, Cons(8, Cons(4, Nil))) | map) {
+    let halves = do (<(half, Cons(8, Cons(4, Nil))) | map) hn {
         throw(m) => Nil,
     };
     <halves | fmt | println; // "[4, 2]"
-    let none = do (<(half, Cons(8, Cons(5, Nil))) | map) {
+    let none = do (<(half, Cons(8, Cons(5, Nil))) | map) hn {
         throw(m) => Nil,
     };
     <none | fmt | println; // "[]"
 
     // the negative function's row, discharged like any other
-    <do (<6 | emit) {
+    <do (<6 | emit) hn {
         config(): resume => <7 | resume,
     } | println; // 42
 

@@ -1,4 +1,4 @@
-//! `mod name;`: a module whose body is a file of its own.
+//! `sect name;`: a module whose body is a file of its own.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,9 +28,9 @@ fn slc(subcommand: &str, main: &Path) -> (bool, String, String) {
     )
 }
 
-const MAIN: &str = "mod geometry;
+const MAIN: &str = "sect geometry;
 
-use geometry::area;
+cite geometry::area;
 
 proc main | (exit: i32) / {IO} {
     <geometry::Shape::Rect(6, 7) | area | println;
@@ -40,7 +40,7 @@ proc main | (exit: i32) / {IO} {
 
 const GEOMETRY: &str = "pub enum Shape { Circle(i64), Rect(i64, i64) }
 
-use Shape::*;
+cite Shape::*;
 
 func squared(n: i64) -> i64 { <(n, n) | mul }
 
@@ -68,7 +68,7 @@ fn a_module_file_keeps_its_private_names() {
         &[
             (
                 "main.sl",
-                "mod geometry;\nproc main | (exit: i32) / {IO} {\n    <4 | geometry::squared | println;\n    <0 | exit>\n}\n",
+                "sect geometry;\nproc main | (exit: i32) / {IO} {\n    <4 | geometry::squared | println;\n    <0 | exit>\n}\n",
             ),
             ("geometry.sl", GEOMETRY),
         ],
@@ -87,9 +87,9 @@ fn a_module_file_declares_its_own_modules_a_directory_down() {
         &[
             (
                 "main.sl",
-                "mod geometry;\nmod outer { pub mod inner; }\nproc main | (exit: i32) / {IO} {\n    <geometry::shapes::unit() | println;\n    <outer::inner::deep() | println;\n    <0 | exit>\n}\n",
+                "sect geometry;\nsect outer { pub sect inner; }\nproc main | (exit: i32) / {IO} {\n    <geometry::shapes::unit() | println;\n    <outer::inner::deep() | println;\n    <0 | exit>\n}\n",
             ),
-            ("geometry.sl", "pub mod shapes;\n"),
+            ("geometry.sl", "pub sect shapes;\n"),
             ("geometry/shapes.sl", "pub func unit() -> i64 { 1 }\n"),
             ("outer/inner.sl", "pub func deep() -> i64 { 2 }\n"),
         ],
@@ -109,11 +109,11 @@ fn a_module_file_reaches_the_library_and_the_program_s_menus() {
         &[
             (
                 "main.sl",
-                "mod tools;\nmenu Offer { price: i64 }\nproc main | (exit: i32) / {IO} {\n    <tools::total() | println;\n    <tools::offer().price | println;\n    <0 | exit>\n}\n",
+                "sect tools;\nmenu Offer { price: i64 }\nproc main | (exit: i32) / {IO} {\n    <tools::total() | println;\n    <tools::offer().price | println;\n    <0 | exit>\n}\n",
             ),
             (
                 "tools.sl",
-                "use list::List::*;\npub func total() -> i64 { <Cons(1, Cons(2, Nil)) | list::length }\npub func offer() -> Offer { mu Offer { price <= <9 | price> } }\n",
+                "cite list::List::*;\npub func total() -> i64 { <Cons(1, Cons(2, Nil)) | list::length }\npub func offer() -> Offer { mu Offer { price <= <9 | price> } }\n",
             ),
         ],
     );
@@ -127,7 +127,7 @@ fn a_diagnostic_in_a_module_file_names_the_file_and_its_own_line() {
     let main = project(
         "diagnostic",
         &[
-            ("main.sl", "mod broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("main.sl", "sect broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
             ("broken.sl", "// a comment line\n\npub func f() -> i64 { \"text\" }\n"),
         ],
     );
@@ -149,7 +149,7 @@ fn a_syntax_error_in_a_module_file_stays_in_that_file() {
             &[
                 (
                     "main.sl",
-                    "mod broken;\nproc main | (exit: i32) / {IO} {\n    <\"fine\" | println;\n    <0 | exit>\n}\n",
+                    "sect broken;\nproc main | (exit: i32) / {IO} {\n    <\"fine\" | println;\n    <0 | exit>\n}\n",
                 ),
                 ("broken.sl", source),
             ],
@@ -161,7 +161,7 @@ fn a_syntax_error_in_a_module_file_stays_in_that_file() {
     let main = project(
         "located",
         &[
-            ("main.sl", "mod broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("main.sl", "sect broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
             ("broken.sl", "pub func f() -> i64 { 1 + 2 }\n"),
         ],
     );
@@ -173,12 +173,12 @@ fn a_syntax_error_in_a_module_file_stays_in_that_file() {
 fn a_module_with_no_file_is_reported_where_it_is_declared() {
     let main = project(
         "missing",
-        &[("main.sl", "\nmod nowhere;\nproc main | (exit: i32) { <0 | exit> }\n")],
+        &[("main.sl", "\nsect nowhere;\nproc main | (exit: i32) { <0 | exit> }\n")],
     );
     let (ok, _, stderr) = slc("run", &main);
     assert!(!ok);
     assert!(stderr.contains("nowhere.sl"), "{stderr}");
-    assert!(stderr.contains("(at 2:1 `mod nowhere;`)"), "{stderr}");
+    assert!(stderr.contains("(at 2:1 `sect nowhere;`)"), "{stderr}");
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn a_file_is_not_loaded_twice() {
     let main = project(
         "twice",
         &[
-            ("main.sl", "mod a;\nmod a;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("main.sl", "sect a;\nsect a;\nproc main | (exit: i32) { <0 | exit> }\n"),
             ("a.sl", "pub func f() -> i64 { 1 }\n"),
         ],
     );
@@ -200,7 +200,7 @@ fn a_variant_import_is_scoped_to_the_file_that_wrote_it() {
     // Two enums declare `Rect`, so a bare `Rect` needs an import to pin it,
     // and each file's import pins it for that file alone: geometry.sl's
     // `use Shape::*;` and the program's `use Frame::*;` never meet.
-    let frame = "mod geometry;\nenum Frame { Rect(i64, i64) }\n";
+    let frame = "sect geometry;\nenum Frame { Rect(i64, i64) }\n";
     let main = "func width(f: Frame) -> i64 { of f { Rect(w, h) => w } }
 proc main | (exit: i32) / {IO} {
     <Rect(6, 7) | width | println;
@@ -210,7 +210,7 @@ proc main | (exit: i32) / {IO} {
 ";
     let pinned = project(
         "pinned",
-        &[("main.sl", &format!("{frame}use Frame::*;\n{main}")), ("geometry.sl", GEOMETRY)],
+        &[("main.sl", &format!("{frame}cite Frame::*;\n{main}")), ("geometry.sl", GEOMETRY)],
     );
     let (ok, stdout, stderr) = slc("run", &pinned);
     assert!(ok, "{stderr}");

@@ -15,8 +15,8 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
 }
 
 const BUILD: &str = "hook Build { func build() -> i64; }
-    func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
-    func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+    func ignore(callback: (-> (i64 -> i64) / {Build})) -> i64 { 0 }
+    func twice(callback: (-> (i64 -> i64) / {Build})) -> i64 / {Build} {
         <(<1 | callback, <2 | callback) | add
     }";
 
@@ -32,7 +32,7 @@ fn inferred_negative_intermediates_do_not_run_when_discarded() {
             name,
             &format!(
                 "{BUILD}
-                 data Holder {{ callback: Delayed<(i64 -> i64), {{Build}}> }}
+                 data Holder {{ callback: (-> (i64 -> i64) / {{Build}}) }}
                  proc main | (exit: i32) / {{IO}} {{
                      let discard = fn(value) {{ {body} }};
                      <fn(input: i64) {{ input }} | discard | println;
@@ -53,10 +53,10 @@ fn inferred_negative_effects_run_under_the_demand_handler() {
             "{BUILD}
              proc main | (exit: i32) / {{IO}} {{
                  let use_twice = fn(value) {{
-                     let stored = do {{ let pending = {{ build(); value }}; pending }} {{
+                     let stored = do {{ let pending = {{ build(); value }}; pending }} hn {{
                          build(): resume => <0 | resume
                      }};
-                     do (<stored | twice) {{
+                     do (<stored | twice) hn {{
                          build(): resume => {{ <\"demand\" | println; <0 | resume }}
                      }}
                  }};
@@ -77,7 +77,7 @@ fn construction_handlers_cannot_erase_inferred_latent_effects() {
             "{BUILD}
              proc main | (exit: i32) / {{IO}} {{
                  let use_twice = fn(value) {{
-                     let stored = do {{ let pending = {{ build(); value }}; pending }} {{
+                     let stored = do {{ let pending = {{ build(); value }}; pending }} hn {{
                          build(): resume => <0 | resume
                      }};
                      <stored | twice

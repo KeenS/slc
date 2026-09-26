@@ -71,12 +71,12 @@ const ROWS: &[Row] = &[
     },
     Row {
         id: "expr.handler",
-        source: "hook Reader { func read() -> i64; } func f() -> Handler<i64, i64, {Reader}, {}> { op Reader { read(): resume => <1 | resume } }",
+        source: "hook Reader { func read() -> i64; } func f() -> (i64 hn i64 / {Reader}) { hn Reader { read(): resume => <1 | resume } }",
         core: "__clauses",
     },
     Row {
         id: "expr.with_handler",
-        source: "func f(reader: Handler<i64, i64, {}, {}>) -> i64 { op reader do 42 }",
+        source: "func f(reader: (i64 hn i64)) -> i64 { do 42 reader }",
         core: "__handle",
     },
     Row { id: "decl.fn.returning", source: "func f(x: +i32) -> i32 { x }", core: "λx. x" },

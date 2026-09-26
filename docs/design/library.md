@@ -24,8 +24,8 @@ program's own declaration of a prelude name shadows it.
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
 appended after the prelude, and nothing in it is in scope until named: a
 module is reached by its path, `list::length`, or a name is brought in bare
-with `use`. Each file supplies the body of the module named by its file stem,
-so `stdlib/list.sl` is loaded as `mod list { … }`; the source does not repeat
+with `cite`. Each file supplies the body of the module named by its file stem,
+so `stdlib/list.sl` is loaded as `sect list { … }`; the source does not repeat
 that wrapper. `prelude.sl` is the root-scope exception. Each module marks what
 it offers `pub`; the rest is its own.
 
@@ -42,7 +42,7 @@ it offers `pub`; the rest is its own.
 | `num` | `min`, `max`, `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
-| `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `Delayed<T, E>` |
+| `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `(-> T / E)` |
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `proc tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |

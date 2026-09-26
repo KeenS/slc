@@ -32,6 +32,14 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
             check_expr(body, enums, &bindings, diags);
         }
         Decl::Const { value, .. } => check_expr(value, enums, &HashMap::new(), diags),
+        Decl::Hand { clauses, ret, .. } => {
+            for clause in clauses {
+                check_expr(&clause.body, enums, &HashMap::new(), diags);
+            }
+            if let Some((_, body)) = ret {
+                check_expr(body, enums, &HashMap::new(), diags);
+            }
+        }
         Decl::Data { .. }
         | Decl::Enum { .. }
         | Decl::Menu { .. }

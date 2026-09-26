@@ -5,9 +5,9 @@
 // value or a missing message, as `list::nth` does. Inserting 1..7 in order
 // stands at height 3: the tree leaned, and was restored.
 
-use list::List;
-use list::List::*;
-use map::Map;
+cite list::List;
+cite list::List::*;
+cite map::Map;
 
 func height(m: Map<i64, i64>) -> i64 {
     of m {

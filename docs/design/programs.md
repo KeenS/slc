@@ -24,9 +24,9 @@ function end the program behind `main`'s back, and it is gone.)
 ```sl
 proc main | (exit: i32) / {IO} {
     let complain = mu String { message => { <message | println; <1 | exit> } };
-    <(,) | fs::real_command | (fn {
+    do {
         <"input.txt" | fs::read | (mu String { text => { <text | print; <0 | exit> } } & complain)>
-    })>
+    } fs::real
 }
 ```
 
@@ -146,11 +146,11 @@ otherwise be ignored and leave its effect reported as unhandled.
 
 ## 10. Modules
 
-A `mod` is a named scope of declarations, `::` reaches into it, and `use`
+A `sect` is a named scope of declarations, `::` reaches into it, and `cite`
 brings one name into scope:
 
 ```sl
-mod geometry {
+sect geometry {
     pub enum Shape { Circle(i64), Rect(i64, i64) }
 
     func squared(n: i64) -> i64 { <(n, n) | mul }   // private: the module's own
@@ -158,7 +158,7 @@ mod geometry {
     pub func area(s: Shape) -> i64 { … }    // its own names are bare here
 }
 
-use geometry::area;
+cite geometry::area;
 
 proc main | (exit: i32) / {IO} {
     <geometry::Shape::Circle(5) | area | println;
@@ -182,36 +182,36 @@ The library's modules are declared in their own source units, appended
 after the program. Every library file except `prelude.sl` is implicitly
 wrapped in a module named after its file stem. Imports are scoped to the unit
 that wrote them: a
-library file's `use Enum::*;` pins names in that file only, and a program's
+library file's `cite Enum::*;` pins names in that file only, and a program's
 imports never reach into the library. The root scope, though, is one scope
-over every unit, so a library unit imports names only inside its `mod` —
-at its top level a `use` may be a variant import, which is per-unit, and
-nothing else. A program's `mod` of a library module's name shadows it
-whole, as its `func` shadows a prelude function. `use list;` — naming a
+over every unit, so a library unit imports names only inside its `sect` —
+at its top level a `cite` may be a variant import, which is per-unit, and
+nothing else. A program's `sect` of a library module's name shadows it
+whole, as its `func` shadows a prelude function. `cite list;` — naming a
 module already reachable at the root — is allowed, so a program can say
 what it draws on.
 
-`use m::*;` brings every `pub` member of module `m` in bare — a glob. It is
-the weakest way a name arrives: an explicit `use m::f;` and the importing
+`cite m::*;` brings every `pub` member of module `m` in bare — a glob. It is
+the weakest way a name arrives: an explicit `cite m::f;` and the importing
 module's own declarations both win over it. Two globs may bring the same
-name, and that is not an error until the name is used — `use list::*; use
+name, and that is not an error until the name is used — `cite list::*; cite
 seq::*;` is fine, and a bare `map` after it says it could be either and asks
-for the one you mean. A glob over an enum, `use list::List::*;`, still
+for the one you mean. A glob over an enum, `cite list::List::*;`, still
 brings its variants, as before.
 
 Modules exist only to resolution, which runs right after parsing: every
-declaration inside `mod m` is renamed `m::name`, every reference is rewritten
-to the qualified name it resolves to, and the `mod` and `use` declarations
+declaration inside `sect m` is renamed `m::name`, every reference is rewritten
+to the qualified name it resolves to, and the `sect` and `cite` declarations
 disappear. The checker, the lowering, and the runtime never see them — they
 work on flat names, which always contained `::`, because an enum variant is a
 path already.
 
 A name resolves in scope order: a local binding shadows everything and is
-left alone; then the enclosing module's `use` aliases; then its own
+left alone; then the enclosing module's `cite` aliases; then its own
 declarations; then each ancestor's, out to the root. A path resolves by its
 first segment and keeps the rest, so `inner::deep()` works from a sibling and
 `geometry::Shape::Circle` from anywhere. A name nothing claims is left bare
-for later passes — that is how builtins stay global. Two `use` declarations
+for later passes — that is how builtins stay global. Two `cite` declarations
 bringing in the same name are an error.
 
 Visibility follows the private-by-default rule above, and `main` must be
@@ -220,28 +220,28 @@ point does not accept.
 
 ### A module in a file of its own
 
-A `mod` with no body names a file that holds the module's body:
+A `sect` with no body names a file that holds the module's body:
 
 ```sl
-mod geometry;          // the declarations of `geometry` are in geometry.sl
-pub mod report;        // public, as `pub mod report { … }` is
+sect geometry;          // the declarations of `geometry` are in geometry.sl
+pub sect report;        // public, as `pub sect report { … }` is
 ```
 
-The file holds the declarations themselves, with no `mod geometry { … }`
+The file holds the declarations themselves, with no `sect geometry { … }`
 around them: the name is given once, where the module is declared. Nothing
-else about the module changes — privacy, paths, `use` and globs are as
+else about the module changes — privacy, paths, `cite` and globs are as
 above — because a module in a file is a module.
 
 The directory tree is the module tree:
 
-| declared in                  | `mod name;` is         |
-|------------------------------|------------------------|
-| the program, `dir/main.sl`   | `dir/name.sl`          |
-| a module file, `dir/m.sl`    | `dir/m/name.sl`        |
-| inline, inside `mod a { … }` | one `a/` further down  |
+| declared in                   | `sect name;` is        |
+|-------------------------------|------------------------|
+| the program, `dir/main.sl`    | `dir/name.sl`          |
+| a module file, `dir/m.sl`     | `dir/m/name.sl`        |
+| inline, inside `sect a { … }` | one `a/` further down  |
 
 There is no search path and no way to name a file elsewhere: a program is
-the files under its own directory. A `mod name;` whose file is missing is
+the files under its own directory. A `sect name;` whose file is missing is
 reported at the declaration with the path that was tried, and a file reached
 twice is refused rather than declared twice.
 
@@ -252,7 +252,7 @@ between a `{` and a `}`, and the parser reads one ordinary program. That is
 why a `menu` declared in one file is known in the others
 ([§7](data.md#7-additive-data)), and why
 imports behave as they do across files: a variant import is scoped to the
-unit that wrote it, so a file's `use Shape::*;` pins bare names for that
+unit that wrote it, so a file's `cite Shape::*;` pins bare names for that
 file alone. A diagnostic in the program's own file is `line:column`; in any
 other unit it names the file, `src/geometry.sl:4:9`.
 
@@ -262,21 +262,21 @@ records the alternatives.
 
 ### Variant imports
 
-`use` has three forms:
+`cite` has three forms:
 
 ```sl
-use module::name;        // one member, aliased into this module
-use Colour::*;           // every variant of an enum, bare
-use Colour::{Red, Blue}; // the listed variants, bare
+cite module::name;        // one member, aliased into this module
+cite Colour::*;           // every variant of an enum, bare
+cite Colour::{Red, Blue}; // the listed variants, bare
 ```
 
 A bare variant name resolves in this order: an explicit import pins it — an
 import that collides with another import, or names a variant its enum does
-not have, is an error at the `use` — otherwise the automatic rule applies:
+not have, is an error at the `cite` — otherwise the automatic rule applies:
 unqualified while exactly one enum declares the name. A bare name that
 *several* enums declare and nothing imports is an **error**, not a binder:
 a pattern that silently caught everything is the failure mode this rule
 exists to kill. Imports are **scoped to their source unit**: the prelude
-pins its own bare names with `use List::*;`, and that import reaches no
-program code — just as a program's `use Mine::*;` never changes what the
+pins its own bare names with `cite List::*;`, and that import reaches no
+program code — just as a program's `cite Mine::*;` never changes what the
 prelude means, and the two never collide.

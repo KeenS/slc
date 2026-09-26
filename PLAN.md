@@ -41,14 +41,11 @@ rows and the demand-time handler boundaries specified in the design.
 
 ### Of the design
 
-- **Structural adapters require a finite derivation.** Lifting through
-  available declarations supports stored structures and regular recursion,
-  but not recursive specialization with growing type arguments. Derivation
-  is bounded, and opaque constructors still require matching arguments.
-  There is no user-defined lifting interface for an opaque constructor, nor
-  unrestricted commutative type equality. Capability rows are not mapped.
+- **A function keeps the orientation it was written with.** `A -> B` and
+  `B <- A` are different types. A chain reads a stage in the orientation
+  that stage has. A value of one is not accepted where the other is declared.
 
-- **Stored handlers discharge concrete capabilities.** `Handler<A, B, E, F>`
+- **Stored handlers discharge concrete capabilities.** `(A hn B / {E} / {F})`
   preserves both rows, but installation discharges only effects explicitly
   present in `E`; an unknown handled-row tail does not grant capabilities.
   Abstraction over unknown capability tails remains unsupported; typed

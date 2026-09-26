@@ -66,14 +66,14 @@ proc main | (exit: i32) / {IO} {
     let f = <21 | checked;
     // The handler wraps the DEMAND — the honest extent. The same value can
     // answer under different handlers, one per demand.
-    <do f.value { throw(m) => -1 } | println;
-    <do f.doubled { throw(m) => -1 } | println;
-    <do (<-5 | checked).value { throw(m) => -1 } | println;
+    <do f.value hn { throw(m) => -1 } | println;
+    <do f.doubled hn { throw(m) => -1 } | println;
+    <do (<-5 | checked).value hn { throw(m) => -1 } | println;
 
     // A consumer carries a latent row too: `risky | out` composes without
     // performing anything — the row fires when the consumer is FED, so the
     // handler belongs around the cut.
-    let n = do (mu i64 { out <= <5 | risky | out> }) {
+    let n = do (mu i64 { out <= <5 | risky | out> }) hn {
         throw(m) => -1,
     };
     <n | println;
@@ -82,15 +82,15 @@ proc main | (exit: i32) / {IO} {
     // differently under different handlers — dispatch is chosen per
     // demand by the dynamic context, not sealed into the type.
     let s = <7 | scaled;
-    <do s.amount { config(): resume => <10 | resume } | println;
-    <do s.amount { config(): resume => <100 | resume } | println;
+    <do s.amount hn { config(): resume => <10 | resume } | println;
+    <do s.amount hn { config(): resume => <100 | resume } | println;
 
     // Feeding a rowed form under a handler: the arm's throw fires at the
     // feed, in this extent, and lands in this handler.
-    <do (mu i64 { k <= <Validated { age: 21, out: k } | admit()> }) {
+    <do (mu i64 { k <= <Validated { age: 21, out: k } | admit()> }) hn {
         throw(m) => -1,
     } | println;
-    <do (mu i64 { k <= <Validated { age: 15, out: k } | admit()> }) {
+    <do (mu i64 { k <= <Validated { age: 15, out: k } | admit()> }) hn {
         throw(m) => -1,
     } | println;
     <0 | exit>

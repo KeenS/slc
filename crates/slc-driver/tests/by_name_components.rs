@@ -16,8 +16,8 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
 }
 
 const BUILD: &str = "hook Build { func build() -> i64; }
-    data Holder { callback: Delayed<(i64 -> i64), {Build}> }
-    enum Wrapped { Wrap(Delayed<(i64 -> i64), {Build}>) }
+    data Holder { callback: (-> (i64 -> i64) / {Build}) }
+    enum Wrapped { Wrap((-> (i64 -> i64) / {Build})) }
     func make() -> (i64 -> i64) / {Build} {
         let offset = build();
         fn(input: i64) { <(input, offset) | add }
@@ -34,7 +34,7 @@ const NEGATIVE_COMPONENTS: &[(&str, &str)] = &[
     ("variant", "let saved = Wrap(make()); let Wrap(callback) = saved;"),
     (
         "choice",
-        "let saved: (Delayed<(i64 -> i64), {Build}> | i64) = ::0(make());
+        "let saved: ((-> (i64 -> i64) / {Build}) | i64) = ::0(make());
         let callback = of saved {
             ::0(value) => value,
             ::1(value) => fn(input: i64) { input }
@@ -70,16 +70,16 @@ fn negative_components_repeat_under_each_demand_handler() {
             &format!("repeat_{name}"),
             &format!(
                 "{BUILD} proc main | (exit: i32) / {{IO}} {{
-                    let saved_callback = do {{ {setup} callback }} {{
+                    let saved_callback = do {{ {setup} callback }} hn {{
                         build(): resume => {{ <\"wrong handler\" | println; <1000 | resume }}
                     }};
                     let alias = saved_callback;
                     <\"stored\" | println;
-                    let first = do (<1 | alias) {{
+                    let first = do (<1 | alias) hn {{
                         build(): resume => {{ <\"first demand\" | println; <10 | resume }}
                     }};
                     <first | println;
-                    let second = do (<2 | alias) {{
+                    let second = do (<2 | alias) hn {{
                         build(): resume => {{ <\"second demand\" | println; <20 | resume }}
                     }};
                     <second | println;
@@ -138,7 +138,7 @@ fn negative_component_rows_cannot_be_erased_by_storage() {
                 "{BUILD}
                 data PureHolder {{ callback: (i64 -> i64) }}
                 proc main | (exit: i32) / {{IO}} {{
-                    do {{ {setup} (,) }} {{ build(): resume => <10 | resume }};
+                    do {{ {setup} (,) }} hn {{ build(): resume => <10 | resume }};
                     <0 | exit>
                 }}"
             ),
@@ -155,7 +155,7 @@ fn construction_handlers_do_not_discharge_negative_component_rows() {
             &format!("unhandled_{name}"),
             &format!(
                 "{BUILD} proc main | (exit: i32) / {{IO}} {{
-                    let callback = do {{ {setup} callback }} {{ build(): resume => <10 | resume }};
+                    let callback = do {{ {setup} callback }} hn {{ build(): resume => <10 | resume }};
                     <1 | callback | println;
                     <0 | exit>
                 }}"
@@ -179,7 +179,7 @@ fn multi_shot_resumptions_do_not_cache_negative_components() {
                         {setup}
                         let input = fork();
                         <input | callback
-                    }} {{ fork(): resume => <(<1 | resume, <2 | resume) | add }}) {{
+                    }} hn {{ fork(): resume => <(<1 | resume, <2 | resume) | add }}) hn {{
                         build(): resume => {{ <\"build\" | println; <10 | resume }}
                     }};
                     <result | println;
@@ -209,16 +209,16 @@ fn projecting_a_delayed_bundle_repeats_construction_under_the_demand_handler() {
             &format!("project_bundle_{name}"),
             &format!(
                 "hook Build {{ func build() -> i64; }}
-                data BundleHolder {{ bundle: Delayed<(i64 & i64 & i64), {{Build}}> }}
+                data BundleHolder {{ bundle: (-> (i64 & i64 & i64) / {{Build}}) }}
                 func make_bundle() -> (i64 & i64 & i64) / {{Build}} {{ (build() & 0 & 2) }}
                 proc main | (exit: i32) / {{IO}} {{
                     {setup}
                     <\"stored\" | println;
-                    let first = do saved.0 {{
+                    let first = do saved.0 hn {{
                         build(): resume => {{ <\"first build\" | println; <10 | resume }}
                     }};
                     <first | println;
-                    let second = do saved.2 {{
+                    let second = do saved.2 hn {{
                         build(): resume => {{ <\"second build\" | println; <20 | resume }}
                     }};
                     <second | println;
@@ -242,7 +242,7 @@ fn projecting_a_delayed_bundle_does_not_force_its_negative_item() {
             let offset = use_value();
             fn(input: i64) { <(input, offset) | add }
         }
-        func make_bundle() -> (Delayed<(i64 -> i64), {Use}> & i64) / {Build} {
+        func make_bundle() -> ((-> (i64 -> i64) / {Use}) & i64) / {Build} {
             let value = build();
             (make_callback() & value)
         }
@@ -252,10 +252,10 @@ fn projecting_a_delayed_bundle_does_not_force_its_negative_item() {
                 pending.0;
                 <\"projected, not activated\" | println;
                 (,)
-            } { build(): resume => { <\"build\" | println; <10 | resume } };
-            let result = do (do (<1 | pending.0) {
+            } hn { build(): resume => { <\"build\" | println; <10 | resume } };
+            let result = do (do (<1 | pending.0) hn {
                 build(): resume => { <\"build again\" | println; <20 | resume }
-            }) { use_value(): resume => { <\"use\" | println; <30 | resume } };
+            }) hn { use_value(): resume => { <\"use\" | println; <30 | resume } };
             <result | println;
             <0 | exit>
         }",
@@ -269,7 +269,7 @@ fn projecting_a_delayed_bundle_does_not_force_its_negative_item() {
 fn delayed_bundle_projection_retains_construction_and_item_effects() {
     for (name, expression, effect) in [
         ("construction", "pending.0", "Build"),
-        ("item", "do (<1 | pending.0) { build(): resume => <10 | resume }", "Use"),
+        ("item", "do (<1 | pending.0) hn { build(): resume => <10 | resume }", "Use"),
     ] {
         let (success, _, stderr) = run(
             &format!("unhandled_bundle_{name}"),
@@ -303,7 +303,7 @@ fn resuming_bundle_construction_reinstates_the_pending_projection() {
         }
         proc main | (exit: i32) / {IO} {
             let pending = make_bundle();
-            let result = do pending.1 {
+            let result = do pending.1 hn {
                 build(): resume => <(<3 | resume, <4 | resume) | add
             };
             <result | println;

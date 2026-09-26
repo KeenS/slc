@@ -365,6 +365,15 @@ impl Parser {
             }
             Some('(') => {
                 self.pos += 1;
+                // `(-> T / {E})` — a by-name computation. The blank domain is
+                // the unit of the arrow.
+                if self.eat("->") {
+                    let inner = self.ty()?;
+                    self.expect("/")?;
+                    let row = self.row()?;
+                    self.expect(")")?;
+                    return Ok(Type::delayed(inner, row));
+                }
                 // A paren holding only its separator is that connective's unit.
                 for (unit, ty) in
                     [(",", Type::ONE), (";", Type::BOTTOM), ("&", Type::TOP), ("|", Type::ZERO)]
@@ -375,6 +384,23 @@ impl Parser {
                 }
                 let left = self.ty()?;
                 self.spaces();
+                // `(A hn B / {E} / {F})` — a handler value.
+                if self.eat("hn") {
+                    let answer = self.ty()?;
+                    self.expect("/")?;
+                    let discharged = self.row()?;
+                    let residual = if self.eat("/") { self.row()? } else { Row::default() };
+                    self.expect(")")?;
+                    return Ok(Type::Named(
+                        "Handler".into(),
+                        vec![
+                            left,
+                            answer,
+                            Type::rowed(Type::ONE, discharged),
+                            Type::rowed(Type::ONE, residual),
+                        ],
+                    ));
+                }
                 if matches!(self.peek(), Some('/' | ')')) {
                     return self.finish_type_group(left);
                 }

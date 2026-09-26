@@ -1,7 +1,6 @@
 //! The surface checkers: types, polarity, exhaustiveness, and
 //! declaration inference, all reporting the same kind of diagnostic.
 
-mod adapters;
 mod declarations;
 mod env;
 pub mod exhaustive;

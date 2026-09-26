@@ -19,7 +19,7 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
 }
 
 const TICK: &str = "hook Tick { func tick() -> (,); }
-    use list::List::*;
+    cite list::List::*;
     func noisy(n: i64) -> i64 / {Tick} { let u = tick(); <(n, 2) | mul }
     func count(s: seq::Seq<i64>) -> i64 { <s | seq::to_list | list::length }
     func count_t(s: seq::Seq<i64, {Tick}>) -> i64 / {Tick} { <s | seq::to_list | list::length }\n";
@@ -50,7 +50,7 @@ fn a_row_argument_under_an_arrow_is_fitted_the_other_way() {
             func run(g: (seq::Seq<i64> -> i64 / {{Tick}}), s: seq::Seq<i64>) -> i64 / {{Tick}} {{ <s | g }}
             proc main | (exit: -i32) / {{IO}} {{
                 let s = <Cons(1, Cons(2, Nil)) | seq::of_list;
-                let n = do (<(count_t, s) | run) {{ tick(): resume => <(,) | resume }};
+                let n = do (<(count_t, s) | run) hn {{ tick(): resume => <(,) | resume }};
                 <n | println;
                 <0 | exit>
             }}"
@@ -87,7 +87,7 @@ fn a_command_with_several_exits_takes_the_rowed_ones_row() {
         "two_exits",
         "hook Exn { func throw(m: String) -> i64; }
         proc two<E> | (ok: (-i64 / {..E}) & program: ((;) / {Exn, ..E})) / {..E} {
-            do program { throw(m) => <0 | ok> }
+            do program hn { throw(m) => <0 | ok> }
         }
         proc main | (exit: -i32) / {IO} {
             <(,) | two | (mu i64 { n => { <n | println; <0 | exit> } } & fn { <\"boom\" | throw; <1 | exit> })>
@@ -107,7 +107,7 @@ fn a_bundles_exits_meet_declared_latent_rows_one_by_one() {
             do (<(,) | choose | (
                 mu i64 { n => { let u = tick(); <n | println; <0 | exit> } }
                 & mu String { s => { <s | println; <1 | exit> } }
-            )>) { tick(): resume => { <\"tick\" | println; <(,) | resume } }
+            )>) hn { tick(): resume => { <\"tick\" | println; <(,) | resume } }
         }",
     );
     assert!(ok, "{stderr}");
@@ -208,7 +208,7 @@ fn cleanup_runs_only_through_the_wrapped_exit() {
                         let exit = mu i32 {{ status => {{ <resource | close; <status | exit> }} }};
                         let complain = mu String {{ message => {{ <message | println; <0 | exit> }} }};
                         {finish}
-                    }} {{
+                    }} hn {{
                         acquire(): resume => {{ <\"opened\" | println; <1 | resume }},
                         close(resource): resume => {{ <\"closed\" | println; <(,) | resume }}
                     }}

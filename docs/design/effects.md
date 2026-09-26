@@ -15,13 +15,13 @@ hook Choose { func flip() -> Bool; }
 
 // `checked_div`, `scaled` and `pick` perform them, as in `examples/effects/effects.sl`.
 proc main | (exit: i32) / {IO} {
-    let safe = do (<(10, 0) | checked_div) {
+    let safe = do (<(10, 0) | checked_div) hn {
         throw(message) => -1,                       // never resumes: an exception
     };
-    let reading = do (<7 | scaled) {
+    let reading = do (<7 | scaled) hn {
         config(): resume => (<(<10 | resume, 1000) | add),  // resumes once
     };
-    let all = do pick() {
+    let all = do pick() hn {
         flip(): resume => (<(<True | resume, " ") | add | x => (x, <False | resume) | add),  // resumes twice
     };
     …
@@ -56,27 +56,27 @@ delimiter that discharges no effects.
 
 #### Handlers as values
 
-`op Reader { clauses }` constructs a reusable handler value;
-`op [Reader, Other] { clauses }` lists several effects. The shorter
-`op { clauses }` infers the effects from the named operations.
-`op h do body` installs the value `h` around `body`:
+`hn Reader { clauses }` constructs a reusable handler value;
+`hn [Reader, Other] { clauses }` lists several effects. The shorter
+`hn { clauses }` infers the effects from the named operations.
+`do body h` installs the handler `h` — a value or a `hand` — around `body`:
 
 ```sl
 hook Reader { func config() -> i64; }
 func scaled(value: i64) -> i64 / {Reader} { <(value, config()) | mul }
 
 proc main | (exit: i32) / {IO} {
-    let reader: Handler<i64, String, {Reader}, {}> = op Reader {
+    let reader: (i64 hn String / {Reader}) = hn Reader {
         config(): resume => <10 | resume,
         return(value) => <value | to_string
     };
-    <(op reader do (<7 | scaled)) | println;
-    <(op reader do 42) | println;
+    <(do (<7 | scaled) reader) | println;
+    <(do 42 reader) | println;
     <0 | exit>
 }
 ```
 
-This prints `70` and `42`. `Handler<A, B, E, F>` is positive data: its body
+This prints `70` and `42`. `(A hn B / {E} / {F})` is positive data: its body
 produces `A`, its common answer is `B`, it discharges the concrete effects
 in `E`, and its residual budget is `F`. The body's row must fit within
 `E` plus `F`; installing a handler around a pure body or a subset of `E`
@@ -94,13 +94,13 @@ forwarding handler retains its forwarded effects in `F` rather than claiming
 to discharge them in `E`. Reusing a handler does not cache bodies or answers.
 Handlers can be stored in lists, selected at runtime and composed by nesting
 installations; `examples/effects/handler_values.sl` demonstrates all three. Inline
-`do body { clauses }` uses the same clause-tree installation mechanism.
+`do body hn { clauses }` uses the same clause-tree installation mechanism.
 
 An operation is a free function, the dynamic mirror of a trait method: a
 trait is an operation table keyed by a *type* and resolved statically — the
 dictionary travels with the value — while an effect is an operation table
 keyed by the *stack* and resolved dynamically: a handler is installed by
-`do` or `op h do`, and its clauses bind the captured continuation, which no trait
+`do`, and its clauses bind the captured continuation, which no trait
 has. That mirror
 is static-versus-dynamic provisioning; the *polarity* dual of effects is a
 different axis — latency, below — and the two cross: `impl Trait for Menu`
@@ -159,8 +159,8 @@ arguments is rejected at the intercepting handler even if an outer handler
 or residual row could otherwise accept it. Partial handlers retain this
 consistency requirement and forward the typed effect outward.
 
-A literal `op Reader { clauses }` infers its arguments; an annotation
-such as `Handler<i64, i64, {Reader<i64>}, {}>` constrains them. Merely changing
+A literal `hn Reader { clauses }` infers its arguments; an annotation
+such as `(i64 hn i64 / {Reader<i64>})` constrains them. Merely changing
 that annotation cannot change its capabilities. `examples/effects/generic_effects.sl`
 demonstrates independent instantiations and stored handlers. The implementation
 and additional checks are described in `docs/design-notes/generic-effects.md`.
@@ -197,19 +197,18 @@ can be mocked the way `println` can. `fs::read`, `write`, `open`,
 `read_line`, `close` and `exists` perform its operations, and nothing
 answers them unless a program installs a handler around the code that
 touches files: `fs::real`, which answers from the disk and performs `IO`, or
-one of the program's own. A handler is an ordinary function taking the
-computation it handles —
+one of the program's own. A hand is installed around the computation —
 
 ```sl
 func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {fs::Fs, ..E} {
-    do <(,) | program {
+    do <(,) | program hn {
         fs::read_file(path): resume => <::0("canned") | resume,
         _ => forward,
     }
 }
 ```
 
-— so `fs` exports `real` as a function, and a test installs its own. This
+— and `fs` exports `real` as a hand, so a test installs its own. This
 partial mock still requires an outer handler such as `fs::real` for `Fs`;
 a self-contained mock answers all six operations and may discharge it. A
 clause names its operation as a row names its effect, by path. An
@@ -218,32 +217,27 @@ String)`, which the command then offers to its continuations: a clause runs
 below its handler, so the continuations are activated by the command, under
 the handler, not by the clause (`docs/design-notes/file-system-hook.md`).
 
-The computation is written `func { … }`, a lambda of no parameters: it is
-`fn(_: (,)) { … }`. One that leaves through continuations of its own — a
-program ending in `<0 | exit>` — has type `(;)`, a consumer, so it is not a
-value to flow in; it is handed to a *command* as its exit, and
-`fs::real_command` is `fs::real` for such a program:
+`fs::real` is one hand for a value and for a command. A program that leaves
+through `exit` has type `(;)`, and `do` runs that body as a command:
 
 ```sl
 proc main | (exit: i32) / {IO} {
     let complain = mu String { message => { <message | println; <1 | exit> } };
-    <(,) | fs::real_command | (fn {
+    do {
         <"input.txt" | fs::read | (mu String { text => { <text | print; <0 | exit> } } & complain)>
-    })>
+    } fs::real
 }
 ```
 
-An exit parameter preserves its supplied value's latent effects, just as
-a function parameter does: `program: ((;) / {Fs, ..E})` describes what
-running the program may perform. A `do` whose body is `(;)` runs it as
-a command under the handler. Passing the program does not itself run it.
+A `do` whose body is `(;)` runs it as a command under the handler. The
+hand's answer is the body's, so the same clauses serve both.
 
 **Latent rows describe effects at activation.** A function's row is charged
 when it is applied; a menu's when an item is demanded; a form's or consumer's
 when it is fed. Each uses the same effect-accounting rule, with a different
 activation point.
 
-`Delayed<T, E>` adds a separate forcing row before that activation. A cut
+`(-> T / E)` adds a separate forcing row before that activation. A cut
 that only forwards an effectful function or menu as an answer preserves
 its activation row; it does not perform it. In particular, the dual of a
 rowed result retains the row as a requirement on the answer, not as an

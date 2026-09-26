@@ -195,6 +195,35 @@ pub struct Parser {
     no_struct_literal: bool,
 }
 
+/// `(-> T / {E})` lowers to the built-in delayed computation. An empty
+/// forcing row is `T` itself.
+fn by_name_type(result: Node<TypeExpr>, row: EffectRow) -> TypeExpr {
+    if row.is_empty() {
+        return result.kind;
+    }
+    let span = result.span;
+    TypeExpr::Apply("Delayed".into(), vec![result, Node { span, kind: TypeExpr::Row(row) }])
+}
+
+/// `(A hn B / {E} / {F})` lowers to the built-in handler value.
+fn handler_type(
+    body: Node<TypeExpr>,
+    answer: Node<TypeExpr>,
+    discharged: EffectRow,
+    residual: EffectRow,
+) -> TypeExpr {
+    let span = body.span;
+    TypeExpr::Apply(
+        "Handler".into(),
+        vec![
+            body,
+            answer,
+            Node { span, kind: TypeExpr::Row(discharged) },
+            Node { span, kind: TypeExpr::Row(residual) },
+        ],
+    )
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let menu_items = collect_menu_items(&tokens);
@@ -231,10 +260,10 @@ impl Parser {
         let Some(TokenKind::Retired { found, replacement }) = self.peek_kind() else {
             return Ok(());
         };
-        let message = if *found == "with" {
-            "`with h handle e` is written `op h do e`".into()
-        } else {
-            format!("`{found}` is written `{replacement}`")
+        let message = match *found {
+            "with" => "`with h handle e` is written `do e h`".into(),
+            "op" => "`op` is written `hn` for a handler value, and `do e h` to install one".into(),
+            _ => format!("`{found}` is written `{replacement}`"),
         };
         Err(ParseError {
             message,
@@ -260,30 +289,6 @@ impl Parser {
             }
         }
         None
-    }
-
-    /// `op Effect { … }` and `op [E] { … }` are handler values. Anything else
-    /// after `op` is `op h do e`. The current token is the first of that head.
-    fn op_is_handler_literal(&self) -> bool {
-        match self.peek_kind() {
-            Some(TokenKind::LBrace | TokenKind::LBracket) => true,
-            Some(TokenKind::Ident(_)) => {
-                let mut i = self.pos;
-                loop {
-                    if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
-                        return false;
-                    }
-                    i += 1;
-                    if self.tokens.get(i).map(|t| &t.kind) == Some(&TokenKind::ColonColon) {
-                        i += 1;
-                        continue;
-                    }
-                    break;
-                }
-                self.tokens.get(i).map(|t| &t.kind) == Some(&TokenKind::LBrace)
-            }
-            _ => false,
-        }
     }
 
     fn next(&mut self) -> Option<Token> {
@@ -452,6 +457,7 @@ impl Parser {
             Some(TokenKind::Trait) => self.parse_trait_decl(),
             Some(TokenKind::Impl) => self.parse_impl_decl(),
             Some(TokenKind::Effect) => self.parse_effect_decl(),
+            Some(TokenKind::Hand) => self.parse_hand_decl(),
             _ => {
                 // Expression as top-level (for scripting)
                 let e = self.parse_expr()?;
@@ -852,7 +858,7 @@ impl Parser {
 
     fn parse_mod_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Mod, "`mod`")?;
+        let t = self.expect(TokenKind::Mod, "`sect`")?;
         let name = self.expect_ident("module name")?;
         // `mod name;` — the module's body is a file of its own. The driver
         // splices that file's tokens in, in place of the `;`, before the
@@ -879,7 +885,7 @@ impl Parser {
     }
 
     fn parse_use_decl(&mut self) -> Result<Node<Decl>, ParseError> {
-        let t = self.expect(TokenKind::Use, "`use`")?;
+        let t = self.expect(TokenKind::Use, "`cite`")?;
         let mut path = vec![self.expect_ident("a path to use")?];
         let mut imports = UseImports::Member;
         while self.eat(&TokenKind::ColonColon) {
@@ -1473,7 +1479,9 @@ impl Parser {
     }
 
     fn expect_ident(&mut self, what: &str) -> Result<String, ParseError> {
-        if (what == "function name" || what == "a path segment") && self.eat(&TokenKind::Reset) {
+        if matches!(what, "function name" | "a path segment" | "handler name")
+            && self.eat(&TokenKind::Reset)
+        {
             return Ok("reset".into());
         }
         self.expect_name(what)
@@ -1526,7 +1534,34 @@ impl Parser {
                         kind: TypeExpr::Par(Vec::new()),
                     });
                 }
+                // `(-> T / {E})` — a by-name computation. The blank domain is
+                // the unit of the arrow: nothing is passed, and using the
+                // name forces it. `{E}` is the forcing row.
+                if self.eat(&TokenKind::Arrow) {
+                    let result = self.parse_type()?;
+                    let row = self.parse_effect_row()?;
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: by_name_type(result, row),
+                    });
+                }
                 let left = self.parse_type()?;
+                // `(A hn B / {E} / {F})` — the type of a value `hn` builds.
+                if self.eat(&TokenKind::Handler) {
+                    let answer = self.parse_type()?;
+                    let discharged = self.parse_effect_row()?;
+                    let residual = if self.peek_kind() == Some(&TokenKind::Slash) {
+                        self.parse_effect_row()?
+                    } else {
+                        EffectRow::default()
+                    };
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    return Ok(Node {
+                        span: Span { start, end: self.span_end() },
+                        kind: handler_type(left, answer, discharged, residual),
+                    });
+                }
                 if self.eat(&TokenKind::Arrow) {
                     let right = self.parse_type()?;
                     let row = self.parse_effect_row()?;
@@ -1604,6 +1639,17 @@ impl Parser {
                 // `List<i64>` — a declaration applied to type arguments.
                 // `List<-i64>` lexes its `<-` as one token: the bracket and
                 // the first argument's sign.
+                if s == "Delayed" || s == "Handler" {
+                    let spelling = if s == "Delayed" {
+                        "`(-> T / {E})`"
+                    } else {
+                        "`(A hn B / {E} / {F})`"
+                    };
+                    return Err(ParseError {
+                        message: format!("`{s}` is written {spelling}"),
+                        span: Span { start, end: self.span_end() },
+                    });
+                }
                 if matches!(self.peek_kind(), Some(TokenKind::Lt | TokenKind::ReverseArrow)) {
                     let args = self.parse_type_arguments()?;
                     TypeExpr::Apply(s, args)
@@ -2133,36 +2179,55 @@ impl Parser {
         Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Select { ty, arms } })
     }
 
-    /// `do e { clauses }`: run `e` under the clauses.
-    fn parse_do(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
-        self.pos += 1;
-        let body = self.parse_scrutinee()?;
+    /// `hand name / {row} { clauses }`. The row is what the clauses perform
+    /// on their own; leaving it out checks those effects at each installation.
+    fn parse_hand_decl(&mut self) -> Result<Node<Decl>, ParseError> {
+        let is_public = self.take_pub();
+        let t = self.expect(TokenKind::Hand, "`hand`")?;
+        let name = self.expect_ident("handler name")?;
+        let effects =
+            if self.peek_kind() == Some(&TokenKind::Slash) { Some(self.parse_effect_row()?) } else { None };
         let (clauses, ret, forward) = self.parse_handler_clauses()?;
         Ok(Node {
-            span: Span { start, end: self.span_end() },
-            kind: Expr::Handle { body: Box::new(body), clauses, ret, forward },
+            span: t.span,
+            kind: Decl::Hand { name, is_public, effects, clauses, forward, ret },
         })
     }
 
-    /// `op Effect { clauses }`, or `op h do e`.
-    fn parse_op(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+    /// `do body handler`: run `body` under `handler`. A handler is an
+    /// expression — a `hand`, a stored value, or `hn { clauses }`. An `hn`
+    /// with no effect list is the clauses written at the use, and lowers as
+    /// an inline handler so the answer stays the body's.
+    fn parse_do(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
         self.pos += 1;
-        if !self.op_is_handler_literal() {
-            let handler = self.parse_scrutinee()?;
-            self.expect(TokenKind::Handle, "`do` after the handler value")?;
-            let body = self.parse_expr()?;
-            return Ok(Node {
+        let body = self.parse_expr()?;
+        let handler = self.parse_flow_stage()?;
+        let handler_span = handler.span;
+        Ok(match handler.kind {
+            Expr::Handler { effects, clauses, ret, forward } if effects.is_empty() => Node {
                 span: Span { start, end: self.span_end() },
-                kind: Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) },
-            });
-        }
+                kind: Expr::Handle { body: Box::new(body), clauses, ret, forward },
+            },
+            kind => Node {
+                span: Span { start, end: self.span_end() },
+                kind: Expr::WithHandler {
+                    handler: Box::new(Node { span: handler_span, kind }),
+                    body: Box::new(body),
+                },
+            },
+        })
+    }
+
+    /// `hn { clauses }`, `hn Effect { clauses }`, or `hn [E, F] { clauses }`.
+    fn parse_hn(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+        self.pos += 1;
         let mut effects = Vec::new();
         let bracketed = self.eat(&TokenKind::LBracket);
         if self.peek_kind() != Some(&TokenKind::LBrace)
             && (!bracketed || self.peek_kind() != Some(&TokenKind::RBracket))
         {
             loop {
-                let mut effect = self.expect_ident("an effect name after `op`")?;
+                let mut effect = self.expect_ident("an effect name after `hn`")?;
                 while self.eat(&TokenKind::ColonColon) {
                     effect.push_str("::");
                     effect.push_str(&self.expect_ident("an effect name after `::`")?);
@@ -2263,7 +2328,7 @@ impl Parser {
                 } else {
                     "__never_resumed".to_string()
                 };
-                self.expect(TokenKind::FatArrow, "`=>` in an `op` clause")?;
+                self.expect(TokenKind::FatArrow, "`=>` in a handler clause")?;
                 let body = self.parse_expr()?;
                 clauses.push(HandleClause { op, params, resume, body });
             }
@@ -2390,7 +2455,7 @@ impl Parser {
                 })
             }
             Some(TokenKind::Handle) => self.parse_do(start),
-            Some(TokenKind::Handler) => self.parse_op(start),
+            Some(TokenKind::Handler) => self.parse_hn(start),
             Some(TokenKind::Match) => {
                 self.pos += 1;
                 let scrutinee = self.parse_scrutinee()?;
@@ -3028,8 +3093,9 @@ mod tests {
             ("effect E { func read() -> i64; }", "`hook`"),
             ("const N: i64 = 1;", "`def`"),
             ("handle e { read(): k => <1 | k> }", "`do`"),
-            ("handler E { read(): k => <1 | k> }", "`op`"),
-            ("with h handle e", "`op h do e`"),
+            ("handler E { read(): k => <1 | k> }", "`hn`"),
+            ("op E { read(): k => <1 | k> }", "`hn`"),
+            ("with h handle e", "`do e h`"),
             ("fn f() -> i64 { 1 }", "`func`"),
         ] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
@@ -3134,9 +3200,9 @@ mod tests {
     #[test]
     fn a_handler_forwarding_clause_is_explicit_and_last() {
         for source in [
-            "do 1 { _ => forward }",
-            "do 1 { return(value) => value, _ => forward, }",
-            "do 1 { read(): resume => <1 | resume, _ => forward }",
+            "do 1 hn { _ => forward }",
+            "do 1 hn { return(value) => value, _ => forward, }",
+            "do 1 hn { read(): resume => <1 | resume, _ => forward }",
         ] {
             let program = parse_str(source);
             let Decl::Fn { body, .. } = &program.decls[0].kind else {
@@ -3145,11 +3211,11 @@ mod tests {
             assert!(matches!(body.kind, Expr::Handle { forward: true, .. }));
         }
         for source in [
-            "do 1 { _ => forward, read() => 1 }",
-            "do 1 { _ => forward, return(value) => value }",
-            "do 1 { _ => forward, _ => forward }",
-            "do 1 { _ => ignore }",
-            "do 1 { _ => forward() }",
+            "do 1 hn { _ => forward, read() => 1 }",
+            "do 1 hn { _ => forward, return(value) => value }",
+            "do 1 hn { _ => forward, _ => forward }",
+            "do 1 hn { _ => ignore }",
+            "do 1 hn { _ => forward() }",
         ] {
             assert!(parse(lex(source).unwrap()).is_err(), "{source}");
         }

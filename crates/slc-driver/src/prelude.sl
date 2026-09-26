@@ -5,7 +5,7 @@
 // everything below goes through the same checking and lowering as user code.
 //
 // Everything else the library offers lives in `stdlib/`, one module per
-// file, reached by path — `list::length` — or brought in bare with `use`.
+// file, reached by path — `list::length` — or brought in bare with `cite`.
 
 // ── IO: the effect the runtime handles ───────────────────────────────────
 //

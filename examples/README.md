@@ -54,7 +54,6 @@ What is SLC's own: polarity, continuations as values, `mu` for both capture and 
 - [`pipeline.sl`](duality/pipeline.sl) — `|` is flow: everything moves left to right, and every step composes
 - [`polarity.sl`](duality/polarity.sl) — Polarity by position
 - [`select.sl`](duality/select.sl) — Negative additive construction
-- [`structural_adapters.sl`](duality/structural_adapters.sl) — Functions stored where a negative type parameter asks for a consumer
 - [`two_styles.sl`](duality/two_styles.sl) — The same program, twice: value-first, then continuation-first
 - [`yielding_commands.sl`](duality/yielding_commands.sl) — A command's exits closed on returning functions, so the command yields a value
 
@@ -69,7 +68,7 @@ Algebraic effects, handlers as values, delimited control, and rows on the negati
 - [`generic_effects.sl`](effects/generic_effects.sl) — An effect with a type parameter, instantiated twice, and a stored handler
 - [`handler_answers.sl`](effects/handler_answers.sl) — A handler's answer type, and the parameters of its clauses
 - [`handler_forwarding.sl`](effects/handler_forwarding.sl) — A complete handler against one that forwards with `_ => forward`
-- [`handler_values.sl`](effects/handler_values.sl) — Handlers as values: stored in a list, chosen, installed with `op … do`
+- [`handler_values.sl`](effects/handler_values.sl) — Handlers as values: stored in a list, chosen, installed with `do`
 - [`io.sl`](effects/io.sl) — `IO`, the effect the runtime handles
 - [`latent_effects.sl`](effects/latent_effects.sl) — The dual of effects: latent rows on the negative side
 - [`multi.sl`](effects/multi.sl) — Several traits and several effects in one function
@@ -95,7 +94,7 @@ Practical code, written the way the language wants it written.
 - [`file_io.sl`](programs/file_io.sl) — Input and output through continuations
 - [`json_parser.sl`](programs/json_parser.sl) — A continuation-based JSON parser
 - [`mealy_machine.sl`](programs/mealy_machine.sl) — A Mealy machine, as a `menu`: the input alphabet is the menu, and a state is a `mu`
-- [`multi_file/`](programs/multi_file/main.sl) — A program in more than one file: `mod name;`, and the directory tree as the module tree
+- [`multi_file/`](programs/multi_file/main.sl) — A program in more than one file: `sect name;`, and the directory tree as the module tree
 - [`regex_derivative.sl`](programs/regex_derivative.sl) — Regular expressions by Brzozowski derivatives, as a `menu`: a regex is what answers `nullable` and `derive`
 - [`string_builder.sl`](programs/string_builder.sl) — A persistent string builder, expressed as a `menu` whose closed-over state is the accumulated text
 - [`tree_search.sl`](programs/tree_search.sl) — Non-local jump: searching a tree
@@ -117,7 +116,7 @@ What the examples written for the redesign show, with the output to expect.
 
 [`generic_effects.sl`](effects/generic_effects.sl) instantiates `Reader<T>` with an
 integer and a string independently, then installs a stored
-`Handler<i64, i64, {Reader<i64>}, {}>`. It prints `42`, `hello`, and `7` on
+`(i64 hn i64 / {Reader<i64>})`. It prints `42`, `hello`, and `7` on
 separate lines. Changing only the stored handler's effect argument to
 `String` is rejected.
 
@@ -171,7 +170,7 @@ answer through a stored `return` clause.
 ### Delayed construction and explicit thunks
 
 [`delayed_and_lazy.sl`](laziness/delayed_and_lazy.sl) stores
-`Delayed<(i64 -> i64 / {Use}), {Build}>`, forces an alias under `Build`,
+`(-> (i64 -> i64 / {Use}) / {Build})`, forces an alias under `Build`,
 then invokes the resulting function twice under `Use` without rebuilding.
 The original delayed value still rebuilds, including after conversion
 through `lazy::of_delayed` and `lazy::to_delayed`. It also demonstrates

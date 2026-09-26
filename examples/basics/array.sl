@@ -4,8 +4,8 @@
 // a new array. Indices 4, 16, and 19 sit across the boundaries where a new
 // branch is grown.
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 func count(n: i64, limit: i64) -> List<i64> {
     of (<(n, limit) | gt) {

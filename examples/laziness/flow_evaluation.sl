@@ -5,10 +5,10 @@ func make(input: i64) -> (i64 -> i64) / {Build} {
     fn(value: i64) { <(value, offset) | add }
 }
 
-func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
+func ignore(callback: (-> (i64 -> i64) / {Build})) -> i64 { 0 }
 
-func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {IO} {
-    do (<(<1 | callback, <2 | callback) | add) {
+func twice(callback: (-> (i64 -> i64) / {Build})) -> i64 / {IO} {
+    do (<(<1 | callback, <2 | callback) | add) hn {
         build(): resume => {
             <"build at demand" | println;
             <10 | resume

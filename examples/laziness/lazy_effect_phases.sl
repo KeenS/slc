@@ -1,4 +1,4 @@
-use lazy::Lazy;
+cite lazy::Lazy;
 
 hook Build { func build() -> i64; }
 hook Use { func use_value(input: i64) -> i64; }
@@ -25,21 +25,21 @@ func source() -> Lazy<Callback, {Build}> {
 
 proc main | (exit: i32) / {IO} {
     let factory = fn(ignored: (,)) { make() };
-    let+ callable = do (<factory | obtain) {
+    let+ callable = do (<factory | obtain) hn {
         build(): resume => {
             <"factory build" | println;
             <10 | resume
         },
     };
     <"factory ready" | println;
-    let first = do (<1 | callable) {
+    let first = do (<1 | callable) hn {
         use_value(input): resume => {
             <"first use" | println;
             <input | resume
         },
     };
     <first | println;
-    let second = do (<2 | callable) {
+    let second = do (<2 | callable) hn {
         use_value(input): resume => {
             <"second use" | println;
             <input | resume
@@ -48,34 +48,34 @@ proc main | (exit: i32) / {IO} {
     <second | println;
 
     let pending = source();
-    let ready = do pending.force {
+    let ready = do pending.force hn {
         build(): resume => {
             <"lazy build" | println;
             <20 | resume
         },
     };
     <"lazy ready" | println;
-    let third = do (<3 | ready.call) {
+    let third = do (<3 | ready.call) hn {
         use_value(input): resume => {
             <"third use" | println;
             <input | resume
         },
     };
     <third | println;
-    let fourth = do (<4 | ready.call) {
+    let fourth = do (<4 | ready.call) hn {
         use_value(input): resume => {
             <"fourth use" | println;
             <input | resume
         },
     };
     <fourth | println;
-    let again = do pending.force {
+    let again = do pending.force hn {
         build(): resume => {
             <"lazy rebuild" | println;
             <30 | resume
         },
     };
-    let fifth = do (<5 | again.call) {
+    let fifth = do (<5 | again.call) hn {
         use_value(input): resume => {
             <"fifth use" | println;
             <input | resume

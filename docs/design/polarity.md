@@ -128,11 +128,11 @@ An exit is taken by naming it where a command stands — an arm, a block's
 statement or its end — and passed on by naming it anywhere else:
 
 ```sl
-proc pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+proc pick<E>(c: Bool) | (then: (-> (;) / {..E}) & otherwise: (-> (;) / {..E})) / {..E} {
     of c { True => then, _ => otherwise }       // runs the exit
 }
 
-proc forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+proc forward<E>(c: Bool) | (then: (-> (;) / {..E}) & otherwise: (-> (;) / {..E})) / {..E} {
     <c | pick | (then & otherwise)>               // passes them on
 }
 ```
@@ -287,12 +287,12 @@ finally runs.
 Where its type meets a slot that allows less, a parameter declared as a pure
 arrow for instance, it is refused there.
 
-**Forcing is not activation.** `Delayed<T, E>` annotates an implicitly
+**Forcing is not activation.** `(-> T / E)` annotates an implicitly
 delayed computation of negative result type `T`. Its forcing row is `E`;
 the result keeps its own activation row. For example:
 
 ```sl
-data Saved { callback: Delayed<(i64 -> i64 / {Use}), {Build}> }
+data Saved { callback: (-> (i64 -> i64 / {Use}) / {Build}) }
 ```
 
 Constructing the function performs `Build`; applying the result performs
@@ -301,13 +301,13 @@ binding performs only `Build` and binds `(i64 -> i64 / {Use})`. A plain
 function type promises no effectful forcing: replacing the field above
 with `(i64 -> i64 / {Build, Use})` is not equivalent. The same distinction
 survives parameters, returns, aliases, fields and menu answers. Empty
-forcing rows normalize away, so `Delayed<T, {}>` and `Delayed<T>` are `T`
+forcing rows normalize away, so `(-> T)` and `(-> T / {})` are `T`
 as effect promises, without changing call-by-name evaluation.
 
 Put the eager binding *inside* the construction handler:
 
 ```sl
-let+ ready = do { let+ value = pending; value } {
+let+ ready = do { let+ value = pending; value } hn {
     build(): resume => <10 | resume
 };
 ```
@@ -316,9 +316,9 @@ Merely handling the expression `pending` does not force it, and a `let+`
 outside that handler cannot move forcing back inside it.
 
 ```sl
-let g = do { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
+let g = do { let- f = make(); f } hn { throw(m) => fn(n: i64) { 0 } };
 <5 | g | println;              // refused: `make` performs `Exn` here, unhandled
 
 let pair = (1, make());        // stored, it performs nothing yet
-let r = do <5 | pair.1 { throw(m) => -1 };   // and performs here, handled
+let r = do <5 | pair.1 hn { throw(m) => -1 };   // and performs here, handled
 ```

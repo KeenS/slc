@@ -71,7 +71,7 @@
 ;;; Highlighting
 
 (defconst slc-keywords
-  '("fn" "func" "mu" "proc" "mod" "use" "spec" "impl" "for" "hook" "do" "op"
+  '("fn" "func" "mu" "proc" "sect" "cite" "spec" "impl" "for" "hook" "do" "hand" "hn"
     "reset" "of" "let" "data" "enum" "menu" "form" "dual" "def" "pub")
   "The words SLC reserves.")
 

@@ -1,6 +1,6 @@
 // Modules: named scopes, flattened by resolution.
 //
-// A `mod` groups declarations under a path, `::` reaches into it, and `use`
+// A `sect` groups declarations under a path, `::` reaches into it, and `cite`
 // brings one name into scope. Resolution rewrites all of it away before
 // checking: every declaration becomes its qualified name, so the rest of the
 // compiler works on flat names — which always contained `::`, because enum
@@ -11,7 +11,7 @@
 // declaration in no module — everything in a single-file program, and the
 // prelude — is visible everywhere.
 
-mod geometry {
+sect geometry {
     pub data Point {
         x: i64,
         y: i64,
@@ -39,15 +39,15 @@ mod geometry {
     }
 }
 
-mod physics {
+sect physics {
     // A sibling module reaches another through its path.
     pub func weight(s: geometry::Shape) -> i64 {
         <(<s | geometry::area, 10) | mul
     }
 }
 
-// `use` makes one name local; everything else stays qualified.
-use geometry::area;
+// `cite` makes one name local; everything else stays qualified.
+cite geometry::area;
 
 proc main | (exit: i32) / {IO} {
     <geometry::Shape::Circle(5) | area | println;

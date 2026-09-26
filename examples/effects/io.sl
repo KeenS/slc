@@ -35,7 +35,7 @@ proc main | (exit: i32) / {IO} {
     // A handler the program installs sits *nearer* the operation than the
     // runtime's, so it answers first — and the text goes nowhere near the
     // terminal. This is how a program mocks its own output.
-    let captured = do <(<"slant" | shout) | greet {
+    let captured = do <(<"slant" | shout) | greet hn {
         write_line(text): resume => text,
         return(u) => "nothing was written",
         _ => forward,
@@ -49,7 +49,7 @@ proc main | (exit: i32) / {IO} {
     // *below* its own prompt, so what it performs escapes outward to the
     // next handler — the runtime's — which is how it both reports the write
     // and forwards it.
-    do <"again" | greet {
+    do <"again" | greet hn {
         write_line(text): resume => {
             <("about to write ", <text | str_len | to_string)
                 | add

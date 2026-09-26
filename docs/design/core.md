@@ -162,8 +162,8 @@ storing them. Positive arguments are evaluated before computed stages.
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
 | `decl.form` | `form F { field: A, … }` | no term of its own: `mu F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
 | `expr.consumer_argument` | `<k \| f` — a consumer as an argument | `⟦k⟧` — a consumer is a value; nothing to coerce |
-| `expr.handler` | `op E { clauses }` | a labelled clause tree containing operation closures and the return closure, defaulting to identity; unmatched operations forward outward |
-| `expr.with_handler` | `op h do body` | runtime handler installation with `⟦h⟧` and a thunk of `body`; inline `do` builds the same clause tree |
+| `expr.handler` | `hn E { clauses }` | a labelled clause tree containing operation closures and the return closure, defaulting to identity; unmatched operations forward outward |
+| `expr.with_handler` | `do body h` | runtime handler installation with `⟦h⟧` and a thunk of `body`; inline `do body hn { clauses }` builds the same clause tree |
 | `decl.fn.returning` | `func f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
 | `decl.fn.transformer` | `func f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
 | `decl.mu` | `proc f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |

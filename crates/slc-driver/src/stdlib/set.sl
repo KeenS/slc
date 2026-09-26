@@ -3,8 +3,8 @@
 // `Map` asks for. `Builder` assembles one the way `map::Builder` does: `put`
 // takes the key alone.
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 pub enum Set<+K> {
     Of(map::Map<K, (,)>),

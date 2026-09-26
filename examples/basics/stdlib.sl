@@ -4,14 +4,14 @@
 // `IO` effect, and `Display` with `fmt`/`to_string`. Everything else is a
 // stdlib module — `list`, `option`, `result`, `num`, `stream`, `seq`,
 // `lazy`, `trace` — reached by its path, `list::length`, or brought in bare
-// with `use`. A module's declarations are private unless it marks them
+// with `cite`. A module's declarations are private unless it marks them
 // `pub`, so what a module offers is exactly what it says it offers.
 
-use list::List; // the type, for signatures
-use list::List::*; // its variants, bare: `Nil`, `Cons`
-use list::length; // one function, bare
-use option::*; // every `pub` member of `option`, bare: `Option`, `unwrap_or`
-use option::Option::*;
+cite list::List; // the type, for signatures
+cite list::List::*; // its variants, bare: `Nil`, `Cons`
+cite list::length; // one function, bare
+cite option::*; // every `pub` member of `option`, bare: `Option`, `unwrap_or`
+cite option::Option::*;
 
 func first(xs: List<i64>) -> Option<i64> {
     of xs {

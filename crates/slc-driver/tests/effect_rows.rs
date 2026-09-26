@@ -52,21 +52,21 @@ fn a_handler_must_answer_every_operation_of_a_handled_effect() {
         "incomplete_file_handler",
         &with_main(
             &[],
-            "let outcome = do <(\"unused\", \"text\") | fs::write_file { fs::read_file(path): resume => <::0(\"mock\") | resume };",
+            "let outcome = do <(\"unused\", \"text\") | fs::write_file hn { fs::read_file(path): resume => <::0(\"mock\") | resume };",
         ),
         &["fs::Fs", "6 operations", "fs::write_file", "_ => forward"],
     );
     for body in ["second()", "1"] {
         refused(
             &format!("incomplete_handler_{}", if body == "1" { "pure" } else { "effectful" }),
-            &with_main(&[PAIR_OPS], &format!("<do ({body}) {{ first() => 1 }} | println;")),
-            &["`op`", "PairOps", "second", "_ => forward"],
+            &with_main(&[PAIR_OPS], &format!("<do ({body}) hn {{ first() => 1 }} | println;")),
+            &["handler", "PairOps", "second", "_ => forward"],
         );
     }
     assert_eq!(
         accepted(
             "complete_handler",
-            &with_main(&[PAIR_OPS], "<do second() { first() => 1, second() => 2 } | println;"),
+            &with_main(&[PAIR_OPS], "<do second() hn { first() => 1, second() => 2 } | println;"),
         ),
         "2\n",
     );
@@ -76,7 +76,7 @@ fn a_handler_must_answer_every_operation_of_a_handled_effect() {
 fn a_forwarding_handler_keeps_the_effect_for_an_outer_handler() {
     refused(
         "forwarding_without_outer_handler",
-        &with_main(&[PAIR_OPS], "<do second() { first() => 1, _ => forward } | println;"),
+        &with_main(&[PAIR_OPS], "<do second() hn { first() => 1, _ => forward } | println;"),
         &["effect:", "PairOps"],
     );
     assert_eq!(
@@ -87,7 +87,7 @@ fn a_forwarding_handler_keeps_the_effect_for_an_outer_handler() {
                     PAIR_OPS,
                     "func run() -> i64 / {PairOps} { let before = first(); let middle = second(); let after = first(); <(<(before, middle) | add, after) | add }"
                 ],
-                "let result = do (do run() { first(): resume => <1 | resume, _ => forward }) {
+                "let result = do (do run() hn { first(): resume => <1 | resume, _ => forward }) hn {
                     first(): resume => <100 | resume,
                     second(): resume => <(<2 | resume, <3 | resume) | add
                 };
@@ -108,7 +108,7 @@ fn an_escaping_exit_cannot_forget_its_row() {
         proc main | (exit: -i32) / {IO} {
             let saved = do (mu Stored { stored <=
                 <(,) | store | (mu i64 { value => { tick(); <0 | exit> } } & stored)>
-            }) { tick(): resume => <(,) | resume };
+            }) hn { tick(): resume => <(,) | resume };
             <42 | saved.consumer>
         }";
     refused("escaping_pure_exit", source, &["effect:", "Tick"]);
@@ -126,7 +126,7 @@ fn an_escaping_exit_is_handled_when_activated_not_when_passed() {
         }";
     let setup = "let saved = do (mu Stored<{Tick}> { stored <=
             <(,) | forward | (mu i64 { value => { tick(); <0 | exit> } } & stored)>
-        }) { tick(): resume => { <\"construction\" | println; <(,) | resume } };";
+        }) hn { tick(): resume => { <\"construction\" | println; <(,) | resume } };";
     for (label, stored) in
         [("direct", "consumer"), ("closure", "mu i64 { value => <value | consumer> }")]
     {
@@ -144,7 +144,7 @@ fn an_escaping_exit_is_handled_when_activated_not_when_passed() {
                 &format!("escaping_rowed_exit_handled_{label}"),
                 &format!("{declarations} proc main | (exit: -i32) / {{IO}} {{
                 {setup}
-                do (<42 | saved.consumer>) {{ tick(): resume => {{ <\"activation\" | println; <(,) | resume }} }}
+                do (<42 | saved.consumer>) hn {{ tick(): resume => {{ <\"activation\" | println; <(,) | resume }} }}
             }}"),
             ),
             "activation\n",
@@ -210,7 +210,7 @@ fn returned_values_cannot_charge_latent_effects_to_construction() {
 
 #[test]
 fn effectful_streams_keep_their_rows_through_consumers_and_bridges() {
-    let declarations = [EXN, RISKY, "use list::List::*;\n"];
+    let declarations = [EXN, RISKY, "cite list::List::*;\n"];
     for (name, demand) in [
         ("stream_take", "<(source, 2) | stream::take"),
         (
@@ -233,7 +233,7 @@ fn effectful_streams_keep_their_rows_through_consumers_and_bridges() {
                 &format!("{name}_handled"),
                 &with_main(
                     &declarations,
-                    &format!("{setup} <do ({demand}) {{ throw(message) => Nil }} | println;"),
+                    &format!("{setup} <do ({demand}) hn {{ throw(message) => Nil }} | println;"),
                 ),
             ),
             "[]\n",
@@ -298,7 +298,7 @@ fn a_row_variable_forwards_an_arguments_row() {
         &["`main` performs `Exn`"],
     );
     // Handled at the call, the row is discharged.
-    let handled = "let r = do <(risky, 1) | app { throw(m) => -1, return(n) => n };\n<r | println;";
+    let handled = "let r = do <(risky, 1) | app hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("forwards_handled", &with_main(&[EXN, RISKY, APP], handled)), "-1\n");
 }
 
@@ -324,7 +324,7 @@ fn an_undeclared_forwarded_row_is_rejected() {
 #[test]
 fn forwarding_composes_through_the_call_graph() {
     let twice = "func twice<F>(g: (i64 -> i64 / {..F}), x: i64) -> i64 / {..F} { <(g, (<(g, x) | app)) | app }\n";
-    let body = "let r = do <(risky, 8) | twice { throw(m) => -1, return(n) => n };\n<r | println;";
+    let body = "let r = do <(risky, 8) | twice hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("composes", &with_main(&[EXN, RISKY, APP, twice], body)), "-1\n");
 }
 
@@ -344,7 +344,7 @@ fn a_row_extension_covers_the_named_part() {
     // only the rest flows through `E`.
     let guard =
         "func guard<E>(f: (i64 -> i64 / {Exn, ..E}), x: i64) -> i64 / {Exn, ..E} { <x | f }\n";
-    let body = "let r = do <(risky, 1) | guard { throw(m) => -1, return(n) => n };\n<r | println;";
+    let body = "let r = do <(risky, 1) | guard hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("extension", &with_main(&[EXN, RISKY, guard], body)), "-1\n");
 }
 
@@ -407,7 +407,7 @@ fn a_rowed_menu_charges_demands_not_the_constructor() {
         &["`main` performs `Exn`"],
     );
     // Handled around the demand, `main` is pure.
-    let handled = "<do (<1 | checked).value { throw(m) => -1, return(n) => n } | println;";
+    let handled = "<do (<1 | checked).value hn { throw(m) => -1, return(n) => n } | println;";
     assert_eq!(accepted("menu_handled", &with_main(&[EXN, FALLIBLE], handled)), "1\n");
 }
 
@@ -447,7 +447,7 @@ fn a_latent_result_row_fires_at_the_cut_and_survives_a_handle() {
 }
 ";
     let around_call = "let n = mu i64 { out <= {
-    let c = do <(risky, out) | after { throw(m) => mu i64 { x => <-1 | out> }, };
+    let c = do <(risky, out) | after hn { throw(m) => mu i64 { x => <-1 | out> }, };
     <5 | c>
 } };
 <n | println;";
@@ -456,7 +456,7 @@ fn a_latent_result_row_fires_at_the_cut_and_survives_a_handle() {
         &with_main(&[EXN, RISKY, after], around_call),
         &["`main` performs `Exn`"],
     );
-    let around_cut = "let n = do (mu i64 { out <= <5 | (<(risky, out) | after)> }) { throw(m) => -1, return(x) => x };
+    let around_cut = "let n = do (mu i64 { out <= <5 | (<(risky, out) | after)> }) hn { throw(m) => -1, return(x) => x };
 <n | println;";
     assert_eq!(
         accepted("latent_result_handled", &with_main(&[EXN, RISKY, after], around_cut)),
@@ -493,10 +493,10 @@ fn a_declarations_row_variable_is_one_of_its_row_parameters() {
 fn clause_binders_are_copattern_shaped() {
     // Omitted for a clause that never resumes; bound after a colon, under any
     // name, for one that does.
-    let never = "let r = do <\"x\" | throw { throw(m) => -1, return(n) => n };\n<r | println;";
+    let never = "let r = do <\"x\" | throw hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("clause_never", &with_main(&[EXN], never)), "-1\n");
     let resumes =
-        "let r = do <\"x\" | throw { throw(m): k => <9 | k, return(n) => n };\n<r | println;";
+        "let r = do <\"x\" | throw hn { throw(m): k => <9 | k, return(n) => n };\n<r | println;";
     assert_eq!(accepted("clause_resumes", &with_main(&[EXN], resumes)), "9\n");
 }
 

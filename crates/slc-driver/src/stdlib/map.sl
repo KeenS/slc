@@ -16,14 +16,14 @@
 // persistent, so a shared prefix can diverge. `Stream` and `Seq` stay the
 // negative sequences.
 
-use list::List::*;
+cite list::List::*;
 
 pub enum Map<+K, +V> {
     Empty,
     Node(Map<K, V>, K, V, Map<K, V>, i64),
 }
 
-use Map::*;
+cite Map::*;
 
 pub func empty<+K, +V>() -> Map<K, V> {
     Empty
@@ -119,7 +119,7 @@ enum Least<+K, +V> {
     Found(K, V, Map<K, V>),
 }
 
-use Least::*;
+cite Least::*;
 
 func take_least<+K, +V>(m: Map<K, V>) -> Least<K, V> {
     of m {

@@ -3,8 +3,8 @@
 // `Builder` assembles one the way `hashmap::Builder` does, and `put` takes
 // the key alone.
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 pub enum HashSet<+K> {
     Of(hashmap::HashMap<K, (,)>),

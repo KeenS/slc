@@ -20,8 +20,8 @@
 // The module carries the context, so nothing here repeats it: `seq::map`,
 // not `map_seq`.
 
-use list::List::*;
-use stream::Stream;
+cite list::List::*;
+cite stream::Stream;
 
 pub enum Step<+T, E> {
     Done,
@@ -51,7 +51,7 @@ pub func to_list<+T, E>(s: Seq<T, ..E>) -> list::List<T> / {..E} {
 }
 
 // Every stream is a sequence that never ends.
-pub func of_stream<+T, E>(s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> {
+pub func of_stream<+T, E>(s: (-> Stream<T, ..E> / {..E})) -> Seq<T, ..E> {
     mu Seq {
         next <= <Step::Yield(s.head, <s.tail | of_stream) | next>,
     }
@@ -101,7 +101,7 @@ pub func take<+T, E>(s: Seq<T, ..E>, n: i64) -> Seq<T, ..E> {
 // does.
 pub func take_while<+T, E>(
     keep: (T -> Bool / {..E}),
-    s: Delayed<Stream<T, ..E>, ..E>,
+    s: (-> Stream<T, ..E> / {..E}),
 ) -> Seq<T, ..E> {
     mu Seq {
         next <= of <s.head | keep {

@@ -56,16 +56,16 @@ proc main | (exit: i32) / {IO} {
     // multiple effects, discharged by nested handlers — the inner handles
     // Exn, the outer Reader. Either order works; each handler answers its
     // own operations.
-    let ok = do (do (<5 | scale) {
+    let ok = do (do (<5 | scale) hn {
         fail(m) => -1,
-    }) {
+    }) hn {
         config(): resume => <10 | resume,
     };
     <ok | println; // 5 * 10 = 50
 
-    let bad = do (do (<0 | scale) {
+    let bad = do (do (<0 | scale) hn {
         fail(m) => -1,
-    }) {
+    }) hn {
         config(): resume => <10 | resume,
     };
     <bad | println; // failed → -1

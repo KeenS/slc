@@ -4,7 +4,7 @@
 // beside the key. `Set` is the ordered set: `Map` with nothing beside the
 // key, so the keys come out in order. Two keys with one hash share a list.
 
-use list::List::*;
+cite list::List::*;
 
 enum Id {
     A,

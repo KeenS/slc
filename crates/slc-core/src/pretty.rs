@@ -27,7 +27,7 @@ impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Var(v) => write!(f, "?{v}"),
-            Type::Delayed(inner, row) => write!(f, "Delayed<{inner}, {row}>"),
+            Type::Delayed(inner, row) => write!(f, "(-> {inner} / {row})"),
             Type::Pos(b) => write!(f, "+{b}"),
             Type::Neg(b) => write!(f, "-{b}"),
             Type::Tensor(xs) => connective(f, xs, ", ", "(,)"),
@@ -47,6 +47,15 @@ impl std::fmt::Display for Type {
             Type::With(xs) => connective(f, xs, " & ", "(&)"),
             Type::Sum(xs) => connective(f, xs, " | ", "(|)"),
             Type::Param(i) => write!(f, "%{i}"),
+            Type::Named(name, args) if name == "Handler" && args.len() == 4 => {
+                let discharged = row_arg(&args[2]);
+                let residual = row_arg(&args[3]);
+                write!(f, "({} hn {} / {discharged}", args[0], args[1])?;
+                if !residual_is_empty(&args[3]) {
+                    write!(f, " / {residual}")?;
+                }
+                write!(f, ")")
+            }
             Type::Named(name, args) => {
                 // A projection is stored under a nominal name. Print it as
                 // the path the program wrote: `Walk::Item<…>`.
@@ -75,6 +84,20 @@ impl std::fmt::Display for Type {
                 }
             }
         }
+    }
+}
+
+fn row_arg(ty: &Type) -> String {
+    match ty {
+        Type::Rowed(inner, row) if **inner == Type::ONE => row.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn residual_is_empty(ty: &Type) -> bool {
+    match ty {
+        Type::Rowed(inner, row) if **inner == Type::ONE => row.is_empty(),
+        _ => false,
     }
 }
 

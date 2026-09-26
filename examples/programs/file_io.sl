@@ -10,17 +10,17 @@
 // `fs::close` spends the file. A file is a value of its own type, `File` — an
 // integer cannot close a file, and reading through a closed file fails.
 //
-// Touching a file is the `Fs` effect, and `fs::real_command` answers it from
-// the disk: the program's file work, `func { … }`, runs under it and leaves
-// through `exit` itself. The same work could run under a handler of the
-// program's own, which answers from somewhere else.
+// Touching a file is the `Fs` effect, and `fs::real` answers it from the
+// disk: the program's file work runs under `do` and leaves through `exit`
+// itself. The same work could run under a handler of the program's own,
+// which answers from somewhere else.
 //
 // Cleanup runs on paths routed through the wrapped exit. Earlier consumers
 // keep the exit they captured, so the failure consumers used after opening
 // the file are built after the wrapper too.
 
 proc main | (exit: i32) / {IO} {
-    <(,) | fs::real_command | (fn {
+    do {
         let complain = mu String {
             message => {
                 <("cannot read: ", message) | add | println;
@@ -74,5 +74,5 @@ proc main | (exit: i32) / {IO} {
                 },
             }
         )>
-    })>
+    } fs::real
 }

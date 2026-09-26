@@ -7,11 +7,11 @@
 // infinite structure cannot print whole; the honest form is
 // `<(s, n) | take | fmt`.
 
-use list::List::*;
+cite list::List::*;
 
 pub menu Stream<+T, E> / {..E} {
     head: T,
-    tail: Delayed<Stream<T, ..E>, ..E>,
+    tail: (-> Stream<T, ..E> / {..E}),
 }
 
 pub func repeat<+T>(x: T) -> Stream<T> {
@@ -28,7 +28,7 @@ pub func count_from(n: i64) -> Stream<i64> {
     }
 }
 
-pub func map<+A, +B, E>(f: (A -> B / {..E}), s: Delayed<Stream<A, ..E>, ..E>) -> Stream<B, ..E> {
+pub func map<+A, +B, E>(f: (A -> B / {..E}), s: (-> Stream<A, ..E> / {..E})) -> Stream<B, ..E> {
     mu Stream {
         head <= <s.head | f | head>,
         tail <= <(f, s.tail) | map | tail>,
@@ -36,7 +36,7 @@ pub func map<+A, +B, E>(f: (A -> B / {..E}), s: Delayed<Stream<A, ..E>, ..E>) ->
 }
 
 // The bridge back to data: the first `n` elements, as a list.
-pub func take<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> list::List<T> / {..E} {
+pub func take<+T, E>(s: (-> Stream<T, ..E> / {..E}), n: i64) -> list::List<T> / {..E} {
     of (<(n, 0) | le) {
         True => { Nil },
         _ => { Cons(s.head, <(s.tail, <(n, 1) | sub) | take) },
@@ -64,8 +64,8 @@ pub func iterate<+T, E>(f: (T -> T / {..E}), x: T) -> Stream<T, ..E> {
 }
 
 pub func zip<+A, +B, E>(
-    a: Delayed<Stream<A, ..E>, ..E>,
-    b: Delayed<Stream<B, ..E>, ..E>,
+    a: (-> Stream<A, ..E> / {..E}),
+    b: (-> Stream<B, ..E> / {..E}),
 ) -> Stream<(A, B), ..E> {
     mu Stream {
         head <= <(a.head, b.head) | head>,
@@ -75,7 +75,7 @@ pub func zip<+A, +B, E>(
 
 // Unlike the others this forces as it goes: `n` demands happen here
 // rather than at the first demand of the result.
-pub func drop<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> Stream<T, ..E> / {..E} {
+pub func drop<+T, E>(s: (-> Stream<T, ..E> / {..E}), n: i64) -> Stream<T, ..E> / {..E} {
     of (<(n, 0) | le) {
         True => {
             let+ ready = s;

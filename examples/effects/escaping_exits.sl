@@ -22,7 +22,7 @@ proc main | (exit: -i32) / {IO} {
             }
             & returned
         )>,
-    }) {
+    }) hn {
         tick(): resume => {
             <"unexpected construction demand" | println;
             <(,) | resume
@@ -30,7 +30,7 @@ proc main | (exit: -i32) / {IO} {
     };
 
     <"stored without running" | println;
-    do (<42 | saved.consumer>) {
+    do (<42 | saved.consumer>) hn {
         tick(): resume => {
             <"tick on activation" | println;
             <(,) | resume

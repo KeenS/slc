@@ -314,7 +314,7 @@ mod tests {
         assert!(delayed.dual().is_positive() && !delayed.dual().is_negative());
         assert_eq!(delayed.dual().dual(), delayed);
         assert_eq!(Type::delayed(callable.clone(), Row::default()), callable);
-        assert_eq!(delayed.to_string(), "Delayed<(+i64 -> +i64 / {IO}), {Exn}>");
+        assert_eq!(delayed.to_string(), "(-> (+i64 -> +i64 / {IO}) / {Exn})");
     }
 
     #[test]

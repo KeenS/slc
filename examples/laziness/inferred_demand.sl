@@ -1,8 +1,8 @@
 hook Build { func build() -> i64; }
 
-func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
+func ignore(callback: (-> (i64 -> i64) / {Build})) -> i64 { 0 }
 
-func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+func twice(callback: (-> (i64 -> i64) / {Build})) -> i64 / {Build} {
     <(<1 | callback, <2 | callback) | add
 }
 
@@ -25,7 +25,7 @@ proc main | (exit: i32) / {IO} {
             build();
             value
         };
-        do (<pending | twice) {
+        do (<pending | twice) hn {
             build(): resume => {
                 <"demand" | println;
                 <0 | resume

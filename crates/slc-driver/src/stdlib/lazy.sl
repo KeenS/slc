@@ -4,7 +4,7 @@ pub menu Lazy<*T, E> / {..E} {
     force: T,
 }
 
-pub func of_delayed<-T, E>(computation: Delayed<T, ..E>) -> Lazy<T, ..E> {
+pub func of_delayed<-T, E>(computation: (-> T / {..E})) -> Lazy<T, ..E> {
     mu Lazy<T, ..E> {
         force <= {
             let+ value = computation;
@@ -13,7 +13,7 @@ pub func of_delayed<-T, E>(computation: Delayed<T, ..E>) -> Lazy<T, ..E> {
     }
 }
 
-pub func to_delayed<-T, E>(computation: Lazy<T, ..E>) -> Delayed<T, ..E> {
+pub func to_delayed<-T, E>(computation: Lazy<T, ..E>) -> (-> T / {..E}) {
     let- pending = computation.force;
     pending
 }

@@ -9,7 +9,7 @@ func calculate() -> i64 / {Maths} {
 }
 
 proc main | (exit: -i32) / {IO} {
-    let answer = do calculate() {
+    let answer = do calculate() hn {
         seed(): resume => <("resumed: ", <40 | resume) | add,
         combine(left, right): resume => <(left, right) | add | resume,
         return(value) => <("answer: ", <value | int_to_str) | add,

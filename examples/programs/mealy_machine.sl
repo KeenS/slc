@@ -22,8 +22,8 @@
 //   locked  ─────────────────▶  unlocked  ─────────────────▶  locked
 //   push / Alarm, and stay      coin / Refund, and stay
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 enum Input { Coin, Push }
 

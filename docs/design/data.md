@@ -494,7 +494,7 @@ storable consumer.
 
 `Lazy<T, E>` is an ordinary one-item menu, accepting either polarity of
 `T`; `.force` performs `E` and returns `T` without activating that result.
-`Lazy<T>` has an empty demand row. `Delayed<T, E>` instead annotates an
+`Lazy<T>` has an empty demand row. `(-> T / E)` instead annotates an
 implicit computation and accepts only negative `T`. They are not literal
 duals: `dual(Lazy<T, E>)` is the menu's request type, carrying a continuation
 for its answer, not a delayed computation. For negative `T`,

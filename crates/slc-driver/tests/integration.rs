@@ -223,7 +223,7 @@ func make() -> (i64 -> i64) / {Exn} {
 }
 
 func apply5(f: (i64 -> i64)) -> i64 { <5 | f }
-func apply5_effectful(f: Delayed<(i64 -> i64), {Exn}>) -> i64 / {Exn} { <5 | f }
+func apply5_effectful(f: (-> (i64 -> i64) / {Exn})) -> i64 / {Exn} { <5 | f }
 
 enum Held { Holds((i64 -> i64)) }
 "#;
@@ -240,13 +240,13 @@ fn a_delayed_computation_performs_under_the_handler_around_its_use() {
         &delayed_program(
             r#"// Handled around the use.
             let- f = make();
-            let a = do <5 | f { throw(m) => -1, };
+            let a = do <5 | f hn { throw(m) => -1, };
             <a | println;
             // Run with `let+` under the handler where it is written.
-            let g = do { let+ made = make(); made } { throw(m) => fn(n: i64) { 0 }, };
+            let g = do { let+ made = make(); made } hn { throw(m) => fn(n: i64) { 0 }, };
             <5 | g | println;
             // What flows into a callee is demanded by the callee.
-            let c = do <make() | apply5_effectful { throw(m) => -3, };
+            let c = do <make() | apply5_effectful hn { throw(m) => -3, };
             <c | println;
             // Stored, it carries its row on its type, and never runs unused.
             let t = (make(), 1);
@@ -262,13 +262,13 @@ fn a_delayed_computation_that_escapes_its_handler_is_refused() {
     let refused = [
         // Written under the handler, returned out of it, used outside.
         (
-            "let g = do { let- f = make(); f } { throw(m) => fn(n: i64) { 0 }, };\n<5 | g | println;",
+            "let g = do { let- f = make(); f } hn { throw(m) => fn(n: i64) { 0 }, };\n<5 | g | println;",
             "`main` performs `Exn`",
         ),
         // Handed to a callee that promises a pure arrow, even under a
         // handler: running it performs `Exn` inside `apply5`.
         (
-            "let- f = make();\nlet b = do <f | apply5 { throw(m) => -2, };\n<b | println;",
+            "let- f = make();\nlet b = do <f | apply5 hn { throw(m) => -2, };\n<b | println;",
             "`apply5` takes `f` with a pure arrow but `f` performs `Exn`",
         ),
         // Stored in a variant whose payload is declared pure.
@@ -321,7 +321,7 @@ fn a_row_follows_its_value_where_names_cannot() {
     // them is accepted and then fails with "no handler for operation".
     let refused = [
         // A lambda written under a handler and called after it.
-        "let f = do { fn(x: i64) { <\"late\" | throw } } { throw(m) => fn(x: i64) { 0 }, };\n<1 | f | println;",
+        "let f = do { fn(x: i64) { <\"late\" | throw } } hn { throw(m) => fn(x: i64) { 0 }, };\n<1 | f | println;",
         // A higher-order global handed on as a value.
         "let+ h = app;\n<(risky, 1) | h | println;",
         // A function laundered through a `let`.
@@ -339,11 +339,11 @@ fn a_row_follows_its_value_where_names_cannot() {
     // Today the first is refused where the lambda is written, and the last
     // is refused as a stored delayed computation.
     let accepted = [
-        "let+ f = fn(x: i64) { <\"late\" | throw };\nlet r = do <1 | f { throw(m) => -1, };\n<r | println;",
-        "let+ h = app;\nlet r = do <(risky, 1) | h { throw(m) => -1, };\n<r | println;",
-        "let+ f = risky;\nlet r = do <1 | f { throw(m) => -1, };\n<r | println;",
-        "let r = do <1 | inc | x => (risky, x) | app { throw(m) => -1, };\n<r | println;",
-        "let t = (make(), 1);\nlet r = do <5 | t.0 { throw(m) => -1, };\n<r | println;",
+        "let+ f = fn(x: i64) { <\"late\" | throw };\nlet r = do <1 | f hn { throw(m) => -1, };\n<r | println;",
+        "let+ h = app;\nlet r = do <(risky, 1) | h hn { throw(m) => -1, };\n<r | println;",
+        "let+ f = risky;\nlet r = do <1 | f hn { throw(m) => -1, };\n<r | println;",
+        "let r = do <1 | inc | x => (risky, x) | app hn { throw(m) => -1, };\n<r | println;",
+        "let t = (make(), 1);\nlet r = do <5 | t.0 hn { throw(m) => -1, };\n<r | println;",
     ];
     for (index, body) in accepted.iter().enumerate() {
         let (stdout, stderr, ok) =
@@ -363,7 +363,7 @@ fn a_delayed_computation_carries_a_row_variable_on_its_type() {
         }}
 
         proc main | (exit: -i32) / {{IO}} {{
-            let r = do <(fn(u: (,)) {{ make() }}) | wrap {{ throw(m) => -1, }};
+            let r = do <(fn(u: (,)) {{ make() }}) | wrap hn {{ throw(m) => -1, }};
             <r | println;
             <0 | exit>
         }}"
@@ -395,7 +395,7 @@ fn a_tail_resuming_handler_runs_as_long_as_the_program_does() {
         }
 
         proc main | (exit: -i32) / {IO} {
-            let r = do (<100000 | spin) { tick(): resume => <(,) | resume, };
+            let r = do (<100000 | spin) hn { tick(): resume => <(,) | resume, };
             <r | println;
             <0 | exit>
         }"#,
@@ -805,13 +805,13 @@ fn fs_read_offers_a_missing_file_to_its_failure_continuation() {
     std::fs::write(
         &dir,
         r#"proc main | (exit: -i32) / {IO} {
-            let status = <(fn(u: (,)) {
+            let status = do {
                 mu i32 { done <= <"does-not-exist.sl" | fs::read | (mu String {
                     source => { <("unexpectedly read ", source) | add | println; <1 | done> },
                 } & mu String {
                     message => { <("failed: ", message) | add | println; <0 | done> },
                 })> }
-            }) | fs::real;
+            } fs::real;
             <status | exit>
         }"#,
     )
@@ -830,7 +830,7 @@ fn fs_write_and_read_round_trip_through_their_continuations() {
         &dir,
         format!(
             r#"proc main | (exit: -i32) / {{IO}} {{
-            let status = <(fn(u: (,)) {{
+            let status = do {{
                 mu i32 {{ finish <= {{
                     let failed = mu String {{ message => {{ <message | println; <1 | finish> }} }};
                     <({path:?}, "written") | fs::write | (mu unit {{
@@ -839,7 +839,7 @@ fn fs_write_and_read_round_trip_through_their_continuations() {
                         }} & failed)>,
                     }} & failed)>
                 }} }}
-            }}) | fs::real;
+            }} fs::real;
             <status | exit>
         }}"#,
             path = target.to_str().unwrap()
@@ -1137,7 +1137,7 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
         &dir,
         format!(
             r#"proc main | (exit: -i32) / {{IO}} {{
-                let status = <(fn(u: (,)) {{
+                let status = do {{
                     mu i32 {{ done <= {{
                         let fail = mu String {{ m => {{ <m | println; <1 | done> }} }};
                         let fh = mu {{ k <= <"{}" | fs::open | (k & fail)> }};
@@ -1148,7 +1148,7 @@ fn a_file_handle_is_its_own_type_and_is_spent_by_close() {
                         <line | println;
                         <0 | done>
                     }} }}
-                }}) | fs::real;
+                }} fs::real;
                 <status | exit>
             }}"#,
             data.display()
@@ -1165,11 +1165,11 @@ fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
     let (stdout, stderr, ok) = run_sl_with(
         &[],
         "slc_test_fs_mock.sl",
-        r#"use fs::read_file;
+        r#"cite fs::read_file;
 
         // Every file holds its own name, and nothing touches the disk.
         func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            do <(,) | program {
+            do <(,) | program hn {
                 read_file(path): resume => <::0(<("canned ", path) | add) | resume,
                 fs::write_file(path, text): resume => <::0((,)) | resume,
                 fs::open_file(path): resume => <::1("not supported") | resume,
@@ -1197,7 +1197,7 @@ fn a_computation_is_handed_to_a_handler_as_fn_braces() {
         &[],
         "slc_test_fn_braces.sl",
         r#"func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            do <(,) | program {
+            do <(,) | program hn {
                 fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
                 fs::write_file(path, text): resume => <::0((,)) | resume,
                 fs::open_file(path): resume => <::1("not supported") | resume,
@@ -1231,7 +1231,7 @@ fn a_program_ending_in_a_cut_is_handed_to_a_command_handler() {
         "slc_test_command_handler.sl",
         r#"// The program leaves through `exit`, so it is `(;)`: a command's exit.
         proc canned<E> | (program: ((;) / {fs::Fs, ..E})) / {..E} {
-            do program {
+            do program hn {
                 fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
                 fs::write_file(path, text): resume => <::0((,)) | resume,
                 fs::open_file(path): resume => <::1("not supported") | resume,
@@ -1259,12 +1259,12 @@ fn a_program_ending_in_a_cut_runs_under_real_command() {
         &[],
         "slc_test_real_command.sl",
         r#"proc main | (exit: -i32) / {IO} {
-            <(,) | fs::real_command | (fn {
+            do {
                 <"surely/not/here.txt" | fs::read | (
                     mu String { text => <1 | exit> }
                     & mu String { why => { <"cannot read" | println; <0 | exit> } }
                 )>
-            })>
+            } fs::real
         }"#,
     );
     assert!(ok, "stderr: {stderr}");
@@ -1277,7 +1277,7 @@ fn a_handler_clause_names_its_operation_by_path() {
         &[],
         "slc_test_fs_clause_path.sl",
         r#"func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            do <(,) | program {
+            do <(,) | program hn {
                 fs::read_file(path): resume => <::0(<("canned ", path) | add) | resume,
                 fs::write_file(path, text): resume => <::0((,)) | resume,
                 fs::open_file(path): resume => <::1("not supported") | resume,
@@ -1308,7 +1308,7 @@ fn a_partial_file_handler_forwards_writes_to_real_command() {
         "slc_test_fs_forwarding.sl",
         &format!(
             r#"proc main | (exit: -i32) / {{IO}} {{
-                <(,) | fs::real_command | (fn {{
+                do {{
                     do {{
                         let outcome = <("{}", "forwarded") | fs::write_file;
                         let contents = mu String {{ done <=
@@ -1316,11 +1316,11 @@ fn a_partial_file_handler_forwards_writes_to_real_command() {
                         }};
                         <contents | println;
                         <0 | exit>
-                    }} {{
+                    }} hn {{
                         fs::read_file(path): resume => <::0("intercepted") | resume,
                         _ => forward
                     }}
-                }})>
+                }} fs::real
             }}"#,
             path.display(),
         ),
@@ -1474,8 +1474,8 @@ fn an_operation_may_take_several_parameters() {
         &dir,
         r#"hook Tag { func tag(label: +String, n: +i64) -> i64; }
         proc main | (exit: -i32) / {IO} {
-            <do (<("ten", 7) | tag) { tag(l, n): k => (<(n, 10) | mul | k), return(m) => m } | println;
-            <do (<("len", 7) | tag) { tag(l, n) => (<((<l | str_len), n) | add), return(m) => m } | println;
+            <do (<("ten", 7) | tag) hn { tag(l, n): k => (<(n, 10) | mul | k), return(m) => m } | println;
+            <do (<("len", 7) | tag) hn { tag(l, n) => (<((<l | str_len), n) | add), return(m) => m } | println;
             <0 | exit>
         }"#,
     )
@@ -1515,7 +1515,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     let dir = std::env::temp_dir().join("slc_test_stdlib_reach.sl");
     std::fs::write(
         &dir,
-        r#"use num::max;
+        r#"cite num::max;
         proc main | (exit: -i32) / {IO} {
             <(<(3, 7) | num::min) | println;
             <(<(3, 7) | max) | println;
@@ -1542,7 +1542,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     let dir = std::env::temp_dir().join("slc_test_stdlib_shadow_mod.sl");
     std::fs::write(
         &dir,
-        r#"mod num { pub func min(a: +i64, b: +i64) -> i64 { (<(a, 100) | add) } }
+        r#"sect num { pub func min(a: +i64, b: +i64) -> i64 { (<(a, 100) | add) } }
         proc main | (exit: -i32) / {IO} { <(<(3, 7) | num::min) | println; <0 | exit> }"#,
     )
     .unwrap();
@@ -1554,7 +1554,7 @@ fn a_stdlib_module_is_reached_by_path_or_use_and_not_otherwise() {
     let dir = std::env::temp_dir().join("slc_test_stdlib_diag.sl");
     std::fs::write(
         &dir,
-        r#"use list::List::*;
+        r#"cite list::List::*;
         proc main | (exit: -i32) / {IO} { <(Nil, "x") | list::nth | (exit & exit)> }"#,
     )
     .unwrap();
@@ -1595,7 +1595,7 @@ fn display_formats_through_bounded_impls() {
     let dir = std::env::temp_dir().join("slc_test_display.sl");
     std::fs::write(
         &dir,
-        r#"use list::List;
+        r#"cite list::List;
         proc main | (exit: -i32) / {IO} {
             <fmt(42) | println;
             <fmt("plain") | println;
@@ -1637,8 +1637,8 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     let dir = std::env::temp_dir().join("slc_test_use_glob.sl");
     std::fs::write(
         &dir,
-        r#"use list::List;
-        use list::List::*;
+        r#"cite list::List;
+        cite list::List::*;
         enum Mine { Nil, Cons(i64, Mine) }
         func total(xs: List<i64>) -> i64 {
             of xs { Nil => 0, Cons(n, rest) => (<(n, (<rest | total)) | add) }
@@ -1658,7 +1658,7 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     let dir = std::env::temp_dir().join("slc_test_use_ambiguous.sl");
     std::fs::write(
         &dir,
-        r#"use list::List;
+        r#"cite list::List;
         enum Mine { Nil, Cons(i64, Mine) }
         func count(xs: Mine) -> i64 {
             of xs { Nil => 0, Cons(_, rest) => (<(1, count(rest)) | add) }
@@ -1674,9 +1674,9 @@ fn variant_imports_pin_bare_names_and_ambiguity_is_an_error() {
     let dir = std::env::temp_dir().join("slc_test_use_collision.sl");
     std::fs::write(
         &dir,
-        r#"use list::List::*;
+        r#"cite list::List::*;
         enum Mine { Nil }
-        use Mine::*;
+        cite Mine::*;
         proc main | (exit: -i32) / {IO} { 0 | exit> }"#,
     )
     .unwrap();
@@ -1804,10 +1804,8 @@ fn a_consumer_built_over_an_atom_receives_the_value() {
 
 #[test]
 fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
-    // `(A ; B)` and `(B ; A)` are one type. A negative function stored where the
-    // positive spelling is declared, and a positive function where the
-    // negative one is, must both *run* — which is what proves the value was
-    // turned around at the cut rather than merely accepted.
+    // `(A ; B)` and `(B ; A)` are different types. A function stored where the
+    // other orientation is declared is refused.
     let dir = std::env::temp_dir().join("slc_test_par_commutes.sl");
     std::fs::write(
         &dir,
@@ -1828,16 +1826,16 @@ fn a_value_meets_a_slot_at_the_mirrored_spelling_of_its_type() {
         }"#,
     )
     .unwrap();
-    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stderr: {stderr}");
-    assert_eq!(stdout.lines().collect::<Vec<_>>(), ["the number 42", "n=7"]);
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "the other orientation was accepted");
+    assert!(stderr.contains("type:"), "{stderr}");
 }
 
 #[test]
 fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
-    // The same turn, wherever a value meets a declared type rather than a
-    // consumer: a record field, a `let` annotation, a variant's payload, a
-    // function's argument, and its return value. Each is run.
+    // The same refusal, wherever a value meets a declared type: a record
+    // field, a `let` annotation, a variant's payload, an argument, and a
+    // return.
     let dir = std::env::temp_dir().join("slc_test_par_stores.sl");
     std::fs::write(
         &dir,
@@ -1861,19 +1859,16 @@ fn a_value_is_stored_passed_and_returned_at_the_mirrored_spelling() {
         }"#,
     )
     .unwrap();
-    let (stdout, stderr, ok) = run_sl(dir.to_str().unwrap());
-    assert!(ok, "stderr: {stderr}");
-    assert_eq!(
-        stdout.lines().collect::<Vec<_>>(),
-        ["the number 1", "the number 2", "the number 42", "the number 3", "the number 4"]
-    );
+    let (_, stderr, ok) = run_sl(dir.to_str().unwrap());
+    assert!(!ok, "the other orientation was accepted");
+    assert!(stderr.contains("type:"), "{stderr}");
 }
 
 #[test]
 fn a_value_is_turned_inside_a_written_structure_and_between_stages() {
-    // A tuple and an alternative written out, and a stage's result meeting the
-    // next stage, each at the other spelling of its declared type. Each runs.
-    let (stdout, stderr, ok) = run_sl_with(
+    // A tuple, an alternative, and a stage's result, each meeting the other
+    // spelling of its type, are refused.
+    let (_, stderr, ok) = run_sl_with(
         &[],
         "slc_test_par_structures.sl",
         r#"func deliver_i64(out: String) <- i64 {
@@ -1891,11 +1886,8 @@ fn a_value_is_turned_inside_a_written_structure_and_between_stages() {
             <0 | exit>
         }"#,
     );
-    assert!(ok, "stderr: {stderr}");
-    assert_eq!(
-        stdout.lines().collect::<Vec<_>>(),
-        ["the number 1", "the number 5", "the number 42"]
-    );
+    assert!(!ok, "the other orientation was accepted");
+    assert!(stderr.contains("type:"), "{stderr}");
 }
 
 #[test]
@@ -1903,8 +1895,8 @@ fn adapters_do_not_override_a_type_parameters_polarity() {
     let (_, stderr, ok) = run_sl_with(
         &[],
         "slc_test_par_constructor.sl",
-        r#"use list::List;
-        use list::List::*;
+        r#"cite list::List;
+        cite list::List::*;
 
         func deliver_i64(out: String) <- i64 {
             mu i64 { n => <("the number ", (<n | int_to_str)) | add | out> }
@@ -2248,7 +2240,7 @@ fn a_bundle_item_that_ends_in_a_cut_runs_only_when_chosen() {
     let dir = std::env::temp_dir().join("slc_test_by_name_bundle.sl");
     std::fs::write(
         &dir,
-        r#"proc pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+        r#"proc pick<E>(c: Bool) | (then: (-> (;) / {..E}) & otherwise: (-> (;) / {..E})) / {..E} {
             of c { True => <(,) | then>, _ => <(,) | otherwise> }
         }
 
@@ -2269,11 +2261,11 @@ fn an_exit_named_as_a_command_runs_and_passed_on_it_does_not() {
     let dir = std::env::temp_dir().join("slc_test_exit_as_command.sl");
     std::fs::write(
         &dir,
-        r#"proc pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+        r#"proc pick<E>(c: Bool) | (then: (-> (;) / {..E}) & otherwise: (-> (;) / {..E})) / {..E} {
             of c { True => then, _ => otherwise }
         }
 
-        proc forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+        proc forward<E>(c: Bool) | (then: (-> (;) / {..E}) & otherwise: (-> (;) / {..E})) / {..E} {
             <c | pick | (then & otherwise)>
         }
 
@@ -2294,7 +2286,7 @@ fn what_flows_into_a_function_is_by_name() {
     let dir = std::env::temp_dir().join("slc_test_by_name_flow_head.sl");
     std::fs::write(
         &dir,
-        r#"func twice(g: Delayed<(String -> (,) / {IO}), {IO}>) -> (,) / {IO} {
+        r#"func twice(g: (-> (String -> (,) / {IO}) / {IO})) -> (,) / {IO} {
             <"a" | g;
             <"b" | g
         }
@@ -2372,7 +2364,7 @@ fn an_operation_performed_after_resume_reaches_a_handler_outside_the_resumed_cod
         }
 
         proc main | (exit: -i32) / {IO} {
-            let n = do show_config() {
+            let n = do show_config() hn {
                 config(): resume => <10 | resume,
                 return(v) => v,
             };
@@ -2404,7 +2396,7 @@ fn a_tail_resuming_handler_runs_a_long_loop_in_constant_space() {
         }
 
         proc main | (exit: -i32) / {IO} {
-            let done = do (<10000 | spin) {
+            let done = do (<10000 | spin) hn {
                 tick(): resume => <(,) | resume,
                 return(v) => v,
             };
@@ -2436,7 +2428,7 @@ fn a_continuation_captured_in_resumed_code_continues_past_the_handler() {
         }
 
         proc main | (exit: -i32) / {IO} {
-            let r = do body() {
+            let r = do body() hn {
                 config(): resume => <10 | resume,
                 return(x) => x,
             };
@@ -2454,7 +2446,7 @@ fn a_continuation_captured_in_resumed_code_continues_past_the_handler() {
 
 #[test]
 fn a_mu_whose_body_performs_returns_into_every_resumption() {
-    // `r` is captured under the handler, so jumping to it from a resumed copy
+    // `r` is captured under the handler / so jumping to it from a resumed copy
     // of that handler's extent lands in the copy: each resumption answers.
     let dir = std::env::temp_dir().join("slc_test_mu_under_resuming_clause.sl");
     std::fs::write(
@@ -2467,7 +2459,7 @@ fn a_mu_whose_body_performs_returns_into_every_resumption() {
         }
 
         proc main | (exit: -i32) / {IO} {
-            let all = do pick() {
+            let all = do pick() hn {
                 flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
                 return(s) => s,
             };
@@ -2491,7 +2483,7 @@ fn a_clause_cuts_into_a_continuation_it_is_handed() {
         r#"hook Judge { func judge(n: i64, ok: -String, bad: -String) -> (;); }
 
         proc main | (exit: -i32) / {IO} {
-            let verdict = do (mu String { k <= <(5, k, k) | judge> }) {
+            let verdict = do (mu String { k <= <(5, k, k) | judge> }) hn {
                 judge(n, ok, bad) => of (<(n, 3) | gt) { True => <"big" | ok>, False => <"small" | bad> },
                 return(s) => s,
             };
@@ -2526,7 +2518,7 @@ fn a_continuation_jumped_to_under_a_later_handler_is_an_error() {
             of chosen {
                 ::0(n) => { <n | println; <0 | exit> },
                 ::1(k) => {
-                    let r = do (<k | use_inside) {
+                    let r = do (<k | use_inside) hn {
                         config(): resume => <7 | resume,
                         return(v) => v,
                     };
@@ -2569,7 +2561,7 @@ fn a_consumer_transformer_stage_hands_on_its_answer_wherever_it_stands() {
             <12345 | shown | len | println;
             <((<50 | twice), 1) | add | println;
             <21 | wrap | println;
-            let h = do (<6 | scaled) { config(): resume => <7 | resume, };
+            let h = do (<6 | scaled) hn { config(): resume => <7 | resume, };
             <h | println;
             <mu i64 { k <= <50 | twice | inc | k> } | println;
             <0 | exit>
@@ -2650,7 +2642,7 @@ fn an_operation_performed_inside_a_reset_reaches_the_handler_outside_it() {
         func read_twice() -> i64 / {Reader} { <(config(), config()) | add }
 
         proc main | (exit: -i32) / {IO} {
-            let n = do (reset read_twice()) {
+            let n = do (reset read_twice()) hn {
                 config(): resume => <21 | resume,
             };
             <n | println;
@@ -2681,7 +2673,7 @@ fn a_resumption_whose_slice_crosses_a_reset_reinstates_it() {
         }
 
         proc main | (exit: -i32) / {IO} {
-            let all = do pick() {
+            let all = do pick() hn {
                 flip(): resume => <((<True | resume), " ") | add | x => (x, (<False | resume)) | add,
             };
             <all | println;

@@ -252,7 +252,10 @@ fn infer_decl(
             Ok(DeclarationType { name: name.clone(), ty: lower_type(ty)? })
         }
         // Resolved away before inference runs.
-        Decl::Mod { name, .. } | Decl::Trait { name, .. } | Decl::Effect { name, .. } => {
+        Decl::Mod { name, .. }
+        | Decl::Trait { name, .. }
+        | Decl::Effect { name, .. }
+        | Decl::Hand { name, .. } => {
             Ok(DeclarationType { name: name.clone(), ty: Type::ONE })
         }
         Decl::Use { .. } | Decl::Impl { .. } => {

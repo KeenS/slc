@@ -9,7 +9,7 @@ around its construction or handover. An effectful exit no longer fits a
 rowless slot; commands that activate arbitrary exits use explicit row
 parameters and account for those rows when activating them.
 
-The forcing/activation follow-up is also implemented: `Delayed<T, E>`
+The forcing/activation follow-up is also implemented: `(-> T / E)`
 keeps construction effects separate from `T`'s activation row. See
 `forcing-and-lazy.md` for the representation and the corresponding change
 to duality. The initial single-wrapper representation below is historical

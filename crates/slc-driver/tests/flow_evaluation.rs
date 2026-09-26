@@ -20,8 +20,8 @@ const BUILD: &str = "hook Build { func build() -> i64; }
         let offset = build();
         fn(value: i64) { <(value, offset) | add }
     }
-    func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
-    func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+    func ignore(callback: (-> (i64 -> i64) / {Build})) -> i64 { 0 }
+    func twice(callback: (-> (i64 -> i64) / {Build})) -> i64 / {Build} {
         <(<1 | callback, <2 | callback) | add
     }";
 
@@ -62,7 +62,7 @@ fn regrouping_preserves_repeated_demand_and_handler_selection() {
             &format!(
                 "{BUILD}
                 proc main | (exit: i32) / {{IO}} {{
-                    let result = do ({expression}) {{
+                    let result = do ({expression}) hn {{
                         build(): resume => {{ <\"build\" | println; <10 | resume }}
                     }};
                     <result | println;
@@ -85,11 +85,11 @@ fn regrouping_preserves_command_value_and_exit_groups() {
             &format!("command_{name}"),
             &format!(
                 "{BUILD}
-                proc send(callback: Delayed<(i64 -> i64), {{Build}}>) | (answer: i64) / {{Build}} {{
+                proc send(callback: (-> (i64 -> i64) / {{Build}})) | (answer: i64) / {{Build}} {{
                     <(<callback | twice) | answer>
                 }}
                 proc main | (exit: i32) / {{IO}} {{
-                    let result = do (mu i64 {{ answer <= {expression} }}) {{
+                    let result = do (mu i64 {{ answer <= {expression} }}) hn {{
                         build(): resume => {{ <\"build\" | println; <10 | resume }}
                     }};
                     <result | println;
@@ -114,8 +114,8 @@ fn an_intermediate_runs_under_the_callees_handler() {
             &format!("callee_handler_{name}"),
             &format!(
                 "{BUILD}
-                func locally_twice(callback: Delayed<(i64 -> i64), {{Build}}>) -> i64 / {{IO}} {{
-                    do (<callback | twice) {{
+                func locally_twice(callback: (-> (i64 -> i64) / {{Build}})) -> i64 / {{IO}} {{
+                    do (<callback | twice) hn {{
                         build(): resume => {{ <\"callee build\" | println; <10 | resume }}
                     }}
                 }}

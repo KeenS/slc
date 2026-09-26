@@ -1,16 +1,13 @@
 # SLC Language Design
 
-SLC is a Rust-flavored programming language whose core semantics follow the
-classical λ̄μμ̃ (lambda-bar-mu-mu-tilde) calculus. The surface language is
-intentionally familiar to Rust programmers, but it does not pretend to be
-literally symmetric: polarity is represented by types, arrows, and separate
-binder groups rather than by inventing a second Rust-like syntax for
-co-programs.
+SLC is a programming language whose core semantics follow the classical λ̄μμ̃
+(lambda-bar-mu-mu-tilde) calculus. Polarity is represented by types, arrows,
+and separate binder groups rather than by a second syntax for co-programs.
 
 This asymmetry is intentional. The core calculus distinguishes terms,
-co-terms, and commands, but a surface language with two parallel Rust-like
-grammars would obscure both. SLC instead uses one familiar grammar and makes
-polarity explicit through type signs and arrows.
+co-terms, and commands, but a surface language with two parallel grammars
+would obscure both. SLC uses one grammar and makes polarity explicit through
+type signs and arrows.
 
 What the one grammar does keep is the mirror. A program can be written
 value-first — functions take data and give data back — or continuation-first,
@@ -27,13 +24,15 @@ in this file and in every part below.
 
 ## 1. Design goals
 
-1. **Rust-like surface** — familiar `func`, `proc`, `let`, `of`, braces, type
+1. **Surface** — `func`, `proc`, `let`, `of`, braces, type
    annotations, and paths. A declaration's keyword is four letters (`func`,
    `proc`, `spec`, `hook`, and the four-letter forms already in use). An
-   expression that returns a value is two (`of`, `do`, `op`, and `mu`).
+   expression that returns a value is two (`of`, `do`, `hn`, and `mu`).
+   `hand` declares a named handler.
    `def` names a definition and is the exception, three letters, because a
    definition sits on neither side of the value and continuation mirror.
-   `let`, `mod`, `use`, and `reset` stay, and so does the lambda `func`.
+   `let` and `reset` stay, and so does the lambda `func`. A section is `sect`.
+   `cite` brings a name in from one.
 2. **λ̄μμ̃ core** — terms, co-terms, and cuts are the underlying semantic
    categories.
 3. **Polarized types** — positive types denote values/proofs; negative types

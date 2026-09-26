@@ -124,7 +124,7 @@ func pick() -> String / {Choose} {
 }
 
 // "H T": `r` is the `let`'s own continuation, and each resumption has its own.
-do pick() {
+do pick() hn {
     flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 ```
@@ -155,18 +155,18 @@ handler, so a continuation captured under the `reset` lands on the copy.
 
 ### Composable capture
 
-`control::reset` is a library handler, not the bare `reset` delimiter. It
-takes an explicit computation thunk. Inside it, `control::shift` receives a
-callback whose argument is the captured, returning continuation:
+`control::reset` is a library hand, not the bare `reset` delimiter. Install
+it with `do`. Inside it, `control::shift` receives a callback whose argument
+is the captured, returning continuation:
 
 ```sl
 proc main | (exit: i32) / {IO} {
-    let result = <fn {
+    let result = do {
         let value = <fn(resume: (i64 -> i64)) {
             <(<1 | resume, <2 | resume) | add
         } | control::shift;
         <(value, 10) | mul
-    } | control::reset;
+    } control::reset;
     <result | println;
     <0 | exit>
 }
@@ -180,7 +180,7 @@ multi-shot and never memoize results.
 The library uses `Shift<+A, +R, E>`. `A` is the operation's result and `R`
 is the fixed answer type of one capture handler; both are positive.
 The resumption has type `(A -> R / {..E})`. Its callback has type
-`Delayed<((A -> R / {..E}) -> R / {..E}), ..E>`, so construction, callback
+`(-> ((A -> R / {..E}) -> R / {..E}) / {..E})`, so construction, callback
 execution and resumption retain their separate demand points but share one
 conservative effect budget `E`. Annotate an effectful resumption accordingly;
 for example `(i64 -> i64 / {Factor})` when its continuation performs `Factor`.
@@ -193,6 +193,6 @@ rank-polymorphic prompt. Nested capture handlers may use different types. Each h
 own typed operations; incompatible answers at the same installation are
 rejected. A thunk with no capture also works. Unhandled `control::shift` is
 an effect error, including under bare `reset`. Always write the qualified
-`control::reset` call: unqualified `reset e` retains its delimiter meaning.
+`control::reset` installation: unqualified `reset e` retains its delimiter meaning.
 `examples/effects/delimited.sl` runs all of it; `examples/errors/delimited_error.sl` is the
 refused jump.

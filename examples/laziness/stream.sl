@@ -13,9 +13,9 @@
 // copatterns — the arms sharing an outer destructor group into an inner
 // menu, which must again cover every item.
 // `count_from` is not imported: this program declares its own below.
-use stream::Stream;
-use stream::repeat;
-use stream::take;
+cite stream::Stream;
+cite stream::repeat;
+cite stream::take;
 
 func count_from(n: i64) -> Stream<i64> {
     mu Stream {

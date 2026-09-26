@@ -13,10 +13,10 @@ fn a_handler_without_return_answers_its_bodys_value() {
 
         proc main | (exit: -i32) / {IO} {
             // Resumed: the body's value, 70.
-            let r = do (<7 | scaled) { config(): resume => <10 | resume };
+            let r = do (<7 | scaled) hn { config(): resume => <10 | resume };
             <r | println;
             // No operation performed at all: still the body's value.
-            let s = do (<(2, 3) | add) { config(): resume => <10 | resume };
+            let s = do (<(2, 3) | add) hn { config(): resume => <10 | resume };
             <s | println;
             <0 | exit>
         }"#,

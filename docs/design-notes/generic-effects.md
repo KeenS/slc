@@ -16,7 +16,7 @@ For example, this core type preserves both effect phases (its source
 counterpart requires declarations for `Use` and `Build`):
 
 ```text
-Delayed<(+i64 -> +String / {Use<+String>}), {Build<+i64>}>
+(-> (+i64 -> +String / {Use<+String>}) / {Build<+i64>})
 ```
 
 It preserves the distinction between constructing the function under
@@ -61,7 +61,7 @@ Stored handlers preserve those applications in their capability rows.
 ## Composable capture
 
 `control::Shift<+A, +R, E>` has one operation. Its parameter is
-`Delayed<((A -> R / {..E}) -> R / {..E}), ..E>` and its result is `A`.
+`(-> ((A -> R / {..E}) -> R / {..E}) / {..E})` and its result is `A`.
 The thunk-taking `control::reset` handles this operation by passing its
 resumption to the callback. It uses the existing runtime resumption value;
 no new capture primitive or dispatch representation is needed.

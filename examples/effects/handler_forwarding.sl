@@ -8,20 +8,20 @@ func total() -> i64 / {Config} {
 }
 
 func override_first<+A, E>(program: ((,) -> A / {Config, ..E})) -> A / {Config, ..E} {
-    do <(,) | program {
+    do <(,) | program hn {
         first(): resume => <7 | resume,
         _ => forward,
     }
 }
 
 proc main | (exit: -i32) / {IO} {
-    let complete = do total() {
+    let complete = do total() hn {
         first(): resume => <10 | resume,
         second(): resume => <20 | resume,
     };
     <("complete: ", <complete | int_to_str) | add | println;
 
-    let forwarded = do (<(fn { total() }) | override_first) {
+    let forwarded = do (<(fn { total() }) | override_first) hn {
         first(): resume => <100 | resume,
         second(): resume => <35 | resume,
     };

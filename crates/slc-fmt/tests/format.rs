@@ -39,8 +39,8 @@ fn a_negative_function_keeps_its_arrow_and_its_menu_of_exits() {
 #[test]
 fn a_module_in_a_file_of_its_own_is_one_line() {
     assert_eq!(
-        fmt("pub  mod geometry ;\nmod outer{mod inner;}"),
-        "pub mod geometry;\nmod outer { mod inner; }\n"
+        fmt("pub  sect geometry ;\nsect outer{sect inner;}"),
+        "pub sect geometry;\nsect outer { sect inner; }\n"
     );
 }
 
@@ -78,8 +78,8 @@ fn arms_get_commas_and_a_broken_list_a_trailing_one() {
         "func f(b: Bool) -> i64 {\n    of b {\n        True => 1,\n        False => 2,\n    }\n}\n"
     );
     assert_eq!(
-        fmt("func f() -> i64 { do g() { ask(x): k => <x | k, return(v) => v, } }"),
-        "func f() -> i64 { do g() { ask(x): k => <x | k, return(v) => v } }\n"
+        fmt("func f() -> i64 { do g() hn { ask(x): k => <x | k, return(v) => v, } }"),
+        "func f() -> i64 { do g() hn { ask(x): k => <x | k, return(v) => v } }\n"
     );
 }
 
@@ -94,10 +94,10 @@ fn a_list_too_long_for_its_line_breaks_one_element_per_line() {
 
 #[test]
 fn a_long_header_breaks_at_its_parameters_first() {
-    let source = "pub func take_while<+T, E>(keep: (T -> Bool / {..E}), s: Delayed<Stream<T, ..E>, ..E>) -> Seq<T, ..E> { s }";
+    let source = "pub func take_while<+T, E>(keep: (T -> Bool / {..E}), s: (-> Stream<T, ..E> / {..E})) -> Seq<T, ..E> { s }";
     assert_eq!(
         fmt(source),
-        "pub func take_while<+T, E>(\n    keep: (T -> Bool / {..E}),\n    s: Delayed<Stream<T, ..E>, ..E>,\n) -> Seq<T, ..E> { s }\n"
+        "pub func take_while<+T, E>(\n    keep: (T -> Bool / {..E}),\n    s: (-> Stream<T, ..E> / {..E}),\n) -> Seq<T, ..E> { s }\n"
     );
     let source = "pub proc nth<+T, E>(xs: List<T>, i: i64) | (found: (-T / {..E}) & missing: (-String / {..E})) / {..E} { <i | found> }";
     assert_eq!(
@@ -119,7 +119,7 @@ fn a_long_chain_breaks_before_each_pipe_and_a_binder_keeps_its_next_stage() {
 fn a_chain_hugs_the_block_it_ends_in() {
     let source = "proc main | (exit: i32) / {IO} {\n    <Shape::Circle(5) | area_of | label_of | mu String {\n        answer => <answer | println,\n    }>\n}\n";
     assert_eq!(fmt(source), source);
-    let source = "proc main | (exit: i32) / {IO} {\n    <do (<6 | emit) {\n        config(): resume => <7 | resume,\n    } | println;\n    <0 | exit>\n}\n";
+    let source = "proc main | (exit: i32) / {IO} {\n    <do (<6 | emit) hn {\n        config(): resume => <7 | resume,\n    } | println;\n    <0 | exit>\n}\n";
     assert_eq!(fmt(source), source);
 }
 
@@ -159,8 +159,8 @@ fn a_scrutinee_is_not_a_record_literal() {
 #[test]
 fn every_declaration_form_is_laid_out() {
     let source = "\
-use list::List::{Nil, Cons};
-use list::*;
+cite list::List::{Nil, Cons};
+cite list::*;
 
 hook Reader<+T> { func ask() -> T; }
 
@@ -181,14 +181,14 @@ menu Seq<+T, E> / {..E} { next: Step<T, ..E> }
 
 form Report / {IO} { value: i64, label: String }
 
-mod m {
+sect m {
     pub def N: i64 = 1;
 }
 ";
     assert_eq!(fmt(source), source);
     assert_eq!(
-        fmt("use list::List::{Nil,Cons}\ndef N:i64=1"),
-        "use list::List::{Nil, Cons};\ndef N: i64 = 1;\n"
+        fmt("cite list::List::{Nil,Cons}\ndef N:i64=1"),
+        "cite list::List::{Nil, Cons};\ndef N: i64 = 1;\n"
     );
 }
 
@@ -201,8 +201,8 @@ func f(k: -Config, p: (i64 | String)) -> i64 {
     let c = of k { .retries(out) <= .retries(out), .name(out) <= .name(out) };
     let d = of p { ::0(n) => n, ::1(_) => 0 };
     let e = of a { 0..=9 | 10 => 1, n @ 11 => n, -1 => 2, _ => 3 };
-    let g = op [Reader, State] { ask(): k => <1 | k, _ => forward };
-    let h = op g do (reset ask());
+    let g = hn [Reader, State] { ask(): k => <1 | k, _ => forward };
+    let h = do (reset ask()) g;
     let i = fn(x: i64) -> i64 { x };
     let j = fn { 1 };
     let l = (a ; b);

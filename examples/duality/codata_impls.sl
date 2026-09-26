@@ -12,9 +12,9 @@
 // continuations — so its `Self` is the type it consumes, and the cut it
 // stands in is what fixes it: in `<42 | deliver(s)`, `Self` is `+i64`.
 
-use list::List::*;
-use stream::Stream;
-use stream::count_from;
+cite list::List::*;
+cite stream::Stream;
+cite stream::count_from;
 
 menu Config {
     retries: i64,

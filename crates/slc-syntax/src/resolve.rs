@@ -3,13 +3,13 @@
 //! A `mod m { … }` is a scope, not a runtime thing. Resolution rewrites the
 //! program so that nothing after it has to know modules existed: every
 //! declaration inside `m` is renamed `m::name`, every reference is rewritten
-//! to the qualified name it resolves to, and the `mod`/`use` declarations
+//! to the qualified name it resolves to, and the `sect`/`cite` declarations
 //! themselves disappear. The checker, the lowering, and the runtime keep
 //! working on flat names — which already contain `::`, because enum variants
 //! always did.
 //!
 //! A name resolves in scope order: a local binding shadows everything and is
-//! left alone; then the `use` aliases of the enclosing module; then the
+//! left alone; then the `cite` aliases of the enclosing module; then the
 //! module's own declarations; then each ancestor module's, out to the root.
 //! A path resolves by its first segment and keeps the rest.
 
@@ -23,7 +23,7 @@ pub struct ResolveError {
     pub span: Span,
 }
 
-/// One module's names: what it declares, and what it `use`s.
+/// One module's names: what it declares, and what its `cite`s bring in.
 struct Scope {
     type_parameters: std::cell::RefCell<Vec<HashSet<String>>>,
     /// The module's path from the root, `["a", "b"]` for `a::b`.
@@ -34,7 +34,7 @@ struct Scope {
     /// `use a::b::c;` makes `c` mean `a::b::c` here.
     aliases: HashMap<String, String>,
     /// `use m::*;` — every `pub` member of module `m`, bare, by the targets
-    /// each name could mean. Weaker than an explicit `use` and than the
+    /// each name could mean. Weaker than an explicit `cite` and than the
     /// module's own declarations; two globs bringing one name make it
     /// ambiguous, which is an error only where the name is used.
     globs: HashMap<String, Vec<String>>,
@@ -63,7 +63,8 @@ fn collect_modules(decls: &[Node<Decl>], prefix: &str, out: &mut Modules) {
                 | Decl::Form { name, is_public, .. }
                 | Decl::Const { name, is_public, .. }
                 | Decl::Trait { name, is_public, .. }
-                | Decl::Mod { name, is_public, .. } => members.push((name.clone(), *is_public)),
+                | Decl::Mod { name, is_public, .. }
+                | Decl::Hand { name, is_public, .. } => members.push((name.clone(), *is_public)),
                 Decl::Effect { name, is_public, operations, .. } => {
                     members.push((name.clone(), *is_public));
                     for op in operations {
@@ -138,7 +139,7 @@ fn unit_of(span_start: usize, units: &[usize]) -> usize {
 ///
 /// The root scope is one scope over every unit, so a top-level `use a::b;`
 /// in a library unit would make `b` mean `a::b` in the program too. A
-/// library unit therefore imports names only inside its `mod`; at its top
+/// library unit therefore imports names only inside its `sect`; at its top
 /// level it may import variants — which are scoped per unit — and nothing
 /// else.
 pub fn resolve_program_split(
@@ -158,7 +159,7 @@ pub fn resolve_program_split(
         };
         if brings_names && unit_of(d.span.start, units) > 0 {
             errors.push(ResolveError {
-                message: "a library unit imports names inside its `mod`, not at the top: \
+                message: "a library unit imports names inside its `sect`, not at the top: \
                           the root scope is shared with the program"
                     .into(),
                 span: d.span,
@@ -170,14 +171,15 @@ pub fn resolve_program_split(
     expand_globs(&mut root, &program.decls, &modules);
     let mut stack = vec![root];
     flatten(&program.decls, &mut stack, &mut out, &modules, &mut errors);
-    let out = apply_variant_imports(out, units, &mut errors);
+    let mut out = apply_variant_imports(out, units, &mut errors);
     check_visibility(&out, &mut errors);
+    inline_hands(&mut out);
     if errors.is_empty() { Ok(Program { decls: out }) } else { Err(errors) }
 }
 
 /// Enforce visibility, once every name is qualified.
 ///
-/// A declaration inside a `mod` is private unless it is `pub`: reachable
+/// A declaration inside a `sect` is private unless it is `pub`: reachable
 /// from that module and the modules nested inside it, and nowhere else. A
 /// top-level declaration is in no module and is visible everywhere, which
 /// is what lets the prelude be the prelude.
@@ -197,7 +199,8 @@ fn check_visibility(decls: &[Node<Decl>], errors: &mut Vec<ResolveError>) {
             | Decl::Form { name, is_public, .. }
             | Decl::Const { name, is_public, .. }
             | Decl::Trait { name, is_public, .. }
-            | Decl::Effect { name, is_public, .. } => (name, *is_public),
+            | Decl::Effect { name, is_public, .. }
+            | Decl::Hand { name, is_public, .. } => (name, *is_public),
             _ => continue,
         };
         public.insert(name.clone(), is_public);
@@ -269,7 +272,8 @@ fn declared_name(d: &Decl) -> Option<&String> {
         | Decl::Form { name, .. }
         | Decl::Const { name, .. }
         | Decl::Trait { name, .. }
-        | Decl::Effect { name, .. } => Some(name),
+        | Decl::Effect { name, .. }
+        | Decl::Hand { name, .. } => Some(name),
         _ => None,
     }
 }
@@ -357,6 +361,19 @@ fn references(d: &Decl, out: &mut Vec<String>) {
         }
     }
     match d {
+        Decl::Hand { effects, clauses, ret, .. } => {
+            if let Some(effects) = effects {
+                for effect in &effects.effects {
+                    ty(&effect.kind, out);
+                }
+            }
+            for clause in clauses {
+                expr(&clause.body, out);
+            }
+            if let Some((_, body)) = ret {
+                expr(body, out);
+            }
+        }
         Decl::Fn { params, return_type, body, .. } => {
             for p in params {
                 if let Some(t) = &p.ty {
@@ -405,7 +422,7 @@ fn references(d: &Decl, out: &mut Vec<String>) {
 /// imported variant — in patterns and in expressions — is rewritten to its
 /// qualified label, so the automatic unqualified-while-unambiguous rule
 /// never has to guess about it. An import that collides with another, or
-/// names a variant its enum does not have, is an error at the `use`.
+/// names a variant its enum does not have, is an error at the `cite`.
 fn apply_variant_imports(
     decls: Vec<Node<Decl>>,
     units: &[usize],
@@ -492,7 +509,8 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
             | Decl::Form { name, .. }
             | Decl::Const { name, .. }
             | Decl::Mod { name, .. }
-            | Decl::Trait { name, .. } => {
+            | Decl::Trait { name, .. }
+            | Decl::Hand { name, .. } => {
                 scope.declares.insert(name.clone());
             }
             Decl::Effect { name, operations, .. } => {
@@ -510,7 +528,7 @@ fn collect_scope(decls: &[Node<Decl>], path: Vec<String>, errors: &mut Vec<Resol
                 let name = path.last().expect("a use path has segments").clone();
                 if scope.aliases.insert(name.clone(), target).is_some() {
                     errors.push(ResolveError {
-                        message: format!("`{name}` is brought in by two `use` declarations"),
+                        message: format!("`{name}` is brought in by two `cite` declarations"),
                         span: d.span,
                     });
                 }
@@ -568,7 +586,7 @@ fn flatten(
                         errors.push(ResolveError {
                             message: format!(
                                 "`{name}` is brought in by more than one glob — {} — so \
-                                 write the one you mean, or `use` it by name",
+                                 write the one you mean, or `cite` it by name",
                                 listed.join(", ")
                             ),
                             span: d.span,
@@ -771,6 +789,25 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
                     Decl::Fn { name, .. } | Decl::Command { name, .. } => *name = unqualified,
                     _ => {}
                 }
+            }
+        }
+        Decl::Hand { name, effects, clauses, ret, .. } => {
+            *name = scope.qualify(name);
+            if let Some(effects) = effects {
+                resolve_row(effects, stack);
+            }
+            for clause in clauses.iter_mut() {
+                clause.op = resolve_name(&clause.op, stack);
+                let mut bound: HashSet<String> = clause.params.iter().cloned().collect();
+                bound.insert(clause.resume.clone());
+                locals.push(bound);
+                resolve_expr(&mut clause.body.kind, stack, locals);
+                locals.pop();
+            }
+            if let Some((binder, body)) = ret {
+                locals.push(HashSet::from([binder.clone()]));
+                resolve_expr(&mut body.kind, stack, locals);
+                locals.pop();
             }
         }
         Decl::Effect { name, operations, .. } => {
@@ -1119,10 +1156,147 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
 /// in expressions and in patterns, through every declaration body. Imported
 /// names take precedence over like-named locals, as a variant does in a
 /// pattern.
+/// Clauses of one `hand`, copied into each `do` that names it.
+type HandBody = (Vec<crate::ast::HandleClause>, bool, Option<(String, Box<Node<Expr>>)>);
+
+/// A `hand` installed by name is the clauses written at that `do`. The name
+/// is not a value, so resolution pastes the clauses in before checking.
+fn inline_hands(decls: &mut [Node<Decl>]) {
+    let mut hands: HashMap<String, HandBody> = HashMap::new();
+    for decl in decls.iter() {
+        if let Decl::Hand { name, clauses, forward, ret, .. } = &decl.kind {
+            hands.insert(name.clone(), (clauses.clone(), *forward, ret.clone()));
+        }
+    }
+    if hands.is_empty() {
+        return;
+    }
+    for decl in decls {
+        inline_hands_decl(&mut decl.kind, &hands);
+    }
+}
+
+fn inline_hands_decl(decl: &mut Decl, hands: &HashMap<String, HandBody>) {
+    match decl {
+        Decl::Fn { body, .. } | Decl::Command { body, .. } => inline_hands_expr(&mut body.kind, hands),
+        Decl::Const { value, .. } => inline_hands_expr(&mut value.kind, hands),
+        Decl::Hand { clauses, ret, .. } => {
+            for clause in clauses {
+                inline_hands_expr(&mut clause.body.kind, hands);
+            }
+            if let Some((_, body)) = ret {
+                inline_hands_expr(&mut body.kind, hands);
+            }
+        }
+        Decl::Impl { methods, .. } => {
+            for method in methods {
+                inline_hands_decl(&mut method.kind, hands);
+            }
+        }
+        Decl::Mod { decls, .. } => {
+            for decl in decls {
+                inline_hands_decl(&mut decl.kind, hands);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn inline_hands_expr(expr: &mut Expr, hands: &HashMap<String, HandBody>) {
+    match expr {
+        Expr::Lambda { body, .. } | Expr::Mu { body, .. } => inline_hands_expr(&mut body.kind, hands),
+        Expr::Call { callee, args } => {
+            inline_hands_expr(&mut callee.kind, hands);
+            for arg in args {
+                inline_hands_expr(&mut arg.kind, hands);
+            }
+        }
+        Expr::Inject { value, .. } => inline_hands_expr(&mut value.kind, hands),
+        Expr::Pair(items)
+        | Expr::Bundle(items)
+        | Expr::Par(items)
+        | Expr::Block(items)
+        | Expr::Flow { stages: items, .. } => {
+            for item in items {
+                inline_hands_expr(&mut item.kind, hands);
+            }
+        }
+        Expr::Match { scrutinee, arms } => {
+            inline_hands_expr(&mut scrutinee.kind, hands);
+            for arm in arms {
+                inline_hands_expr(&mut arm.body.kind, hands);
+            }
+        }
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                inline_hands_expr(&mut value.kind, hands);
+            }
+        }
+        Expr::Select { arms, .. } | Expr::CoMatch { arms, .. } => {
+            for arm in arms {
+                inline_hands_expr(&mut arm.command.kind, hands);
+            }
+        }
+        Expr::Let { value, body, .. } => {
+            inline_hands_expr(&mut value.kind, hands);
+            if let Some(body) = body {
+                inline_hands_expr(&mut body.kind, hands);
+            }
+        }
+        Expr::Project { base, .. } => inline_hands_expr(&mut base.kind, hands),
+        Expr::Request { arg, .. } => inline_hands_expr(&mut arg.kind, hands),
+        Expr::Handle { body, clauses, ret, .. } => {
+            inline_hands_expr(&mut body.kind, hands);
+            for clause in clauses {
+                inline_hands_expr(&mut clause.body.kind, hands);
+            }
+            if let Some((_, ret)) = ret {
+                inline_hands_expr(&mut ret.kind, hands);
+            }
+        }
+        Expr::Handler { clauses, ret, .. } => {
+            for clause in clauses {
+                inline_hands_expr(&mut clause.body.kind, hands);
+            }
+            if let Some((_, ret)) = ret {
+                inline_hands_expr(&mut ret.kind, hands);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            inline_hands_expr(&mut handler.kind, hands);
+            inline_hands_expr(&mut body.kind, hands);
+        }
+        Expr::Int(_) | Expr::Float(_) | Expr::Str(_) | Expr::Char(_) | Expr::Ident(_) => {}
+    }
+    let Expr::WithHandler { handler, .. } = expr else { return };
+    let Expr::Ident(name) = &handler.kind else { return };
+    let Some((clauses, forward, ret)) = hands.get(name) else { return };
+    let Expr::WithHandler { body, .. } = expr else { return };
+    let body = body.clone();
+    let mut clauses = clauses.clone();
+    let mut ret = ret.clone();
+    let forward = *forward;
+    for clause in &mut clauses {
+        inline_hands_expr(&mut clause.body.kind, hands);
+    }
+    if let Some((_, body)) = &mut ret {
+        inline_hands_expr(&mut body.kind, hands);
+    }
+    *expr = Expr::Handle { body, clauses, forward, ret };
+}
+
 fn rewrite_decl_imports(d: &mut Decl, imported: &HashMap<String, String>) {
     match d {
         Decl::Fn { body, .. } => rewrite_expr_imports(&mut body.kind, imported),
         Decl::Command { body, .. } => rewrite_expr_imports(&mut body.kind, imported),
+        Decl::Hand { clauses, ret, .. } => {
+            for clause in clauses {
+                rewrite_expr_imports(&mut clause.body.kind, imported);
+            }
+            if let Some((_, body)) = ret {
+                rewrite_expr_imports(&mut body.kind, imported);
+            }
+        }
         Decl::Const { value, .. } => rewrite_expr_imports(&mut value.kind, imported),
         Decl::Impl { methods, .. } => {
             for method in methods {

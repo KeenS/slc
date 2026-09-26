@@ -493,6 +493,12 @@ impl Formatter {
                 head.extend([self.type_params()?, text(" ")]);
                 self.with_items(head, &mut |f| f.operation().map(plain))?
             }
+            Some(T::Hand) => {
+                let mut head = vec![self.bump(), text(" "), self.name("a handler name")?];
+                head.extend([self.effect_row()?, text(" ")]);
+                head.push(self.braces(&[T::Comma], FIELDS, &mut |f| f.clause())?);
+                concat(head)
+            }
             // An expression at the top level, for scripting.
             _ => {
                 let mut docs = vec![self.expr()?.doc];
@@ -797,7 +803,19 @@ impl Formatter {
         if is_connective(self.kind()) && self.kind_at(1) == Some(&T::RParen) {
             return Ok(concat(vec![open, self.bump(), self.bump()]));
         }
+        // `(-> T / {E})` — a by-name computation.
+        if self.at(&T::Arrow) {
+            let mut docs = vec![open, self.bump(), text(" "), self.ty()?];
+            docs.extend([self.effect_row()?, self.expect(&T::RParen)?]);
+            return Ok(concat(docs));
+        }
         let left = self.ty()?;
+        // `(A hn B / {E} / {F})` — a handler value.
+        if self.at(&T::Handler) {
+            let mut docs = vec![open, left, text(" "), self.bump(), text(" "), self.ty()?];
+            docs.extend([self.effect_row()?, self.effect_row()?, self.expect(&T::RParen)?]);
+            return Ok(concat(docs));
+        }
         if self.at(&T::Arrow) {
             let mut docs = vec![open, left, text(" "), self.bump(), text(" "), self.ty()?];
             docs.extend([self.effect_row()?, self.expect(&T::RParen)?]);
@@ -981,16 +999,14 @@ impl Formatter {
                 Ok(plain(concat(docs)))
             }
             Some(T::Handle) => {
-                let mut docs = vec![self.bump(), text(" "), self.scrutinee()?, text(" ")];
-                docs.push(self.braces(&[T::Comma], FIELDS, &mut |f| f.clause())?);
-                Ok(hugging(concat(docs)))
+                let mut docs = vec![self.bump(), text(" ")];
+                let body = self.expr()?;
+                docs.extend([body.doc, text(" ")]);
+                let handler = self.stage()?;
+                docs.push(handler.doc);
+                Ok(if handler.hug { hugging(concat(docs)) } else { plain(concat(docs)) })
             }
             Some(T::Handler) => {
-                if !self.op_is_literal() {
-                    let mut docs = vec![self.bump(), text(" "), self.scrutinee()?, text(" ")];
-                    docs.extend([self.expect(&T::Handle)?, text(" "), self.expr()?.doc]);
-                    return Ok(plain(concat(docs)));
-                }
                 let mut docs = vec![self.bump(), text(" ")];
                 if self.at(&T::LBracket) {
                     let brackets = (&T::LBracket, &T::RBracket);
@@ -1040,30 +1056,6 @@ impl Formatter {
             }
         }
         false
-    }
-
-    /// `op` is the current token. A following `[`, `{`, or effect path and
-    /// `{` is the handler value; anything else is `op h do e`.
-    fn op_is_literal(&self) -> bool {
-        match self.kind_at(1) {
-            Some(T::LBrace | T::LBracket) => true,
-            Some(T::Ident(_)) => {
-                let mut i = self.pos + 1;
-                loop {
-                    if !matches!(self.toks.get(i).map(|tok| &tok.kind), Some(T::Ident(_))) {
-                        return false;
-                    }
-                    i += 1;
-                    if self.toks.get(i).map(|tok| &tok.kind) == Some(&T::ColonColon) {
-                        i += 1;
-                        continue;
-                    }
-                    break;
-                }
-                matches!(self.toks.get(i).map(|tok| &tok.kind), Some(T::LBrace))
-            }
-            _ => false,
-        }
     }
 
     /// An expression after which a `{` opens arms, not a record literal.

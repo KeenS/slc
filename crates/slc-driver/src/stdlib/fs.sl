@@ -6,10 +6,10 @@
 // an integer cannot close a file — produced only by `open`.
 //
 // Touching a file is the `Fs` effect, so a declaration that does says so in
-// its row, and something around it answers the effect: `fs::real`, which
-// reaches the disk through the runtime's primitives (`__read_file` and its
-// siblings), or a handler of the program's own, which need not touch the disk
-// at all.
+// its row, and something around it answers the effect: `do expr fs::real`,
+// which reaches the disk through the runtime's primitives (`__read_file`
+// and its siblings), or a handler of the program's own, which need not
+// touch the disk at all.
 
 // What touching a file performs. An operation answers with its outcome,
 // one alternative per continuation of the command that performs it: a
@@ -59,56 +59,26 @@ pub func exists(path: String) -> Bool / {Fs} {
     <path | file_exists
 }
 
-// The file system itself. It runs `program`, answers every operation of
-// `Fs` it performs with the runtime's primitive, and passes on whatever
-// else it performs.
-pub func real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
-    do <(,) | program {
-        read_file(path): resume => <path
-            | __read_file
-            | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
-            | resume,
-        write_file(path, contents): resume => <(path, contents)
-            | __write_file
-            | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
-            | resume,
-        open_file(path): resume => <path
-            | __open_file
-            | (fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) })
-            | resume,
-        read_line_of(file): resume => <file
-            | __read_line
-            | (fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) })
-            | resume,
-        close_file(file): resume => <(<file | __close_file) | resume,
-        file_exists(path): resume => <(<path | __file_exists) | resume,
-    }
-}
-
-// The same file system, for a program that leaves through continuations
-// of its own: `func { …; <0 | exit> }` has type `(;)`, so it is handed to a
-// command as its exit, `<(,) | fs::real_command | (fn { … })>`. The
-// clauses are `real`'s; `real` cannot run through this command, since its
-// own continuation was captured outside the handler.
-pub proc real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
-    do program {
-        read_file(path): resume => <path
-            | __read_file
-            | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
-            | resume,
-        write_file(path, contents): resume => <(path, contents)
-            | __write_file
-            | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
-            | resume,
-        open_file(path): resume => <path
-            | __open_file
-            | (fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) })
-            | resume,
-        read_line_of(file): resume => <file
-            | __read_line
-            | (fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) })
-            | resume,
-        close_file(file): resume => <(<file | __close_file) | resume,
-        file_exists(path): resume => <(<path | __file_exists) | resume,
-    }
+// The file system itself. `do expr fs::real` answers every operation of
+// `Fs` from the disk. The clauses perform `IO`; whatever else `expr`
+// performs passes outward. A value and a command use the same hand.
+pub hand real / {IO} {
+    read_file(path): resume => <path
+        | __read_file
+        | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
+        | resume,
+    write_file(path, contents): resume => <(path, contents)
+        | __write_file
+        | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
+        | resume,
+    open_file(path): resume => <path
+        | __open_file
+        | (fn(file: File) { ::0(file) } & fn(why: String) { ::1(why) })
+        | resume,
+    read_line_of(file): resume => <file
+        | __read_line
+        | (fn(line: String) { ::0(line) } & fn(end: unit) { ::1(end) })
+        | resume,
+    close_file(file): resume => <(<file | __close_file) | resume,
+    file_exists(path): resume => <(<path | __file_exists) | resume,
 }

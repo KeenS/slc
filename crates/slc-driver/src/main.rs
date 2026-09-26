@@ -7,7 +7,7 @@ enum RunOutcome {
 
 /// The library, as source units appended after the program: the prelude
 /// first — ordinary declarations every program sees unasked — then each
-/// stdlib module, which a program reaches only through `use`. Every unit
+/// stdlib module, which a program reaches only through `cite`. Every unit
 /// goes through the same pipeline as user code. The prelude is the root
 /// unit; every other library file is implicitly wrapped in a module named
 /// after the file. See `prelude.sl` and `stdlib/` for what belongs where.
@@ -37,7 +37,7 @@ const LIBRARY: &[(&str, &str)] = &[
 /// nothing reaches is never parsed or checked.
 ///
 /// Reaching is read off tokens, not a parse: a name followed by `::`, or a
-/// name after `use`. A false positive only loads a unit the program did not
+/// name after `cite`. A false positive only loads a unit the program did not
 /// need, and a lexing error loads nothing extra — the real lex reports it.
 fn library_for(program: &str) -> Vec<(&'static str, &'static str)> {
     use slc_syntax::token::TokenKind;
@@ -732,11 +732,11 @@ mod tests {
 
     #[test]
     fn a_module_loads_with_the_modules_it_reaches() {
-        // A path is enough; so is a `use`, of a name or a glob.
+        // A path is enough; so is a `cite`, of a name or a glob.
         assert_eq!(loaded("x | fs::read"), ["prelude", "fs"]);
-        assert_eq!(loaded("use num::*;"), ["prelude", "num"]);
-        assert_eq!(loaded("use option;"), ["prelude", "option"]);
+        assert_eq!(loaded("cite num::*;"), ["prelude", "num"]);
+        assert_eq!(loaded("cite option;"), ["prelude", "option"]);
         // `seq` reaches `list` and `stream`, and `stream` reaches `list`.
-        assert_eq!(loaded("use seq::Seq;"), ["prelude", "list", "stream", "seq"]);
+        assert_eq!(loaded("cite seq::Seq;"), ["prelude", "list", "stream", "seq"]);
     }
 }

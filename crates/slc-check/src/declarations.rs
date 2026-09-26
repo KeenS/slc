@@ -42,6 +42,8 @@ pub struct Declarations {
     param_signs: HashMap<String, Vec<(String, Option<ParamPolarity>)>>,
     /// Operation name → the effect that declares it.
     pub(crate) op_effects: HashMap<String, String>,
+    /// Qualified `hand` names. A hand is installed with `do`, not used as a value.
+    pub(crate) hands: std::collections::HashSet<String>,
     pub(crate) effects: std::collections::HashSet<String>,
     /// Menu or form name → the latent row it declares: what demanding an
     /// item, or feeding the form, performs.
@@ -445,6 +447,9 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
             for op in operations {
                 enums.op_effects.insert(op.name.clone(), name.clone());
             }
+        }
+        if let Decl::Hand { name, .. } = &d.kind {
+            enums.hands.insert(name.clone());
         }
         // A row variable in a menu's or form's own row is one of its row
         // parameters, instantiated at each use.

@@ -1,9 +1,9 @@
 pub hook Shift<+A, +R, E> {
-    func shift(callback: Delayed<((A -> R / {..E}) -> R / {..E}), ..E>) -> A;
+    func shift(callback: (-> ((A -> R / {..E}) -> R / {..E}) / {..E})) -> A;
 }
 
-pub func reset<+A, +R, E>(program: ((,) -> R / {Shift<A, R, ..E>, ..E})) -> R / {..E} {
-    do (<(,) | program) {
-        shift(callback): resume => <resume | callback,
-    }
+// The answer is the body's, and the callback's effects are accounted at
+// each `do expr control::reset`.
+pub hand reset {
+    shift(callback): resume => <resume | callback,
 }

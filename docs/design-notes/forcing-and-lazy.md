@@ -6,7 +6,7 @@ All delayed evaluation is call-by-name, with no memoization or call-by-need.
 
 ## Two interfaces, not literal duals
 
-`Delayed<T, E>` is a built-in computation annotation for negative `T`.
+`(-> T / E)` is a built-in computation annotation for negative `T`.
 Its runtime value is an implicit delay: application, cut or projection
 forces it and then uses the result. `let+` forces it without activating
 the result. The spelling does not introduce an explicit wrapper to build
@@ -24,19 +24,19 @@ demand row is empty. `.force` is an explicit menu demand that runs the
 chosen arm and returns `T`; it does not activate that answer.
 
 `dual(Lazy<T, E>)` is its request type, carrying a continuation for `T`.
-It is not `Delayed<T, E>`. Symmetry supplies the request/answer interface,
+It is not `(-> T / E)`. Symmetry supplies the request/answer interface,
 not an automatic equation between an explicit menu and an implicit delay.
 
 For negative `T`, ordinary library functions convert the interfaces:
 
 ```sl
-pub fn of_delayed<-T, E>(computation: Delayed<T, ..E>) -> Lazy<T, ..E> {
+pub fn of_delayed<-T, E>(computation: (-> T / {..E})) -> Lazy<T, ..E> {
     mu Lazy<T, ..E> {
         force <= { let+ value = computation; <value | force> },
     }
 }
 
-pub fn to_delayed<-T, E>(computation: Lazy<T, ..E>) -> Delayed<T, ..E> {
+pub fn to_delayed<-T, E>(computation: Lazy<T, ..E>) -> (-> T / {..E}) {
     let- pending = computation.force;
     pending
 }
@@ -49,7 +49,7 @@ also preserve a result's independent activation effects.
 ## Distinct effect phases
 
 ```sl
-data Saved { callback: Delayed<(i64 -> i64 / {Use}), {Build}> }
+data Saved { callback: (-> (i64 -> i64 / {Use}) / {Build}) }
 ```
 
 Obtaining the function performs `Build`; calling it performs `Use`.
@@ -61,7 +61,7 @@ does not force fields or demand a menu item.
 The type checker uses separate `Type::Delayed` and `Type::Rowed` wrappers.
 Only forcing rows are combined when another implicit delay is introduced.
 An ordinary negative type promises pure forcing; an activation budget
-cannot absorb construction effects. `Delayed<T, {}>` normalizes to `T`,
+cannot absorb construction effects. `(-> T)` normalizes to `T`,
 but that effect equivalence does not change runtime demand counts.
 
 The runtime's private forcing operation repeatedly evaluates outer

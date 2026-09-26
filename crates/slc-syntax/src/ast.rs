@@ -195,7 +195,7 @@ impl Expr {
     }
 }
 
-/// What a `use` declaration brings into scope.
+/// What a `cite` declaration brings into scope.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UseImports {
     /// `use module::name;` — the member the path ends in.
@@ -629,6 +629,20 @@ pub enum Decl {
         /// `type Item = i64;`, in the order written.
         assocs: Vec<(String, TypeExpr)>,
         methods: Vec<Node<Decl>>,
+    },
+    /// A named handler: `hand name / {IO} { clauses }`. Installed with
+    /// `do expr name`. Each installation answers with these clauses the way
+    /// an inline handler does, so the answer is the body's.
+    Hand {
+        name: String,
+        /// `pub` — visible outside the module that declares it.
+        is_public: bool,
+        /// What the clauses perform on their own. `None` leaves that row to
+        /// each installation, which is what a clause that runs a callback needs.
+        effects: Option<EffectRow>,
+        clauses: Vec<HandleClause>,
+        forward: bool,
+        ret: Option<(String, Box<Node<Expr>>)>,
     },
     /// An effect: a named set of operations a computation may perform.
     Effect {

@@ -22,7 +22,7 @@ proc main | (exit: i32) / {IO} {
 
     let answer = do (<2 | choose | (fn(value: i64) { <(value, read()) | add } & fn(value: i64) {
         0
-    })) { read(): resume => <40 | resume };
+    })) hn { read(): resume => <40 | resume };
     <answer | println;
     <0 | exit>
 }

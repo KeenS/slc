@@ -22,7 +22,7 @@ cargo run -- run examples/basics/hello.sl     # compile and run
 cargo run -- check examples/*/*.sl            # every compiler phase, and no run
 ```
 
-A program may be several files: `mod geometry;` declares a module whose
+A program may be several files: `sect geometry;` declares a module whose
 body is `geometry.sl`, beside the program, and the directory tree is the
 module tree (`examples/programs/multi_file/`). Run and check the root.
 

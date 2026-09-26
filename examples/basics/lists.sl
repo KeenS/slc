@@ -8,13 +8,13 @@
 // Type declarations take parameters — `List<T>`, and `List<i64>` at use —
 // and so do `data`, `menu`, and `form`.
 
-// The library is reached by path or brought in by `use`; nothing of it is in scope unasked.
-use list::List;
-use list::List::*;
-use list::length;
-use list::append;
-use list::map;
-use list::nth;
+// The library is reached by path or brought in by `cite`; nothing of it is in scope unasked.
+cite list::List;
+cite list::List::*;
+cite list::length;
+cite list::append;
+cite list::map;
+cite list::nth;
 
 func double(n: i64) -> i64 { <(n, 2) | mul }
 

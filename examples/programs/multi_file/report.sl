@@ -1,6 +1,6 @@
-// `mod report`: a sibling reaches `shapes` by its path from the root.
+// `sect report`: a sibling reaches `shapes` by its path from the root.
 
-use shapes::measure::area;
+cite shapes::measure::area;
 
 func name(s: shapes::Shape) -> String {
     of s {

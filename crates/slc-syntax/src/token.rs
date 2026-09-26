@@ -31,9 +31,11 @@ pub enum TokenKind {
     For,
     /// A `hook`.
     Effect,
-    /// Inline handling, `do`.
+    /// Inline handling, `do expr handler`.
     Handle,
-    /// A handler value, `op`, and the `op h do e` form.
+    /// A named handler declaration, `hand`.
+    Hand,
+    /// A handler value, `hn { clauses }`.
     Handler,
     Reset,
     /// Scrutinee matching, `of`.
@@ -115,14 +117,15 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Func => write!(f, "`func`"),
             TokenKind::Mu => write!(f, "`mu`"),
             TokenKind::Command => write!(f, "`proc`"),
-            TokenKind::Mod => write!(f, "`mod`"),
-            TokenKind::Use => write!(f, "`use`"),
+            TokenKind::Mod => write!(f, "`sect`"),
+            TokenKind::Use => write!(f, "`cite`"),
             TokenKind::Trait => write!(f, "`spec`"),
             TokenKind::Impl => write!(f, "`impl`"),
             TokenKind::For => write!(f, "`for`"),
             TokenKind::Effect => write!(f, "`hook`"),
             TokenKind::Handle => write!(f, "`do`"),
-            TokenKind::Handler => write!(f, "`op`"),
+            TokenKind::Hand => write!(f, "`hand`"),
+            TokenKind::Handler => write!(f, "`hn`"),
             TokenKind::Reset => write!(f, "`reset`"),
             TokenKind::Match => write!(f, "`of`"),
             TokenKind::Let => write!(f, "`let`"),

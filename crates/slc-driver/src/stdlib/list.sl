@@ -1,6 +1,6 @@
 // `list`: a list is an ordinary recursive enum — nothing about it is built in.
 //
-// `use list::List::*;` brings `Nil` and `Cons` in bare; the functions are
+// `cite list::List::*;` brings `Nil` and `Cons` in bare; the functions are
 // reached as `list::length`, or imported one by one.
 
 pub enum List<+T> {
@@ -11,7 +11,7 @@ pub enum List<+T> {
 // The import pins `Nil` and `Cons` to List *within this unit*: imports
 // are scoped to their source unit, so a program's own `Nil` — or its own
 // glob — never changes what these mean, and theirs is untouched by ours.
-use List::*;
+cite List::*;
 
 pub func length<+T>(xs: List<T>) -> i64 {
     of xs {

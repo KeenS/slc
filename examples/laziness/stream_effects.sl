@@ -14,15 +14,15 @@ proc main | (exit: -i32) / {IO} {
     let+ source = numbers();
     <"built, not demanded" | println;
 
-    <do (<(source, 3) | stream::take) {
+    <do (<(source, 3) | stream::take) hn {
         factor(): resume => <10 | resume,
     } | println;
-    <do (<(source, 3) | stream::take) {
+    <do (<(source, 3) | stream::take) hn {
         factor(): resume => <100 | resume,
     } | println;
 
     let+ sequence = <source | seq::of_stream;
-    <do (<(sequence, 2) | seq::take | seq::to_list) {
+    <do (<(sequence, 2) | seq::take | seq::to_list) hn {
         factor(): resume => <2 | resume,
     } | println;
     <0 | exit>

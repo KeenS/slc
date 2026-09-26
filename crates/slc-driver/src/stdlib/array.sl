@@ -8,8 +8,8 @@
 // miss, so each offers that outcome to a continuation, the way `list::nth`
 // does.
 
-use list::List;
-use list::List::*;
+cite list::List;
+cite list::List::*;
 
 pub enum Array4<+T> {
     One(T),

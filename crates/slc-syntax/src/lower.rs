@@ -1325,7 +1325,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             | Decl::Use { .. }
             | Decl::Trait { .. }
             | Decl::Impl { .. }
-            | Decl::Effect { .. } => {}
+            | Decl::Effect { .. }
+            | Decl::Hand { .. } => {}
             Decl::Data { .. } | Decl::Enum { .. } | Decl::Menu { .. } | Decl::Form { .. } => {
                 // Type declarations are handled by the checker, not lowering
             }

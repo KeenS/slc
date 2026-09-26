@@ -1,7 +1,7 @@
-// `mod shapes::measure`. A name is looked for in each enclosing module, out
+// `sect shapes::measure`. A name is looked for in each enclosing module, out
 // to the root, so `Shape` here is the parent's `shapes::Shape`.
 
-use Shape::*;
+cite Shape::*;
 
 // Private: the file's own helper, and no part of the module's surface.
 func squared(n: i64) -> i64 {

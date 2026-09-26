@@ -15,7 +15,7 @@
 // Everything is called through its module — `seq::map`, `stream::take` —
 // so the two `take`s, the two `map`s and the list's own never meet.
 
-use list::List::*;
+cite list::List::*;
 
 func odd(n: i64) -> Bool { <(n, 2) | rem | x => (x, 1) | eq }
 func double(n: i64) -> i64 { <(n, 2) | mul }

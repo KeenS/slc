@@ -28,14 +28,14 @@ fn refused(name: &str, body: &str) -> String {
 fn resume_closed_with_a_bracket_is_diagnosed() {
     let stderr = refused(
         "resume_value",
-        "let r = do config() { config(): resume => <42 | resume> };\n<r | println;",
+        "let r = do config() hn { config(): resume => <42 | resume> };\n<r | println;",
     );
     assert!(stderr.contains("`resume` is a function"), "{stderr}");
     assert!(stderr.contains("`<… | resume`"), "{stderr}");
 
     let stderr = refused(
         "resume_alternative",
-        "let s: (i64 | String) = do ::0(1) { config(): resume => <::0(3) | resume> };",
+        "let s: (i64 | String) = do ::0(1) hn { config(): resume => <::0(3) | resume> };",
     );
     assert!(stderr.contains("`resume` is a function"), "{stderr}");
     assert!(!stderr.contains("is an alternative of a sum"), "{stderr}");

@@ -52,7 +52,7 @@ fn returning_exits_preserve_effects_and_run_only_the_selected_callback() {
             hook Read {{ func read() -> i64; }}
             func callback(input: i64) -> i64 / {{Read}} {{ <(input, read()) | add }}
             proc main | (exit: i32) / {{IO}} {{
-                let value = do (<2 | choose | (callback & fn(input: i64) {{ <100 | callback }})) {{
+                let value = do (<2 | choose | (callback & fn(input: i64) {{ <100 | callback }})) hn {{
                     read(): resume => {{ <\"read\" | println; <40 | resume }}
                 }};
                 <value | println;
@@ -114,7 +114,7 @@ fn returning_exits_preserve_value_order_and_delay_unselected_construction() {
                 <label | println;
                 fn(value: i64) {{ value }}
             }}
-            func callbacks() -> (Delayed<(i64 -> i64), {{IO}}> & Delayed<(i64 -> i64), {{IO}}>) / {{IO}} {{
+            func callbacks() -> ((-> (i64 -> i64) / {{IO}}) & (-> (i64 -> i64) / {{IO}})) / {{IO}} {{
                 <\"bundle\" | println;
                 (<\"selected\" | make_callback & <\"unselected\" | make_callback)
             }}
@@ -140,7 +140,7 @@ fn returning_exits_resume_into_the_remainder_of_the_chain() {
             proc main | (exit: i32) / {{IO}} {{
                 let answer = do (<1 | choose | (
                     fn(value: i64) {{ read() }} & fn(value: i64) {{ 0 }}
-                ) | scale) {{ read(): resume => <(<1 | resume, <2 | resume) | add }};
+                ) | scale) hn {{ read(): resume => <(<1 | resume, <2 | resume) | add }};
                 <answer | println;
                 <0 | exit>
             }}"

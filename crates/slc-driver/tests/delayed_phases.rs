@@ -28,24 +28,24 @@ fn eager_alias_forces_only_construction_without_caching_the_original() {
         "eager_alias",
         &format!(
             "{BUILD}
-            data Holder {{ callback: Delayed<(i64 -> i64 / {{Use}}), {{Build}}> }}
+            data Holder {{ callback: (-> (i64 -> i64 / {{Use}}) / {{Build}}) }}
             proc main | (exit: i32) / {{IO}} {{
                 let saved = Holder {{ callback: make() }};
                 let pending = saved.callback;
                 let alias = pending;
-                let+ ready = do {{ let+ result = alias; result }} {{
+                let+ ready = do {{ let+ result = alias; result }} hn {{
                     build(): resume => {{ <\"build now\" | println; <10 | resume }}
                 }};
                 <\"ready\" | println;
-                let first = do (<1 | ready) {{
+                let first = do (<1 | ready) hn {{
                     use_value(input): resume => {{ <\"use\" | println; <input | resume }}
                 }};
                 <first | println;
-                let second = do (<2 | ready) {{
+                let second = do (<2 | ready) hn {{
                     use_value(input): resume => {{ <\"use\" | println; <input | resume }}
                 }};
                 <second | println;
-                let third = do (<3 | pending) {{
+                let third = do (<3 | pending) hn {{
                     build(): resume => {{ <\"build again\" | println; <20 | resume }},
                     use_value(input): resume => {{ <\"use\" | println; <input | resume }}
                 }};
@@ -64,7 +64,7 @@ fn lazy_can_return_an_effectful_function_without_activating_it() {
     let (success, stdout, stderr) = run(
         "lazy_function",
         &format!(
-            "use lazy::Lazy;
+            "cite lazy::Lazy;
             {BUILD}
             func source() -> Lazy<(i64 -> i64 / {{Use}}), {{Build}}> {{
                 mu Lazy<(i64 -> i64 / {{Use}}), {{Build}}> {{
@@ -73,11 +73,11 @@ fn lazy_can_return_an_effectful_function_without_activating_it() {
             }}
             proc main | (exit: i32) / {{IO}} {{
                 let pending = source();
-                let+ ready = do pending.force {{
+                let+ ready = do pending.force hn {{
                     build(): resume => {{ <\"build\" | println; <10 | resume }}
                 }};
                 <\"ready\" | println;
-                let first = do (<1 | ready) {{
+                let first = do (<1 | ready) hn {{
                     use_value(input): resume => {{ <\"use\" | println; <input | resume }}
                 }};
                 <first | println;
@@ -95,14 +95,14 @@ fn forcing_and_activation_cannot_erase_each_others_effects() {
     for (name, body, effect) in [
         (
             "missing_build",
-            "let- pending: Delayed<(i64 -> i64 / {Use}), {Build}> = make();
+            "let- pending: (-> (i64 -> i64 / {Use}) / {Build}) = make();
              let+ ready = pending; <0 | exit>",
             "Build",
         ),
         (
             "missing_use",
-            "let- pending: Delayed<(i64 -> i64 / {Use}), {Build}> = make();
-             let+ ready = do { let+ result = pending; result } {
+            "let- pending: (-> (i64 -> i64 / {Use}) / {Build}) = make();
+             let+ ready = do { let+ result = pending; result } hn {
                  build(): resume => <10 | resume
              };
              <1 | ready | println; <0 | exit>",
@@ -114,7 +114,7 @@ fn forcing_and_activation_cannot_erase_each_others_effects() {
             "let pending = mu lazy::Lazy<(i64 -> i64 / {Use}), {Build}> {
                  force <= { let+ built = make(); <built | force> }
              };
-             let+ ready = do pending.force { build(): resume => <10 | resume };
+             let+ ready = do pending.force hn { build(): resume => <10 | resume };
              <1 | ready | println; <0 | exit>",
             "Use",
         ),
@@ -129,8 +129,8 @@ fn forcing_and_activation_cannot_erase_each_others_effects() {
 #[test]
 fn positive_delayed_payloads_and_incorrect_row_kinds_are_rejected() {
     for (name, annotation, diagnostic) in [
-        ("positive", "Delayed<i64, {Build}>", "positive"),
-        ("row_kind", "Delayed<(i64 -> i64), i64>", "row"),
+        ("positive", "(-> i64 / {Build})", "positive"),
+        ("row_kind", "(-> (i64 -> i64) / i64)", "row"),
     ] {
         let (success, _, stderr) = run(
             name,
@@ -148,16 +148,16 @@ fn positive_delayed_payloads_and_incorrect_row_kinds_are_rejected() {
 fn positive_lazy_demands_repeat_under_the_current_handler() {
     let (success, stdout, stderr) = run(
         "lazy_positive",
-        "use lazy::Lazy;
+        "cite lazy::Lazy;
          hook Build { func build() -> i64; }
          proc main | (exit: i32) / {IO} {
              let pending = mu Lazy<i64, {Build}> { force <= <build() | force> };
              let+ same_menu = pending;
              <\"menu ready\" | println;
-             let first = do same_menu.force {
+             let first = do same_menu.force hn {
                  build(): resume => { <\"first\" | println; <10 | resume }
              };
-             let second = do same_menu.force {
+             let second = do same_menu.force hn {
                  build(): resume => { <\"second\" | println; <20 | resume }
              };
              <first | println; <second | println; <0 | exit>
@@ -178,20 +178,20 @@ fn conversions_preserve_repeated_demands_and_separate_rows() {
                 let thunk = <original | lazy::of_delayed;
                 let again = <thunk | lazy::to_delayed;
                 <\"stored\" | println;
-                let first = do (<1 | again) {{
+                let first = do (<1 | again) hn {{
                     build(): resume => {{ <\"build one\" | println; <10 | resume }},
                     use_value(input): resume => <input | resume
                 }};
                 <first | println;
-                let second = do (<2 | again) {{
+                let second = do (<2 | again) hn {{
                     build(): resume => {{ <\"build two\" | println; <20 | resume }},
                     use_value(input): resume => <input | resume
                 }};
                 <second | println;
-                let+ ready = do {{ let+ value = again; value }} {{
+                let+ ready = do {{ let+ value = again; value }} hn {{
                     build(): resume => {{ <\"build now\" | println; <30 | resume }}
                 }};
-                let third = do (<3 | ready) {{ use_value(input): resume => <input | resume }};
+                let third = do (<3 | ready) hn {{ use_value(input): resume => <input | resume }};
                 <third | println;
                 <0 | exit>
             }}"
@@ -213,9 +213,9 @@ fn a_multi_shot_build_reinstates_eager_forcing() {
                     let+ ready = pending;
                     <\"ready\" | println;
                     <1 | ready
-                }} {{
+                }} hn {{
                     build(): resume => <(<10 | resume, <20 | resume) | add
-                }}) {{ use_value(input): resume => <input | resume }};
+                }}) hn {{ use_value(input): resume => <input | resume }};
                 <result | println;
                 <0 | exit>
             }}"
@@ -229,7 +229,7 @@ fn a_multi_shot_build_reinstates_eager_forcing() {
 fn eagerly_forcing_a_delayed_menu_does_not_demand_its_item() {
     let (success, stdout, stderr) = run(
         "eager_menu",
-        "use lazy::Lazy;
+        "cite lazy::Lazy;
          hook Build { func build() -> i64; }
          hook Use { func use_value(input: i64) -> i64; }
          func make_menu() -> Lazy<i64, {Use}> / {Build} {
@@ -237,15 +237,15 @@ fn eagerly_forcing_a_delayed_menu_does_not_demand_its_item() {
              mu Lazy<i64, {Use}> { force <= <offset | use_value | force> }
          }
          proc main | (exit: i32) / {IO} {
-             let- pending: Delayed<Lazy<i64, {Use}>, {Build}> = make_menu();
-             let+ ready = do { let+ value = pending; value } {
+             let- pending: (-> Lazy<i64, {Use}> / {Build}) = make_menu();
+             let+ ready = do { let+ value = pending; value } hn {
                  build(): resume => { <\"build\" | println; <10 | resume }
              };
              <\"menu ready\" | println;
-             let first = do ready.force {
+             let first = do ready.force hn {
                  use_value(input): resume => { <\"use one\" | println; <input | resume }
              };
-             let second = do ready.force {
+             let second = do ready.force hn {
                  use_value(input): resume => { <\"use two\" | println; <input | resume }
              };
              <first | println; <second | println; <0 | exit>
@@ -283,7 +283,7 @@ fn unrestricted_type_parameters_accept_both_polarities_but_not_assumptions() {
 fn turning_an_adapter_cannot_erase_delayed_forcing_effects() {
     for (name, annotation) in [
         ("pure_adapter", "(String ; -i64)"),
-        ("delayed_adapter", "Delayed<(String ; -i64), {Build}>"),
+        ("delayed_adapter", "(-> (String ; -i64) / {Build})"),
     ] {
         let (success, _, stderr) = run(
             name,
@@ -298,11 +298,7 @@ fn turning_an_adapter_cannot_erase_delayed_forcing_effects() {
                  }}"
             ),
         );
-        if name == "pure_adapter" {
-            assert!(!success, "{name} lost the adapter's forcing boundary");
-            assert!(stderr.contains("effect:") && stderr.contains("Build"), "{name}: {stderr}");
-        } else {
-            assert!(success, "{name}: {stderr}");
-        }
+        assert!(!success, "{name} accepted the other orientation");
+        assert!(stderr.contains("type:") || stderr.contains("effect:"), "{name}: {stderr}");
     }
 }

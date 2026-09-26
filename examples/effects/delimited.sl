@@ -38,19 +38,19 @@ func check(out: -String) -> String / {Reader} {
 func read_twice() -> i64 / {Reader} { <(config(), config()) | add }
 
 proc main | (exit: i32) / {IO} {
-    let all = do pick() {
+    let all = do pick() hn {
         flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <all | println; // H T
 
-    let crossed = do pick_under_reset() {
+    let crossed = do pick_under_reset() hn {
         flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
     };
     <crossed | println; // H T
 
     // A clause cuts into the continuations it is handed: it runs below its
     // handler, on frames they share.
-    let verdict = do (mu String { k <= <(5, k, k) | judge> }) {
+    let verdict = do (mu String { k <= <(5, k, k) | judge> }) hn {
         judge(n, ok, bad) => of (<(n, 3) | gt) {
             True => <"big" | ok>,
             False => <"small" | bad>,
@@ -58,13 +58,13 @@ proc main | (exit: i32) / {IO} {
     };
     <verdict | println; // big
 
-    let stopped = do (mu String { out <= <(<out | check) | out> }) {
+    let stopped = do (mu String { out <= <(<out | check) | out> }) hn {
         config(): resume => <-1 | resume,
     };
     <stopped | println; // negative, stopping early
 
     // What `reset` does not handle passes through to the handler around it.
-    let n = do (reset read_twice()) {
+    let n = do (reset read_twice()) hn {
         config(): resume => <21 | resume,
     };
     <n | println; // 42

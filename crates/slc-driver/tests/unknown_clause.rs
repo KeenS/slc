@@ -25,7 +25,7 @@ fn a_clause_naming_no_operation_is_refused() {
         "hook Reader { func config() -> i64; }
         func f() -> i64 / {Reader} { config() }
         proc main | (exit: -i32) / {IO} {
-            let v = do f() { nope(): resume => <1 | resume, config(): resume => <2 | resume };
+            let v = do f() hn { nope(): resume => <1 | resume, config(): resume => <2 | resume };
             <v | println;
             <0 | exit>
         }",
@@ -36,7 +36,7 @@ fn a_clause_naming_no_operation_is_refused() {
     let (ok, _, stderr) = run(
         "path",
         "func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            do <(,) | program { fs::nope(path): resume => <::0(\"x\") | resume }
+            do <(,) | program hn { fs::nope(path): resume => <::0(\"x\") | resume }
         }
         proc main | (exit: -i32) / {IO} { <0 | exit> }",
     );
@@ -51,7 +51,7 @@ fn a_clause_for_a_declared_operation_keeps_its_meaning() {
         "hook Reader { func config() -> i64; }
         func f() -> i64 / {Reader} { config() }
         proc main | (exit: -i32) / {IO} {
-            let v = do f() { config(): resume => <2 | resume };
+            let v = do f() hn { config(): resume => <2 | resume };
             <v | println;
             <0 | exit>
         }",

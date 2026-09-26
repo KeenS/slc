@@ -50,7 +50,7 @@ passes through both.
 1. **Originally no new language feature; now superseded.** The function
    encoding above remains useful, but first-class handler values are now
    implemented: `handler { … }` constructs one and `with h handle c`
-   installs it. `docs/design/effects.md` specifies `Handler<A, B, E, F>`; the
+   installs it. `docs/design/effects.md` specifies `(A hn B / {E} / {F})`; the
    `examples/effects/handler_values.sl` example stores, selects and composes them.
 2. **`fs` declares `Fs`,** one operation per primitive: reading a file,
    writing one, opening one, reading a line, closing, and asking whether a

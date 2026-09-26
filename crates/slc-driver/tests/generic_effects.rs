@@ -19,8 +19,8 @@ fn generic_operations_and_handlers_share_their_effect_arguments() {
         hook Reader<+T> { func read() -> T; }
         func get<+T>() -> T / {Reader<T>} { read() }
         proc main | (exit: i32) / {IO} {
-            let number = do get() { read(): resume => <42 | resume };
-            let text = do get() { read(): resume => <\"hello\" | resume };
+            let number = do get() hn { read(): resume => <42 | resume };
+            let text = do get() hn { read(): resume => <\"hello\" | resume };
             <number | println;
             <text | println;
             <0 | exit>
@@ -40,10 +40,10 @@ fn nested_handlers_may_use_different_instantiations() {
         func text() -> String / {Reader<String>} { read() }
         proc main | (exit: i32) / {IO} {
             let result = do {
-                let inner = do text() { read(): resume => <\"inner\" | resume };
+                let inner = do text() hn { read(): resume => <\"inner\" | resume };
                 <inner | println;
                 number()
-            } { read(): resume => <42 | resume };
+            } hn { read(): resume => <42 | resume };
             <result | println;
             <0 | exit>
         }",
@@ -61,8 +61,8 @@ fn incompatible_same_name_interception_is_rejected() {
         func number() -> i64 / {Reader<i64>} { read() }
         proc main | (exit: i32) / {IO} {
             let result = do {
-                do number() { read(): resume => <\"wrong\" | resume }
-            } { read(): resume => <42 | resume };
+                do number() hn { read(): resume => <\"wrong\" | resume }
+            } hn { read(): resume => <42 | resume };
             <result | println;
             <0 | exit>
         }",
@@ -101,10 +101,10 @@ fn generic_handler_values_keep_their_capabilities() {
         "
         hook Reader<+T> { func read() -> T; }
         proc main | (exit: i32) / {IO} {
-            let reader: Handler<i64, i64, {Reader<i64>}, {}> = op Reader {
+            let reader: (i64 hn i64 / {Reader<i64>}) = hn Reader {
                 read(): resume => <42 | resume
             };
-            <(op reader do read()) | println;
+            <(do read() reader) | println;
             <0 | exit>
         }",
     );
@@ -119,7 +119,7 @@ fn operations_of_one_effect_share_one_handler_instantiation() {
         "
         hook Pair<+T> { func first() -> T; func second() -> T; }
         proc main | (exit: i32) / {IO} {
-            let result = do <(first(), second()) | add {
+            let result = do <(first(), second()) | add hn {
                 first(): resume => <10 | resume,
                 second(): resume => <32 | resume
             };
@@ -134,7 +134,7 @@ fn operations_of_one_effect_share_one_handler_instantiation() {
         "
         hook Pair<+T> { func first() -> T; func second() -> T; }
         proc main | (exit: i32) / {IO} {
-            let result = do first() {
+            let result = do first() hn {
                 first(): resume => <10 | resume,
                 second(): resume => <\"wrong\" | resume
             };
@@ -152,12 +152,12 @@ fn composable_capture_resumes_twice_and_preserves_unrelated_effects() {
         "
         hook Factor { func factor() -> i64; }
         proc main | (exit: i32) / {IO} {
-            let result = do (<fn {
+            let result = do (do {
                 let value = <fn(resume: (i64 -> i64 / {Factor})) {
                     <(<1 | resume, <2 | resume) | add
                 } | control::shift;
                 <(value, factor()) | mul
-            } | control::reset) { factor(): resume => <10 | resume };
+            } control::reset) hn { factor(): resume => <10 | resume };
             <result | println;
             <0 | exit>
         }",
@@ -170,15 +170,15 @@ fn composable_capture_resumes_twice_and_preserves_unrelated_effects() {
 fn capture_handlers_nest_with_distinct_answer_types() {
     let (success, stdout, stderr) = run("nested_capture", "
         proc main | (exit: i32) / {IO} {
-            let result = <fn {
-                let inner = <fn {
+            let result = do {
+                let inner = do {
                     let value = <fn(resume: (String -> String)) { <\"inner\" | resume } | control::shift;
                     <(value, \"!\") | add
-                } | control::reset;
+                } control::reset;
                 <inner | println;
                 let value = <fn(resume: (i64 -> i64 / {IO})) { <2 | resume } | control::shift;
                 <(value, 10) | mul
-            } | control::reset;
+            } control::reset;
             <result | println;
             <0 | exit>
         }");
@@ -197,7 +197,7 @@ fn bare_reset_does_not_handle_shift_and_answers_must_agree() {
         ),
         (
             "answer",
-            "<fn { let value = <fn(resume: (i64 -> String)) { <1 | resume } | control::shift; <(value, 1) | add } | control::reset",
+            "do { let value = <fn(resume: (i64 -> String)) { <1 | resume } | control::shift; <(value, 1) | add } control::reset",
             "Shift",
         ),
     ] {
@@ -220,13 +220,13 @@ fn module_resolution_preserves_generic_scopes_and_effect_paths() {
     let (success, stdout, stderr) = run(
         "modules",
         "
-        mod provider {
+        sect provider {
             pub data T { value: String }
             pub hook Reader<+T> { func read() -> T; }
             pub func get<+T>() -> T / {Reader<T>} { read() }
         }
         proc main | (exit: i32) / {IO} {
-            let result = do provider::get() { provider::read(): resume => <42 | resume };
+            let result = do provider::get() hn { provider::read(): resume => <42 | resume };
             <result | println;
             <0 | exit>
         }",
@@ -245,13 +245,13 @@ fn capture_forces_callback_construction_without_caching_resumptions() {
             fn(resume: (i64 -> i64 / {IO})) { <(<1 | resume, <2 | resume) | add }
         }
         proc main | (exit: i32) / {IO} {
-            let result = <fn {
+            let result = do {
                 let value = <make() | control::shift;
                 <\"resumed\" | println;
                 <(value, 10) | mul
-            } | control::reset;
+            } control::reset;
             <result | println;
-            <(<fn { 42 } | control::reset) | println;
+            <(do 42 control::reset) | println;
             <0 | exit>
         }",
     );
@@ -267,11 +267,11 @@ fn generic_forwarding_keeps_the_intercepted_instantiation() {
         hook Pair<+T> { func first() -> T; func second() -> T; }
         proc main | (exit: i32) / {IO} {
             let result = do {
-                do <(first(), second()) | add {
+                do <(first(), second()) | add hn {
                     first(): resume => <7 | resume,
                     _ => forward
                 }
-            } {
+            } hn {
                 first(): resume => <100 | resume,
                 second(): resume => <35 | resume
             };
@@ -297,7 +297,7 @@ fn generic_effect_parameters_and_local_row_annotations_are_checked() {
         (
             "capability",
             "hook Reader<+T> { func read() -> T; }",
-            "let wrong: Handler<i64, i64, {Reader<String>}, {}> = op Reader { read(): resume => <42 | resume };",
+            "let wrong: (i64 hn i64 / {Reader<String>}) = hn Reader { read(): resume => <42 | resume };",
         ),
     ] {
         let (success, _, stderr) = run(
@@ -325,8 +325,8 @@ fn generic_latent_rows_keep_demand_time_handlers() {
         }
         proc main | (exit: i32) / {IO} {
             let source: Source<i64> = make();
-            <(do source.value { read(): resume => <10 | resume }) | println;
-            <(do source.value { read(): resume => <20 | resume }) | println;
+            <(do source.value hn { read(): resume => <10 | resume }) | println;
+            <(do source.value hn { read(): resume => <20 | resume }) | println;
             <0 | exit>
         }",
     );
@@ -341,10 +341,10 @@ fn capture_cannot_erase_an_unhandled_residual_effect() {
         "
         hook Factor { func factor() -> i64; }
         proc main | (exit: i32) / {IO} {
-            let result = <fn {
+            let result = do {
                 let value = <fn(resume: (i64 -> i64 / {Factor})) { <2 | resume } | control::shift;
                 <(value, factor()) | mul
-            } | control::reset;
+            } control::reset;
             <result | println;
             <0 | exit>
         }",

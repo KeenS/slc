@@ -9,7 +9,7 @@ what made it so.
 ## Keyword spellings
 
 A declaration is four letters, and an expression that returns a value is two.
-`let` stays, with `let+` and `let-`. `mod` and `use` stay. `reset` stays,
+`let` stays, with `let+` and `let-`. `reset` stays,
 because `control::reset` is a function of that name. The lambda `fn` stays.
 `data`, `enum`, `menu`, `form`, and `impl` were already four letters. `pub`,
 `for`, and `dual` stay.
@@ -23,9 +23,12 @@ because `control::reset` is a function of that name. The lambda `fn` stays.
 | `const` | `def` |
 | `match` | `of` |
 | `handle` | `do` |
-| `handler` | `op` |
-| `with h handle e` | `op h do e` |
+| `handler` | `hn` |
+| `op` | `hn`, and `do e h` to install |
+| `with h handle e` | `do e h` |
 | `select` | `mu`, with `=>` |
+| `mod` | `sect` |
+| `use` | `cite` |
 
 `def` is the one declaration that is not four letters: a definition sits on
 neither side of the value and continuation mirror. `select` is not renamed
@@ -63,9 +66,9 @@ hook Reader<+T> { func read() -> T; }
 def ANSWER: i64 = 42;
 of xs { Nil => 0, Cons(n, rest) => n }
 mu Colour { Red => <0 | out>, Green => <1 | out> }
-do body { read(): resume => <1 | resume> }
-let reader = op Reader { read(): resume => <1 | resume> };
-op reader do body
+do body hn { read(): resume => <1 | resume> }
+let reader = hn Reader { read(): resume => <1 | resume> };
+do body reader
 ```
 
 The lambda is still `fn(x: i64) -> i64 { … }`.
@@ -82,7 +85,7 @@ func get<+T>() -> T / {Reader<T>} { read() }
 
 Handlers infer their application from the operations they intercept and the
 answers their clauses supply. A stored handler can be annotated with
-`Handler<i64, i64, {Reader<i64>}, {}>`. An incompatible same-name operation
+`(i64 hn i64 / {Reader<i64>})`. An incompatible same-name operation
 is rejected even if a residual row or outer handler could accept it.
 Invalid effect names and arguments are now rejected on unused signatures too.
 
@@ -146,7 +149,7 @@ than explicit `mu` captures. See `examples/duality/yielding_commands.sl`.
 
 Functions that install inline handlers remain valid. To store or select the
 handler itself, use `handler Reader { clauses }` and `with value handle body`.
-The type is `Handler<A, B, E, F>`: body, answer, handled effects, residual
+The type is `(A hn B / {E} / {F})`: body, answer, handled effects, residual
 effects. A `return` clause can change `A` to `B` even for a pure body.
 `handler` and `with` are reserved syntax, and `Handler` is a built-in type
 name; rename conflicting declarations. The old composition example's
@@ -169,7 +172,7 @@ let xs = list_push(list_new(), 10);
 Write:
 
 ```sl
-use list::List::*;
+cite list::List::*;
 
 func f(xs: list::List<i64>) -> i64 { … }
 let xs = Cons(10, Nil);
@@ -821,25 +824,25 @@ menu Deliver { deliver: (i64 -> String) }       // new: either spelling
 Nothing that type-checked changes meaning — the written spelling is tried
 first. Inside a tuple or a type argument the spelling still has to match.
 
-## `use m::*` brings a module's `pub` members
+## `cite m::*` brings a module's `pub` members
 
 A glob used to mean an enum's variants only. Over a module it now brings
 every `pub` member in bare:
 
 ```sl
-use num::min;                      // old: one name at a time
-use num::max;
+cite num::min;                      // old: one name at a time
+cite num::max;
 
-use num::*;                        // new: every `pub` member of `num`
+cite num::*;                        // new: every `pub` member of `num`
 ```
 
-A named `use` and the module's own declarations win over a glob. Two globs
+A named `cite` and the module's own declarations win over a glob. Two globs
 bringing the same name are allowed until that name is used; then write the
-path, or `use` the one you mean by name.
+path, or `cite` the one you mean by name.
 
 Only the stdlib modules a program reaches are loaded now, so a program that
 names no module is checked against the prelude alone. Nothing to change —
-but a program relying on a stdlib name *without* its path or `use` was
+but a program relying on a stdlib name *without* its path or `cite` was
 already an error, and stays one.
 
 ## A call is not applied to part of its group
@@ -896,7 +899,7 @@ made sense with its suffix:
 were already names that do not restate their module, and are unchanged.
 
 ```sl
-use seq::map_seq;                                        // old
+cite seq::map_seq;                                        // old
 (double, s) | map_seq
 
 <(double, s) | seq::map                                  // new
@@ -927,8 +930,8 @@ Only `IO` and `Display` (with `fmt`/`to_string`) stay in scope unasked.
 let xs = Cons(1, Cons(2, Nil));                      // old: in scope unasked
 xs | length | println;
 
-use list::List::*;                                   // new
-use list::length;
+cite list::List::*;                                   // new
+cite list::length;
 let xs = Cons(1, Cons(2, Nil));
 <xs | length | println;
 <(3, 7) | num::min | println;                        // or by path, no import
@@ -947,7 +950,7 @@ A `mod` used to expose everything it declared. It now exposes what is
 marked, as in Rust:
 
 ```sl
-mod geometry {
+sect geometry {
     enum Shape { … }                   // old: reachable everywhere
     func area(s: Shape) -> i64 { … }
 
@@ -1324,7 +1327,7 @@ func pick() -> String / {Choose} {
     a
 }
 
-do pick() {
+do pick() hn {
     flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 // old: "H" — the first jump to `r` left the clause
@@ -1338,8 +1341,8 @@ Return the continuation out of the `handle` and jump to it there, or pass
 the value out instead of jumping:
 
 ```sl
-let r = do (<k | use_inside) { … };    // old: a jump to `k` inside left the handler
-let r = do use_inside() { … };         // new: `use_inside` returns; the jump is outside
+let r = do (<k | use_inside) hn { … };    // old: a jump to `k` inside left the handler
+let r = do use_inside() hn { … };         // new: `use_inside` returns; the jump is outside
 <r | k>
 ```
 
@@ -1364,8 +1367,8 @@ there. A program that relied on the handler around the writing runs the
 computation there with `let+`:
 
 ```sl
-let g = do { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // old: failed at run time
-let g = do { let+ f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // new
+let g = do { let- f = make(); f } hn { throw(m) => fn(n: i64) { 0 } };   // old: failed at run time
+let g = do { let+ f = make(); f } hn { throw(m) => fn(n: i64) { 0 } };   // new
 ```
 
 ## Effect rows are part of types
@@ -1419,7 +1422,7 @@ operations, `fs::read_file` and its siblings, each with a sum of its outcomes:
 
 ```sl
 func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-    do <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
+    do <(,) | program hn { fs::read_file(path): resume => <::0("canned") | resume }
 }
 ```
 
@@ -1541,8 +1544,8 @@ on as stored: projection does not additionally force a delayed callback.
 
 ```sl
 let pending = (build() & 0);
-let first = do pending.0 { build(): resume => <10 | resume };
-let second = do pending.0 { build(): resume => <20 | resume };
+let first = do pending.0 hn { build(): resume => <10 | resume };
+let second = do pending.0 hn { build(): resume => <20 | resume };
 ```
 
 Here `build()` returns an integer; `first` is `10`, and `second` is `20`.
@@ -1583,7 +1586,7 @@ preserve their exits' rows explicitly.
 ### Separate construction and activation
 
 A stored effectfully constructed function now names both phases:
-`Delayed<(i64 -> i64 / {Use}), {Build}>`. The old combined annotation
+`(-> (i64 -> i64 / {Use}) / {Build})`. The old combined annotation
 `(i64 -> i64 / {Build, Use})` cannot represent effectful construction.
 Plain negative types permit only pure forcing; `/ {Use}` still describes
 activation. Empty forcing rows can be omitted.
@@ -1601,9 +1604,9 @@ and `lazy::to_delayed` adapt the explicit and implicit interfaces for
 negative `T` without forcing during conversion.
 
 `Stream` tails now explicitly allow delayed construction:
-`Delayed<Stream<T, ..E>, ..E>`. Stream consumers and sequence bridges
+`(-> Stream<T, ..E> / {..E})`. Stream consumers and sequence bridges
 accept that type too. Suspended effectful command blocks use
-`Delayed<(;), ..E>` rather than conflating construction with activation
+`(-> (;) / {..E})` rather than conflating construction with activation
 in `((;) / {..E})`. In exit groups `Delayed` already denotes a negative
 computation, so no implicit dual is added.
 

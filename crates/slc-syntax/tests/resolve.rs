@@ -28,9 +28,9 @@ fn names(program: &slc_syntax::ast::Program) -> Vec<String> {
 #[test]
 fn declarations_qualify_and_modules_disappear() {
     let p = resolved(
-        "mod a {
+        "sect a {
              func f() -> i64 { 1 }
-             mod b { func g() -> i64 { 2 } }
+             sect b { func g() -> i64 { 2 } }
          }
          func h() -> i64 { 3 }",
     );
@@ -41,9 +41,9 @@ fn declarations_qualify_and_modules_disappear() {
 fn references_resolve_by_scope() {
     // In-module bare names, sibling paths, and the walk to an ancestor.
     let p = resolved(
-        "mod outer {
+        "sect outer {
              func shared() -> i64 { 1 }
-             mod inner { pub func deep() -> i64 { shared() } }
+             sect inner { pub func deep() -> i64 { shared() } }
              func from_sibling() -> i64 { inner::deep() }
          }",
     );
@@ -58,9 +58,9 @@ fn a_private_declaration_is_its_module_s_own() {
     assert!(
         resolve_program(
             &parse(
-                lex("mod m { func helper() -> i64 { 1 }
+                lex("sect m { func helper() -> i64 { 1 }
                            pub func f() -> i64 { helper() }
-                           mod deeper { pub func g() -> i64 { helper() } } }")
+                           sect deeper { pub func g() -> i64 { helper() } } }")
                 .unwrap()
             )
             .unwrap()
@@ -70,7 +70,7 @@ fn a_private_declaration_is_its_module_s_own() {
     // And nowhere else.
     let errors = resolve_program(
         &parse(
-            lex("mod m { func helper() -> i64 { 1 } }
+            lex("sect m { func helper() -> i64 { 1 } }
                     func caller() -> i64 { m::helper() }")
             .unwrap(),
         )
@@ -86,8 +86,8 @@ fn a_private_declaration_is_its_module_s_own() {
 #[test]
 fn a_use_gives_a_name_and_a_local_takes_it_back() {
     let p = resolved(
-        "mod m { pub func f() -> i64 { 1 } }
-         use m::f;
+        "sect m { pub func f() -> i64 { 1 } }
+         cite m::f;
          func caller() -> i64 { f() }
          func shadows() -> i64 { let f = 5; f }",
     );
@@ -100,7 +100,7 @@ fn a_use_gives_a_name_and_a_local_takes_it_back() {
 #[test]
 fn an_unclaimed_name_is_left_for_later_passes() {
     // `str_len` is a builtin: no module claims it, so it stays bare.
-    let p = resolved("mod m { func f() -> i64 { str_len(\"x\"); 1 } }");
+    let p = resolved("sect m { func f() -> i64 { str_len(\"x\"); 1 } }");
     let body = format!("{:?}", p.decls[0].kind);
     assert!(body.contains("\"str_len\""), "{body}");
 }
@@ -108,16 +108,16 @@ fn an_unclaimed_name_is_left_for_later_passes() {
 #[test]
 fn two_uses_of_one_name_collide() {
     let program = parse(
-        lex("mod a { func f() -> i64 { 1 } }
-             mod b { func f() -> i64 { 2 } }
-             use a::f;
-             use b::f;
+        lex("sect a { func f() -> i64 { 1 } }
+             sect b { func f() -> i64 { 2 } }
+             cite a::f;
+             cite b::f;
              func g() -> i64 { f() }")
         .unwrap(),
     )
     .unwrap();
     let errors = resolve_program(&program).unwrap_err();
-    assert!(errors.iter().any(|e| e.message.contains("two `use` declarations")), "{errors:?}");
+    assert!(errors.iter().any(|e| e.message.contains("two `cite` declarations")), "{errors:?}");
 }
 
 /// The body of the declaration named `name`, as resolved.
@@ -133,8 +133,8 @@ fn body_of(program: &slc_syntax::ast::Program, name: &str) -> String {
 #[test]
 fn a_module_glob_brings_every_pub_member_and_nothing_private() {
     let p = resolved(
-        "mod m { pub func f() -> i64 { 1 } func g() -> i64 { 2 } }
-         use m::*;
+        "sect m { pub func f() -> i64 { 1 } func g() -> i64 { 2 } }
+         cite m::*;
          func uses_f() -> i64 { f() }
          func uses_g() -> i64 { g() }",
     );
@@ -145,10 +145,10 @@ fn a_module_glob_brings_every_pub_member_and_nothing_private() {
 #[test]
 fn a_named_use_and_a_declaration_beat_a_glob() {
     let p = resolved(
-        "mod a { pub func f() -> i64 { 1 } pub func h() -> i64 { 3 } }
-         mod b { pub func f() -> i64 { 2 } }
-         use a::*;
-         use b::f;
+        "sect a { pub func f() -> i64 { 1 } pub func h() -> i64 { 3 } }
+         sect b { pub func f() -> i64 { 2 } }
+         cite a::*;
+         cite b::f;
          func h() -> i64 { 4 }
          func by_name() -> i64 { f() }
          func declared() -> i64 { h() }",
@@ -159,8 +159,8 @@ fn a_named_use_and_a_declaration_beat_a_glob() {
 
 #[test]
 fn two_globs_may_share_a_name_until_it_is_used() {
-    let two = "mod a { pub func f() -> i64 { 1 } } mod b { pub func f() -> i64 { 2 } }
-               use a::*; use b::*;";
+    let two = "sect a { pub func f() -> i64 { 1 } } sect b { pub func f() -> i64 { 2 } }
+               cite a::*; cite b::*;";
     assert!(
         resolve_program(
             &parse(lex(&format!("{two} func quiet() -> i64 {{ 0 }}")).unwrap()).unwrap()

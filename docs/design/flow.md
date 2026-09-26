@@ -17,97 +17,28 @@ before it consumes, so the chain delivers rather than returns.
 | `f \| g` | function composition — a function |
 | `f \| k>` | composition into a consumer — a consumer |
 
-**A stage can be adapted to read either way round.** `(A ; B)` is
-`dual(A) -> B`; turning it gives `(B ; A)`, or `dual(B) -> A`.
-A returning function and its consumer-transformer counterpart can therefore
-serve the same pipeline, through an elaborated adapter rather than
-unrestricted type equality:
+**A stage is read in the orientation it has.** `(A ; B)` is `dual(A) -> B`.
+The same connective written the other way is `(B ; A)`, or `dual(B) -> A`.
+Those are different types. A chain uses whichever reading the stage was
+given; it does not turn a value of one into the other.
 
 ```sl
 func area(s: Shape) -> i64                  // (-Shape ; +i64)
-func area_of(out: i64) <- Shape             // (+i64 ; -Shape) — adapted orientation
+func area_of(out: i64) <- Shape             // (+i64 ; -Shape)
 ```
 
-Either stands as a stage, and what flows in picks the reading; the forward
-reading wins when both fit. A stage read the second way
-takes *the rest of the chain* as its continuation, which is why the two
-styles are written the same:
+What flows in meets the stage's argument. A stage whose argument is the
+rest of the chain takes that rest as its continuation, which is why each
+style is written uniformly:
 
 ```sl
 <shape | area    | label    | out>
 <shape | area_of | label_of | out>
 ```
 
-`examples/duality/two_styles.sl` is that program, twice.
-
-The same adapter is available wherever a value meets a declared type. A
-consumer transformer stored in a menu item declared `(i64 -> String)`, a returning function
-passed where `(-String -> -i64)` is declared, or either kept in a record
-field, a variant, a `let`, or returned, is accepted at the other spelling.
-A value of a joint type is a closure facing one way, so the checker records a swap
-there and lowering turns the closure around:
-
-```
-f : left ⅋ right   ↦   λk. μx. ⟨ f x ∥ k ⟩        a positive left
-                   ↦   λk. co(μ̃x. ⟨ f x ∥ k ⟩)    a negative left
-```
-
-— capturing with `μ` where the binder is a genuine continuation, building
-the consumer with `μ̃` where it is a genuine value, and cutting toward `k`
-or from it by the polarity of `right`. The forward reading is always tried
-first, so nothing that fits as written changes meaning. A tuple or an
-alternative written out is turned component by component, each component
-one value meeting one declared type, and a stage's result that meets the
-next stage at the other spelling is turned around between the two steps.
-**Adapters lift through structure, not just literals.** A stored tuple,
-alternative, record, or enum can be adapted componentwise. Functions adapt
-their inputs in the opposite direction and their results in the forward
-direction. Menus adapt the answer to the item actually requested; forms
-and other named consumers adapt the demand they receive. The compiler
-derives these adapters from declarations, including regular recursive
-declarations, rather than treating different representations as equal.
-
-```sl
-data Box<-F> { value: F }
-
-func deliver(out: String) <- i64 {
-    mu i64 { number => <number | int_to_str | out> }
-}
-
-proc main | (exit: i32) / {IO} {
-    let original = Box { value: deliver };
-    let adapted: Box<(i64 -> String)> = original;
-    <7 | adapted.value | println;
-    <0 | exit>
-}
-```
-
-Parameter polarity still applies: `Box<-F>` accepts these negative stages;
-the standard `List<+T>` does not. Polarity is not variance. Dual occurrences
-use the reverse adapter's dual; they do not simply map inputs forward.
-Tuple order is unchanged except when adapting an explicitly dual parameter
-requires the dual of a `;` reversal. There is no general tuple permutation
-or commutative type equality.
-
-**Turning preserves forcing as well as activation.** Adapting
-`Delayed<T, E>` to `Delayed<U, E>` stores an adapter for the result. Each
-demand first forces the original computation under that demand's handlers,
-then adapts the result, without activating it. An eager `let+` therefore
-performs construction but not activation; another demand of the original
-delayed value repeats construction. Neither row may be erased, merged into
-the other, or moved across a handler boundary. Adapting a structure does
-not force delayed payloads or request unselected menu items.
-
-Lifting requires a finite, bounded adapter derivation from available
-declarations. Recursive specialization whose type arguments keep growing
-is refused. Opaque constructors, including `Handler`, still require matching
-arguments; capability rows are checked invariantly rather than mapped.
-Exact matching remains the first choice. These are elaborated adapters,
-not an unrestricted equality law under every type constructor.
-
-`examples/duality/structural_adapters.sl` demonstrates stored and recursive values
-and the separate construction and activation phases. Implementation details
-and the validation obligations are in `docs/design-notes/structural-adapters.md`.
+`examples/duality/two_styles.sl` is that program, twice. Storing `area_of`
+where `(Shape -> i64)` is declared is refused. The orientation that was
+written is the orientation the value has.
 
 **`<` is never left out.** A chain without it begins with a function,
 whatever its head is, and composes: `f | g` is a function, and `f | k>` a
