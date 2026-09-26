@@ -13,26 +13,26 @@
 // function: `f | k>` composes, and the cut that sends `f` itself to `k` is
 // `<f | k>`.
 
-fn double(n: i64) -> i64 { <(n, 2) | mul }
-fn incr(n: i64) -> i64 { <(n, 1) | add }
+func double(n: i64) -> i64 { <(n, 2) | mul }
+func incr(n: i64) -> i64 { <(n, 1) | add }
 
 // Closed at the right only: a consumer, awaiting a value.
-fn doubling(k: -i64) -> -i64 {
+func doubling(k: -i64) -> -i64 {
     double | incr | k>
 }
 
 // A two-exit command, written unary: one value, one menu of exits, each
 // component naming what reaches it.
-command classify(n: i64) | (found: i64 & missing: String) {
-    match (<(n, 0) | gt) { True => <n | found>, False => <"nothing there" | missing> }
+proc classify(n: i64) | (found: i64 & missing: String) {
+    of (<(n, 0) | gt) { True => <n | found>, False => <"nothing there" | missing> }
 }
 
 // A row is a value: this one takes the whole menu and hands it on.
-command forward(n: i64) | (row: (i64 & String)) {
+proc forward(n: i64) | (row: (i64 & String)) {
     <n | classify | row>
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // a value flowing through functions, awaiting a continuation
     <21 | double | println;
     <3 | double | incr | double | println;
@@ -50,9 +50,9 @@ command main | (exit: i32) / {IO} {
     <5 | quadruple | println;
 
     // a two-exit command: its exits spread, then bundled, then forwarded
-    <mu i64 { ok <= <7 | classify | (ok & select String { s => <s | str_len | ok> })> } | println;
-    <mu i64 { ok <= <-1 | classify | (ok & select String { s => <s | str_len | ok> })> } | println;
-    <mu i64 { ok <= <-1 | forward | (ok & select String { s => <s | str_len | ok> })> } | println;
+    <mu i64 { ok <= <7 | classify | (ok & mu String { s => <s | str_len | ok> })> } | println;
+    <mu i64 { ok <= <-1 | classify | (ok & mu String { s => <s | str_len | ok> })> } | println;
+    <mu i64 { ok <= <-1 | forward | (ok & mu String { s => <s | str_len | ok> })> } | println;
 
     <0 | exit>
 }

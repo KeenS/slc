@@ -19,7 +19,7 @@ fn run(name: &str, source: &str) -> (String, String, bool) {
     )
 }
 
-const SIGNED: &str = "fn keep<+T>(x: T) -> (,) { (,) }\nfn feed<-T>(x: T) -> (,) { (,) }\n";
+const SIGNED: &str = "func keep<+T>(x: T) -> (,) { (,) }\nfunc feed<-T>(x: T) -> (,) { (,) }\n";
 
 #[test]
 fn an_unsolved_type_meeting_both_polarities_is_refused() {
@@ -28,7 +28,7 @@ fn an_unsolved_type_meeting_both_polarities_is_refused() {
         "let_both",
         &format!(
             "{SIGNED}
-            command main | (exit: -i32) / {{IO}} {{
+            proc main | (exit: -i32) / {{IO}} {{
                 let v = mu {{ k <= <0 | exit> }};
                 <v | keep;
                 <v | feed;
@@ -46,7 +46,7 @@ fn a_lambda_parameter_meeting_both_polarities_is_refused() {
         "lambda_both",
         &format!(
             "{SIGNED}
-            command main | (exit: -i32) / {{IO}} {{
+            proc main | (exit: -i32) / {{IO}} {{
                 let f = fn(x) {{ <x | keep; <x | feed }};
                 <0 | exit>
             }}"
@@ -63,7 +63,7 @@ fn a_lambda_parameter_takes_the_polarity_of_the_parameter_it_meets() {
         "lambda_one",
         &format!(
             "{SIGNED}
-            command main | (exit: -i32) / {{IO}} {{
+            proc main | (exit: -i32) / {{IO}} {{
                 let f = fn(x) {{ <x | keep }};
                 <\"done\" | println;
                 <0 | exit>

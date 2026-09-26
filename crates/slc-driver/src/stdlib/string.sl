@@ -10,7 +10,7 @@ pub menu Builder {
     finish: String,
 }
 
-fn from(text: String, part: String) -> Builder {
+func from(text: String, part: String) -> Builder {
     let text = <(text, part) | add;
     mu Builder {
         append <= <fn(part: String) { <(text, part) | from } | append>,
@@ -18,7 +18,7 @@ fn from(text: String, part: String) -> Builder {
     }
 }
 
-pub fn new() -> Builder {
+pub func new() -> Builder {
     mu Builder {
         append <= <fn(part: String) { <("", part) | from } | append>,
         finish <= <"" | finish>,
@@ -26,6 +26,6 @@ pub fn new() -> Builder {
 }
 
 // `Display` makes the builder useful for values as well as literal text.
-pub fn push<+T: Display>(builder: Builder, value: T) -> Builder {
+pub func push<+T: Display>(builder: Builder, value: T) -> Builder {
     <value | fmt | builder.append
 }

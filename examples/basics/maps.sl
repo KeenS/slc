@@ -9,21 +9,21 @@ use list::List;
 use list::List::*;
 use map::Map;
 
-fn height(m: Map<i64, i64>) -> i64 {
-    match m {
+func height(m: Map<i64, i64>) -> i64 {
+    of m {
         Map::Empty => 0,
         Map::Node(_, _, _, _, h) => h,
     }
 }
 
-fn range(n: i64, limit: i64) -> List<(i64, i64)> {
-    match (<(n, limit) | gt) {
+func range(n: i64, limit: i64) -> List<(i64, i64)> {
+    of (<(n, limit) | gt) {
         True => Nil,
         _ => Cons((n, n), <(<(n, 1) | add, limit) | range),
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // The order the tree is built on.
     <("a", "b") | lt | println; // true
     <("b", "a") | lt | println; // false
@@ -38,10 +38,10 @@ command main | (exit: i32) / {IO} {
     <grown | fmt | println; // {a: 2, m: 1, z: 3}
 
     <mu i64 {
-        out <= <(grown, "m") | map::get | (out & select String { message => <0 | out> })>,
+        out <= <(grown, "m") | map::get | (out & mu String { message => <0 | out> })>,
     } | println; // 1
     <mu String {
-        out <= <(grown, "no") | map::get | (select i64 { n => <n | int_to_str | out> } & out)>,
+        out <= <(grown, "no") | map::get | (mu i64 { n => <n | int_to_str | out> } & out)>,
     } | println; // nothing for that key
 
     let replaced = <(grown, "m", 9) | map::insert;

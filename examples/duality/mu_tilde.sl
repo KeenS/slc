@@ -12,24 +12,24 @@
 
 // A `mu` that hands its result to whatever consumer it is given — including
 // one built below.
-command twice<E>(x: i64) | (k: (-i64 / {..E})) / {..E} {
+proc twice<E>(x: i64) | (k: (-i64 / {..E})) / {..E} {
     <(x, 2) | mul | k>
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // 1. `let` is a μ̃. `let x = v; rest` lowers to
     //    `μlet.  v ∥ μ̃x.  rest ∥ let ⟩ ⟩`: the value is cut against a
     //    binder, and the rest of the block is what that binder runs.
     let doubled = <(21, 2) | mul;
     <doubled | println;
 
-    // 2. The same co-term, written directly. `select` builds the consumer of
+    // 2. The same co-term, written directly. `mu` builds the consumer of
     //    a positive type, and an atom is the degenerate product — one shape,
     //    one component — so its one arm binds the whole value with a plain
     //    name. This is `μ̃n. println(n) ∥ … ⟩`, spelled in the surface.
     mu (,) {
         next <= {
-            let show = select i64 {
+            let show = mu i64 {
                 n => {
                     <n | println;
                     <(,) | next>
@@ -47,7 +47,7 @@ command main | (exit: i32) / {IO} {
     //    below are that, taken apart.
     mu (,) {
         next <= {
-            let discard = select String {
+            let discard = mu String {
                 _ => {
                     <"the value was consumed" | println;
                     <(,) | next>
@@ -62,7 +62,7 @@ command main | (exit: i32) / {IO} {
     //    command sharing its context — which is what `;` means.
     mu (,) {
         next <= {
-            let report = select (i64, i64) {
+            let report = mu (i64, i64) {
                 (left, right) => {
                     <(left, right) | add | println;
                     <(,) | next>
@@ -74,7 +74,7 @@ command main | (exit: i32) / {IO} {
 
     // 5. A μ̃ is an ordinary consumer, so it goes wherever one is wanted: this
     //    one is the continuation `twice` activates.
-    <50 | twice | select i64 {
+    <50 | twice | mu i64 {
         n => {
             <n | println;
             <0 | exit>

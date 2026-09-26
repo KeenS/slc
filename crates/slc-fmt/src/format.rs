@@ -451,11 +451,10 @@ impl Formatter {
             docs.extend([self.bump(), text(" ")]);
         }
         // `fn(` or `fn {` is a lambda, an expression at the top level.
-        let is_lambda = matches!(self.kind_at(1), Some(T::LParen | T::LBrace));
         docs.push(match self.kind() {
             Some(T::Data | T::Form | T::Menu) => self.fields_decl()?,
             Some(T::Enum) => self.enum_decl()?,
-            Some(T::Fn) if !is_lambda => self.fn_decl()?,
+            Some(T::Func) => self.fn_decl()?,
             Some(T::Command) => self.command_decl()?,
             Some(T::Const) => self.const_decl()?,
             Some(T::Mod) => {
@@ -637,9 +636,9 @@ impl Formatter {
         }
     }
 
-    /// An effect's operation: `fn op(params) -> T;`.
+    /// A hook's operation: `func name(params) -> T;`.
     fn operation(&mut self) -> R<Doc> {
-        let mut docs = vec![self.expect(&T::Fn)?, text(" "), self.name("an operation name")?];
+        let mut docs = vec![self.expect(&T::Func)?, text(" "), self.name("an operation name")?];
         docs.push(self.params()?);
         if self.at(&T::Arrow) {
             docs.extend([text(" "), self.bump(), text(" "), self.ty()?]);
@@ -949,14 +948,16 @@ impl Formatter {
                 })?;
                 Ok(hugging(concat(vec![name, text(" "), fields])))
             }
-            Some(T::Mu | T::Select) => {
-                let is_mu = self.at(&T::Mu);
+            Some(T::Mu) => {
                 let mut docs = vec![self.bump()];
                 if !self.at(&T::LBrace) {
                     docs.extend([text(" "), self.ty()?]);
                 }
+                // `<=` answers a demand, so labels are copatterns. `=>` builds
+                // the consumer, whose arms are data patterns.
+                let demands = self.arm_list_demands();
                 docs.push(text(" "));
-                docs.push(self.braces(&[T::Comma], FIELDS, &mut |f| f.arm(is_mu))?);
+                docs.push(self.braces(&[T::Comma], FIELDS, &mut |f| f.arm(demands))?);
                 Ok(hugging(concat(docs)))
             }
             Some(T::Fn) => {
@@ -979,17 +980,17 @@ impl Formatter {
                 let docs = vec![self.bump(), text(" "), self.expr()?.doc];
                 Ok(plain(concat(docs)))
             }
-            Some(T::With) => {
-                let mut docs = vec![self.bump(), text(" "), self.scrutinee()?, text(" ")];
-                docs.extend([self.expect(&T::Handle)?, text(" "), self.expr()?.doc]);
-                Ok(plain(concat(docs)))
-            }
             Some(T::Handle) => {
                 let mut docs = vec![self.bump(), text(" "), self.scrutinee()?, text(" ")];
                 docs.push(self.braces(&[T::Comma], FIELDS, &mut |f| f.clause())?);
                 Ok(hugging(concat(docs)))
             }
             Some(T::Handler) => {
+                if !self.op_is_literal() {
+                    let mut docs = vec![self.bump(), text(" "), self.scrutinee()?, text(" ")];
+                    docs.extend([self.expect(&T::Handle)?, text(" "), self.expr()?.doc]);
+                    return Ok(plain(concat(docs)));
+                }
                 let mut docs = vec![self.bump(), text(" ")];
                 if self.at(&T::LBracket) {
                     let brackets = (&T::LBracket, &T::RBracket);
@@ -1017,6 +1018,51 @@ impl Formatter {
             }
             Some(T::LBrace) => self.block().map(hugging),
             _ => self.error("an expression"),
+        }
+    }
+
+    /// The arm list's `{` is the current token. `<=` at the arm's depth
+    /// answers a demand; `=>` builds the consumer.
+    fn arm_list_demands(&self) -> bool {
+        let mut depth = 0i32;
+        for tok in &self.toks[self.pos..] {
+            match &tok.kind {
+                T::LBrace | T::LParen | T::LBracket => depth += 1,
+                T::RBrace | T::RParen | T::RBracket if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                T::Le if depth == 1 => return true,
+                T::FatArrow if depth == 1 => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// `op` is the current token. A following `[`, `{`, or effect path and
+    /// `{` is the handler value; anything else is `op h do e`.
+    fn op_is_literal(&self) -> bool {
+        match self.kind_at(1) {
+            Some(T::LBrace | T::LBracket) => true,
+            Some(T::Ident(_)) => {
+                let mut i = self.pos + 1;
+                loop {
+                    if !matches!(self.toks.get(i).map(|tok| &tok.kind), Some(T::Ident(_))) {
+                        return false;
+                    }
+                    i += 1;
+                    if self.toks.get(i).map(|tok| &tok.kind) == Some(&T::ColonColon) {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                matches!(self.toks.get(i).map(|tok| &tok.kind), Some(T::LBrace))
+            }
+            _ => false,
         }
     }
 

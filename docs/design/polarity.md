@@ -5,7 +5,7 @@ Part of the [language design](../../DESIGN.md).
 A **returning function** uses `->` and produces a value:
 
 ```sl
-fn plus(x: +i32, y: +i32) -> i32 {
+func plus(x: +i32, y: +i32) -> i32 {
     <(x, y) | add
 }
 ```
@@ -16,8 +16,8 @@ written with the reverse arrow:
 ```sl
 enum Status { Ok(i64), Failed(i64) }
 
-fn report(success: -i64, failure: -i64) <- Status {
-    select Status {
+func report(success: -i64, failure: -i64) <- Status {
+    mu Status {
         Ok(code) => <code | success>,
         Failed(code) => <code | failure>,
     }
@@ -30,7 +30,7 @@ The arrows identify the direction of the cut:
 - `fn(continuation_params) <- ContinuationType` consumes continuations and
   produces a continuation.
 
-There is one `fn` declaration form. The old `+fn` and `-fn` prefixes do not
+There is one `func` declaration form. The old `+fn` and `-fn` prefixes do not
 exist. Both orientations have negative function types; "returning" does not
 mean positive polarity or call-by-value evaluation. Argument and result
 types determine evaluation independently of the declaration's orientation.
@@ -47,18 +47,18 @@ expected. There are four places to write one, and all four occur:
 
 | | argument position | continuation position |
 |---|---|---|
-| **positive type** | data arrives: `fn f(x: +i64)` | the type after `<-`: `fn config() <- Request` |
-| **negative type** | a consumer arrives: `fn f(note: -String)` | the row of a `command`: `command f \| (k: -i64)` |
+| **positive type** | data arrives: `func f(x: +i64)` | the type after `<-`: `func config() <- Request` |
+| **negative type** | a consumer arrives: `func f(note: -String)` | the row of a `proc`: `proc f \| (k: -i64)` |
 
 The diagonal is the ordinary reading — data in, control out. The other two are
 what polarity buys:
 
 - A **negative type in argument position** is a consumer received as data. A
-  returning `fn` may take one, because it returns rather than ending in a cut,
-  so it promises nothing about consuming it; a `command` splits its parameters by
+  returning `func` may take one, because it returns rather than ending in a cut,
+  so it promises nothing about consuming it; a `proc` splits its parameters by
   polarity, so a consumer there belongs in the continuation group instead.
 - A **positive type in continuation position** is the type after `<-`. A
-  continuation is named by the type it consumes, so `fn config() <- Request`
+  continuation is named by the type it consumes, so `func config() <- Request`
   writes a positive type and produces its consumer.
 
 Consuming codata reverses a cut's usual sides: a provider is negative, so what
@@ -67,7 +67,7 @@ consumes it is its dual — the positive request. In
 request is the value.
 
 `examples/duality/polarity.sl` writes all four; `examples/errors/polarity_error.sl` writes
-the two a `command` rejects.
+the two a `proc` rejects.
 
 A type the checker has not solved yet still has a polarity once it meets a
 generic parameter that states one: meeting `<+T>` makes it positive, meeting
@@ -79,7 +79,7 @@ negative — before anything solves it.
 ### Continuation rows
 
 The continuation parameters of a consumer transformer, and the second parameter
-group of a `command`, form that declaration's **continuation row**. A row is
+group of a `proc`, form that declaration's **continuation row**. A row is
 compared **positionally and invariantly**:
 
 - Two rows are equal when they have the same width and their positions are
@@ -96,7 +96,7 @@ of exactly the declared type, so a wider, narrower, or reordered row is a
 different interface — not a compatible one.
 
 The core is **classical**, so continuations are not linear. A row position may
-go unused — a `command` that reaches one continuation and ignores the rest is
+go unused — a `proc` that reaches one continuation and ignores the rest is
 well-formed — and a continuation may be mentioned several times, since a cut
 does not return, so at most one actually runs (a parser can forward its error
 consumer to a sub-parser *and* cut against it in the continuation that
@@ -128,18 +128,18 @@ An exit is taken by naming it where a command stands — an arm, a block's
 statement or its end — and passed on by naming it anywhere else:
 
 ```sl
-command pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
-    match c { True => then, _ => otherwise }       // runs the exit
+proc pick<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+    of c { True => then, _ => otherwise }       // runs the exit
 }
 
-command forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
+proc forward<E>(c: Bool) | (then: Delayed<(;), ..E> & otherwise: Delayed<(;), ..E>) / {..E} {
     <c | pick | (then & otherwise)>               // passes them on
 }
 ```
 
-What *is* enforced is that control is **total**: a `command` body must be `⊥`
+What *is* enforced is that control is **total**: a `proc` body must be `⊥`
 — it reaches a continuation on every path — so a body that falls off the end
-(a bare value) or dangles (a `match` with an arm that yields a value) is
+(a bare value) or dangles (an `of` with an arm that yields a value) is
 rejected by the type checker, not by any linearity pass. A call
 supplies each row position a continuation of exactly the declared type.
 
@@ -156,20 +156,20 @@ variable carries no polarity of its own, so the mark is
 required — on type declarations, functions, commands and impls alike — and
 it goes on the declaration because `-T` in a type already means `dual(T)`.
 A row variable, used as `..E`, ranges over effects rather than types and
-takes no mark: `fn map<+A, +B, E>`.
+takes no mark: `func map<+A, +B, E>`.
 
 The mark is held against every use. A call, a function named as a value, and
 a construction — a variant, a record, a `mu` over a generic menu — give each
 parameter a type once the declaration's unification has finished, and a
 positive parameter given a function, a consumer or a menu is refused, as is
 a negative one given data. Inside a generic body a parameter carries its own
-mark, so `fn f<-U>(x: U) -> U { <x | id }` is refused when `id` declares
+mark, so `func f<-U>(x: U) -> U { <x | id }` is refused when `id` declares
 `<+T>`. A type written in a declaration's signature is held to the same rule:
 with `enum List<+T>`, `List<-i64>` and `List<(i64 -> i64)>` are refused, and
 a list of consumers is a declaration of its own.
 
 An unrestricted parameter can forward or store its argument, but cannot
-assume it is positive or negative. `fn id<*T>(value: T) -> T { value }`
+assume it is positive or negative. `func id<*T>(value: T) -> T { value }`
 accepts both data and functions. Passing its `T` to a `<+U>`-only function
 is refused. A computation whose result has unrestricted polarity needs
 an explicit evaluation choice if inference cannot settle that polarity.
@@ -179,8 +179,8 @@ With `<+T>`, `T` is positive; a bare `T` in a continuation row denotes its
 dual consumer, not a negative instantiation of `T`:
 
 ```sl
-fn id<+T>(value: T) -> T { value }
-fn consume<+T>(ok: T) <- T { ok }
+func id<+T>(value: T) -> T { value }
+func consume<+T>(ok: T) <- T { ok }
 ```
 
 An explicit sign also states the position's polarity: `+T` is rejected in
@@ -197,12 +197,12 @@ parameters lower to λ binders as well — a continuation is a value like any ot
 trivial one. A binder stands for **every** value of its type — there is no
 other arm to fall to — so the pattern must be irrefutable: tuples, bundles,
 records, single-variant enums, and `_` all qualify, and a many-variant enum
-is refused with a pointer at `match`.
+is refused with a pointer at `of`.
 
 ```sl
 let (a, b) = pair;
 let Point { x, y } = origin;
-fn skew((a, b): (i64, i64), c: i64) -> i64 { <(a, c) | mul | x => (x, b) | sub }
+func skew((a, b): (i64, i64), c: i64) -> i64 { <(a, c) | mul | x => (x, b) | sub }
 ```
 
 This is what the unary calling convention already stood on. A declaration
@@ -216,7 +216,7 @@ A **continuation parameter is a name**. Control leaves through it, and a
 pattern has nowhere to leave through — the group as a whole is the bundle
 pattern, and its leaves are the names of the exits.
 
-`let … else` is out of scope: a binder that may fail is a `match`.
+`let … else` is out of scope: a binder that may fail is an `of`.
 `examples/basics/patterns.sl` writes all of it.
 
 ### When a `let` computes
@@ -261,7 +261,7 @@ standing as a command runs the exit it holds (see "Continuation rows").
 
 A plain `let` follows the polarity of its type. A negative computation is
 delayed, as `let-` would; a positive one is computed where it is written, as
-`let+` would; and a value — a literal, a name, a `fn`, a `select`, a
+`let+` would; and a value — a literal, a name, a `func`, a `mu`, a
 constructor of values — ran nothing, so it is bound as it is. Which one a
 binding is may be known only once the declaration's unification has
 finished, so it is settled then, and a computation whose polarity is still
@@ -277,7 +277,7 @@ its result may have either polarity.
 
 Effects follow the same rule. A delayed computation performs nothing where it
 is written: what it performs happens at each use, under the handlers around
-that use, so a `let-` written inside a `handle` and used after the `handle`
+that use, so a `let-` written inside a `do` and used after the `do`
 has returned answers to the handlers outside it. `let+` is how a computation
 performs under the handler where it is written. What a delayed computation
 performs rides on its type as a row ([Effects and handlers](effects.md)), so
@@ -307,7 +307,7 @@ as effect promises, without changing call-by-name evaluation.
 Put the eager binding *inside* the construction handler:
 
 ```sl
-let+ ready = handle { let+ value = pending; value } {
+let+ ready = do { let+ value = pending; value } {
     build(): resume => <10 | resume
 };
 ```
@@ -316,9 +316,9 @@ Merely handling the expression `pending` does not force it, and a `let+`
 outside that handler cannot move forcing back inside it.
 
 ```sl
-let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
+let g = do { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };
 <5 | g | println;              // refused: `make` performs `Exn` here, unhandled
 
 let pair = (1, make());        // stored, it performs nothing yet
-let r = handle <5 | pair.1 { throw(m) => -1 };   // and performs here, handled
+let r = do <5 | pair.1 { throw(m) => -1 };   // and performs here, handled
 ```

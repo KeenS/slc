@@ -5,7 +5,7 @@
 // Since the states are persistent, two builders can share a prefix and then
 // diverge without affecting one another.
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let start = string::new();
     let left = <(start, "left: ") | string::push;
     let left = <(left, 42) | string::push;

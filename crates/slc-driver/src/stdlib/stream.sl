@@ -14,21 +14,21 @@ pub menu Stream<+T, E> / {..E} {
     tail: Delayed<Stream<T, ..E>, ..E>,
 }
 
-pub fn repeat<+T>(x: T) -> Stream<T> {
+pub func repeat<+T>(x: T) -> Stream<T> {
     mu Stream {
         head <= <x | head>,
         tail <= <x | repeat | tail>,
     }
 }
 
-pub fn count_from(n: i64) -> Stream<i64> {
+pub func count_from(n: i64) -> Stream<i64> {
     mu Stream {
         head <= <n | head>,
         tail <= <(n, 1) | add | count_from | tail>,
     }
 }
 
-pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Delayed<Stream<A, ..E>, ..E>) -> Stream<B, ..E> {
+pub func map<+A, +B, E>(f: (A -> B / {..E}), s: Delayed<Stream<A, ..E>, ..E>) -> Stream<B, ..E> {
     mu Stream {
         head <= <s.head | f | head>,
         tail <= <(f, s.tail) | map | tail>,
@@ -36,8 +36,8 @@ pub fn map<+A, +B, E>(f: (A -> B / {..E}), s: Delayed<Stream<A, ..E>, ..E>) -> S
 }
 
 // The bridge back to data: the first `n` elements, as a list.
-pub fn take<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> list::List<T> / {..E} {
-    match (<(n, 0) | le) {
+pub func take<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> list::List<T> / {..E} {
+    of (<(n, 0) | le) {
         True => { Nil },
         _ => { Cons(s.head, <(s.tail, <(n, 1) | sub) | take) },
     }
@@ -49,21 +49,21 @@ pub fn take<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> list::List<T> / {
 // *is* the element. Only the demanded arm runs, so the step runs once
 // per demand.
 
-pub fn unfold<+S, +T, E>(step: (S -> (T, S) / {..E}), seed: S) -> Stream<T, ..E> {
+pub func unfold<+S, +T, E>(step: (S -> (T, S) / {..E}), seed: S) -> Stream<T, ..E> {
     mu Stream {
         head <= <(<seed | step).0 | head>,
         tail <= <(step, (<seed | step).1) | unfold | tail>,
     }
 }
 
-pub fn iterate<+T, E>(f: (T -> T / {..E}), x: T) -> Stream<T, ..E> {
+pub func iterate<+T, E>(f: (T -> T / {..E}), x: T) -> Stream<T, ..E> {
     mu Stream {
         head <= <x | head>,
         tail <= <(f, <x | f) | iterate | tail>,
     }
 }
 
-pub fn zip<+A, +B, E>(
+pub func zip<+A, +B, E>(
     a: Delayed<Stream<A, ..E>, ..E>,
     b: Delayed<Stream<B, ..E>, ..E>,
 ) -> Stream<(A, B), ..E> {
@@ -75,8 +75,8 @@ pub fn zip<+A, +B, E>(
 
 // Unlike the others this forces as it goes: `n` demands happen here
 // rather than at the first demand of the result.
-pub fn drop<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> Stream<T, ..E> / {..E} {
-    match (<(n, 0) | le) {
+pub func drop<+T, E>(s: Delayed<Stream<T, ..E>, ..E>, n: i64) -> Stream<T, ..E> / {..E} {
+    of (<(n, 0) | le) {
         True => {
             let+ ready = s;
             ready

@@ -12,25 +12,25 @@ enum Id {
 }
 
 impl Eq for Id {
-    fn eq(self: Id, other: Id) -> Bool {
-        match self {
-            A => match other {
+    func eq(self: Id, other: Id) -> Bool {
+        of self {
+            A => of other {
                 A => True,
                 _ => False,
             },
-            B => match other {
+            B => of other {
                 B => True,
                 _ => False,
             },
         }
     }
-    fn ne(self: Id, other: Id) -> Bool {
-        match self {
-            A => match other {
+    func ne(self: Id, other: Id) -> Bool {
+        of self {
+            A => of other {
                 A => False,
                 _ => True,
             },
-            B => match other {
+            B => of other {
                 B => False,
                 _ => True,
             },
@@ -39,31 +39,31 @@ impl Eq for Id {
 }
 
 impl Hash for Id {
-    fn hash(self: Id) -> u64 {
+    func hash(self: Id) -> u64 {
         0
     }
 }
 
 impl Display for Id {
-    fn fmt(self: Id) -> String {
-        match self {
+    func fmt(self: Id) -> String {
+        of self {
             A => "A",
             B => "B",
         }
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let base = <(hashmap::empty(), "m", 1) | hashmap::insert;
     let grown = <(<(base, "a", 2) | hashmap::insert, "m", 9) | hashmap::insert;
     <base | fmt | println; // {m: 1}
     <grown | fmt | println; // {m: 9, a: 2}
     <grown | hashmap::length | println; // 2
     <mu i64 {
-        out <= <(grown, "m") | hashmap::get | (out & select String { _ => <0 | out> })>,
+        out <= <(grown, "m") | hashmap::get | (out & mu String { _ => <0 | out> })>,
     } | println; // 9
     <mu i64 {
-        out <= <(grown, "z") | hashmap::get | (out & select String { _ => <-1 | out> })>,
+        out <= <(grown, "z") | hashmap::get | (out & mu String { _ => <-1 | out> })>,
     } | println; // -1
     <(grown, "a") | hashmap::contains | println; // true
     <(<(grown, "nope") | hashmap::remove) | hashmap::length | println; // 2

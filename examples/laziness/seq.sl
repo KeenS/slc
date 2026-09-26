@@ -17,17 +17,17 @@
 
 use list::List::*;
 
-fn odd(n: i64) -> Bool { <(n, 2) | rem | x => (x, 1) | eq }
-fn double(n: i64) -> i64 { <(n, 2) | mul }
-fn under_ten(n: i64) -> Bool { <(n, 10) | lt }
+func odd(n: i64) -> Bool { <(n, 2) | rem | x => (x, 1) | eq }
+func double(n: i64) -> i64 { <(n, 2) | mul }
+func under_ten(n: i64) -> Bool { <(n, 10) | lt }
 
 // A step function is another way to write a stream: each step answers an
 // element and the seed the rest is built from.
-fn halving(n: i64) -> (i64, i64) {
+func halving(n: i64) -> (i64, i64) {
     (n, <(n, 2) | div)
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let xs = Cons(1, Cons(2, Cons(3, Cons(4, Cons(5, Nil)))));
 
     // Over data, `Seq` is an ordinary lazy pipeline: nothing runs until

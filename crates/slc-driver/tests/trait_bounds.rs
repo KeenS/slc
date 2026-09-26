@@ -17,8 +17,8 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const LOUD: &str = "trait Loud { fn shout(self: Self) -> String; }
-impl Loud for i64 { fn shout(self: i64) -> String { <(<self | fmt, \"!\") | add } }
+const LOUD: &str = "spec Loud { func shout(self: Self) -> String; }
+impl Loud for i64 { func shout(self: i64) -> String { <(<self | fmt, \"!\") | add } }
 ";
 
 #[test]
@@ -27,11 +27,11 @@ fn a_function_uses_every_trait_its_parameter_is_bound_by() {
         "function",
         &format!(
             "{LOUD}
-fn largest<+T: Ord + Loud + Display>(a: T, b: T) -> String {{
-    let big = match (<(a, b) | gt) {{ True => a, False => b }};
+func largest<+T: Ord + Loud + Display>(a: T, b: T) -> String {{
+    let big = of (<(a, b) | gt) {{ True => a, False => b }};
     <(<big | shout, <big | fmt) | add
 }}
-command main | (exit: i32) / {{IO}} {{
+proc main | (exit: i32) / {{IO}} {{
     <(3, 7) | largest | println;
     <0 | exit>
 }}"
@@ -49,14 +49,14 @@ fn an_impl_is_bound_the_same_way() {
             "{LOUD}
 data Pair<+T> {{ left: T, right: T }}
 impl<+T: Ord + Loud> Loud for Pair<T> {{
-    fn shout(self: Pair<T>) -> String {{
-        match (<(self.left, self.right) | gt) {{
+    func shout(self: Pair<T>) -> String {{
+        of (<(self.left, self.right) | gt) {{
             True => <self.left | shout,
             False => <self.right | shout,
         }}
     }}
 }}
-command main | (exit: i32) / {{IO}} {{
+proc main | (exit: i32) / {{IO}} {{
     <Pair {{ left: 3, right: 7 }} | shout | println;
     <0 | exit>
 }}"
@@ -72,8 +72,8 @@ fn a_bound_that_is_not_met_is_still_refused_by_name() {
         "unmet",
         &format!(
             "{LOUD}
-fn both<+T: Display + Loud>(x: T) -> String {{ <x | shout }}
-command main | (exit: i32) / {{IO}} {{
+func both<+T: Display + Loud>(x: T) -> String {{ <x | shout }}
+proc main | (exit: i32) / {{IO}} {{
     <\"text\" | both | println;
     <0 | exit>
 }}"
@@ -87,7 +87,7 @@ command main | (exit: i32) / {{IO}} {{
 fn bounds_are_joined_by_plus_and_not_by_a_second_colon() {
     let (ok, _, stderr) = run(
         "colon",
-        "fn f<+T: Ord: Display>(x: T) -> T { x }\ncommand main | (exit: i32) { <0 | exit> }",
+        "func f<+T: Ord: Display>(x: T) -> T { x }\nproc main | (exit: i32) { <0 | exit> }",
     );
     assert!(!ok);
     assert!(stderr.contains("`+`") && stderr.contains("T: Ord + Display"), "{stderr}");
@@ -97,7 +97,7 @@ fn bounds_are_joined_by_plus_and_not_by_a_second_colon() {
 fn a_type_declaration_still_carries_no_bounds() {
     let (ok, _, stderr) = run(
         "data",
-        "data Box<+T: Ord + Display> { inner: T }\ncommand main | (exit: i32) { <0 | exit> }",
+        "data Box<+T: Ord + Display> { inner: T }\nproc main | (exit: i32) { <0 | exit> }",
     );
     assert!(!ok);
     assert!(stderr.contains("carry no bounds"), "{stderr}");

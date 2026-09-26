@@ -36,7 +36,7 @@ Type      A ::= +B | -B               positive / negative atom
 
 `co(e)` reifies a co-term as a value: a consumer on the value side,
 so that a consumer can sit where a value is expected. The surface never
-writes it directly — `select` denotes a consumer and lowers straight to it,
+writes it directly — `mu` denotes a consumer and lowers straight to it,
 and a continuation passed as an argument arrives the same way. Its
 elimination is application: `⟨ co(e′) ∥ v · e ⟩ → ⟨ v ∥ e′ ⟩` sends the
 argument to the underlying co-term. The reification is invisible at
@@ -46,7 +46,7 @@ already in this form; the type is what they change.
 A declared continuation parameter and `μα. c` both bind a continuation
 variable, and they are not interchangeable. A declared parameter is an
 ordinary `λ` binder — the caller supplies the continuation, since a
-continuation is a value like any other, and that is a `command`'s row.
+continuation is a value like any other, and that is a `proc`'s row.
 `μα. c` captures the *ambient* continuation instead, and that is the `mu`
 expression.
 
@@ -58,7 +58,7 @@ the continuation, held as data rather than as host stack. A cut pushes the
 co-term side as a frame; `μ` captures the stack into a value; a captured
 continuation is activated by reinstating its stack, down to the nearest
 handler it shares with the running one, which is why it outlives its `mu`
-and can be used more than once. `select` branches stay unevaluated
+and can be used more than once. `mu` branches stay unevaluated
 until activation chooses one. A run is bounded only by memory; `slc run
 --fuel N` caps it at `N` machine steps, turning divergence into an error.
 
@@ -68,7 +68,7 @@ once, into a single flat instruction stream — a `Chunk`, one vector of nodes
 pointer. In it, every lexical binder is resolved to a de Bruijn index, so a
 variable reference is a count into a positional environment rather than a walk
 comparing names. What a compiler cannot resolve lexically — a global, a
-literal, or a `match` arm's pattern variables, which the pattern engine
+literal, or an `of` arm's pattern variables, which the pattern engine
 injects at run time — stays a name, found in a by-name overlay and then the
 globals table. Keeping pattern injections in their own overlay is what lets
 the indices be stable: an injected binding never shifts the positional chain,
@@ -123,11 +123,11 @@ Only the core's terms keep their own notation.
 ⟨ (v₁ ⊗ … ⊗ vₙ) ∥ μ̃(x₁, …, xₙ). c ⟩ → c[vᵢ/xᵢ]    product
 ```
 
-The labelled rule is what makes `select` lazy: the label of the value selects
+The labelled rule is what makes `mu` lazy: the label of the value selects
 one branch, and the branches that were not selected are discarded unreduced.
 The copattern rule is its mirror: the request selects one branch of the menu
 and binds the continuation it carries. The co-labelled rule is what lets
-`match` take a continuation apart — a reified request is a labelled
+`of` take a continuation apart — a reified request is a labelled
 positive value, so the arm binds the request's own continuation as a value.
 An `enum` has a branch per variant and a `data` exactly one, so the same
 rule covers the additive and the labelled multiplicative; the product rule is
@@ -150,24 +150,24 @@ storing them. Positive arguments are evaluated before computed stages.
 | `expr.lambda` | `fn(x: +A) -> B { e }` | `λx. ⟦e⟧`. A stage `x => e` is `fn(x) { e }`, and a stage `k <= e` followed by `rest>` is the closing consumer `<rest> \| fn(k) { e }` |
 | `expr.pair` | `(a, b, …)`, `(,)` | the tuple `(⟦a⟧ ⊗ ⟦b⟧ ⊗ …)`; `(,)` is `unit` |
 | `expr.inject` | `::i(v)` | `\|i(⟦v⟧)` — the position is the whole label, whatever the sum |
-| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `match` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.match` builds. A parameter pattern binds the group to one name and destructures it the same way |
+| `expr.let` | `let x = v; e` | `μlet. ⟨ ⟦v⟧ ∥ μ̃x. ⟨ ⟦e⟧ ∥ let ⟩ ⟩` — a binder is `μ̃`, the value abstraction. A binder that is a pattern is the one-arm `of` it abbreviates: `μ__match. ⟨ ⟦v⟧ ∥ μ̃p. ⟨⟦e⟧ ∥ __match⟩ ⟩`, over the same branch table `expr.of` builds. A parameter pattern binds the group to one name and destructures it the same way |
 | `expr.block` | `{ e₁; e₂ }` | `μ__seqᵢ. ⟨ ⟦e₁⟧ ∥ μ̃__discarded. ⟨ ⟦e₂⟧ ∥ __seqᵢ ⟩ ⟩` — both generated binders are fresh against the expressions they enclose |
-| `expr.flow` | `<v \| k>`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer; for a computed one, first bind the by-name input to a fresh `saved`, then evaluate the consumer and apply it to `saved`. The cut has no result. Open chains fold grouped applications; composition wraps that fold in a λ. A command takes its value group and exit bundle together; yielding exits compose returning callbacks into a fresh captured result continuation ([§5](control.md#5-command-consumer-abstraction)) |
+| `expr.flow` | `<v \| k>`, and every other chain | `μ__cut. ⟨ ⟦v⟧ ∥ k ⟩` for a named consumer; for a computed one, first bind the by-name input to a fresh `saved`, then evaluate the consumer and apply it to `saved`. The cut has no result. Open chains fold grouped applications; composition wraps that fold in a λ. A command takes its value group and exit bundle together; yielding exits compose returning callbacks into a fresh captured result continuation ([§5](control.md#5-proc-consumer-abstraction)) |
 | `expr.mu` | `mu A { k <= e }` | `μk. ⟨ ⟦e⟧ ∥ k ⟩` — the captured continuation, not a declared parameter; the type in front is what the expression produces |
-| `expr.match` | `match s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ λ__match_arg. ⟦e⟧)` |
+| `expr.match` | `of s { p => e, … }` | a match the core can express — every arm a shape (variant, record, tuple, request, or one whole-value binder), components binders or nested products, no duplicates — is a genuine cut: `μ__match. ⟨ ⟦s⟧ ∥ μ̃[T; L(x…). ⟨⟦e⟧ ∥ __match⟩ \| … ] ⟩` (`μ̃(x…)`/`μ̃x` for a product/atom). Anything order-sensitive — literals, or-patterns, a default among labelled arms — falls back to `__match_dispatch(⟦s⟧, arm₁, …)`, each arm `__match_arm(descriptor ⊗ λ__match_arg. ⟦e⟧)` |
 | `expr.data` | `S { f: v, g: w }` | `S((⟦v⟧ ⊗ ⟦w⟧))` — the declaration's name labelling the tuple of its fields, the same shape a variant has |
-| `expr.select` | `select T { p => c, … }` | `co(μ̃[T; L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃[T])` when it has no shapes; `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
+| `expr.select` | `mu T { p => c, … }` | `co(μ̃[T; L(x…). ⟦c⟧ … ])` for a labelled type — one branch per shape, the pattern's binders naming that shape's components — and `co(μ̃[T])` when it has no shapes; `co(μ̃(x…). ⟦c⟧)` for a product, and `co(μ̃x. ⟦c⟧)` for an atom, whose one binder takes the whole value |
 | `expr.comatch` | `mu T { item: k <= c, … }` | `μ[T; .T::item(k). ⟦c⟧ | …]` — the copattern form of `mu`: a menu value, one branch per demand. Nested copatterns group by their outer destructor: the branch binds `__k`, and its body cuts the inner menu against it |
 | `expr.request` | `.item(k)` | `co(.M::item(k))` for a named continuation; any other expression is bound first, then named. A demand `cfg.item` is `μ__ask. ⟨ ⟦cfg⟧ ∥ .M::item(__ask) ⟩` |
 | `decl.menu` | `menu M { item: A, … }` | no term of its own: `mu M { … }` builds the `μ[…]`, and its items name the `.M::item(e)` requests |
-| `decl.form` | `form F { field: A, … }` | no term of its own: `select F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
+| `decl.form` | `form F { field: A, … }` | no term of its own: `mu F` builds `co(μ̃[F; F(x…). ⟦c⟧])`, and `F { … }` builds the demand `F(⟦v⟧ ⊗ …)` it consumes |
 | `expr.consumer_argument` | `<k \| f` — a consumer as an argument | `⟦k⟧` — a consumer is a value; nothing to coerce |
-| `expr.handler` | `handler E { clauses }` | a labelled clause tree containing operation closures and the return closure, defaulting to identity; unmatched operations forward outward |
-| `expr.with_handler` | `with h handle body` | runtime handler installation with `⟦h⟧` and a thunk of `body`; inline `handle` builds the same clause tree |
-| `decl.fn.returning` | `fn f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
-| `decl.fn.transformer` | `fn f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
-| `decl.mu` | `command f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
-| `decl.const` | `const C: +A = v;` | `⟦v⟧` |
+| `expr.handler` | `op E { clauses }` | a labelled clause tree containing operation closures and the return closure, defaulting to identity; unmatched operations forward outward |
+| `expr.with_handler` | `op h do body` | runtime handler installation with `⟦h⟧` and a thunk of `body`; inline `do` builds the same clause tree |
+| `decl.fn.returning` | `func f(x: +A) -> B { e }` | `λx. ⟦e⟧` |
+| `decl.fn.transformer` | `func f(k: -A) <- B { e }` | `λk. ⟦e⟧` |
+| `decl.mu` | `proc f(x: +A) \| (k: -B) { e }` | `λx. λk. ⟦e⟧` |
+| `decl.const` | `def C: +A = v;` | `⟦v⟧` |
 | `decl.enum` | `enum E { V }` | one global per variant: `E::V = E::V(unit)` |
 | `decl.data` | `data S { … }` | no term; the declaration is a type |
 
@@ -187,18 +187,18 @@ the group. This is not partial application of individual source parameters.
 
 | Core construct | Surface representation |
 |---|---|
-| `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`fn … <- …`, a `command`’s row) |
+| `x`, `λx. t` | identifiers, functions, lambdas, and declared continuation parameters (`func … <- …`, a `proc`’s row) |
 | `μα. c` | local `mu` expression, a flow that closes against a named consumer, and the lowering of `let`, blocks, and applications |
 | `t ⊗ t` | tuple literals, `data` literals, `(A, B)` values |
 | `L(t)` | `enum` values and `data` values — a labelled product — and choices `::i(v)`, labelled by their position `\|i` |
 | `μ[M; .d(α). c \| …]` | `mu` over a `menu` — the copattern form |
 | `.d(e)` | a demand `cfg.item`, and the consumer inside a request literal `.item(k)` |
-| `co(e)` | `select`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
+| `co(e)` | `mu`, and every consumer in value position — a reified co-term, and a `form` value, `(k1 ; k2)` included |
 | `α` | the consumer named on the right of a cut, `<v \| k>` |
 | `v · e` | application, `<a \| f`, and a cut whose consumer is computed rather than named, which applies the resulting consumer after binding the input |
-| `μ̃x. c` | every binder: `let`, a discarded block expression; written directly as `select +A { x => c }` |
-| `μ̃[T; …]`, `μ̃[T]` | `select` over an `enum`, a `data` or a sum `(A \| B)`, including `select (\|) {}` |
-| `μ̃(x…)` | `select` over a bare product |
+| `μ̃x. c` | every binder: `let`, a discarded block expression; written directly as `mu +A { x => c }` |
+| `μ̃[T; …]`, `μ̃[T]` | `mu` over an `enum`, a `data` or a sum `(A \| B)`, including `mu (\|) {}` |
+| `μ̃(x…)` | `mu` over a bare product |
 | `prj:i` | `base.i` (tuple) and `base.field` (a record), the field resolved to its index from the base type |
 
 ### Classical control
@@ -209,12 +209,12 @@ negation is an involution, so its elimination is the identity. Excluded
 middle uses `mu`, which hands out the continuation of its expression:
 
 ```sl
-fn dne<+T>(value: -(-T)) -> T { value }
+func dne<+T>(value: -(-T)) -> T { value }
 
 // A ⊕ ¬A: answer with the refutation, which is the continuation in disguise.
-fn lem() -> Choice {
+func lem() -> Choice {
     mu { k <=
-        <Choice::Refutes(select i64 { a => <Choice::Holds(a) | k> }) | k>
+        <Choice::Refutes(mu i64 { a => <Choice::Holds(a) | k> }) | k>
     }
 }
 ```
@@ -232,7 +232,7 @@ captures by reifying it. Activating `k` *reinstates* that stack — after the
 `mu` has answered, from however deep, as many times as it is reached, down
 to the nearest handler the two stacks share
 ([§6](control.md#6-mu-capturing-the-current-continuation)) — so
-taking `lem()`'s offer re-enters the very `match` that already received
+taking `lem()`'s offer re-enters the very `of` that already received
 `Refutes`, which this time holds.
 
 ## 12. Error continuations
@@ -242,8 +242,8 @@ a parse operation receives both a success continuation and an error
 continuation:
 
 ```sl
-let parsed = select +String { value => { <("parsed: ", value) | add | println; <0 | exit> } };
-let failed = select +String { message => { <("error: ", message) | add | println; <1 | exit> } };
+let parsed = mu +String { value => { <("parsed: ", value) | add | println; <0 | exit> } };
+let failed = mu +String { message => { <("error: ", message) | add | println; <1 | exit> } };
 <source | parse_json | (parsed & failed)>
 ```
 

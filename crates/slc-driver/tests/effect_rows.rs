@@ -34,17 +34,17 @@ fn accepted(name: &str, source: &str) -> String {
 
 fn with_main(decls: &[&str], body: &str) -> String {
     let mut source = decls.concat();
-    source.push_str("command main | (exit: -i32) / {IO} {\n");
+    source.push_str("proc main | (exit: -i32) / {IO} {\n");
     source.push_str(body);
     source.push_str("\n<0 | exit>\n}\n");
     source
 }
 
-const EXN: &str = "effect Exn { fn throw(m: String) -> i64; }\n";
-const MAIN: &str = "command main | (exit: -i32) / {IO} { <0 | exit> }\n";
-const RISKY: &str = "fn risky(x: i64) -> i64 / {Exn} { <\"boom\" | throw }\n";
+const EXN: &str = "hook Exn { func throw(m: String) -> i64; }\n";
+const MAIN: &str = "proc main | (exit: -i32) / {IO} { <0 | exit> }\n";
+const RISKY: &str = "func risky(x: i64) -> i64 / {Exn} { <\"boom\" | throw }\n";
 
-const PAIR_OPS: &str = "effect PairOps { fn first() -> i64; fn second() -> i64; }\n";
+const PAIR_OPS: &str = "hook PairOps { func first() -> i64; func second() -> i64; }\n";
 
 #[test]
 fn a_handler_must_answer_every_operation_of_a_handled_effect() {
@@ -52,21 +52,21 @@ fn a_handler_must_answer_every_operation_of_a_handled_effect() {
         "incomplete_file_handler",
         &with_main(
             &[],
-            "let outcome = handle <(\"unused\", \"text\") | fs::write_file { fs::read_file(path): resume => <::0(\"mock\") | resume };",
+            "let outcome = do <(\"unused\", \"text\") | fs::write_file { fs::read_file(path): resume => <::0(\"mock\") | resume };",
         ),
         &["fs::Fs", "6 operations", "fs::write_file", "_ => forward"],
     );
     for body in ["second()", "1"] {
         refused(
             &format!("incomplete_handler_{}", if body == "1" { "pure" } else { "effectful" }),
-            &with_main(&[PAIR_OPS], &format!("<handle ({body}) {{ first() => 1 }} | println;")),
-            &["handler", "PairOps", "second", "_ => forward"],
+            &with_main(&[PAIR_OPS], &format!("<do ({body}) {{ first() => 1 }} | println;")),
+            &["`op`", "PairOps", "second", "_ => forward"],
         );
     }
     assert_eq!(
         accepted(
             "complete_handler",
-            &with_main(&[PAIR_OPS], "<handle second() { first() => 1, second() => 2 } | println;"),
+            &with_main(&[PAIR_OPS], "<do second() { first() => 1, second() => 2 } | println;"),
         ),
         "2\n",
     );
@@ -76,15 +76,18 @@ fn a_handler_must_answer_every_operation_of_a_handled_effect() {
 fn a_forwarding_handler_keeps_the_effect_for_an_outer_handler() {
     refused(
         "forwarding_without_outer_handler",
-        &with_main(&[PAIR_OPS], "<handle second() { first() => 1, _ => forward } | println;"),
+        &with_main(&[PAIR_OPS], "<do second() { first() => 1, _ => forward } | println;"),
         &["effect:", "PairOps"],
     );
     assert_eq!(
         accepted(
             "forwarding_multishot",
             &with_main(
-                &[PAIR_OPS, "fn run() -> i64 / {PairOps} { let before = first(); let middle = second(); let after = first(); <(<(before, middle) | add, after) | add }"],
-                "let result = handle (handle run() { first(): resume => <1 | resume, _ => forward }) {
+                &[
+                    PAIR_OPS,
+                    "func run() -> i64 / {PairOps} { let before = first(); let middle = second(); let after = first(); <(<(before, middle) | add, after) | add }"
+                ],
+                "let result = do (do run() { first(): resume => <1 | resume, _ => forward }) {
                     first(): resume => <100 | resume,
                     second(): resume => <(<2 | resume, <3 | resume) | add
                 };
@@ -97,14 +100,14 @@ fn a_forwarding_handler_keeps_the_effect_for_an_outer_handler() {
 
 #[test]
 fn an_escaping_exit_cannot_forget_its_row() {
-    let source = "effect Tick { fn tick() -> (,); }
+    let source = "hook Tick { func tick() -> (,); }
         data Stored { consumer: -i64 }
-        command store | (consumer: i64 & stored: Stored) {
+        proc store | (consumer: i64 & stored: Stored) {
             <Stored { consumer: consumer } | stored>
         }
-        command main | (exit: -i32) / {IO} {
-            let saved = handle (mu Stored { stored <=
-                <(,) | store | (select i64 { value => { tick(); <0 | exit> } } & stored)>
+        proc main | (exit: -i32) / {IO} {
+            let saved = do (mu Stored { stored <=
+                <(,) | store | (mu i64 { value => { tick(); <0 | exit> } } & stored)>
             }) { tick(): resume => <(,) | resume };
             <42 | saved.consumer>
         }";
@@ -113,35 +116,35 @@ fn an_escaping_exit_cannot_forget_its_row() {
 
 #[test]
 fn an_escaping_exit_is_handled_when_activated_not_when_passed() {
-    let declarations = "effect Tick { fn tick() -> (,); }
+    let declarations = "hook Tick { func tick() -> (,); }
         data Stored<E> { consumer: (-i64 / {..E}) }
-        command store<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
+        proc store<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
             <Stored { consumer: consumer } | stored>
         }
-        command forward<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
+        proc forward<E> | (consumer: (-i64 / {..E}) & stored: Stored<..E>) {
             <(,) | store | (consumer & stored)>
         }";
-    let setup = "let saved = handle (mu Stored<{Tick}> { stored <=
-            <(,) | forward | (select i64 { value => { tick(); <0 | exit> } } & stored)>
+    let setup = "let saved = do (mu Stored<{Tick}> { stored <=
+            <(,) | forward | (mu i64 { value => { tick(); <0 | exit> } } & stored)>
         }) { tick(): resume => { <\"construction\" | println; <(,) | resume } };";
     for (label, stored) in
-        [("direct", "consumer"), ("closure", "select i64 { value => <value | consumer> }")]
+        [("direct", "consumer"), ("closure", "mu i64 { value => <value | consumer> }")]
     {
         let declarations =
             declarations.replace("consumer: consumer", &format!("consumer: {stored}"));
         refused(
             &format!("escaping_rowed_exit_{label}"),
             &format!(
-                "{declarations} command main | (exit: -i32) / {{IO}} {{ {setup} <42 | saved.consumer> }}"
+                "{declarations} proc main | (exit: -i32) / {{IO}} {{ {setup} <42 | saved.consumer> }}"
             ),
             &["effect:", "Tick"],
         );
         assert_eq!(
             accepted(
                 &format!("escaping_rowed_exit_handled_{label}"),
-                &format!("{declarations} command main | (exit: -i32) / {{IO}} {{
+                &format!("{declarations} proc main | (exit: -i32) / {{IO}} {{
                 {setup}
-                handle (<42 | saved.consumer>) {{ tick(): resume => {{ <\"activation\" | println; <(,) | resume }} }}
+                do (<42 | saved.consumer>) {{ tick(): resume => {{ <\"activation\" | println; <(,) | resume }} }}
             }}"),
             ),
             "activation\n",
@@ -154,10 +157,10 @@ fn a_generic_exit_cannot_be_stored_as_a_pure_consumer() {
     refused(
         "generic_exit_pure_storage",
         "data Stored { consumer: -i64 }
-        command store<E> | (consumer: (-i64 / {..E}) & stored: Stored) {
+        proc store<E> | (consumer: (-i64 / {..E}) & stored: Stored) {
             <Stored { consumer: consumer } | stored>
         }
-        command main | (exit: -i32) / {IO} { <0 | exit> }",
+        proc main | (exit: -i32) / {IO} { <0 | exit> }",
         &["effect:", "..E"],
     );
 }
@@ -167,10 +170,10 @@ fn an_unused_exit_does_not_perform_its_row() {
     assert_eq!(
         accepted(
             "unused_rowed_exit",
-            "effect Tick { fn tick() -> (,); }
-            command ignore<E> | (unused: (-i64 / {..E}) & done: i32) { <0 | done> }
-            command main | (exit: -i32) / {IO} {
-                <(,) | ignore | (select i64 { value => { tick(); <0 | exit> } } & exit)>
+            "hook Tick { func tick() -> (,); }
+            proc ignore<E> | (unused: (-i64 / {..E}) & done: i32) { <0 | done> }
+            proc main | (exit: -i32) / {IO} {
+                <(,) | ignore | (mu i64 { value => { tick(); <0 | exit> } } & exit)>
             }",
         ),
         "",
@@ -182,22 +185,22 @@ fn returned_values_cannot_charge_latent_effects_to_construction() {
     for (name, declaration) in [
         (
             "returned_consumer",
-            "fn make(out: -i64) -> -i64 / {Exn} {
-                select i64 { value => <(<\"late\" | throw) | out> }
+            "func make(out: -i64) -> -i64 / {Exn} {
+                mu i64 { value => <(<\"late\" | throw) | out> }
             }",
         ),
         (
             "returned_menu",
             "menu Counter { value: i64 }
-            fn make() -> Counter / {Exn} {
+            func make() -> Counter / {Exn} {
                 mu Counter { value <= <(<\"late\" | throw) | value> }
             }",
         ),
         (
             "returned_form",
             "form Sink { value: i64 }
-            fn make(out: -i64) -> Sink / {Exn} {
-                select Sink { Sink { value } => <(<\"late\" | throw) | out> }
+            func make(out: -i64) -> Sink / {Exn} {
+                mu Sink { Sink { value } => <(<\"late\" | throw) | out> }
             }",
         ),
     ] {
@@ -230,7 +233,7 @@ fn effectful_streams_keep_their_rows_through_consumers_and_bridges() {
                 &format!("{name}_handled"),
                 &with_main(
                     &declarations,
-                    &format!("{setup} <handle ({demand}) {{ throw(message) => Nil }} | println;"),
+                    &format!("{setup} <do ({demand}) {{ throw(message) => Nil }} | println;"),
                 ),
             ),
             "[]\n",
@@ -253,15 +256,15 @@ fn a_lazy_stream_bridge_does_not_run_its_source() {
         "built\n",
     );
 }
-const APP: &str = "fn app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 / {..E} { <x | f }
-fn inc(x: i64) -> i64 { <(x, 1) | add }
+const APP: &str = "func app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 / {..E} { <x | f }
+func inc(x: i64) -> i64 { <(x, 1) | add }
 ";
 
 #[test]
 fn an_undeclared_effect_is_rejected() {
     refused(
         "undeclared",
-        &[EXN, "fn bad(x: i64) -> i64 { <\"no\" | throw }\n", MAIN].concat(),
+        &[EXN, "func bad(x: i64) -> i64 { <\"no\" | throw }\n", MAIN].concat(),
         &["`bad` performs `Exn`"],
     );
 }
@@ -272,11 +275,11 @@ fn a_declared_effect_is_accepted_and_propagates() {
     // declares what `risky` does.
     accepted(
         "propagates",
-        &[EXN, RISKY, "fn caller(x: i64) -> i64 / {Exn} { <x | risky }\n", MAIN].concat(),
+        &[EXN, RISKY, "func caller(x: i64) -> i64 / {Exn} { <x | risky }\n", MAIN].concat(),
     );
     refused(
         "propagates_undeclared",
-        &[EXN, RISKY, "fn caller(x: i64) -> i64 { <x | risky }\n", MAIN].concat(),
+        &[EXN, RISKY, "func caller(x: i64) -> i64 { <x | risky }\n", MAIN].concat(),
         &["`caller` performs `Exn`"],
     );
 }
@@ -295,14 +298,13 @@ fn a_row_variable_forwards_an_arguments_row() {
         &["`main` performs `Exn`"],
     );
     // Handled at the call, the row is discharged.
-    let handled =
-        "let r = handle <(risky, 1) | app { throw(m) => -1, return(n) => n };\n<r | println;";
+    let handled = "let r = do <(risky, 1) | app { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("forwards_handled", &with_main(&[EXN, RISKY, APP], handled)), "-1\n");
 }
 
 #[test]
 fn a_rowless_arrow_is_a_promise_of_purity() {
-    let pure_app = "fn app(f: (i64 -> i64), x: i64) -> i64 { <x | f }\n";
+    let pure_app = "func app(f: (i64 -> i64), x: i64) -> i64 { <x | f }\n";
     refused(
         "purity",
         &with_main(&[EXN, RISKY, pure_app], "<(risky, 1) | app | println;"),
@@ -314,22 +316,21 @@ fn a_rowless_arrow_is_a_promise_of_purity() {
 fn an_undeclared_forwarded_row_is_rejected() {
     refused(
         "forwarded_undeclared",
-        &[EXN, "fn app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 { <x | f }\n", MAIN].concat(),
+        &[EXN, "func app<E>(f: (i64 -> i64 / {..E}), x: i64) -> i64 { <x | f }\n", MAIN].concat(),
         &["performs the row `..E`", "add `..E`"],
     );
 }
 
 #[test]
 fn forwarding_composes_through_the_call_graph() {
-    let twice = "fn twice<F>(g: (i64 -> i64 / {..F}), x: i64) -> i64 / {..F} { <(g, (<(g, x) | app)) | app }\n";
-    let body =
-        "let r = handle <(risky, 8) | twice { throw(m) => -1, return(n) => n };\n<r | println;";
+    let twice = "func twice<F>(g: (i64 -> i64 / {..F}), x: i64) -> i64 / {..F} { <(g, (<(g, x) | app)) | app }\n";
+    let body = "let r = do <(risky, 8) | twice { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("composes", &with_main(&[EXN, RISKY, APP, twice], body)), "-1\n");
 }
 
 #[test]
 fn an_operation_passed_as_a_value_carries_its_effect() {
-    let app = "fn app<E>(f: (String -> i64 / {..E}), x: String) -> i64 / {..E} { <x | f }\n";
+    let app = "func app<E>(f: (String -> i64 / {..E}), x: String) -> i64 / {..E} { <x | f }\n";
     refused(
         "operation_value",
         &with_main(&[EXN, app], "<(throw, \"m\") | app | println;"),
@@ -342,9 +343,8 @@ fn a_row_extension_covers_the_named_part() {
     // `{Exn, ..E}` on the parameter: `Exn` is the callee's own business, and
     // only the rest flows through `E`.
     let guard =
-        "fn guard<E>(f: (i64 -> i64 / {Exn, ..E}), x: i64) -> i64 / {Exn, ..E} { <x | f }\n";
-    let body =
-        "let r = handle <(risky, 1) | guard { throw(m) => -1, return(n) => n };\n<r | println;";
+        "func guard<E>(f: (i64 -> i64 / {Exn, ..E}), x: i64) -> i64 / {Exn, ..E} { <x | f }\n";
+    let body = "let r = do <(risky, 1) | guard { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("extension", &with_main(&[EXN, RISKY, guard], body)), "-1\n");
 }
 
@@ -352,7 +352,7 @@ fn a_row_extension_covers_the_named_part() {
 fn a_flow_stage_charges_what_it_performs() {
     refused(
         "stage_undeclared",
-        &[EXN, "fn risky(n: i64) -> i64 { match (<(n, 0) | gt) { True => n, False => <\"no\" | throw } }\n", MAIN]
+        &[EXN, "func risky(n: i64) -> i64 { of (<(n, 0) | gt) { True => n, False => <\"no\" | throw } }\n", MAIN]
             .concat(),
         &["`risky` performs `Exn`"],
     );
@@ -360,7 +360,7 @@ fn a_flow_stage_charges_what_it_performs() {
         "stage_declared",
         &[
             EXN,
-            "fn risky(n: i64) -> i64 / {Exn} { match (<(n, 0) | gt) { True => n, False => <\"no\" | throw } }\n",
+            "func risky(n: i64) -> i64 / {Exn} { of (<(n, 0) | gt) { True => n, False => <\"no\" | throw } }\n",
             MAIN,
         ]
         .concat(),
@@ -371,10 +371,10 @@ fn a_flow_stage_charges_what_it_performs() {
 fn printing_performs_io_and_only_main_may_leave_it() {
     refused(
         "shout_undeclared",
-        &["fn shout(m: String) -> (,) { <m | println }\n", MAIN].concat(),
+        &["func shout(m: String) -> (,) { <m | println }\n", MAIN].concat(),
         &["`shout` performs `IO`"],
     );
-    let shout = "fn shout(m: String) -> (,) / {IO} { <m | println }\n";
+    let shout = "func shout(m: String) -> (,) / {IO} { <m | println }\n";
     assert_eq!(accepted("shout_declared", &with_main(&[shout], "<\"hi\" | shout;")), "hi\n");
 }
 
@@ -382,20 +382,17 @@ fn printing_performs_io_and_only_main_may_leave_it() {
 fn main_may_leave_only_io_undischarged() {
     refused(
         "main_root",
-        &[
-            EXN,
-            "command main | (exit: -i32) / {Exn} { <(<\"no\" | throw) | println; <0 | exit> }\n",
-        ]
-        .concat(),
+        &[EXN, "proc main | (exit: -i32) / {Exn} { <(<\"no\" | throw) | println; <0 | exit> }\n"]
+            .concat(),
         &["`main` is the root"],
     );
 }
 
 const FALLIBLE: &str = "menu Fallible / {Exn} { value: i64, doubled: i64 }
-fn checked(n: i64) -> Fallible {
+func checked(n: i64) -> Fallible {
     mu Fallible {
-        value <= <(match (<(n, 0) | ge) { True => n, False => <\"neg\" | throw }) | value>,
-        doubled <= <(match (<(n, 0) | ge) { True => <(n, 2) | mul, False => <\"neg\" | throw }) | doubled>,
+        value <= <(of (<(n, 0) | ge) { True => n, False => <\"neg\" | throw }) | value>,
+        doubled <= <(of (<(n, 0) | ge) { True => <(n, 2) | mul, False => <\"neg\" | throw }) | doubled>,
     }
 }
 ";
@@ -410,15 +407,15 @@ fn a_rowed_menu_charges_demands_not_the_constructor() {
         &["`main` performs `Exn`"],
     );
     // Handled around the demand, `main` is pure.
-    let handled = "<handle (<1 | checked).value { throw(m) => -1, return(n) => n } | println;";
+    let handled = "<do (<1 | checked).value { throw(m) => -1, return(n) => n } | println;";
     assert_eq!(accepted("menu_handled", &with_main(&[EXN, FALLIBLE], handled)), "1\n");
 }
 
 #[test]
 fn a_mu_arm_beyond_the_latent_row_is_rejected() {
-    let noisy = "effect Log { fn log(m: String) -> (,); }
+    let noisy = "hook Log { func log(m: String) -> (,); }
 menu Fallible / {Exn} { value: i64 }
-fn noisy() -> Fallible {
+func noisy() -> Fallible {
     mu Fallible { value: out <= <{ <\"x\" | log; 1 } | out> }
 }
 ";
@@ -432,8 +429,8 @@ fn noisy() -> Fallible {
 #[test]
 fn a_rowed_form_charges_the_feed() {
     let guarded = "form Guarded / {Exn} { value: i64 }
-fn guard(k: -i64) -> Guarded {
-    select Guarded { Guarded { value } => <(<\"no\" | throw) | k> }
+func guard(k: -i64) -> Guarded {
+    mu Guarded { Guarded { value } => <(<\"no\" | throw) | k> }
 }
 ";
     let body = "let n = mu i64 { k <= <Guarded { value: 1 } | (<k | guard)> };\n<n | println;";
@@ -445,12 +442,12 @@ fn a_latent_result_row_fires_at_the_cut_and_survives_a_handle() {
     // `after` performs nothing when called: its row lives on the consumer it
     // returns. A handler around the call discharges nothing, because nothing
     // ran; around the cut, it discharges the row.
-    let after = "fn after<E>(f: (i64 -> i64 / {..E}), k: -i64) -> (-i64 / {..E}) {
+    let after = "func after<E>(f: (i64 -> i64 / {..E}), k: -i64) -> (-i64 / {..E}) {
     fn(x: i64) { <(<x | f) | k> }
 }
 ";
     let around_call = "let n = mu i64 { out <= {
-    let c = handle <(risky, out) | after { throw(m) => select i64 { x => <-1 | out> }, };
+    let c = do <(risky, out) | after { throw(m) => mu i64 { x => <-1 | out> }, };
     <5 | c>
 } };
 <n | println;";
@@ -459,7 +456,7 @@ fn a_latent_result_row_fires_at_the_cut_and_survives_a_handle() {
         &with_main(&[EXN, RISKY, after], around_call),
         &["`main` performs `Exn`"],
     );
-    let around_cut = "let n = handle (mu i64 { out <= <5 | (<(risky, out) | after)> }) { throw(m) => -1, return(x) => x };
+    let around_cut = "let n = do (mu i64 { out <= <5 | (<(risky, out) | after)> }) { throw(m) => -1, return(x) => x };
 <n | println;";
     assert_eq!(
         accepted("latent_result_handled", &with_main(&[EXN, RISKY, after], around_cut)),
@@ -475,7 +472,7 @@ fn a_returned_literal_beyond_the_latent_row_is_rejected() {
         "returned_literal",
         &[
             EXN,
-            "fn quiet(k: -i64) -> (-i64 / {}) {\n    fn(x: i64) { <(<\"loud\" | throw) | k> }\n}\n",
+            "func quiet(k: -i64) -> (-i64 / {}) {\n    fn(x: i64) { <(<\"loud\" | throw) | k> }\n}\n",
             MAIN,
         ]
         .concat(),
@@ -496,23 +493,23 @@ fn a_declarations_row_variable_is_one_of_its_row_parameters() {
 fn clause_binders_are_copattern_shaped() {
     // Omitted for a clause that never resumes; bound after a colon, under any
     // name, for one that does.
-    let never = "let r = handle <\"x\" | throw { throw(m) => -1, return(n) => n };\n<r | println;";
+    let never = "let r = do <\"x\" | throw { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("clause_never", &with_main(&[EXN], never)), "-1\n");
     let resumes =
-        "let r = handle <\"x\" | throw { throw(m): k => <9 | k, return(n) => n };\n<r | println;";
+        "let r = do <\"x\" | throw { throw(m): k => <9 | k, return(n) => n };\n<r | println;";
     assert_eq!(accepted("clause_resumes", &with_main(&[EXN], resumes)), "9\n");
 }
 
 #[test]
 fn a_negative_function_carries_an_effect_row() {
-    let log = "effect Log { fn log(m: String) -> (,); }\n";
+    let log = "hook Log { func log(m: String) -> (,); }\n";
     accepted(
         "negative_declared",
-        &[log, "fn emit(out: -i64) <- i64 / {Log} { <\"x\" | log; <42 | out> }\n", MAIN].concat(),
+        &[log, "func emit(out: -i64) <- i64 / {Log} { <\"x\" | log; <42 | out> }\n", MAIN].concat(),
     );
     refused(
         "negative_undeclared",
-        &[log, "fn emit(out: -i64) <- i64 { <\"x\" | log; <42 | out> }\n", MAIN].concat(),
+        &[log, "func emit(out: -i64) <- i64 { <\"x\" | log; <42 | out> }\n", MAIN].concat(),
         &["`emit` performs `Log`"],
     );
 }

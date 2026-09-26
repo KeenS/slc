@@ -15,8 +15,8 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const READER: &str = "effect Reader { fn config() -> i64; }
-    fn scaled(value: i64) -> i64 / {Reader} { <(value, config()) | mul }";
+const READER: &str = "hook Reader { func config() -> i64; }
+    func scaled(value: i64) -> i64 / {Reader} { <(value, config()) | mul }";
 
 #[test]
 fn handler_values_handle_effectful_and_pure_computations() {
@@ -24,10 +24,10 @@ fn handler_values_handle_effectful_and_pure_computations() {
         "basic",
         &format!(
             "{READER}
-            command main | (exit: i32) / {{IO}} {{
-                let reader = handler Reader {{ config(): resume => <10 | resume }};
-                <(with reader handle (<7 | scaled)) | println;
-                <(with reader handle 3) | println;
+            proc main | (exit: i32) / {{IO}} {{
+                let reader = op Reader {{ config(): resume => <10 | resume }};
+                <(op reader do (<7 | scaled)) | println;
+                <(op reader do 3) | println;
                 <0 | exit>
             }}"
         ),
@@ -43,21 +43,21 @@ fn handler_values_can_be_stored_selected_and_composed() {
         "stored",
         &format!(
             "{READER}
-            effect Offset {{ fn offset() -> i64; }}
-            fn run(reader: Handler<i64, i64, {{Reader}}, {{}}>) -> i64 {{
-                with reader handle (<7 | scaled)
+            hook Offset {{ func offset() -> i64; }}
+            func run(reader: Handler<i64, i64, {{Reader}}, {{}}>) -> i64 {{
+                op reader do (<7 | scaled)
             }}
-            command main | (exit: i32) / {{IO}} {{
-                let first = handler Reader {{ config(): resume => <10 | resume }};
-                let second = handler Reader {{ config(): resume => <20 | resume }};
+            proc main | (exit: i32) / {{IO}} {{
+                let first = op Reader {{ config(): resume => <10 | resume }};
+                let second = op Reader {{ config(): resume => <20 | resume }};
                 let choices = list::List::Cons(first, list::List::Cons(second, list::List::Nil));
                 let chosen = <(choices, 1) | list::nth | (
                     fn(value: Handler<i64, i64, {{Reader}}, {{}}>) {{ value }}
                     & fn(reason: String) {{ first }}
                 );
                 <chosen | run | println;
-                let extra = handler Offset {{ offset(): resume => <2 | resume }};
-                <(with first handle (with extra handle <(<7 | scaled, offset()) | add)) | println;
+                let extra = op Offset {{ offset(): resume => <2 | resume }};
+                <(op first do (op extra do <(<7 | scaled, offset()) | add)) | println;
                 <0 | exit>
             }}"
         ),
@@ -73,13 +73,13 @@ fn stored_return_clauses_change_the_answer_even_for_a_pure_body() {
         "return",
         &format!(
             "{READER}
-            command main | (exit: i32) / {{IO}} {{
-                let reader: Handler<i64, String, {{Reader}}, {{}}> = handler Reader {{
+            proc main | (exit: i32) / {{IO}} {{
+                let reader: Handler<i64, String, {{Reader}}, {{}}> = op Reader {{
                     config(): resume => <10 | resume,
                     return(value) => <value | to_string
                 }};
-                <(with reader handle 42) | println;
-                <(with reader handle (<7 | scaled)) | println;
+                <(op reader do 42) | println;
+                <(op reader do (<7 | scaled)) | println;
                 <0 | exit>
             }}"
         ),
@@ -92,19 +92,15 @@ fn stored_return_clauses_change_the_answer_even_for_a_pure_body() {
 #[test]
 fn stored_handler_clauses_still_require_common_answers_and_complete_coverage() {
     for (name, definition, message) in [
-        ("coverage", "handler Pair { first(): resume => <1 | resume }", "second"),
-        (
-            "answer",
-            "handler Reader { config() => 1, return(value) => \"answer\" }",
-            "handler clause",
-        ),
+        ("coverage", "op Pair { first(): resume => <1 | resume }", "second"),
+        ("answer", "op Reader { config() => 1, return(value) => \"answer\" }", "`op` clause"),
     ] {
         let (success, _, stderr) = run(
             name,
             &format!(
                 "{READER}
-                effect Pair {{ fn first() -> i64; fn second() -> i64; }}
-                command main | (exit: i32) / {{IO}} {{ let reader = {definition}; <0 | exit> }}"
+                hook Pair {{ func first() -> i64; func second() -> i64; }}
+                proc main | (exit: i32) / {{IO}} {{ let reader = {definition}; <0 | exit> }}"
             ),
         );
         assert!(!success, "{name}: invalid handler accepted");
@@ -118,11 +114,11 @@ fn handler_capabilities_cannot_be_widened_by_an_annotation() {
         "capability",
         &format!(
             "{READER}
-            effect Other {{ fn other() -> i64; }}
-            command main | (exit: i32) / {{IO}} {{
+            hook Other {{ func other() -> i64; }}
+            proc main | (exit: i32) / {{IO}} {{
                 let reader: Handler<i64, i64, {{Reader, Other}}, {{}}> =
-                    handler Reader {{ config(): resume => <10 | resume }};
-                <(with reader handle other()) | println;
+                    op Reader {{ config(): resume => <10 | resume }};
+                <(op reader do other()) | println;
                 <0 | exit>
             }}"
         ),
@@ -135,14 +131,14 @@ fn handler_capabilities_cannot_be_widened_by_an_annotation() {
 fn stored_forwarding_handlers_delegate_to_the_installation_context() {
     let (success, stdout, stderr) = run(
         "forwarding",
-        "effect Pair { fn first() -> i64; fn second() -> i64; }
-        command main | (exit: i32) / {IO} {
-            let partial = handler Pair { first(): resume => <7 | resume, _ => forward };
-            let complete = handler Pair {
+        "hook Pair { func first() -> i64; func second() -> i64; }
+        proc main | (exit: i32) / {IO} {
+            let partial = op Pair { first(): resume => <7 | resume, _ => forward };
+            let complete = op Pair {
                 first(): resume => <100 | resume,
                 second(): resume => <35 | resume
             };
-            let result = with complete handle (with partial handle <(first(), second()) | add);
+            let result = op complete do (op partial do <(first(), second()) | add);
             <result | println;
             <0 | exit>
         }",
@@ -158,11 +154,11 @@ fn handler_clause_effects_run_at_installation_not_construction() {
         "clause_effects",
         &format!(
             "{READER}
-            effect Other {{ fn other() -> i64; }}
-            command main | (exit: i32) / {{IO}} {{
-                let reader = handler Reader {{ config(): resume => <other() | resume }};
+            hook Other {{ func other() -> i64; }}
+            proc main | (exit: i32) / {{IO}} {{
+                let reader = op Reader {{ config(): resume => <other() | resume }};
                 <\"stored\" | println;
-                let result = handle (with reader handle (<7 | scaled)) {{
+                let result = do (op reader do (<7 | scaled)) {{
                     other(): resume => {{ <\"other\" | println; <6 | resume }}
                 }};
                 <result | println;

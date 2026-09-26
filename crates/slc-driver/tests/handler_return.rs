@@ -7,16 +7,16 @@ fn a_handler_without_return_answers_its_bodys_value() {
     let path = std::env::temp_dir().join("slc_handler_without_return.sl");
     std::fs::write(
         &path,
-        r#"effect Reader { fn config() -> i64; }
+        r#"hook Reader { func config() -> i64; }
 
-        fn scaled(x: i64) -> i64 / {Reader} { <(x, config()) | mul }
+        func scaled(x: i64) -> i64 / {Reader} { <(x, config()) | mul }
 
-        command main | (exit: -i32) / {IO} {
+        proc main | (exit: -i32) / {IO} {
             // Resumed: the body's value, 70.
-            let r = handle (<7 | scaled) { config(): resume => <10 | resume };
+            let r = do (<7 | scaled) { config(): resume => <10 | resume };
             <r | println;
             // No operation performed at all: still the body's value.
-            let s = handle (<(2, 3) | add) { config(): resume => <10 | resume };
+            let s = do (<(2, 3) | add) { config(): resume => <10 | resume };
             <s | println;
             <0 | exit>
         }"#,

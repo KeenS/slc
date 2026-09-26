@@ -11,7 +11,7 @@
 // integer cannot close a file, and reading through a closed file fails.
 //
 // Touching a file is the `Fs` effect, and `fs::real_command` answers it from
-// the disk: the program's file work, `fn { … }`, runs under it and leaves
+// the disk: the program's file work, `func { … }`, runs under it and leaves
 // through `exit` itself. The same work could run under a handler of the
 // program's own, which answers from somewhere else.
 //
@@ -19,9 +19,9 @@
 // keep the exit they captured, so the failure consumers used after opening
 // the file are built after the wrapper too.
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <(,) | fs::real_command | (fn {
-        let complain = select String {
+        let complain = mu String {
             message => {
                 <("cannot read: ", message) | add | println;
                 <1 | exit>
@@ -40,7 +40,7 @@ command main | (exit: i32) / {IO} {
         // From here on, `exit` *is* "close the file, then leave": the
         // arm's `exit` is the outer one. The earlier `complain` still holds
         // that original exit and is used only before acquisition.
-        let exit = select i32 {
+        let exit = mu i32 {
             status => {
                 <file | fs::close;
                 <status | exit>
@@ -48,7 +48,7 @@ command main | (exit: i32) / {IO} {
         };
 
         let first = mu {
-            k <= <file | fs::read_line | (k & select unit {
+            k <= <file | fs::read_line | (k & mu unit {
                 end => {
                     <"empty file" | println;
                     <1 | exit>
@@ -61,13 +61,13 @@ command main | (exit: i32) / {IO} {
         // this file does not exist. Both leave through the composed door,
         // so the open file above is closed on these paths too.
         <"examples/missing.sl" | fs::open | (
-            select File {
+            mu File {
                 unexpected => {
                     <"unexpectedly opened" | println;
                     <1 | exit>
                 },
             }
-            & select String {
+            & mu String {
                 message => {
                     <("cannot open: ", message) | add | println;
                     <0 | exit>

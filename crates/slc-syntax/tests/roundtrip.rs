@@ -15,16 +15,16 @@ fn lower_str(s: &str) -> Vec<(String, Term)> {
 
 #[test]
 fn roundtrip_int() {
-    let a = lower_str("fn main() -> i32 { 42 }");
-    let b = lower_str("fn main() -> i32 { 42 }");
+    let a = lower_str("func main() -> i32 { 42 }");
+    let b = lower_str("func main() -> i32 { 42 }");
     assert_eq!(a, b);
 }
 
 #[test]
 fn roundtrip_lambda_alpha() {
     // Same program with different binder names: alpha-equivalent.
-    let a = lower_str("fn main() -> i32 { fn(x: +i32) -> i32 { x }(1) }");
-    let b = lower_str("fn main() -> i32 { fn(y: +i32) -> i32 { y }(1) }");
+    let a = lower_str("func main() -> i32 { fn(x: +i32) -> i32 { x }(1) }");
+    let b = lower_str("func main() -> i32 { fn(y: +i32) -> i32 { y }(1) }");
     let (_, ta) = &a[0];
     let (_, tb) = &b[0];
     assert!(alpha_eq_term(ta, tb));
@@ -32,22 +32,22 @@ fn roundtrip_lambda_alpha() {
 
 #[test]
 fn roundtrip_let_scoping() {
-    let a = lower_str("fn main() -> i32 { let x = 1; let y = 2; x }");
-    let b = lower_str("fn main() -> i32 { let x = 1; let y = 2; x }");
+    let a = lower_str("func main() -> i32 { let x = 1; let y = 2; x }");
+    let b = lower_str("func main() -> i32 { let x = 1; let y = 2; x }");
     assert_eq!(a, b);
 }
 
 #[test]
 fn roundtrip_nested_calls() {
-    let a = lower_str("fn main() -> i32 { add(1, add(2, 3)) }");
-    let b = lower_str("fn main() -> i32 { add(1, add(2, 3)) }");
+    let a = lower_str("func main() -> i32 { add(1, add(2, 3)) }");
+    let b = lower_str("func main() -> i32 { add(1, add(2, 3)) }");
     assert_eq!(a, b);
 }
 
 #[test]
 fn roundtrip_printing_stable() {
     // Display of lowered IR contains expected structure.
-    let defs = lower_str("fn main() -> i32 { fn(x: +i32) -> i32 { x }(5) }");
+    let defs = lower_str("func main() -> i32 { fn(x: +i32) -> i32 { x }(5) }");
     let printed = format!("{}", defs[0].1);
     assert!(printed.contains("λ"), "should contain lambda: {printed}");
 }
@@ -55,10 +55,10 @@ fn roundtrip_printing_stable() {
 #[test]
 fn roundtrip_operators_and_indexing() {
     let a = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
+        r#"func main() -> i32 { let s = "abc"; of (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => of (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
     );
     let b = lower_str(
-        r#"fn main() -> i32 { let s = "abc"; match (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => match (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
+        r#"func main() -> i32 { let s = "abc"; of (<(1, (<(2, 3) | __mul)) | __add | x => (x, 7) | __eq) { True => of (<((<(s, 0) | __index), 'a') | __eq) { True => (<(s, 1, (<s | str_len)) | substring), _ => "" }, _ => "" } }"#,
     );
     assert_eq!(a, b);
 }
@@ -66,10 +66,10 @@ fn roundtrip_operators_and_indexing() {
 #[test]
 fn roundtrip_patterns() {
     let a = lower_str(
-        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
+        r#"func main() -> i32 { of c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
     );
     let b = lower_str(
-        r#"fn main() -> i32 { match c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
+        r#"func main() -> i32 { of c { 'a'..='z' | '_' => 1, '0'..='9' => 2, _ => 3 } }"#,
     );
     assert_eq!(a, b);
 }
@@ -80,16 +80,16 @@ fn lowered_declarations_round_trip_through_the_printed_core() {
     // lowered declaration and reading it back must give the same IR.
     let defs = lower_str(
         "enum Color { Red, Green, Blue }
-         fn positive(x: +i32) -> i32 { x }
-         fn negative(return: -i32) <- Color {
-             select Color {
+         func positive(x: +i32) -> i32 { x }
+         func negative(return: -i32) <- Color {
+             mu Color {
                  Red => <0 | return>,
                  Green => <1 | return>,
                  Blue => <2 | return>,
              }
          }
-         command route(x: +i32) | (k: -i32) { <x | k> }
-         fn main() -> i32 { let y = 1; y }",
+         proc route(x: +i32) | (k: -i32) { <x | k> }
+         func main() -> i32 { let y = 1; y }",
     );
     assert!(defs.len() > 5, "expected every declaration: {defs:?}");
     for (name, term) in defs {

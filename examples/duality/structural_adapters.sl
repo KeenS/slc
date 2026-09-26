@@ -1,26 +1,26 @@
 data Box<-F> { value: F }
 enum Chain<-F> { End, Link(F, Chain<F>) }
 
-fn deliver(out: String) <- i64 {
-    select i64 { number => <number | int_to_str | out> }
+func deliver(out: String) <- i64 {
+    mu i64 { number => <number | int_to_str | out> }
 }
 
-fn first(chain: Chain<(i64 -> String)>) -> String {
-    match chain {
+func first(chain: Chain<(i64 -> String)>) -> String {
+    of chain {
         End => "empty",
         Link(stage, rest) => <42 | stage,
     }
 }
 
-effect Build { fn build() -> i64; }
-effect Use { fn use_value(input: i64) -> i64; }
+hook Build { func build() -> i64; }
+hook Use { func use_value(input: i64) -> i64; }
 
-fn make() -> (i64 -> i64 / {Use}) / {Build} {
+func make() -> (i64 -> i64 / {Use}) / {Build} {
     let offset = build();
     fn(input: i64) { <(input, offset) | add | use_value }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let original = Box { value: deliver };
     let boxed: Box<(i64 -> String)> = original;
     <7 | boxed.value | println;
@@ -31,7 +31,7 @@ command main | (exit: i32) / {IO} {
     let original = Box { value: make() };
     let delayed: Box<Delayed<(-i64 -> -i64 / {Use}), {Build}>> = original;
     <"stored" | println;
-    let+ ready = handle {
+    let+ ready = do {
         let+ value = delayed.value;
         value
     } {
@@ -41,13 +41,13 @@ command main | (exit: i32) / {IO} {
         },
     };
     <"ready" | println;
-    <handle (<1 | ready) {
+    <do (<1 | ready) {
         use_value(input): resume => {
             <"use" | println;
             <input | resume
         },
     } | println;
-    <handle (<2 | delayed.value) {
+    <do (<2 | delayed.value) {
         build(): resume => {
             <"build again" | println;
             <20 | resume

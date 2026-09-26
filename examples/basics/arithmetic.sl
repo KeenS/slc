@@ -5,7 +5,7 @@
 //   1 / 0    → division by zero
 //   9223372036854775807 + 1 → arithmetic overflow
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <(2, 3) | add | println;
     <(10, 4) | sub | println;
     <(6, 7) | mul | println;

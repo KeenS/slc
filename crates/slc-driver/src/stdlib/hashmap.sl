@@ -44,16 +44,16 @@ pub enum HashMap<+K, +V> {
     Root(Node<K, V>, i64),
 }
 
-fn word(n: u64) -> u64 {
+func word(n: u64) -> u64 {
     n
 }
 
-fn mask(slot: u64) -> u64 {
-    match (<(slot, 0) | eq) {
+func mask(slot: u64) -> u64 {
+    of (<(slot, 0) | eq) {
         True => <1 | word,
-        _ => match (<(slot, 1) | eq) {
+        _ => of (<(slot, 1) | eq) {
             True => <2 | word,
-            _ => match (<(slot, 2) | eq) {
+            _ => of (<(slot, 2) | eq) {
                 True => <4 | word,
                 _ => <8 | word,
             },
@@ -61,15 +61,15 @@ fn mask(slot: u64) -> u64 {
     }
 }
 
-fn bit_set(bitmap: u64, slot: u64) -> Bool {
+func bit_set(bitmap: u64, slot: u64) -> Bool {
     let m = <slot | mask;
     let shifted = <(bitmap, m) | div;
     let bit = <(shifted, 2) | rem;
     <(bit, 1) | eq
 }
 
-fn one_if(bitmap: u64, slot: u64) -> u64 {
-    match (<(bitmap, slot) | bit_set) {
+func one_if(bitmap: u64, slot: u64) -> u64 {
+    of (<(bitmap, slot) | bit_set) {
         True => <1 | word,
         _ => <0 | word,
     }
@@ -77,12 +77,12 @@ fn one_if(bitmap: u64, slot: u64) -> u64 {
 
 // How many occupied slots sit strictly before `slot`. That is the index in
 // the packed `Array4`.
-fn below(bitmap: u64, slot: u64) -> u64 {
-    match (<(slot, 0) | eq) {
+func below(bitmap: u64, slot: u64) -> u64 {
+    of (<(slot, 0) | eq) {
         True => <0 | word,
-        _ => match (<(slot, 1) | eq) {
+        _ => of (<(slot, 1) | eq) {
             True => <(bitmap, 0) | one_if,
-            _ => match (<(slot, 2) | eq) {
+            _ => of (<(slot, 2) | eq) {
                 True => {
                     let a = <(bitmap, 0) | one_if;
                     let b = <(bitmap, 1) | one_if;
@@ -99,25 +99,25 @@ fn below(bitmap: u64, slot: u64) -> u64 {
     }
 }
 
-fn child<+T>(kids: array::Array4<T>, i: u64) -> T {
-    match kids {
+func child<+T>(kids: array::Array4<T>, i: u64) -> T {
+    of kids {
         array::Array4::One(a0) => a0,
-        array::Array4::Two(a0, a1) => match (<(i, 0) | eq) {
+        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
             True => a0,
             _ => a1,
         },
-        array::Array4::Three(a0, a1, a2) => match (<(i, 0) | eq) {
+        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
             True => a0,
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => a1,
                 _ => a2,
             },
         },
-        array::Array4::Four(a0, a1, a2, a3) => match (<(i, 0) | eq) {
+        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
             True => a0,
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => a1,
-                _ => match (<(i, 2) | eq) {
+                _ => of (<(i, 2) | eq) {
                     True => a2,
                     _ => a3,
                 },
@@ -126,25 +126,25 @@ fn child<+T>(kids: array::Array4<T>, i: u64) -> T {
     }
 }
 
-fn swap_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
-    match kids {
+func swap_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
+    of kids {
         array::Array4::One(_) => array::Array4::One(value),
-        array::Array4::Two(a0, a1) => match (<(i, 0) | eq) {
+        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
             True => array::Array4::Two(value, a1),
             _ => array::Array4::Two(a0, value),
         },
-        array::Array4::Three(a0, a1, a2) => match (<(i, 0) | eq) {
+        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
             True => array::Array4::Three(value, a1, a2),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => array::Array4::Three(a0, value, a2),
                 _ => array::Array4::Three(a0, a1, value),
             },
         },
-        array::Array4::Four(a0, a1, a2, a3) => match (<(i, 0) | eq) {
+        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
             True => array::Array4::Four(value, a1, a2, a3),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => array::Array4::Four(a0, value, a2, a3),
-                _ => match (<(i, 2) | eq) {
+                _ => of (<(i, 2) | eq) {
                     True => array::Array4::Four(a0, a1, value, a3),
                     _ => array::Array4::Four(a0, a1, a2, value),
                 },
@@ -153,24 +153,24 @@ fn swap_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> 
     }
 }
 
-fn insert_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
-    match kids {
-        array::Array4::One(a0) => match (<(i, 0) | eq) {
+func insert_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
+    of kids {
+        array::Array4::One(a0) => of (<(i, 0) | eq) {
             True => array::Array4::Two(value, a0),
             _ => array::Array4::Two(a0, value),
         },
-        array::Array4::Two(a0, a1) => match (<(i, 0) | eq) {
+        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
             True => array::Array4::Three(value, a0, a1),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => array::Array4::Three(a0, value, a1),
                 _ => array::Array4::Three(a0, a1, value),
             },
         },
-        array::Array4::Three(a0, a1, a2) => match (<(i, 0) | eq) {
+        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
             True => array::Array4::Four(value, a0, a1, a2),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => array::Array4::Four(a0, value, a1, a2),
-                _ => match (<(i, 2) | eq) {
+                _ => of (<(i, 2) | eq) {
                     True => array::Array4::Four(a0, a1, value, a2),
                     _ => array::Array4::Four(a0, a1, a2, value),
                 },
@@ -180,25 +180,25 @@ fn insert_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T
     }
 }
 
-fn remove_child<+T>(kids: array::Array4<T>, i: u64) -> Packed<T> {
-    match kids {
+func remove_child<+T>(kids: array::Array4<T>, i: u64) -> Packed<T> {
+    of kids {
         array::Array4::One(_) => Packed::None,
-        array::Array4::Two(a0, a1) => match (<(i, 0) | eq) {
+        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
             True => Packed::Some(array::Array4::One(a1)),
             _ => Packed::Some(array::Array4::One(a0)),
         },
-        array::Array4::Three(a0, a1, a2) => match (<(i, 0) | eq) {
+        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
             True => Packed::Some(array::Array4::Two(a1, a2)),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => Packed::Some(array::Array4::Two(a0, a2)),
                 _ => Packed::Some(array::Array4::Two(a0, a1)),
             },
         },
-        array::Array4::Four(a0, a1, a2, a3) => match (<(i, 0) | eq) {
+        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
             True => Packed::Some(array::Array4::Three(a1, a2, a3)),
-            _ => match (<(i, 1) | eq) {
+            _ => of (<(i, 1) | eq) {
                 True => Packed::Some(array::Array4::Three(a0, a2, a3)),
-                _ => match (<(i, 2) | eq) {
+                _ => of (<(i, 2) | eq) {
                     True => Packed::Some(array::Array4::Three(a0, a1, a3)),
                     _ => Packed::Some(array::Array4::Three(a0, a1, a2)),
                 },
@@ -207,17 +207,17 @@ fn remove_child<+T>(kids: array::Array4<T>, i: u64) -> Packed<T> {
     }
 }
 
-fn slot_of(hash: u64, shift: u64) -> u64 {
+func slot_of(hash: u64, shift: u64) -> u64 {
     <(<(hash, shift) | div, 4) | rem
 }
 
 // Both hashes still have bits, or they share every remaining digit and the
 // keys are kept together.
-fn unite<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> Node<K, V> {
+func unite<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> Node<K, V> {
     let r1 = <(h1, shift) | div;
     let r2 = <(h2, shift) | div;
-    match (<(r1, 0) | eq) {
-        True => match (<(r2, 0) | eq) {
+    of (<(r1, 0) | eq) {
+        True => of (<(r2, 0) | eq) {
             True => Node::Knot(Cons((k1, v1), Cons((k2, v2), Nil))),
             _ => <(k1, v1, h1, k2, v2, h2, shift) | split,
         },
@@ -225,15 +225,15 @@ fn unite<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> No
     }
 }
 
-fn split<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> Node<K, V> {
+func split<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> Node<K, V> {
     let s1 = <(h1, shift) | slot_of;
     let s2 = <(h2, shift) | slot_of;
-    match (<(s1, s2) | eq) {
+    of (<(s1, s2) | eq) {
         True => {
             let deeper = <(k1, v1, h1, k2, v2, h2, <(shift, 4) | mul) | unite;
             Node::Branch(<s1 | mask, array::Array4::One(deeper))
         },
-        _ => match (<(s1, s2) | lt) {
+        _ => of (<(s1, s2) | lt) {
             True => {
                 Node::Branch(
                     <(<s1 | mask, <s2 | mask) | add,
@@ -250,20 +250,20 @@ fn split<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> No
     }
 }
 
-fn knot_lookup<+K: Eq, +V>(pairs: List<(K, V)>, key: K) -> Hit<V> {
-    match pairs {
+func knot_lookup<+K: Eq, +V>(pairs: List<(K, V)>, key: K) -> Hit<V> {
+    of pairs {
         Nil => Hit::No,
-        Cons((k, v), rest) => match (<(key, k) | eq) {
+        Cons((k, v), rest) => of (<(key, k) | eq) {
             True => Hit::Yes(v),
             _ => <(rest, key) | knot_lookup,
         },
     }
 }
 
-fn knot_place<+K: Eq, +V>(pairs: List<(K, V)>, key: K, value: V) -> (List<(K, V)>, i64) {
-    match pairs {
+func knot_place<+K: Eq, +V>(pairs: List<(K, V)>, key: K, value: V) -> (List<(K, V)>, i64) {
+    of pairs {
         Nil => (Cons((key, value), Nil), 1),
-        Cons((k, v), rest) => match (<(key, k) | eq) {
+        Cons((k, v), rest) => of (<(key, k) | eq) {
             True => (Cons((key, value), rest), 0),
             _ => {
                 let placed = <(rest, key, value) | knot_place;
@@ -273,20 +273,20 @@ fn knot_place<+K: Eq, +V>(pairs: List<(K, V)>, key: K, value: V) -> (List<(K, V)
     }
 }
 
-fn knot_rest<+K, +V>(pairs: List<(K, V)>) -> KnotCut<K, V> {
-    match pairs {
+func knot_rest<+K, +V>(pairs: List<(K, V)>) -> KnotCut<K, V> {
+    of pairs {
         Nil => KnotCut::Gone,
         Cons((k, v), Nil) => KnotCut::One(k, v),
         many => KnotCut::Many(many),
     }
 }
 
-fn knot_cut<+K: Eq, +V>(pairs: List<(K, V)>, key: K) -> KnotCut<K, V> {
-    match pairs {
+func knot_cut<+K: Eq, +V>(pairs: List<(K, V)>, key: K) -> KnotCut<K, V> {
+    of pairs {
         Nil => KnotCut::Gone,
-        Cons((k, v), rest) => match (<(key, k) | eq) {
+        Cons((k, v), rest) => of (<(key, k) | eq) {
             True => <rest | knot_rest,
-            _ => match <(rest, key) | knot_cut {
+            _ => of <(rest, key) | knot_cut {
                 KnotCut::Gone => KnotCut::One(k, v),
                 KnotCut::One(k2, v2) => KnotCut::Many(Cons((k, v), Cons((k2, v2), Nil))),
                 KnotCut::Many(xs) => KnotCut::Many(Cons((k, v), xs)),
@@ -295,16 +295,16 @@ fn knot_cut<+K: Eq, +V>(pairs: List<(K, V)>, key: K) -> KnotCut<K, V> {
     }
 }
 
-fn lookup<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) -> Hit<V> {
-    match node {
-        Node::Leaf(k, v) => match (<(key, k) | eq) {
+func lookup<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) -> Hit<V> {
+    of node {
+        Node::Leaf(k, v) => of (<(key, k) | eq) {
             True => Hit::Yes(v),
             _ => Hit::No,
         },
         Node::Knot(pairs) => <(pairs, key) | knot_lookup,
         Node::Branch(bitmap, children) => {
             let slot = <(full, shift) | slot_of;
-            match (<(bitmap, slot) | bit_set) {
+            of (<(bitmap, slot) | bit_set) {
                 False => Hit::No,
                 _ => {
                     let index = <(bitmap, slot) | below;
@@ -316,19 +316,19 @@ fn lookup<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) ->
     }
 }
 
-fn place<+K: Hash + Eq, +V>(
+func place<+K: Hash + Eq, +V>(
     node: Node<K, V>,
     key: K,
     value: V,
     full: u64,
     shift: u64,
 ) -> (Node<K, V>, i64) {
-    match node {
-        Node::Leaf(k, v) => match (<(key, k) | eq) {
+    of node {
+        Node::Leaf(k, v) => of (<(key, k) | eq) {
             True => (Node::Leaf(key, value), 0),
             _ => {
                 let old = <k | hash;
-                match (<(old, full) | eq) {
+                of (<(old, full) | eq) {
                     True => (Node::Knot(Cons((key, value), Cons((k, v), Nil))), 1),
                     _ => (<(k, v, old, key, value, full, shift) | unite, 1),
                 }
@@ -341,7 +341,7 @@ fn place<+K: Hash + Eq, +V>(
         Node::Branch(bitmap, children) => {
             let slot = <(full, shift) | slot_of;
             let next = <(shift, 4) | mul;
-            match (<(bitmap, slot) | bit_set) {
+            of (<(bitmap, slot) | bit_set) {
                 False => {
                     let index = <(bitmap, slot) | below;
                     let kids = <(children, index, Node::Leaf(key, value)) | insert_child;
@@ -360,29 +360,29 @@ fn place<+K: Hash + Eq, +V>(
     }
 }
 
-fn cut<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) -> Cut<K, V> {
-    match node {
-        Node::Leaf(k, _) => match (<(key, k) | eq) {
+func cut<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) -> Cut<K, V> {
+    of node {
+        Node::Leaf(k, _) => of (<(key, k) | eq) {
             True => Cut::Dropped,
             _ => Cut::Kept(node),
         },
-        Node::Knot(pairs) => match <(pairs, key) | knot_cut {
+        Node::Knot(pairs) => of <(pairs, key) | knot_cut {
             KnotCut::Gone => Cut::Dropped,
             KnotCut::One(k, v) => Cut::Kept(Node::Leaf(k, v)),
             KnotCut::Many(xs) => Cut::Kept(Node::Knot(xs)),
         },
         Node::Branch(bitmap, children) => {
             let slot = <(full, shift) | slot_of;
-            match (<(bitmap, slot) | bit_set) {
+            of (<(bitmap, slot) | bit_set) {
                 False => Cut::Kept(node),
                 _ => {
                     let index = <(bitmap, slot) | below;
                     let found = <(children, index) | child;
-                    match <(found, key, full, <(shift, 4) | mul) | cut {
+                    of <(found, key, full, <(shift, 4) | mul) | cut {
                         Cut::Kept(child) => {
                             Cut::Kept(Node::Branch(bitmap, <(children, index, child) | swap_child))
                         },
-                        Cut::Dropped => match <(children, index) | remove_child {
+                        Cut::Dropped => of <(children, index) | remove_child {
                             Packed::None => Cut::Dropped,
                             Packed::Some(kids) => {
                                 let bits = <(bitmap, <slot | mask) | sub;
@@ -396,20 +396,20 @@ fn cut<+K: Hash + Eq, +V>(node: Node<K, V>, key: K, full: u64, shift: u64) -> Cu
     }
 }
 
-pub fn empty<+K, +V>() -> HashMap<K, V> {
+pub func empty<+K, +V>() -> HashMap<K, V> {
     HashMap::Empty
 }
 
-pub fn length<+K, +V>(m: HashMap<K, V>) -> i64 {
-    match m {
+pub func length<+K, +V>(m: HashMap<K, V>) -> i64 {
+    of m {
         HashMap::Empty => 0,
         HashMap::Root(_, n) => n,
     }
 }
 
-pub fn insert<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<K, V> {
+pub func insert<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<K, V> {
     let hash = <key | hash;
-    match m {
+    of m {
         HashMap::Empty => HashMap::Root(Node::Leaf(key, value), 1),
         HashMap::Root(node, n) => {
             let placed = <(node, key, value, hash, 1) | place;
@@ -418,58 +418,58 @@ pub fn insert<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K, value: V) -> HashMap<
     }
 }
 
-pub fn contains<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> Bool {
-    match m {
+pub func contains<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> Bool {
+    of m {
         HashMap::Empty => False,
-        HashMap::Root(node, _) => match <(node, key, <key | hash, 1) | lookup {
+        HashMap::Root(node, _) => of <(node, key, <key | hash, 1) | lookup {
             Hit::Yes(_) => True,
             Hit::No => False,
         },
     }
 }
 
-fn delete<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
-    match m {
+func delete<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
+    of m {
         HashMap::Empty => HashMap::Empty,
-        HashMap::Root(node, n) => match <(node, key, <key | hash, 1) | cut {
+        HashMap::Root(node, n) => of <(node, key, <key | hash, 1) | cut {
             Cut::Dropped => HashMap::Empty,
             Cut::Kept(node) => HashMap::Root(node, <(n, 1) | sub),
         },
     }
 }
 
-pub fn remove<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
-    match (<(m, key) | contains) {
+pub func remove<+K: Hash + Eq, +V>(m: HashMap<K, V>, key: K) -> HashMap<K, V> {
+    of (<(m, key) | contains) {
         False => m,
         _ => <(m, key) | delete,
     }
 }
 
-pub command get<+K: Hash + Eq, +V, E>(m: HashMap<K, V>, key: K) | (
+pub proc get<+K: Hash + Eq, +V, E>(m: HashMap<K, V>, key: K) | (
     found: (-V / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match m {
+    of m {
         HashMap::Empty => <"nothing for that key" | missing>,
-        HashMap::Root(node, _) => match <(node, key, <key | hash, 1) | lookup {
+        HashMap::Root(node, _) => of <(node, key, <key | hash, 1) | lookup {
             Hit::Yes(v) => <v | found>,
             Hit::No => <"nothing for that key" | missing>,
         },
     }
 }
 
-fn append_pairs<+K, +V>(xs: List<(K, V)>, tail: List<(K, V)>) -> List<(K, V)> {
-    match xs {
+func append_pairs<+K, +V>(xs: List<(K, V)>, tail: List<(K, V)>) -> List<(K, V)> {
+    of xs {
         Nil => tail,
         Cons(h, rest) => Cons(h, <(rest, tail) | append_pairs),
     }
 }
 
-fn node_onto<+K, +V>(node: Node<K, V>, tail: List<(K, V)>) -> List<(K, V)> {
-    match node {
+func node_onto<+K, +V>(node: Node<K, V>, tail: List<(K, V)>) -> List<(K, V)> {
+    of node {
         Node::Leaf(k, v) => Cons((k, v), tail),
         Node::Knot(pairs) => <(pairs, tail) | append_pairs,
-        Node::Branch(_, children) => match children {
+        Node::Branch(_, children) => of children {
             array::Array4::One(a) => <(a, tail) | node_onto,
             array::Array4::Two(a, b) => <(a, <(b, tail) | node_onto) | node_onto,
             array::Array4::Three(a, b, c) => <(a, <(b, <(c, tail) | node_onto) | node_onto)
@@ -481,31 +481,31 @@ fn node_onto<+K, +V>(node: Node<K, V>, tail: List<(K, V)>) -> List<(K, V)> {
     }
 }
 
-pub fn to_list<+K, +V>(m: HashMap<K, V>) -> List<(K, V)> {
-    match m {
+pub func to_list<+K, +V>(m: HashMap<K, V>) -> List<(K, V)> {
+    of m {
         HashMap::Empty => Nil,
         HashMap::Root(node, _) => <(node, Nil) | node_onto,
     }
 }
 
-fn of_onto<+K: Hash + Eq, +V>(pairs: List<(K, V)>, m: HashMap<K, V>) -> HashMap<K, V> {
-    match pairs {
+func of_onto<+K: Hash + Eq, +V>(pairs: List<(K, V)>, m: HashMap<K, V>) -> HashMap<K, V> {
+    of pairs {
         Nil => m,
         Cons((k, v), rest) => <(rest, <(m, k, v) | insert) | of_onto,
     }
 }
 
 // Left to right: a later pair with an equal key replaces the earlier one.
-pub fn of_list<+K: Hash + Eq, +V>(pairs: List<(K, V)>) -> HashMap<K, V> {
+pub func of_list<+K: Hash + Eq, +V>(pairs: List<(K, V)>) -> HashMap<K, V> {
     <(pairs, HashMap::Empty) | of_onto
 }
 
-fn fmt_entry<+K: Display, +V: Display>(key: K, value: V) -> String {
+func fmt_entry<+K: Display, +V: Display>(key: K, value: V) -> String {
     (<(<key | fmt, ": ") | add | x => (x, <value | fmt) | add)
 }
 
-fn fmt_entries<+K: Display, +V: Display>(xs: List<(K, V)>) -> String {
-    match xs {
+func fmt_entries<+K: Display, +V: Display>(xs: List<(K, V)>) -> String {
+    of xs {
         Nil => "",
         Cons((k, v), Nil) => <(k, v) | fmt_entry,
         Cons((k, v), rest) => {
@@ -515,7 +515,7 @@ fn fmt_entries<+K: Display, +V: Display>(xs: List<(K, V)>) -> String {
 }
 
 impl<+K: Display, +V: Display> Display for HashMap<K, V> {
-    fn fmt(self: HashMap<K, V>) -> String {
+    func fmt(self: HashMap<K, V>) -> String {
         (<("{", <self | to_list | fmt_entries) | add | x => (x, "}") | add)
     }
 }
@@ -527,10 +527,10 @@ pub menu Builder<+K, +V> {
     finish: HashMap<K, V>,
 }
 
-fn holding<+K: Hash + Eq, +V>(m: HashMap<K, V>) -> Builder<K, V> {
+func holding<+K: Hash + Eq, +V>(m: HashMap<K, V>) -> Builder<K, V> {
     mu Builder {
         put <= <fn(entry: (K, V)) {
-            match entry {
+            of entry {
                 (key, value) => <(<(m, key, value) | insert) | holding,
             }
         } | put>,
@@ -538,10 +538,10 @@ fn holding<+K: Hash + Eq, +V>(m: HashMap<K, V>) -> Builder<K, V> {
     }
 }
 
-pub fn builder<+K: Hash + Eq, +V>() -> Builder<K, V> {
+pub func builder<+K: Hash + Eq, +V>() -> Builder<K, V> {
     <empty() | holding
 }
 
-pub fn put<+K: Hash + Eq, +V>(b: Builder<K, V>, key: K, value: V) -> Builder<K, V> {
+pub func put<+K: Hash + Eq, +V>(b: Builder<K, V>, key: K, value: V) -> Builder<K, V> {
     <(key, value) | b.put
 }

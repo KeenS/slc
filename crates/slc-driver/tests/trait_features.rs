@@ -19,9 +19,9 @@ fn a_child_impl_requires_each_parent() {
     let (ok, stderr) = run(
         "parent",
         "enum Hue { Warm, Cool }
-trait Rank: Eq { fn place(self: Self) -> i64; }
-impl Rank for Hue { fn place(self: Hue) -> i64 { 0 } }
-command main | (exit: i32) / {IO} { <0 | exit> }
+spec Rank: Eq { func place(self: Self) -> i64; }
+impl Rank for Hue { func place(self: Hue) -> i64 { 0 } }
+proc main | (exit: i32) / {IO} { <0 | exit> }
 ",
     );
     assert!(!ok);
@@ -36,9 +36,9 @@ fn an_impl_gives_each_associated_type() {
     let (ok, stderr) = run(
         "missing",
         "enum Countdown { Done }
-trait Walk { type Item; fn next(self: Self) -> Item; }
-impl Walk for Countdown { fn next(self: Countdown) -> i64 { 0 } }
-command main | (exit: i32) / {IO} { <0 | exit> }
+spec Walk { type Item; func next(self: Self) -> Item; }
+impl Walk for Countdown { func next(self: Countdown) -> i64 { 0 } }
+proc main | (exit: i32) / {IO} { <0 | exit> }
 ",
     );
     assert!(!ok);
@@ -50,13 +50,13 @@ fn a_pin_refuses_a_different_item() {
     let (ok, stderr) = run(
         "pin",
         "enum Words { One }
-trait Walk { type Item; fn next(self: Self) -> Item; }
+spec Walk { type Item; func next(self: Self) -> Item; }
 impl Walk for Words {
     type Item = String;
-    fn next(self: Words) -> String { \"one\" }
+    func next(self: Words) -> String { \"one\" }
 }
-fn number<+T: Walk<Item = i64>>(x: T) -> i64 { <x | next }
-command main | (exit: i32) / {IO} {
+func number<+T: Walk<Item = i64>>(x: T) -> i64 { <x | next }
+proc main | (exit: i32) / {IO} {
     <One | number | println;
     <0 | exit>
 }
@@ -71,9 +71,9 @@ command main | (exit: i32) / {IO} {
 fn an_unfixed_projection_is_refused() {
     let (ok, stderr) = run(
         "open",
-        "trait Walk { type Item; fn next(self: Self) -> Item; }
-fn bare<+T>(x: T) -> Walk::Item<T> { x }
-command main | (exit: i32) / {IO} { <0 | exit> }
+        "spec Walk { type Item; func next(self: Self) -> Item; }
+func bare<+T>(x: T) -> Walk::Item<T> { x }
+proc main | (exit: i32) / {IO} { <0 | exit> }
 ",
     );
     assert!(!ok);

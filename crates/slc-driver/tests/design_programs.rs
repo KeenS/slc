@@ -31,7 +31,7 @@ fn complete_programs(design: &str) -> Vec<(usize, String)> {
     for (index, line) in design.lines().enumerate() {
         if let Some((start, text)) = block.as_mut() {
             if line.starts_with("```") {
-                if text.contains("command main") && !text.contains('…') {
+                if text.contains("proc main") && !text.contains('…') {
                     programs.push((*start, std::mem::take(text)));
                 }
                 block = None;

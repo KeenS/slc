@@ -30,8 +30,8 @@ enum Input { Coin, Push }
 enum Output { Open, Turn, Refund, Alarm, Wait }
 
 impl Display for Output {
-    fn fmt(self: Output) -> String {
-        match self {
+    func fmt(self: Output) -> String {
+        of self {
             Open => "open",
             Turn => "turn",
             Refund => "refund",
@@ -53,14 +53,14 @@ menu Turnstile {
 
 // One function per state, and one arm per edge out of it. The arm's name is
 // the input, and what it cuts into is the edge: `coin / Open`, to `unlocked`.
-fn locked() -> Turnstile {
+func locked() -> Turnstile {
     mu Turnstile {
         coin <= <Step { output: Open, next: unlocked() } | coin>,
         push <= <Step { output: Alarm, next: locked() } | push>,
     }
 }
 
-fn unlocked() -> Turnstile {
+func unlocked() -> Turnstile {
     mu Turnstile {
         coin <= <Step { output: Refund, next: unlocked() } | coin>,
         push <= <Step { output: Turn, next: locked() } | push>,
@@ -70,18 +70,18 @@ fn unlocked() -> Turnstile {
 // States need not be finitely many functions: a state can carry what it
 // remembers as parameters. This gate wants `fare` coins before it opens, and
 // its state is the credit so far — one definition, a family of states.
-fn gate(credit: i64, fare: i64) -> Turnstile {
+func gate(credit: i64, fare: i64) -> Turnstile {
     let paid = <(credit, fare) | ge;
     mu Turnstile {
-        coin <= match paid {
+        coin <= of paid {
             True => <Step { output: Refund, next: <(credit, fare) | gate } | coin>,
             False => {
                 let credit = <(credit, 1) | add;
-                let output = match (<(credit, fare) | ge) { True => Open, False => Wait };
+                let output = of (<(credit, fare) | ge) { True => Open, False => Wait };
                 <Step { output: output, next: <(credit, fare) | gate } | coin>
             },
         },
-        push <= match paid {
+        push <= of paid {
             True => <Step { output: Turn, next: <(0, fare) | gate } | push>,
             False => <Step { output: Alarm, next: <(credit, fare) | gate } | push>,
         },
@@ -91,15 +91,15 @@ fn gate(credit: i64, fare: i64) -> Turnstile {
 // Running a machine turns the data it is fed into demands: each input picks
 // the item to ask for. This is the one place the two alphabets meet — `Input`
 // is the alphabet as data, `Turnstile` the same alphabet as codata.
-fn feed(machine: Turnstile, input: Input) -> Step {
-    match input {
+func feed(machine: Turnstile, input: Input) -> Step {
+    of input {
         Coin => machine.coin,
         Push => machine.push,
     }
 }
 
-fn run(machine: Turnstile, inputs: List<Input>) -> List<Output> {
-    match inputs {
+func run(machine: Turnstile, inputs: List<Input>) -> List<Output> {
+    of inputs {
         Nil => Nil,
         Cons(input, rest) => {
             let step = <(machine, input) | feed;
@@ -108,7 +108,7 @@ fn run(machine: Turnstile, inputs: List<Input>) -> List<Output> {
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // A machine is driven by projection alone: each `.push` or `.coin` is a
     // transition, and `.next` the machine that remains.
     <locked().push.output | println;

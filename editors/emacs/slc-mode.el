@@ -71,9 +71,8 @@
 ;;; Highlighting
 
 (defconst slc-keywords
-  '("fn" "mu" "command" "mod" "use" "trait" "impl" "for" "effect" "handle"
-    "handler" "with" "reset" "match" "select" "let" "data" "enum" "menu"
-    "form" "dual" "const" "pub")
+  '("fn" "func" "mu" "proc" "mod" "use" "spec" "impl" "for" "hook" "do" "op"
+    "reset" "of" "let" "data" "enum" "menu" "form" "dual" "def" "pub")
   "The words SLC reserves.")
 
 (defconst slc-builtin-types
@@ -93,13 +92,13 @@
     ;; `_ => forward', a handler's last clause.
     ("\\_<_\\s-*=>\\s-*\\(forward\\)\\_>" 1 font-lock-keyword-face)
     ;; What a declaration names.
-    (,(concat "\\_<\\(?:fn\\|command\\)\\s-+\\(" slc--name "\\)")
+    (,(concat "\\_<\\(?:func\\|proc\\)\\s-+\\(" slc--name "\\)")
      1 font-lock-function-name-face)
-    (,(concat "\\_<\\(?:data\\|enum\\|menu\\|form\\|trait\\|effect\\)\\s-+\\("
+    (,(concat "\\_<\\(?:data\\|enum\\|menu\\|form\\|spec\\|hook\\)\\s-+\\("
               slc--name "\\)")
      1 font-lock-type-face)
     (,(concat "\\_<mod\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
-    (,(concat "\\_<const\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
+    (,(concat "\\_<def\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
     ;; The builtins beneath the prelude's operators: `__add'.
     ("\\_<__[[:alnum:]_]+\\_>" . font-lock-builtin-face)
     (,(regexp-opt slc-builtin-types 'symbols) . font-lock-type-face)
@@ -245,13 +244,13 @@ shown; the buffer is then left as it was."
 ;;; The mode
 
 (defvar slc-imenu-generic-expression
-  `(("Functions" ,(concat "^\\s-*\\(?:pub\\s-+\\)?fn\\s-+\\(" slc--name "\\)") 1)
-    ("Commands" ,(concat "^\\s-*\\(?:pub\\s-+\\)?command\\s-+\\(" slc--name "\\)") 1)
+  `(("Functions" ,(concat "^\\s-*\\(?:pub\\s-+\\)?func\\s-+\\(" slc--name "\\)") 1)
+    ("Commands" ,(concat "^\\s-*\\(?:pub\\s-+\\)?proc\\s-+\\(" slc--name "\\)") 1)
     ("Types" ,(concat "^\\s-*\\(?:pub\\s-+\\)?\\(?:data\\|enum\\|menu\\|form\\)\\s-+\\("
                       slc--name "\\)")
      1)
-    ("Traits" ,(concat "^\\s-*\\(?:pub\\s-+\\)?trait\\s-+\\(" slc--name "\\)") 1)
-    ("Effects" ,(concat "^\\s-*\\(?:pub\\s-+\\)?effect\\s-+\\(" slc--name "\\)") 1)
+    ("Traits" ,(concat "^\\s-*\\(?:pub\\s-+\\)?spec\\s-+\\(" slc--name "\\)") 1)
+    ("Effects" ,(concat "^\\s-*\\(?:pub\\s-+\\)?hook\\s-+\\(" slc--name "\\)") 1)
     ("Modules" ,(concat "^\\s-*\\(?:pub\\s-+\\)?mod\\s-+\\(" slc--name "\\)") 1))
   "The declarations `imenu' lists.")
 

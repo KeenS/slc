@@ -26,12 +26,12 @@ form Sink {
     out: -i64,
 }
 
-trait Describe {
-    fn describe(self: Self) -> String;
+spec Describe {
+    func describe(self: Self) -> String;
 }
 
 impl Describe for Config {
-    fn describe(self: Config) -> String {
+    func describe(self: Config) -> String {
         <(self.name, " with ")
             | add
             | x => (x, <self.retries | fmt) | add
@@ -40,7 +40,7 @@ impl Describe for Config {
 }
 
 impl Describe for Sink {
-    fn describe(self: Sink) -> String {
+    func describe(self: Sink) -> String {
         "a sink for one number"
     }
 }
@@ -48,55 +48,55 @@ impl Describe for Sink {
 // A bounded impl for a generic menu: describing a Stream<T> needs T
 // displayable, and the dictionary composes at the use.
 impl<+T: Display> Describe for Stream<T> {
-    fn describe(self: Stream<T>) -> String {
+    func describe(self: Stream<T>) -> String {
         <("stream starting ", <self.head | fmt) | add
     }
 }
 
-fn config() -> Config {
+func config() -> Config {
     mu Config {
         retries <= <3 | retries>,
         name <= <"slant" | name>,
     }
 }
 
-fn keeper() -> Sink {
-    select Sink {
+func keeper() -> Sink {
+    mu Sink {
         Sink { value, out } => <value | out>,
     }
 }
 
 // A bound discharged at codata types: `label` knows only that its argument
 // is negative — a menu or a form, it cannot tell which.
-fn label<-T: Describe>(x: T) -> String {
+func label<-T: Describe>(x: T) -> String {
     <x | describe
 }
 
 // A bounded negative function: `T` is fixed by the cut, and `fmt`'s
 // dictionary travels in from the caller's side.
-fn emit<+T: Display>(out: String) <- T {
+func emit<+T: Display>(out: String) <- T {
     fn(x: T) { <x | fmt | out> }
 }
 
 // A trait method that consumes `Self`. Dispatch reads the type the cut
 // sends, so `<42 | deliver(s)` finds the `i64` impl.
-trait Deliver {
-    fn deliver(out: String) <- Self;
+spec Deliver {
+    func deliver(out: String) <- Self;
 }
 
 impl Deliver for i64 {
-    fn deliver(out: String) <- i64 {
+    func deliver(out: String) <- i64 {
         fn(n: i64) { <("the number ", <n | fmt) | add | out> }
     }
 }
 
 impl Deliver for Bool {
-    fn deliver(out: String) <- Bool {
-        fn(b: Bool) { <match b { True => "affirmative", False => "negative" } | out> }
+    func deliver(out: String) <- Bool {
+        fn(b: Bool) { <of b { True => "affirmative", False => "negative" } | out> }
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <config() | describe | println;
     <keeper() | describe | println;
     <7 | count_from | describe | println;

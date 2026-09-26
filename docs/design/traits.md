@@ -17,16 +17,16 @@ several methods stores them as a tuple. A bounded impl of such a trait
 applies the element's dictionaries to each method, then builds that tuple:
 a tuple of functions is not itself a function.
 
-A `trait` names operations over an implicit `Self`; an `impl` gives them for a
+A `spec` names operations over an implicit `Self`; an `impl` gives them for a
 type; a bound `<T: Show>` lets a generic use them. A method is a free function
 overloaded on its first argument's type — `<x | show`, never `x.show()`:
 
 ```sl
-trait Show { fn show(self: Self) -> String; }
-impl Show for i64  { fn show(self: i64)  -> String { <self | int_to_str } }
-impl Show for Bool { fn show(self: Bool) -> String { match self { True => "t", _ => "f" } } }
+spec Show { func show(self: Self) -> String; }
+impl Show for i64  { func show(self: i64)  -> String { <self | int_to_str } }
+impl Show for Bool { func show(self: Bool) -> String { of self { True => "t", _ => "f" } } }
 
-fn labelled<+T: Show>(x: T) -> String { (<("= ", <x | show) | add) }
+func labelled<+T: Show>(x: T) -> String { (<("= ", <x | show) | add) }
 ```
 
 The checker makes dispatch total: coherence allows one `impl` per trait and
@@ -51,14 +51,14 @@ A method of several parameters takes them as one group, as any function
 does, and `Self` is read off the components its parameters give that type.
 Each component is checked against its parameter, and an integer literal
 takes its width from the others, so with
-`trait Combine { fn combine(self: Self, other: Self) -> Self; }`,
+`spec Combine { func combine(self: Self, other: Self) -> Self; }`,
 `<(1, x) | combine` for `x: i32` is `i32`'s `combine`.
 
 A parameter may be bound by several traits, joined by `+`:
 
 ```
-fn largest<+T: Ord + Display>(a: T, b: T) -> String {
-    match (<(a, b) | gt) { True => <a | fmt, False => <b | fmt }
+func largest<+T: Ord + Display>(a: T, b: T) -> String {
+    of (<(a, b) | gt) { True => <a | fmt, False => <b | fmt }
 }
 ```
 
@@ -74,11 +74,11 @@ call meets: an argument that has one, or — when the parameter appears only
 in what the call produces — the type that result is expected to have.
 
 ```sl
-trait Into<+U> { fn into(self: Self) -> U; }
-impl Into<i64> for Wrap { fn into(self: Wrap) -> i64 { … } }
-impl Into<String> for Wrap { fn into(self: Wrap) -> String { … } }
+spec Into<+U> { func into(self: Self) -> U; }
+impl Into<i64> for Wrap { func into(self: Wrap) -> i64 { … } }
+impl Into<String> for Wrap { func into(self: Wrap) -> String { … } }
 
-fn number(w: Wrap) -> i64 { <w | into }
+func number(w: Wrap) -> i64 { <w | into }
 ```
 
 `number` returns `i64`, so `<w | into` is `Into<i64>`. The same call in a
@@ -98,7 +98,7 @@ it. A default may call another method of its trait. It may not call the
 method it defines.
 [`examples/basics/defaults.sl`](../../examples/basics/defaults.sl) writes `eq` only.
 
-A trait may require other traits, written `trait Rank: Eq`, and several
+A trait may require other traits, written `spec Rank: Eq`, and several
 parents join with `+`. An impl of the child is refused unless every parent
 is implemented for the same type. A bound `T: Rank` is still one bound where
 it is written. It carries one dictionary per trait, parents before the
@@ -113,21 +113,21 @@ destinations. A family stays a trait parameter, which is what `Into<U>` is,
 and `Add` returns `Self`.
 
 ```sl
-trait Walk {
+spec Walk {
     type Item;
-    fn next(self: Self) -> Item;
+    func next(self: Self) -> Item;
 }
 
 impl Walk for Countdown {
     type Item = i64;
-    fn next(self: Countdown) -> i64 { … }
+    func next(self: Countdown) -> i64 { … }
 }
 ```
 
 `Item` in the trait's signatures stands for the impl's type. At a use the
 projection is `Walk::Item<Countdown>`: the trait's own arguments come first
 and the implementing type is last, so it is `i64`. Inside
-`fn echo<+T: Walk>(x: T) -> Walk::Item<T>` the two mentions are one type,
+`func echo<+T: Walk>(x: T) -> Walk::Item<T>` the two mentions are one type,
 and a call with a `Countdown` returns that impl's `i64`. A bound may pin
 the projection, `<+T: Walk<Item = i64>>`. The dictionary is still `Walk`'s;
 at the call, where `T` is known, `Walk::Item<T>` must be `i64`. A projection
@@ -135,6 +135,6 @@ nothing fixes — no impl, and no bound — is refused.
 [`examples/basics/associated.sl`](../../examples/basics/associated.sl) runs the
 three.
 
-A method may be a `command`, taking continuations like any other; the
+A method may be a `proc`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits, and bounds are
 on positive type parameters.

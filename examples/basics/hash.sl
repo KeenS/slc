@@ -4,11 +4,11 @@
 // integer widths. A negative `i64` still hashes non-negative, so `rem` by a
 // small width lands in `0 .. width`.
 
-fn hash_u(n: u64) -> u64 { <n | hash }
+func hash_u(n: u64) -> u64 { <n | hash }
 
-fn show<+T: Hash>(x: T) -> u64 { <x | hash }
+func show<+T: Hash>(x: T) -> u64 { <x | hash }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <0 | hash | println;
     <42 | hash | println;
     <-1 | hash | println;

@@ -12,7 +12,7 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
 }
 
 const STAGE: &str =
-    "fn deliver(out: String) <- i64 { select i64 { number => <number | int_to_str | out> } }";
+    "func deliver(out: String) <- i64 { mu i64 { number => <number | int_to_str | out> } }";
 
 #[test]
 fn stored_products_sums_records_and_recursive_variants_adapt() {
@@ -23,16 +23,16 @@ fn stored_products_sums_records_and_recursive_variants_adapt() {
         {STAGE}
         data Box<-F> {{ value: F }}
         enum Chain<-F> {{ End, Link(F, Chain<F>) }}
-        fn take(chain: Chain<(i64 -> String)>) -> String {{
-            match chain {{ End => "end", Link(stage, rest) => <42 | stage }}
+        func take(chain: Chain<(i64 -> String)>) -> String {{
+            of chain {{ End => "end", Link(stage, rest) => <42 | stage }}
         }}
-        command main | (exit: i32) / {{IO}} {{
+        proc main | (exit: i32) / {{IO}} {{
             let original = (deliver, 1);
             let pair: ((i64 -> String), i64) = original;
             <pair.1 | pair.0 | println;
             let original: ((-String -> -i64) | i64) = ::0(deliver);
             let choice: ((i64 -> String) | i64) = original;
-            match choice {{ ::0(stage) => <2 | stage | println, ::1(number) => <number | println }};
+            of choice {{ ::0(stage) => <2 | stage | println, ::1(number) => <number | println }};
             let original = Box {{ value: deliver }};
             let boxed: Box<(i64 -> String)> = original;
             <3 | boxed.value | println;
@@ -56,9 +56,9 @@ fn higher_order_inputs_outputs_and_menu_answers_adapt() {
         {STAGE}
         data Box<-F> {{ value: F }}
         menu Provider<-F> {{ get: F }}
-        fn use_stage(stage: (i64 -> String)) -> String {{ <4 | stage }}
-        fn provide() -> Box<(-String -> -i64)> {{ Box {{ value: deliver }} }}
-        command main | (exit: i32) / {{IO}} {{
+        func use_stage(stage: (i64 -> String)) -> String {{ <4 | stage }}
+        func provide() -> Box<(-String -> -i64)> {{ Box {{ value: deliver }} }}
+        proc main | (exit: i32) / {{IO}} {{
             let use_other: ((-String -> -i64) -> String) = use_stage;
             <deliver | use_other | println;
             let make_box: ((,) -> Box<(i64 -> String)>) = provide;
@@ -81,27 +81,27 @@ fn delayed_turning_keeps_construction_at_each_forcing_boundary() {
     let (success, stdout, stderr) = run(
         "phases",
         r#"
-        effect Build { fn build() -> i64; }
-        effect Use { fn use_value(input: i64) -> i64; }
+        hook Build { func build() -> i64; }
+        hook Use { func use_value(input: i64) -> i64; }
         data Box<-F> { value: F }
-        fn make() -> (i64 -> i64 / {Use}) / {Build} {
+        func make() -> (i64 -> i64 / {Use}) / {Build} {
             let offset = build();
             fn(input: i64) { <(input, offset) | add | use_value }
         }
-        command main | (exit: i32) / {IO} {
+        proc main | (exit: i32) / {IO} {
             let original = Box { value: make() };
             let boxed: Box<Delayed<(-i64 -> -i64 / {Use}), {Build}>> = original;
             <"stored" | println;
-            let+ ready = handle { let+ value = boxed.value; value } {
+            let+ ready = do { let+ value = boxed.value; value } {
                 build(): resume => { <"build now" | println; <10 | resume }
             };
             <"ready" | println;
-            <handle (<1 | ready) { use_value(input): resume => { <"use" | println; <input | resume } } | println;
-            <handle (<2 | boxed.value) {
+            <do (<1 | ready) { use_value(input): resume => { <"use" | println; <input | resume } } | println;
+            <do (<2 | boxed.value) {
                 build(): resume => { <"build again" | println; <20 | resume },
                 use_value(input): resume => { <"use" | println; <input | resume }
             } | println;
-            <handle (<3 | boxed.value) {
+            <do (<3 | boxed.value) {
                 build(): resume => { <"build again" | println; <30 | resume },
                 use_value(input): resume => { <"use" | println; <input | resume }
             } | println;
@@ -125,13 +125,13 @@ fn adapters_cannot_erase_forcing_or_activation_rows() {
             name,
             &format!(
                 r#"
-            effect Build {{ fn build() -> i64; }}
-            effect Use {{ fn use_value(input: i64) -> i64; }}
+            hook Build {{ func build() -> i64; }}
+            hook Use {{ func use_value(input: i64) -> i64; }}
             data Box<-F> {{ value: F }}
-            fn make() -> (i64 -> i64 / {{Use}}) / {{Build}} {{
+            func make() -> (i64 -> i64 / {{Use}}) / {{Build}} {{
                 let offset = build(); fn(input: i64) {{ <input | use_value }}
             }}
-            command main | (exit: i32) {{
+            proc main | (exit: i32) {{
                 let original = Box {{ value: make() }};
                 let boxed: Box<{annotation}> = original;
                 <0 | exit>
@@ -153,9 +153,9 @@ fn dual_parameter_occurrences_and_consumers_adapt_contravariantly() {
         {STAGE}
         data Box<-F> {{ value: F }}
         data Request<-F> {{ value: -F }}
-        command main | (exit: i32) / {{IO}} {{
+        proc main | (exit: i32) / {{IO}} {{
             let number = mu String {{ out <= {{
-                let consumer: -Box<(-String -> -i64)> = select Box<(i64 -> String)> {{ Box {{ value: stage }} => <7 | stage | out> }};
+                let consumer: -Box<(-String -> -i64)> = mu Box<(i64 -> String)> {{ Box {{ value: stage }} => <7 | stage | out> }};
                 <Box {{ value: deliver }} | consumer>
             }} }};
             <number | println;
@@ -182,7 +182,7 @@ fn double_turning_and_alternative_paths_agree() {
             r#"
         {STAGE}
         data Box<-F> {{ value: F }}
-        command main | (exit: i32) / {{IO}} {{
+        proc main | (exit: i32) / {{IO}} {{
             let original = Box {{ value: deliver }};
             let forward: Box<(i64 -> String)> = original;
             let backward: Box<(-String -> -i64)> = forward;
@@ -209,10 +209,10 @@ fn recursive_menu_lifting_leaves_unrequested_answers_unrun() {
             r#"
         {STAGE}
         menu Stream<-F> {{ head: F, tail: Stream<F> }}
-        fn stream() -> Stream<(-String -> -i64)> {{
+        func stream() -> Stream<(-String -> -i64)> {{
             mu Stream<(-String -> -i64)> {{ head: out <= <deliver | out>, tail: out <= <stream() | out> }}
         }}
-        command main | (exit: i32) / {{IO}} {{
+        proc main | (exit: i32) / {{IO}} {{
             let original = stream();
             let adapted: Stream<(i64 -> String)> = original;
             <10 | adapted.tail.tail.head | println;
@@ -230,15 +230,15 @@ fn forcing_adapters_survive_multishot_resumption() {
     let (success, stdout, stderr) = run(
         "multishot",
         r#"
-        effect Choose { fn choose() -> i64; }
+        hook Choose { func choose() -> i64; }
         data Box<-F> { value: F }
-        fn make() -> (i64 -> String) / {Choose} {
+        func make() -> (i64 -> String) / {Choose} {
             let offset = choose(); fn(number: i64) { <(number, offset) | add | int_to_str }
         }
-        command main | (exit: i32) / {IO} {
+        proc main | (exit: i32) / {IO} {
             let original = Box { value: make() };
             let boxed: Box<Delayed<(-String -> -i64), {Choose}>> = original;
-            let answer = handle (<1 | boxed.value) {
+            let answer = do (<1 | boxed.value) {
                 choose(): resume => <((<10 | resume), (<20 | resume)) | add
             };
             <answer | println;
@@ -261,7 +261,7 @@ fn opaque_types_capability_rows_and_unbounded_specialization_are_rejected() {
         ),
         (
             "capability",
-            "effect Reader<-F> { fn read() -> F; } menu Box<E> / {..E} { value: i64 }",
+            "hook Reader<-F> { func read() -> F; } menu Box<E> / {..E} { value: i64 }",
             "Box<{Reader<(-String -> -i64)>}>",
             "Box<{Reader<(i64 -> String)>}>",
         ),
@@ -277,8 +277,8 @@ fn opaque_types_capability_rows_and_unbounded_specialization_are_rejected() {
             &format!(
                 r#"
             {declarations}
-            fn cast(value: {source}) -> {target} {{ value }}
-            command main | (exit: i32) {{ <0 | exit> }}
+            func cast(value: {source}) -> {target} {{ value }}
+            proc main | (exit: i32) {{ <0 | exit> }}
         "#
             ),
         );
@@ -295,8 +295,8 @@ fn generic_stage_adapters_use_declared_polarities() {
             r#"
         {STAGE}
         data Box<-F> {{ value: F }}
-        fn turn<+A, +B>(value: Box<(-B -> -A)>) -> Box<(A -> B)> {{ value }}
-        command main | (exit: i32) / {{IO}} {{
+        func turn<+A, +B>(value: Box<(-B -> -A)>) -> Box<(A -> B)> {{ value }}
+        proc main | (exit: i32) / {{IO}} {{
             let boxed = <Box {{ value: deliver }} | turn;
             <11 | boxed.value | println;
             <0 | exit>
@@ -316,12 +316,12 @@ fn bundles_and_named_forms_lift_their_components() {
             r#"
         {STAGE}
         form Sink<-F> {{ callback: F }}
-        command main | (exit: i32) / {{IO}} {{
+        proc main | (exit: i32) / {{IO}} {{
             let original = (deliver & deliver);
             let bundle: ((i64 -> String) & (i64 -> String)) = original;
             <12 | bundle.0 | println;
             let answer = mu String {{ out <= {{
-                let original = select Sink<(i64 -> String)> {{ Sink {{ callback }} => <13 | callback | out> }};
+                let original = mu Sink<(i64 -> String)> {{ Sink {{ callback }} => <13 | callback | out> }};
                 let adapted: Sink<(-String -> -i64)> = original;
                 <Sink {{ callback: deliver }} | adapted>
             }} }};
@@ -341,9 +341,9 @@ fn lazy_lifting_preserves_demand_effects_and_delayed_results() {
         "lazy",
         r#"
         use lazy::Lazy;
-        effect Build { fn build() -> i64; }
-        effect Use { fn use_value(input: i64) -> i64; }
-        command main | (exit: i32) / {IO} {
+        hook Build { func build() -> i64; }
+        hook Use { func use_value(input: i64) -> i64; }
+        proc main | (exit: i32) / {IO} {
             let original = mu Lazy<(i64 -> i64 / {Use}), {Build}> {
                 force: out <= {
                     let offset = build();
@@ -352,11 +352,11 @@ fn lazy_lifting_preserves_demand_effects_and_delayed_results() {
             };
             let adapted: Lazy<(-i64 -> -i64 / {Use}), {Build}> = original;
             <"stored" | println;
-            let+ ready = handle { let+ result = adapted.force; result } {
+            let+ ready = do { let+ result = adapted.force; result } {
                 build(): resume => { <"build" | println; <30 | resume }
             };
             <"ready" | println;
-            <handle (<4 | ready) {
+            <do (<4 | ready) {
                 use_value(input): resume => { <"use" | println; <input | resume }
             } | println;
             <0 | exit>

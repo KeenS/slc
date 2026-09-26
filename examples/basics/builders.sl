@@ -6,7 +6,7 @@
 // ready to be extended. `map` and `set` order their keys. `hashmap` and
 // `hashset` keep hash-slot order.
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let start = map::builder();
     // Demanded on the menu, then through `put`.
     let left = <("m", 1) | start.put;

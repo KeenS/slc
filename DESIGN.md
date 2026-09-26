@@ -15,8 +15,8 @@ polarity explicit through type signs and arrows.
 What the one grammar does keep is the mirror. A program can be written
 value-first — functions take data and give data back — or continuation-first,
 where a function takes a consumer and gives a consumer back and nothing
-returns at all. Each construct has its opposite: `fn f(x: +A) -> B` against
-`fn f(k: -B) <- A`, `match` against `select`, a call against a cut, and a
+returns at all. Each construct has its opposite: `func f(x: +A) -> B` against
+`func f(k: -B) <- A`, `of` against `mu`, a call against a cut, and a
 `let` against the consumer that the rest of the program becomes.
 `examples/duality/two_styles.sl` writes one program both ways.
 
@@ -27,8 +27,13 @@ in this file and in every part below.
 
 ## 1. Design goals
 
-1. **Rust-like surface** — familiar `fn`, `command`, `let`, `match`, braces, type
-   annotations, and paths.
+1. **Rust-like surface** — familiar `func`, `proc`, `let`, `of`, braces, type
+   annotations, and paths. A declaration's keyword is four letters (`func`,
+   `proc`, `spec`, `hook`, and the four-letter forms already in use). An
+   expression that returns a value is two (`of`, `do`, `op`, and `mu`).
+   `def` names a definition and is the exception, three letters, because a
+   definition sits on neither side of the value and continuation mirror.
+   `let`, `mod`, `use`, and `reset` stay, and so does the lambda `func`.
 2. **λ̄μμ̃ core** — terms, co-terms, and cuts are the underlying semantic
    categories.
 3. **Polarized types** — positive types denote values/proofs; negative types
@@ -36,7 +41,7 @@ in this file and in every part below.
 4. **Explicit control** — a continuation is activated by a cut, `v | k`,
    which is a command and not a call.
 5. **Total control** — every terminating path reaches a continuation: a
-   `command` body must be `⊥`. The core is classical, so *which* continuation
+   `proc` body must be `⊥`. The core is classical, so *which* continuation
    (and how many times) is up to the program.
 
 ## 2. Core model
@@ -60,7 +65,7 @@ belong to the language, and each part keeps the numbers it had here.
 
 - [Flow](docs/design/flow.md) — §3, application, composition, and the cut.
 - [Polarity](docs/design/polarity.md) — §4, function orientation and evaluation.
-- [Control](docs/design/control.md) — §5 `command`, §6 `mu`.
+- [Control](docs/design/control.md) — §5 `proc`, §6 `mu`.
 - [Data](docs/design/data.md) — §7 additive data, §8 multiplicative data,
   polymorphism, and what a type may leave unwritten.
 - [Traits](docs/design/traits.md) — ad-hoc polymorphism.

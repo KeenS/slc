@@ -4,12 +4,12 @@
 use Shape::*;
 
 // Private: the file's own helper, and no part of the module's surface.
-fn squared(n: i64) -> i64 {
+func squared(n: i64) -> i64 {
     <(n, n) | mul
 }
 
-pub fn area(s: Shape) -> i64 {
-    match s {
+pub func area(s: Shape) -> i64 {
+    of s {
         Circle(r) => <(3, <r | squared) | mul,
         Rect(w, h) => <(w, h) | mul,
     }

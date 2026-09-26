@@ -8,9 +8,9 @@ fn run(name: &str, body: &str) -> String {
     let path = std::env::temp_dir().join(format!("slc_chain_components_{name}.sl"));
     let source = format!(
         "data Pt {{ x: i64, y: i64 }}
-        fn inc(n: i64) -> i64 {{ <(n, 1) | add }}
+        func inc(n: i64) -> i64 {{ <(n, 1) | add }}
 
-        command main | (exit: -i32) / {{IO}} {{
+        proc main | (exit: -i32) / {{IO}} {{
             {body}
             <0 | exit>
         }}"
@@ -60,8 +60,8 @@ fn a_tuple_stage_keeps_its_meaning() {
     let path = std::env::temp_dir().join("slc_chain_components_tuple_stage.sl");
     std::fs::write(
         &path,
-        "fn inc(n: i64) -> i64 { <(n, 1) | add }
-        command main | (exit: -i32) / {IO} { <3 | (inc, inc) | println; <0 | exit> }",
+        "func inc(n: i64) -> i64 { <(n, 1) | add }
+        proc main | (exit: -i32) / {IO} { <3 | (inc, inc) | println; <0 | exit> }",
     )
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_slc")).arg("run").arg(&path).output().unwrap();

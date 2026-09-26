@@ -22,10 +22,10 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
 fn a_clause_naming_no_operation_is_refused() {
     let (ok, _, stderr) = run(
         "bare",
-        "effect Reader { fn config() -> i64; }
-        fn f() -> i64 / {Reader} { config() }
-        command main | (exit: -i32) / {IO} {
-            let v = handle f() { nope(): resume => <1 | resume, config(): resume => <2 | resume };
+        "hook Reader { func config() -> i64; }
+        func f() -> i64 / {Reader} { config() }
+        proc main | (exit: -i32) / {IO} {
+            let v = do f() { nope(): resume => <1 | resume, config(): resume => <2 | resume };
             <v | println;
             <0 | exit>
         }",
@@ -35,10 +35,10 @@ fn a_clause_naming_no_operation_is_refused() {
 
     let (ok, _, stderr) = run(
         "path",
-        "fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-            handle <(,) | program { fs::nope(path): resume => <::0(\"x\") | resume }
+        "func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+            do <(,) | program { fs::nope(path): resume => <::0(\"x\") | resume }
         }
-        command main | (exit: -i32) / {IO} { <0 | exit> }",
+        proc main | (exit: -i32) / {IO} { <0 | exit> }",
     );
     assert!(!ok);
     assert!(stderr.contains("`fs::nope` is not an operation of any effect"), "{stderr}");
@@ -48,10 +48,10 @@ fn a_clause_naming_no_operation_is_refused() {
 fn a_clause_for_a_declared_operation_keeps_its_meaning() {
     let (ok, stdout, stderr) = run(
         "declared",
-        "effect Reader { fn config() -> i64; }
-        fn f() -> i64 / {Reader} { config() }
-        command main | (exit: -i32) / {IO} {
-            let v = handle f() { config(): resume => <2 | resume };
+        "hook Reader { func config() -> i64; }
+        func f() -> i64 / {Reader} { config() }
+        proc main | (exit: -i32) / {IO} {
+            let v = do f() { config(): resume => <2 | resume };
             <v | println;
             <0 | exit>
         }",

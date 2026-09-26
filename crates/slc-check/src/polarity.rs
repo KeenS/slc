@@ -119,7 +119,7 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
                 && !is_positive_type(&core_ty)
             {
                 diags.push(Diagnostic {
-                    message: format!("const type {core_ty} must be positive (+)"),
+                    message: format!("def type {core_ty} must be positive (+)"),
                     span: d.span,
                 });
             }
@@ -453,7 +453,7 @@ fn check_expr(e: &Node<Expr>, declared: &Declarations, diags: &mut Vec<Diagnosti
             {
                 diags.push(Diagnostic {
                     message: format!(
-                        "fn parameter has type {core_ty}; expected positive (+) polarity"
+                        "func parameter has type {core_ty}; expected positive (+) polarity"
                     ),
                     span: e.span,
                 });
@@ -516,34 +516,34 @@ mod tests {
     fn a_consumer_is_a_value() {
         // A value parameter holds either side: a consumer travels bare, and
         // `-(-i64)` is `+i64` by involution.
-        assert!(check("fn f(x: -i64) -> i64 { 0 }").is_ok());
-        assert!(check("fn f(x: -(-i64)) -> i64 { x }").is_ok());
-        assert!(check("command f(x: -i32) | (k: -i32) { <0 | k> }").is_ok());
+        assert!(check("func f(x: -i64) -> i64 { 0 }").is_ok());
+        assert!(check("func f(x: -(-i64)) -> i64 { x }").is_ok());
+        assert!(check("proc f(x: -i32) | (k: -i32) { <0 | k> }").is_ok());
         // Control still cannot leave through data.
-        let diags = check("command f | (j: +i32 & k: -i32) { <0 | k> }").unwrap_err();
+        let diags = check("proc f | (j: +i32 & k: -i32) { <0 | k> }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("expected negative")), "{diags:?}");
     }
 
     #[test]
     fn fn_positive_params_ok() {
-        assert!(check("fn add(x: +i32, y: +i32) -> i32 { x }").is_ok());
+        assert!(check("func add(x: +i32, y: +i32) -> i32 { x }").is_ok());
     }
 
     #[test]
     fn fn_continuation_params_ok() {
-        assert!(check("fn run(k: -i32) <- i32 { k(1) }").is_ok());
+        assert!(check("func run(k: -i32) <- i32 { k(1) }").is_ok());
     }
 
     #[test]
     fn command_mixed_ok() {
-        assert!(check("command step(x: +i32) | (k: -i32) { k(x) }").is_ok());
+        assert!(check("proc step(x: +i32) | (k: -i32) { k(x) }").is_ok());
     }
 
     #[test]
     fn command_wrong_polarity_fails() {
         // The consumer value parameter is fine now; the positive
         // continuation parameter is the one real error left.
-        let r = check("command bad(x: -i32) | (k: +i32) { k(x) }");
+        let r = check("proc bad(x: -i32) | (k: +i32) { k(x) }");
         assert!(r.is_err());
         let diags = r.unwrap_err();
         assert_eq!(diags.len(), 1);
@@ -551,12 +551,12 @@ mod tests {
 
     #[test]
     fn generic_parameters_state_their_polarity() {
-        assert!(check("fn k<+T>(ok: -T) <- T { ok(0) }").is_ok());
-        assert!(check("fn k<+T>(value: T) -> T { value }").is_ok());
-        assert!(check("fn k<-T>(value: T) -> T { value }").is_ok());
+        assert!(check("func k<+T>(ok: -T) <- T { ok(0) }").is_ok());
+        assert!(check("func k<+T>(value: T) -> T { value }").is_ok());
+        assert!(check("func k<-T>(value: T) -> T { value }").is_ok());
         assert!(check("enum Two<+A, -B> { One(A), Other(B) }").is_ok());
 
-        let diags = check("fn k<T>(value: T) -> T { value }").unwrap_err();
+        let diags = check("func k<T>(value: T) -> T { value }").unwrap_err();
         assert!(
             diags.iter().any(|d| d.message.contains("`T` does not state its polarity")),
             "{diags:?}"
@@ -567,22 +567,22 @@ mod tests {
 
     #[test]
     fn a_row_variable_takes_no_polarity() {
-        assert!(check("fn run<+A, E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").is_ok());
+        assert!(check("func run<+A, E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").is_ok());
         let diags =
-            check("fn run<+A, +E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").unwrap_err();
+            check("func run<+A, +E>(g: (+i64 -> +A / {..E})) -> A / {..E} { g(0) }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`E` is a row variable")), "{diags:?}");
     }
 
     #[test]
     fn a_type_application_gives_each_parameter_its_polarity() {
         const LIST: &str = "enum L<+T> { N, C(T, L<T>) }\n";
-        assert!(check(&format!("{LIST}fn f<+U>(xs: L<U>) -> i64 {{ 0 }}")).is_ok());
-        assert!(check(&format!("{LIST}fn f(xs: L<(i64, -i64)>) -> i64 {{ 0 }}")).is_ok());
+        assert!(check(&format!("{LIST}func f<+U>(xs: L<U>) -> i64 {{ 0 }}")).is_ok());
+        assert!(check(&format!("{LIST}func f(xs: L<(i64, -i64)>) -> i64 {{ 0 }}")).is_ok());
         for refused in [
-            "fn f(xs: L<(i64 -> i64)>) -> i64 { 0 }",
-            "fn f(xs: L<-i64>) -> i64 { 0 }",
-            "fn f<-U>(xs: L<U>) -> i64 { 0 }",
-            "fn f(xs: L<L<-i64>>) -> i64 { 0 }",
+            "func f(xs: L<(i64 -> i64)>) -> i64 { 0 }",
+            "func f(xs: L<-i64>) -> i64 { 0 }",
+            "func f<-U>(xs: L<U>) -> i64 { 0 }",
+            "func f(xs: L<L<-i64>>) -> i64 { 0 }",
         ] {
             let diags = check(&format!("{LIST}{refused}")).unwrap_err();
             assert!(
@@ -594,14 +594,14 @@ mod tests {
 
     #[test]
     fn signed_generic_parameters_still_have_polarity() {
-        let r = check("fn bad<+T>(ok: +T) <- T { ok(0) }");
+        let r = check("func bad<+T>(ok: +T) <- T { ok(0) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("expected negative (-) polarity"));
     }
 
     #[test]
     fn positive_parameter_in_negative_fn_fails() {
-        let r = check("fn bad(k: +i32) <- i32 { k(1) }");
+        let r = check("func bad(k: +i32) <- i32 { k(1) }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("negative"));
     }

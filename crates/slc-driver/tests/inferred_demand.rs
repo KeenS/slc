@@ -14,9 +14,9 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const BUILD: &str = "effect Build { fn build() -> i64; }
-    fn ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
-    fn twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+const BUILD: &str = "hook Build { func build() -> i64; }
+    func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
+    func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
         <(<1 | callback, <2 | callback) | add
     }";
 
@@ -33,7 +33,7 @@ fn inferred_negative_intermediates_do_not_run_when_discarded() {
             &format!(
                 "{BUILD}
                  data Holder {{ callback: Delayed<(i64 -> i64), {{Build}}> }}
-                 command main | (exit: i32) / {{IO}} {{
+                 proc main | (exit: i32) / {{IO}} {{
                      let discard = fn(value) {{ {body} }};
                      <fn(input: i64) {{ input }} | discard | println;
                      <0 | exit>
@@ -51,12 +51,12 @@ fn inferred_negative_effects_run_under_the_demand_handler() {
         "demand_handler",
         &format!(
             "{BUILD}
-             command main | (exit: i32) / {{IO}} {{
+             proc main | (exit: i32) / {{IO}} {{
                  let use_twice = fn(value) {{
-                     let stored = handle {{ let pending = {{ build(); value }}; pending }} {{
+                     let stored = do {{ let pending = {{ build(); value }}; pending }} {{
                          build(): resume => <0 | resume
                      }};
-                     handle (<stored | twice) {{
+                     do (<stored | twice) {{
                          build(): resume => {{ <\"demand\" | println; <0 | resume }}
                      }}
                  }};
@@ -75,9 +75,9 @@ fn construction_handlers_cannot_erase_inferred_latent_effects() {
         "escaping",
         &format!(
             "{BUILD}
-             command main | (exit: i32) / {{IO}} {{
+             proc main | (exit: i32) / {{IO}} {{
                  let use_twice = fn(value) {{
-                     let stored = handle {{ let pending = {{ build(); value }}; pending }} {{
+                     let stored = do {{ let pending = {{ build(); value }}; pending }} {{
                          build(): resume => <0 | resume
                      }};
                      <stored | twice
@@ -95,8 +95,8 @@ fn construction_handlers_cannot_erase_inferred_latent_effects() {
 fn inferred_positive_intermediates_still_compute_immediately() {
     let (success, stdout, stderr) = run(
         "positive",
-        "fn ignore(value: i64) -> i64 { 0 }
-         command main | (exit: i32) / {IO} {
+        "func ignore(value: i64) -> i64 { 0 }
+         proc main | (exit: i32) / {IO} {
              let discard = fn(value) { <{ <\"computed\" | println; value } | ignore };
              <42 | discard | println;
              <0 | exit>
@@ -116,10 +116,10 @@ fn primitive_calls_follow_the_same_argument_discipline_as_flows_and_aliases() {
         let (success, stdout, stderr) = run(
             &format!("primitive_{name}"),
             &format!(
-                "fn make() -> (i64 -> i64) / {{IO}} {{
+                "func make() -> (i64 -> i64) / {{IO}} {{
                     <\"constructed\" | println; fn(input: i64) {{ input }}
                  }}
-                 command main | (exit: i32) / {{IO}} {{
+                 proc main | (exit: i32) / {{IO}} {{
                      let primitive = __display;
                      <({expression}) | println;
                      <0 | exit>
@@ -135,9 +135,9 @@ fn primitive_calls_follow_the_same_argument_discipline_as_flows_and_aliases() {
 fn nullary_function_names_are_values_and_calls_are_explicit() {
     let (success, stdout, stderr) = run(
         "nullary",
-        "fn make() -> i64 / {IO} { <\"called\" | println; 42 }
-         fn invoke(factory: ((,) -> i64 / {IO})) -> i64 / {IO} { <(,) | factory }
-         command main | (exit: i32) / {IO} {
+        "func make() -> i64 / {IO} { <\"called\" | println; 42 }
+         func invoke(factory: ((,) -> i64 / {IO})) -> i64 / {IO} { <(,) | factory }
+         proc main | (exit: i32) / {IO} {
              let factory = make;
              <\"stored\" | println;
              <factory | invoke | println;
@@ -167,9 +167,9 @@ fn primitive_outcomes_force_only_the_selected_callback() {
         let (success, stdout, stderr) = run(
             &format!("outcome_{name}"),
             &format!(
-                "command main | (exit: i32) / {{IO}} {{
-                     let success = select i64 {{ value => {{ <value | println; <0 | exit> }} }};
-                     let failure = select String {{ message => {{ <message | println; <1 | exit> }} }};
+                "proc main | (exit: i32) / {{IO}} {{
+                     let success = mu i64 {{ value => {{ <value | println; <0 | exit> }} }};
+                     let failure = mu String {{ message => {{ <message | println; <1 | exit> }} }};
                      {expression}
                  }}"
             ),

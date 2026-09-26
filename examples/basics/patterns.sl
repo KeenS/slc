@@ -4,7 +4,7 @@
 // name — the name being the trivial pattern. The rule is Rust's: a binder
 // stands for *every* value of its type, since there is no other arm to fall
 // to, so the pattern must be irrefutable. Anything that can fail to match
-// belongs in a `match`, which says what happens when it does.
+// belongs in a `of`, which says what happens when it does.
 //
 // This is also what the unary calling convention already stood on. A
 // declaration binds one argument per group, and a header *is* a pattern with
@@ -20,27 +20,27 @@ enum Wrapped {
 }
 
 // The value group is a product of two, and its first leaf is itself a
-// product. `fn f((a, b): (…), c: …)` needs nothing new — the argument was
+// product. `func f((a, b): (…), c: …)` needs nothing new — the argument was
 // always one packed value, and this destructures it a level deeper.
-fn skew((a, b): (i64, i64), c: i64) -> i64 {
+func skew((a, b): (i64, i64), c: i64) -> i64 {
     <(a, c) | mul | x => (x, b) | sub
 }
 
 // A record leaf, taken apart in the header rather than the body.
-fn norm(Point { x, y }: Point) -> i64 {
+func norm(Point { x, y }: Point) -> i64 {
     <(x, x) | mul | z => (z, <(y, y) | mul) | add
 }
 
-// A `command` does the same, and its exits stay names: control leaves
+// A `proc` does the same, and its exits stay names: control leaves
 // through a name, and a pattern has nowhere to leave through.
-command nearer((here, there): (Point, Point)) | (closer: Point) {
-    match (<(<here | norm, <there | norm) | lt) {
+proc nearer((here, there): (Point, Point)) | (closer: Point) {
+    of (<(<here | norm, <there | norm) | lt) {
         True => <here | closer>,
         False => <there | closer>,
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // A tuple binder, and a nested one.
     let (a, b) = (3, 4);
     let ((p, q), r) = ((1, 2), 3);
@@ -51,7 +51,7 @@ command main | (exit: i32) / {IO} {
     let Only(n) = Only(29);
     <(x, y) | mul | x => (x, n) | add | println; // 71
 
-    // `_` binds nothing, as it does in a `match` arm.
+    // `_` binds nothing, as it does in a `of` arm.
     let _ = "evaluated, then dropped";
 
     <((3, 4), 5) | skew | println; // 11

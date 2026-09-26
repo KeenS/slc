@@ -63,44 +63,7 @@ rows and the demand-time handler boundaries specified in the design.
 
 ## Next
 
-Each entry starts with regressions, then implementation and documentation,
-and passes `cargo fmt --check`, `cargo clippy --workspace --all-targets --
--D warnings` and `cargo test --workspace` before it is considered complete.
-New or changed syntax also needs runnable examples with exact-output tests;
-compiling complete programs from the design alone does not establish their
-runtime behaviour.
-
-- **Keyword lengths.** Every program the suite runs still runs, and prints
-  the same output, once its keywords are the spellings below. Writing an old
-  keyword is a parse error that names the new one, as a `+fn` prefix already
-  does.
-
-  A declaration is four letters. An expression that returns a value is two.
-  `let` stays three letters, with `let+` and `let-`, because it yields no
-  value. `mod` and `use` stay, because they only move names. `reset` stays,
-  because `control::reset` is a function of that name. The lambda `fn` stays.
-  `data`, `enum`, `menu`, `form`, and `impl` are already four letters. `pub`,
-  `for`, and `dual` are marks and a type former, and they stay.
-
-  Named `fn` becomes `func`. `command` becomes `proc`. `trait` becomes
-  `spec`. `effect` becomes `hook`. `const` becomes `def`, a definition, which
-  sits on neither side of the value and continuation mirror. `match` becomes
-  `of`. `handle` becomes `do`. `handler` becomes `op`. `with h handle e`
-  becomes `op h do e`.
-
-  `select` is removed. `mu` keeps the capture and the menu, written `<=`:
-  one arm `k <= c` captures the continuation, and `item: out <= c` answers a
-  menu. The consumer `select` built is the same keyword written `=>`, and
-  that is μ̃. A type in front of `<=` is what the expression produces. A type
-  in front of `=>` is what the consumer takes. Every arm in one pair of
-  braces uses the same arrow. A demand-answering `mu` always has an arm, so
-  braces with no arms are the consumer of the written type, today's
-  `select (|) {}`. `of` takes a scrutinee apart, and it keeps its own keyword.
-
-  The lexer, the parser's messages, the formatter, and the Emacs mode learn
-  the spellings. The prelude, the library, the examples, and the design
-  parts are rewritten in them, and `docs/MIGRATION.md` records the old word
-  beside the new one.
+Nothing is queued.
 
 ## Deferred, for discussion
 
@@ -115,7 +78,7 @@ to the design, and whatever it leaves to build moves up to `Next`.
   of earlier bindings.
 
   The first decision is what a continuation captured in one entry means in a
-  later one. Nothing outlives its machine run today — a `const` is a
+  later one. Nothing outlives its machine run today — a `def` is a
   literal — so the prompt is where this first arises. Read off the jump code
   and not yet run: entries run under the runtime's `IO` handler as `main`
   does, each installation has its own prompt, and a jump that first meets a

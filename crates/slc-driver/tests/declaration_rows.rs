@@ -19,7 +19,7 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const TICK: &str = "effect Tick { fn tick() -> (,); }\n";
+const TICK: &str = "hook Tick { func tick() -> (,); }\n";
 
 #[test]
 fn a_menus_row_is_its_row_argument() {
@@ -28,14 +28,14 @@ fn a_menus_row_is_its_row_argument() {
         menu Later<+T, E> / {{..E}} {{ value: T }}
 
         // Building one performs nothing: `f` runs when `value` is demanded.
-        fn later<+T, E>(f: ((,) -> T / {{..E}})) -> Later<T, ..E> {{
+        func later<+T, E>(f: ((,) -> T / {{..E}})) -> Later<T, ..E> {{
             mu Later {{ value <= <(<(,) | f) | value> }}
         }}
 
-        command main | (exit: -i32) / {{IO}} {{
+        proc main | (exit: -i32) / {{IO}} {{
             let l = <(fn {{ let u = tick(); 5 }}) | later;
             <\"built\" | println;
-            let v = handle l.value {{ tick(): resume => {{ <\"tick\" | println; <(,) | resume }} }};
+            let v = do l.value {{ tick(): resume => {{ <\"tick\" | println; <(,) | resume }} }};
             <v | println;
             <0 | exit>
         }}"
@@ -51,9 +51,9 @@ fn a_lazy_sequence_performs_where_it_is_demanded() {
         format!(
             "{TICK}
             use list::List::*;
-            fn noisy(n: i64) -> i64 / {{Tick}} {{ let u = tick(); <(n, 2) | mul }}
+            func noisy(n: i64) -> i64 / {{Tick}} {{ let u = tick(); <(n, 2) | mul }}
 
-            command main | (exit: -i32) / {{IO}} {{
+            proc main | (exit: -i32) / {{IO}} {{
                 let s = <(noisy, <Cons(1, Cons(2, Nil)) | seq::of_list) | seq::map;
                 {demand}
                 <0 | exit>
@@ -63,7 +63,7 @@ fn a_lazy_sequence_performs_where_it_is_demanded() {
     let (ok, stdout, stderr) = run(
         "seq_handled",
         &body(
-            "let l = handle (<s | seq::to_list) { tick(): resume => { <\"tick\" | println; <(,) | resume } };
+            "let l = do (<s | seq::to_list) { tick(): resume => { <\"tick\" | println; <(,) | resume } };
             <l | fmt | println;",
         ),
     );
@@ -80,7 +80,7 @@ fn a_row_variable_a_declaration_does_not_declare_is_refused() {
     let (ok, _, stderr) = run(
         "undeclared",
         &format!(
-            "{TICK}menu Bad / {{..E}} {{ value: i64 }}\ncommand main | (exit: -i32) / {{IO}} {{ <0 | exit> }}"
+            "{TICK}menu Bad / {{..E}} {{ value: i64 }}\nproc main | (exit: -i32) / {{IO}} {{ <0 | exit> }}"
         ),
     );
     assert!(!ok);

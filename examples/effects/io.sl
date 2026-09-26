@@ -18,24 +18,24 @@
 // undischarged. Nothing else may — `main` is the root, and the runtime is
 // the one handler it did not have to write.
 
-fn greet(name: String) -> (,) / {IO} {
+func greet(name: String) -> (,) / {IO} {
     <("hello, ", name) | add | println
 }
 
 // A pure function stays pure, and the checker holds it to that: printing
 // inside this one would be an error rather than a surprise.
-fn shout(name: String) -> String {
+func shout(name: String) -> String {
     <(name, "!") | add
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // Performed, and unhandled here: it reaches the runtime, which writes.
     <"world" | greet;
 
     // A handler the program installs sits *nearer* the operation than the
     // runtime's, so it answers first — and the text goes nowhere near the
     // terminal. This is how a program mocks its own output.
-    let captured = handle <(<"slant" | shout) | greet {
+    let captured = do <(<"slant" | shout) | greet {
         write_line(text): resume => text,
         return(u) => "nothing was written",
         _ => forward,
@@ -49,7 +49,7 @@ command main | (exit: i32) / {IO} {
     // *below* its own prompt, so what it performs escapes outward to the
     // next handler — the runtime's — which is how it both reports the write
     // and forwards it.
-    handle <"again" | greet {
+    do <"again" | greet {
         write_line(text): resume => {
             <("about to write ", <text | str_len | to_string)
                 | add

@@ -30,18 +30,18 @@ enum Shape {
 
 // ─── Value-centric ───────────────────────────────────────────────────────
 //
-// A function receives data and gives data back. `match` takes the shape
+// A function receives data and gives data back. `of` takes the shape
 // apart, and the answer travels outward through the calls.
 
-fn area(s: Shape) -> i64 {
-    match s {
+func area(s: Shape) -> i64 {
+    of s {
         Circle(r) => <(3, r) | mul | x => (x, r) | mul,
         Rect(w, h) => <(w, h) | mul,
     }
 }
 
-fn label(a: i64) -> String {
-    match (<(a, 50) | gt) {
+func label(a: i64) -> String {
+    of (<(a, 50) | gt) {
         True => "big",
         False => "small",
     }
@@ -51,27 +51,27 @@ fn label(a: i64) -> String {
 //
 // A function receives a consumer and gives a consumer back. What follows
 // `<-` is the type consumed, so `area_of` is a consumer of `Shape`: give it
-// somewhere to send an area, and it will accept shapes. `select` takes the
-// shape apart exactly as `match` does — one arm per variant, binding the same
+// somewhere to send an area, and it will accept shapes. `mu` takes the
+// shape apart exactly as `of` does — one arm per variant, binding the same
 // payload — but each arm ends in a cut instead of producing a value.
 
-fn area_of(out: i64) <- Shape {
-    select Shape {
+func area_of(out: i64) <- Shape {
+    mu Shape {
         Circle(r) => <(3, r) | mul | x => (x, r) | mul | out>,
         Rect(w, h) => <(w, h) | mul | out>,
     }
 }
 
-fn label_of(out: String) <- i64 {
-    select i64 {
-        a => match (<(a, 50) | gt) {
+func label_of(out: String) <- i64 {
+    mu i64 {
+        a => of (<(a, 50) | gt) {
             True => <"big" | out>,
             False => <"small" | out>,
         },
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // Value-first: the shape flows through `area`, then `label`.
     <Shape::Circle(5) | area | label | println;
     <Shape::Rect(6, 7) | area | label | println;
@@ -86,7 +86,7 @@ command main | (exit: i32) / {IO} {
     // Where the two differ is what they *are*: `label_of` hands its answer
     // to a consumer, so the chain may just as well end in one of its own,
     // and the rest of the program is then written inside that consumer.
-    <Shape::Circle(5) | area_of | label_of | select String {
+    <Shape::Circle(5) | area_of | label_of | mu String {
         answer => {
             <("and directly: ", answer) | add | println;
             <0 | exit>

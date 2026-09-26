@@ -3,9 +3,9 @@
 // after the capture is.
 
 // Hands its answer to `k` instead of returning it.
-fn escape(k: -i64) -> i64 { <5 | k> }
+func escape(k: -i64) -> i64 { <5 | k> }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let free = mu i64 { out <= <(<out | escape) | out> };
     <free | println; // 5
 

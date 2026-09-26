@@ -4,12 +4,12 @@
 // answers one item the consumer demands. The same two operations work on
 // both, and each keyword keeps its role across the mirror:
 //
-//   `select` answers *data*: it builds the consumer of a positive type,
+//   `mu` answers *data*: it builds the consumer of a positive type,
 //   one arm per shape that can arrive. `mu` answers *demands*: with arms,
 //   it builds a menu, one arm per request that can arrive — the ambient
 //   consumer chooses the branch, and only the demanded one ever runs.
 //
-//   `match` — a branch table applied to a named scrutinee, on either side.
+//   `of` — a branch table applied to a named scrutinee, on either side.
 //   Over an enum value it takes data apart; over a continuation of a menu
 //   type it takes the *request* apart — `.item(out)` binds the continuation
 //   the request carries, and each arm can answer it or build another.
@@ -21,7 +21,7 @@ menu Config {
 
 // Build a menu: one arm per item. `out` is the continuation the request
 // carries; the arm answers by cutting into it.
-fn config() -> Config {
+func config() -> Config {
     mu Config {
         retries <= <3 | retries>,
         name <= <"slant" | name>,
@@ -30,7 +30,7 @@ fn config() -> Config {
 
 // A menu built from another menu: answer `name` differently, forward the
 // rest. Only the demanded item is ever computed.
-fn loud(base: Config) -> Config {
+func loud(base: Config) -> Config {
     mu Config {
         retries <= <base.retries | retries>,
         name <= <(base.name, "!") | add | name>,
@@ -40,14 +40,14 @@ fn loud(base: Config) -> Config {
 // Match on a continuation: the scrutinee is a request, `.item(out)` is its
 // shape, and each arm returns another request — `.item(k)` is a request
 // literal, the mirror of an enum variant expression.
-fn reroute(k: -Config) -> -Config {
-    match k {
+func reroute(k: -Config) -> -Config {
+    of k {
         .retries(out) <= .retries(out),
         .name(out) <= .name(out),
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let cfg = config();
 
     // Demand one item off the menu: the mirror of record projection.

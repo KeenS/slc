@@ -6,14 +6,78 @@ compiler; sections show their replacements or explain compatible additions, and
 every replacement is written in today's syntax, even where a later section is
 what made it so.
 
+## Keyword spellings
+
+A declaration is four letters, and an expression that returns a value is two.
+`let` stays, with `let+` and `let-`. `mod` and `use` stay. `reset` stays,
+because `control::reset` is a function of that name. The lambda `fn` stays.
+`data`, `enum`, `menu`, `form`, and `impl` were already four letters. `pub`,
+`for`, and `dual` stay.
+
+| Old | New |
+| --- | --- |
+| `fn` (a named declaration) | `func` |
+| `command` | `proc` |
+| `trait` | `spec` |
+| `effect` | `hook` |
+| `const` | `def` |
+| `match` | `of` |
+| `handle` | `do` |
+| `handler` | `op` |
+| `with h handle e` | `op h do e` |
+| `select` | `mu`, with `=>` |
+
+`def` is the one declaration that is not four letters: a definition sits on
+neither side of the value and continuation mirror. `select` is not renamed
+to its own word. `mu` keeps the capture and the menu, written `<=`. The
+consumer `select` built is the same keyword written `=>`. A type in front of
+`<=` is what the expression produces. A type in front of `=>` is what the
+consumer takes. Every arm in one pair of braces uses the same arrow. Braces
+with no arms are the consumer of the written type. `of` takes a scrutinee
+apart, and it keeps its own keyword.
+
+Writing an old keyword is a parse error that names the new one.
+
+Unsupported:
+
+```sl
+fn length(xs: List<i64>) -> i64 { … }
+command nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String) { … }
+trait Show { fn show(self: Self) -> String; }
+effect Reader<+T> { fn read() -> T; }
+const ANSWER: i64 = 42;
+match xs { Nil => 0, Cons(n, rest) => n }
+select Colour { Red => <0 | out>, Green => <1 | out> }
+handle body { read(): resume => <1 | resume> }
+let reader = handler Reader { read(): resume => <1 | resume> };
+with reader handle body
+```
+
+Write:
+
+```sl
+func length(xs: List<i64>) -> i64 { … }
+proc nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String) { … }
+spec Show { func show(self: Self) -> String; }
+hook Reader<+T> { func read() -> T; }
+def ANSWER: i64 = 42;
+of xs { Nil => 0, Cons(n, rest) => n }
+mu Colour { Red => <0 | out>, Green => <1 | out> }
+do body { read(): resume => <1 | resume> }
+let reader = op Reader { read(): resume => <1 | resume> };
+op reader do body
+```
+
+The lambda is still `fn(x: i64) -> i64 { … }`.
+
 ## Generic effects and composable capture
 
 Non-generic effects keep their spelling. Generic effects declare signed
 parameters and write applications in rows:
 
 ```sl
-effect Reader<+T> { fn read() -> T; }
-fn get<+T>() -> T / {Reader<T>} { read() }
+hook Reader<+T> { func read() -> T; }
+func get<+T>() -> T / {Reader<T>} { read() }
 ```
 
 Handlers infer their application from the operations they intercept and the
@@ -42,7 +106,7 @@ A nullary returning function's name now has its actual runtime type: a
 function accepting `(,)`. Naming it neither calls it nor charges its effects.
 
 ```sl
-fn answer() -> i64 { 42 }
+func answer() -> i64 { 42 }
 let factory = answer;
 let first = answer();
 let second = <(,) | factory;
@@ -60,8 +124,8 @@ Explicit capture remains valid:
 
 ```sl
 let result = mu i64 { out <= <path | __read_file | (
-    select String { text => <(<text | str_len) | out> }
-    & select String { reason => <0 | out> }
+    mu String { text => <(<text | str_len) | out> }
+    & mu String { reason => <0 | out> }
 )> };
 ```
 
@@ -98,7 +162,7 @@ an ordinary recursive enum in the stdlib's `list` module, with `length`,
 Unsupported:
 
 ```sl
-fn f(xs: [+i64]) -> i64 { … }
+func f(xs: [+i64]) -> i64 { … }
 let xs = list_push(list_new(), 10);
 ```
 
@@ -107,7 +171,7 @@ Write:
 ```sl
 use list::List::*;
 
-fn f(xs: list::List<i64>) -> i64 { … }
+func f(xs: list::List<i64>) -> i64 { … }
 let xs = Cons(10, Nil);
 ```
 
@@ -121,15 +185,15 @@ writes `<=`.
 Unsupported:
 
 ```sl
-select Colour { Red <= 0 | out, Green <= 1 | out }
-match k { .retries(out) => .retries(out) }
+mu Colour { Red <= 0 | out, Green <= 1 | out }
+of k { .retries(out) => .retries(out) }
 ```
 
 Write:
 
 ```sl
-select Colour { Red => <0 | out>, Green => <1 | out> }
-match k { .retries(out) <= .retries(out) }
+mu Colour { Red => <0 | out>, Green => <1 | out> }
+of k { .retries(out) <= .retries(out) }
 ```
 
 ## Menu copatterns in `mu`
@@ -188,13 +252,13 @@ Every function now requires an arrow.
 Unsupported:
 
 ```sl
-fn plus(x: +i32, y: +i32) { x + y }
+func plus(x: +i32, y: +i32) { x + y }
 ```
 
 Write:
 
 ```sl
-fn plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
+func plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
 ```
 
 ### `+fn`
@@ -210,7 +274,7 @@ Unsupported:
 Write:
 
 ```sl
-fn plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
+func plus(x: +i32, y: +i32) -> i32 { <(x, y) | add }
 ```
 
 ### `-fn`
@@ -227,7 +291,7 @@ Unsupported:
 Write:
 
 ```sl
-fn k(k1: i32 & k2: i32) <- (i32, i32) { ... }
+func k(k1: i32 & k2: i32) <- (i32, i32) { ... }
 ```
 
 The parameters before `<-` are the function's row, a menu of exits separated
@@ -243,13 +307,13 @@ kinds of parameter occupy separate parenthesized groups.
 Unsupported:
 
 ```sl
-command route(x: +i32, k: -i32) { k(x) }
+proc route(x: +i32, k: -i32) { k(x) }
 ```
 
 Write:
 
 ```sl
-command route(x: +i32) | (k: -i32) { <x | k> }
+proc route(x: +i32) | (k: -i32) { <x | k> }
 ```
 
 ### `mu` is the expression, `command` is the declaration
@@ -262,7 +326,7 @@ for both hid that.
 
 ```sl
 mu route(x: +i32) | (k: -i32) { x | k }          // old: the declaration
-command route(x: +i32) | (k: -i32) { <x | k> }   // new
+proc route(x: +i32) | (k: -i32) { <x | k> }   // new
 
 let source = mu { k <= <path | fs::read | (k & err)> };   // the capture
 ```
@@ -288,13 +352,13 @@ The directional `to` marker is removed.
 Unsupported:
 
 ```sl
-command route(x: +i32, to k: -i32) { k(x) }
+proc route(x: +i32, to k: -i32) { k(x) }
 ```
 
 Write:
 
 ```sl
-command route(x: +i32) | (k: -i32) { <x | k> }
+proc route(x: +i32) | (k: -i32) { <x | k> }
 ```
 
 ### An empty parameter group is left out
@@ -302,11 +366,11 @@ command route(x: +i32) | (k: -i32) { <x | k> }
 A `command` writes only the groups it has.
 
 ```sl
-command main() | (exit: -i32) { … }   // old
-command main | (exit: i32) { … }      // new
+proc main() | (exit: -i32) { … }   // old
+proc main | (exit: i32) { … }      // new
 
-command log(message: +String) | () { … }   // old
-command log(message: +String) { … }        // new
+proc log(message: +String) | () { … }   // old
+proc log(message: +String) { … }        // new
 ```
 
 A local `mu` has no parameter group at all: `mu { k <= … }`.
@@ -317,7 +381,7 @@ The declaration denotes a command, so its result is bottom. The annotation is
 optional and does not change lowering:
 
 ```sl
-command route(x: +i32) | (k: -i32) -> (;) { <x | k> }
+proc route(x: +i32) | (k: -i32) -> (;) { <x | k> }
 ```
 
 ## Partial agents
@@ -327,7 +391,7 @@ The old partial-agent forms are removed:
 ```sl
 agent.to(k, h)
 agent.consume(k, h)
-fn.partial(a)
+func.partial(a)
 ```
 
 There is no accepted replacement. Construct the needed ordinary function or
@@ -355,7 +419,7 @@ For a function type, use:
 For a negative function declaration, use:
 
 ```sl
-fn k(out: O) <- I { … }
+func k(out: O) <- I { … }
 ```
 
 ### Expression-level `dual(e)`
@@ -396,10 +460,10 @@ reaches helpers as a continuation parameter or inside a consumer built where
 it is in scope.
 
 ```sl
-fn die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
+func die(m: +String) -> ⊥ { println(m); 1 | EXIT }        // old
 
-command main | (exit: i32) / {IO} {                      // new
-    let die = select String { m => { <m | println; <1 | exit> } };
+proc main | (exit: i32) / {IO} {                      // new
+    let die = mu String { m => { <m | println; <1 | exit> } };
     …
 }
 ```
@@ -410,12 +474,12 @@ A program is a command, so `main` is a `command` that takes no values and one
 continuation — its exit status:
 
 ```sl
-fn main() -> i32 {          // old
+func main() -> i32 {          // old
     println("hi");
     42
 }
 
-command main | (exit: i32) / {IO} {  // new
+proc main | (exit: i32) / {IO} {  // new
     <"hi" | println;
     <0 | exit>
 }
@@ -433,16 +497,16 @@ every path, so a `main` that falls off the end is refused by the type checker.
 `match` uses, and an arm is written `pattern => command`:
 
 ```sl
-select Color {                     // one arm per variant — the negative additive
+mu Color {                     // one arm per variant — the negative additive
     Red => <0 | return>,
     Green => <1 | return>,
 }
 
-select Reading {                   // one arm, binding every field — the negative multiplicative
+mu Reading {                   // one arm, binding every field — the negative multiplicative
     Reading { value, unit } => <(<value | int_to_str, unit) | add | out>,
 }
 
-select (+i64, +i64) {              // a bare product names its type
+mu (+i64, +i64) {              // a bare product names its type
     (left, right) => <(left, right) | add | out>,
 }
 ```
@@ -453,7 +517,7 @@ way `match` writes it. And an arm used to be written the other way round, as
 `command => pattern`:
 
 ```sl
-select Color {
+mu Color {
     0 | return => Red,     // old
     Red => <0 | return>,   // new
 }
@@ -480,8 +544,8 @@ continuation each outcome belongs to.
 let content = read_file(path);          // old: a runtime error if it fails
 
 <path | fs::read | (                           // new
-    select String { content => ... }
-    & select String { message => ... }
+    mu String { content => ... }
+    & mu String { message => ... }
 )>
 ```
 
@@ -500,10 +564,10 @@ A declaration that takes both values and continuations is a `command`, not a `fn
 
 ```sl
 // old: a positive function carrying a consumer and returning a position
-fn parse_value(input: +String, pos: +i64, report: -ParseResult) -> i64 { ... }
+func parse_value(input: +String, pos: +i64, report: -ParseResult) -> i64 { ... }
 
 // new: a command with a value group and a continuation group
-command parse_value(input: String, pos: i64) | (ok: i64 & report: ParseResult) { ... }
+proc parse_value(input: String, pos: i64) | (ok: i64 & report: ParseResult) { ... }
 ```
 
 The body of a `command` ends in a cut rather than returning: what was a returned
@@ -516,7 +580,7 @@ let value_end = parse_value(input, pos, report);
 ...
 
 // new
-<(input, pos) | parse_value | (select i64 { value_end => ... } & report)>
+<(input, pos) | parse_value | (mu i64 { value_end => ... } & report)>
 ```
 
 A helper that only computes with values stays an ordinary positive `fn`.
@@ -574,10 +638,10 @@ menu of exits. Nothing written changes, but a row is now a value — it can
 be passed whole:
 
 ```sl
-command nth(xs: List<T>, i: i64) | (found: T & missing: String)
+proc nth(xs: List<T>, i: i64) | (found: T & missing: String)
 
 <(xs, 2) | nth | (found & missing)>          // the exits, as one menu
-command forward(…) | (row: (T & String)) {   // or handed on unopened
+proc forward(…) | (row: (T & String)) {   // or handed on unopened
     <(xs, 2) | nth | row>
 }
 ```
@@ -600,7 +664,7 @@ hiding.
 
 ```sl
 (xs, 9) | nth | (out & (0, out) | defaulting)>              // old
-<(xs, 9) | nth | (out & select String { m => <0 | out> })>  // new
+<(xs, 9) | nth | (out & mu String { m => <0 | out> })>  // new
 ```
 
 ## Printing is an effect
@@ -611,17 +675,17 @@ runtime installs the handler, so `main` may leave it undischarged and
 nothing else may:
 
 ```sl
-command main | (exit: i32) {                    // old
+proc main | (exit: i32) {                    // old
     "hi" | println;
     0 | exit>
 }
 
-command main | (exit: i32) / {IO} {             // new
+proc main | (exit: i32) / {IO} {             // new
     <"hi" | println;
     <0 | exit>
 }
 
-fn greet(name: String) -> (,) / {IO} { <("hello, ", name) | add | println }
+func greet(name: String) -> (,) / {IO} { <("hello, ", name) | add | println }
 ```
 
 A program can now handle its own output: a `handle` with a `write_line`
@@ -668,7 +732,7 @@ t.1                        // old: 2 — projection saw the flat spine
 t.1                        // new: (2, 3)
 t.2                        // old: 3; new: refused, `t` has two components
 
-fn f(p: (i64, i64, i64))   // takes (1, 2, 3), and no longer (1, (2, 3))
+func f(p: (i64, i64, i64))   // takes (1, 2, 3), and no longer (1, (2, 3))
 ```
 
 An alternative is built by its position alone, so `::1(v)` no longer needs
@@ -682,14 +746,14 @@ The glyphs are gone from the surface: `⊗` is `,`, `⅋` is `;`, and `⊥` is
 connective, and `⊗` no longer multiplies.
 
 ```sl
-fn sum_pair(p: (i64 ⊗ i64)) -> i64                 // old
-fn sum_pair(p: (i64, i64)) -> i64                  // new
+func sum_pair(p: (i64 ⊗ i64)) -> i64                 // old
+func sum_pair(p: (i64, i64)) -> i64                  // new
 
-command consume | (k: (-i64 ⅋ -i64)) { … }         // old
-command consume | (k: (-i64 ; -i64)) { … }         // new
+proc consume | (k: (-i64 ⅋ -i64)) { … }         // old
+proc consume | (k: (-i64 ; -i64)) { … }         // new
 
-fn stop(k: -i32) -> ⊥ { 0 | k⟩ }                   // old
-fn stop(k: -i32) -> (;) { <0 | k> }               // new
+func stop(k: -i32) -> ⊥ { 0 | k⟩ }                   // old
+func stop(k: -i32) -> (;) { <0 | k> }               // new
 
 2 ⊗ 3                                              // old
 <(2, 3) | mul                                      // new
@@ -701,17 +765,17 @@ The prelude's `Unit`, `Bottom`, `Empty` and `Top` are gone. Each unit is its
 connective's nullary spelling, a paren holding only the separator:
 
 ```sl
-fn f() -> Unit { (,) }                                // old
-fn f() -> (,) { (,) }                                 // new
+func f() -> Unit { (,) }                                // old
+func f() -> (,) { (,) }                                 // new
 
-command main | (exit: i32) -> Bottom / {IO} { … }     // old
-command main | (exit: i32) -> (;) / {IO} { … }        // new
+proc main | (exit: i32) -> Bottom / {IO} { … }     // old
+proc main | (exit: i32) -> (;) / {IO} { … }        // new
 
-fn absurd(out: i64) <- Empty { select Empty {} }      // old
-fn absurd(out: i64) <- (|) { select (|) {} }          // new
+func absurd(out: i64) <- Empty { mu Empty {} }      // old
+func absurd(out: i64) <- (|) { mu (|) {} }          // new
 
-fn top() -> Top { mu Top {} }                         // old
-fn top() -> (&) { (&) }                               // new
+func top() -> Top { mu Top {} }                         // old
+func top() -> (&) { (&) }                               // new
 ```
 
 `Unit {}` and the `Bottom {}` demand are `(,)`. A declaration named `Unit` or
@@ -724,12 +788,12 @@ alternative by position, counted from 0:
 
 ```sl
 enum Outcome { Number(i64), Text(String) }                // old: a declaration
-fn show(x: Outcome) -> String {
-    match x { Outcome::Number(n) => <n | int_to_str, Outcome::Text(s) => s }
+func show(x: Outcome) -> String {
+    of x { Outcome::Number(n) => <n | int_to_str, Outcome::Text(s) => s }
 }
 
-fn show(x: (i64 | String)) -> String {                    // new
-    match x { ::0(n) => <n | int_to_str, ::1(s) => s }
+func show(x: (i64 | String)) -> String {                    // new
+    of x { ::0(n) => <n | int_to_str, ::1(s) => s }
 }
 ```
 
@@ -749,7 +813,7 @@ implementation's spelling:
 
 ```sl
 menu Deliver { deliver: (-String -> -i64) }     // old: forced to match the negative fn
-fn deliver_i64(out: String) <- i64 { … }
+func deliver_i64(out: String) <- i64 { … }
 
 menu Deliver { deliver: (i64 -> String) }       // new: either spelling
 ```
@@ -885,11 +949,11 @@ marked, as in Rust:
 ```sl
 mod geometry {
     enum Shape { … }                   // old: reachable everywhere
-    fn area(s: Shape) -> i64 { … }
+    func area(s: Shape) -> i64 { … }
 
     pub enum Shape { … }               // new
-    fn squared(n: i64) -> i64 { … }    // new: private, the module's own
-    pub fn area(s: Shape) -> i64 { … }
+    func squared(n: i64) -> i64 { … }    // new: private, the module's own
+    pub func area(s: Shape) -> i64 { … }
 }
 ```
 
@@ -907,8 +971,8 @@ is that a binder may take its value apart:
 let pair = make(); let a = pair.0; let b = pair.1;   // old
 let (a, b) = make();                                 // new
 
-fn norm(p: Point) -> i64 { <(p.x, p.x) | mul | sum => (sum, <(p.y, p.y) | mul) | add }   // still fine
-fn norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, <(y, y) | mul) | add }
+func norm(p: Point) -> i64 { <(p.x, p.x) | mul | sum => (sum, <(p.y, p.y) | mul) | add }   // still fine
+func norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, <(y, y) | mul) | add }
 ```
 
 A binder must be irrefutable — it stands for every value of its type — so a
@@ -937,8 +1001,8 @@ A higher-order function forwards an argument's effects by declaring a
 in a row, on its own arrow and on the parameter's:
 
 ```sl
-fn map<+A, +B>(f: (A -> B), xs: List<A>) -> List<B>              // old: f had to be pure
-fn map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
+func map<+A, +B>(f: (A -> B), xs: List<A>) -> List<B>              // old: f had to be pure
+func map<+A, +B, E>(f: (A -> B / {..E}), xs: List<A>) -> List<B> / {..E}   // new
 ```
 
 A bare arrow still means pure — now enforced against arguments too:
@@ -964,8 +1028,8 @@ Choice::Refutes(k)                 // new
 Refutes(r) => 42 | ↑r              // old
 Refutes(r) => <42 | r>            // new
 
-fn describe(note: ↓-String) -> ⊥ { "…" | ↑note }   // old
-fn describe(note: -String) -> (;) { <"…" | note> }  // new
+func describe(note: ↓-String) -> ⊥ { "…" | ↑note }   // old
+func describe(note: -String) -> (;) { <"…" | note> }  // new
 ```
 
 With no box to go through, `dual` is an involution on the nose: `-(-T)`
@@ -986,8 +1050,8 @@ The final form consumes an existing enum:
 ```sl
 enum Color { Red, Green, Blue }
 
-fn k(return: i32) <- Color {
-    select Color {
+func k(return: i32) <- Color {
+    mu Color {
         Red => <0 | return>,
         Green => <1 | return>,
         Blue => <2 | return>,
@@ -1002,8 +1066,8 @@ consumer:
 ```sl
 enum ParseResult { Parsed(String), Failed(String) }
 
-fn deliver(ok: String & err: String) <- ParseResult {
-    select ParseResult {
+func deliver(ok: String & err: String) <- ParseResult {
+    mu ParseResult {
         Parsed(text) => <text | ok>,
         Failed(message) => <message | err>,
     }
@@ -1029,8 +1093,8 @@ nowhere. The cut `<t | k>` now delivers `t` to `k`, as it always claimed to.
 arm:
 
 ```sl
-match n { m if m > 0 => <m | ok>, _ => <0 | ok> }   // old
-match (<(n, 0) | gt) { True => <n | ok>, False => <0 | ok> }   // new
+of n { m if m > 0 => <m | ok>, _ => <0 | ok> }   // old
+of (<(n, 0) | gt) { True => <n | ok>, False => <0 | ok> }   // new
 ```
 
 The exhaustiveness diagnostic says "add a `_` arm" rather than "an unguarded
@@ -1065,10 +1129,10 @@ A choice on a `Bool` is a `match` on its two variants:
 
 ```sl
 if n > 0 { n } else { 0 - n }                          // old
-match (<(n, 0) | gt) { True => n, False => <n | neg }   // new
+of (<(n, 0) | gt) { True => n, False => <n | neg }   // new
 
 if a { x } else if b { y } else { z }                  // old
-match a { True => x, False => match b { True => y, False => z } }   // new
+of a { True => x, False => of b { True => y, False => z } }   // new
 ```
 
 An `if` with no `else` yielded unit on the false path; write that arm
@@ -1091,10 +1155,10 @@ right side only when it is needed:
 
 ```sl
 ok && <x | valid                                   // old
-match ok { True => <x | valid, False => False }    // new
+of ok { True => <x | valid, False => False }    // new
 
 a || b                                             // old
-match a { True => True, False => b }               // new
+of a { True => True, False => b }               // new
 ```
 
 ## `println` and `print` render through `Display`
@@ -1123,8 +1187,8 @@ mark.
 enum List<T> { Nil, Cons(T, List<T>) }                  // old
 enum List<+T> { Nil, Cons(T, List<T>) }                 // new
 
-fn map<A, B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}    // old
-fn map<+A, +B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}  // new
+func map<A, B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}    // old
+func map<+A, +B, E>(g: (+A -> +B / {..E}), x: A) -> B / {..E}  // new
 ```
 
 A missing mark is an error naming the parameter. Mark `+` each parameter
@@ -1132,8 +1196,8 @@ that is not a row variable, then `-` each one the checker reports being
 given a function, a consumer, a menu or a form:
 
 ```sl
-fn label<+T: Describe>(x: T) -> String { <x | describe }   // old, given a menu
-fn label<-T: Describe>(x: T) -> String { <x | describe }   // new
+func label<+T: Describe>(x: T) -> String { <x | describe }   // old, given a menu
+func label<-T: Describe>(x: T) -> String { <x | describe }   // new
 ```
 
 A generic that took both data and codata splits in two.
@@ -1166,7 +1230,7 @@ the polymorphic function.
 
 ```sl
 let f = fn(x) { x };               // old: generalized; now refused
-fn id<+T>(x: T) -> T { x }         // new: a declaration
+func id<+T>(x: T) -> T { x }         // new: a declaration
 
 let inc = fn(x) { <(x, 1) | add };  // still accepted: the literal fixes `x`
 ```
@@ -1200,8 +1264,8 @@ a + b                    // old
 a * b + c                // old
 <(a, b) | mul | x => (x, c) | add       // new
 
-match n > 0 { … }        // old
-match (<(n, 0) | gt) { … }             // new
+of n > 0 { … }        // old
+of (<(n, 0) | gt) { … }             // new
 
 -x                       // old
 <x | neg                 // new; `-1` is still a literal
@@ -1223,8 +1287,8 @@ with the names that replace them. A `match` on both variants is exhaustive,
 so the `_` arm a `bool` match needed can name `False`.
 
 ```sl
-fn positive(n: i64) -> bool { match (<(n, 0) | gt) { true => true, _ => false } }   // old
-fn positive(n: i64) -> Bool { match (<(n, 0) | gt) { True => True, False => False } } // new
+func positive(n: i64) -> bool { of (<(n, 0) | gt) { true => true, _ => false } }   // old
+func positive(n: i64) -> Bool { of (<(n, 0) | gt) { True => True, False => False } } // new
 ```
 
 A `Bool` still prints as `true` or `false`.
@@ -1253,14 +1317,14 @@ common, so a clause that resumes more than once gets every answer back when
 the resumed code jumps to a continuation it captured earlier:
 
 ```sl
-effect Choose { fn flip() -> Bool; }
+hook Choose { func flip() -> Bool; }
 
-fn pick() -> String / {Choose} {
-    let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+func pick() -> String / {Choose} {
+    let a = mu String { r <= <(of flip() { True => "H", False => "T" }) | r> };
     a
 }
 
-handle pick() {
+do pick() {
     flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 // old: "H" — the first jump to `r` left the clause
@@ -1274,8 +1338,8 @@ Return the continuation out of the `handle` and jump to it there, or pass
 the value out instead of jumping:
 
 ```sl
-let r = handle (<k | use_inside) { … };    // old: a jump to `k` inside left the handler
-let r = handle use_inside() { … };         // new: `use_inside` returns; the jump is outside
+let r = do (<k | use_inside) { … };    // old: a jump to `k` inside left the handler
+let r = do use_inside() { … };         // new: `use_inside` returns; the jump is outside
 <r | k>
 ```
 
@@ -1300,8 +1364,8 @@ there. A program that relied on the handler around the writing runs the
 computation there with `let+`:
 
 ```sl
-let g = handle { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // old: failed at run time
-let g = handle { let+ f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // new
+let g = do { let- f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // old: failed at run time
+let g = do { let+ f = make(); f } { throw(m) => fn(n: i64) { 0 } };   // new
 ```
 
 ## Effect rows are part of types
@@ -1339,13 +1403,13 @@ the disk behind `IO`, so a declaration that reads or writes files says
 only `IO`; a program installs `fs::real` itself.
 
 ```sl
-command main | (exit: i32) / {IO} {                               // old
-    <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+proc main | (exit: i32) / {IO} {                               // old
+    <"input.txt" | fs::read | (mu String { t => { <t | print; <0 | exit> } } & complain)>
 }
 
-command main | (exit: i32) / {IO} {                               // new
+proc main | (exit: i32) / {IO} {                               // new
     <(,) | fs::real_command | (fn {
-        <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+        <"input.txt" | fs::read | (mu String { t => { <t | print; <0 | exit> } } & complain)>
     })>
 }
 ```
@@ -1354,8 +1418,8 @@ The commands keep their shapes. A handler of the program's own answers the
 operations, `fs::read_file` and its siblings, each with a sum of its outcomes:
 
 ```sl
-fn canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
-    handle <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
+func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {..E} {
+    do <(,) | program { fs::read_file(path): resume => <::0("canned") | resume }
 }
 ```
 
@@ -1386,8 +1450,8 @@ is positive, and no longer asks for an annotation; one type meeting both a
 run:
 
 ```sl
-fn keep<+T>(x: T) -> (,) { (,) }
-fn feed<-T>(x: T) -> (,) { (,) }
+func keep<+T>(x: T) -> (,) { (,) }
+func feed<-T>(x: T) -> (,) { (,) }
 
 let f = fn(x) { <x | keep };            // old: "polarity is not known"; new: accepted
 let g = fn(x) { <x | keep; <x | feed }; // new: "no type is both positive and negative"
@@ -1401,12 +1465,12 @@ own, so file work no longer returns a status through `mu i32 { done <= … }`:
 
 ```sl
 let status = <(fn(u: (,)) {                                       // old
-    mu i32 { done <= <"input.txt" | fs::read | (select String { t => { <t | print; <0 | done> } } & complain)> }
+    mu i32 { done <= <"input.txt" | fs::read | (mu String { t => { <t | print; <0 | done> } } & complain)> }
 }) | fs::real;
 <status | exit>
 
 <(,) | fs::real_command | (fn {                                   // new
-    <"input.txt" | fs::read | (select String { t => { <t | print; <0 | exit> } } & complain)>
+    <"input.txt" | fs::read | (mu String { t => { <t | print; <0 | exit> } } & complain)>
 })>
 ```
 
@@ -1424,8 +1488,8 @@ are demanded, and `seq::map`, `filter` and `take_while` no longer build their
 rest with `let+`:
 
 ```sl
-fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E}      // old
-fn map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E>    // new
+func map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A>) -> Seq<B> / {..E}      // old
+func map<+A, +B, E>(f: (A -> B / {..E}), s: Seq<A, ..E>) -> Seq<B, ..E>    // new
 ```
 
 A function that demands a sequence's steps forwards its row:
@@ -1437,8 +1501,8 @@ A constructor's row describes constructing its result. A returned consumer,
 menu or form carries its own effects, performed when applied or demanded:
 
 ```sl
-fn make(out: -i64) -> -i64 / {Tick}             // old, refused
-fn make(out: -i64) -> (-i64 / {Tick})           // new
+func make(out: -i64) -> -i64 / {Tick}             // old, refused
+func make(out: -i64) -> (-i64 / {Tick})           // new
 ```
 
 Declare a menu or form's latent row, or give its row parameter at each use.
@@ -1477,8 +1541,8 @@ on as stored: projection does not additionally force a delayed callback.
 
 ```sl
 let pending = (build() & 0);
-let first = handle pending.0 { build(): resume => <10 | resume };
-let second = handle pending.0 { build(): resume => <20 | resume };
+let first = do pending.0 { build(): resume => <10 | resume };
+let second = do pending.0 { build(): resume => <20 | resume };
 ```
 
 Here `build()` returns an integer; `first` is `10`, and `second` is `20`.
@@ -1505,7 +1569,7 @@ A pure exit slot no longer accepts an effectful consumer. To forward to an
 arbitrary consumer, write its latent row and charge it when activated:
 
 ```sl
-command send<E>(value: i64) | (out: (-i64 / {..E})) / {..E} {
+proc send<E>(value: i64) | (out: (-i64 / {..E})) / {..E} {
     <value | out>
 }
 ```

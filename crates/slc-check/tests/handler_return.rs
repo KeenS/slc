@@ -13,32 +13,32 @@ fn check(source: &str) -> Result<(), Vec<slc_check::Diagnostic>> {
     check_program(&program, &traits)
 }
 
-const READER: &str = "effect Reader { fn config() -> i64; }\n";
+const READER: &str = "hook Reader { func config() -> i64; }\n";
 
 #[test]
 fn handler_clauses_bind_exactly_the_operation_parameters() {
     for (operation, invocation, clause, expected) in [
         (
-            "fn write(path: String, text: String) -> i64;",
+            "func write(path: String, text: String) -> i64;",
             "<(\"path\", \"text\") | write",
             "write(path): resume => <0 | resume",
             "`write` takes 2 parameters, and this clause binds 1",
         ),
         (
-            "fn read(path: String) -> i64;",
+            "func read(path: String) -> i64;",
             "<\"path\" | read",
             "read(path, extra): resume => <0 | resume",
             "`read` takes 1 parameter, and this clause binds 2",
         ),
         (
-            "fn config() -> i64;",
+            "func config() -> i64;",
             "config()",
             "config(unit): resume => <0 | resume",
             "`config` takes 0 parameters, and this clause binds 1",
         ),
     ] {
         let source = format!(
-            "effect Test {{ {operation} }} fn answer() -> i64 {{ handle ({invocation}) {{ {clause} }} }}"
+            "hook Test {{ {operation} }} func answer() -> i64 {{ do ({invocation}) {{ {clause} }} }}"
         );
         let diagnostics = check(&source).unwrap_err();
         assert!(
@@ -51,11 +51,11 @@ fn handler_clauses_bind_exactly_the_operation_parameters() {
 #[test]
 fn handler_clause_results_match_the_answer_type() {
     let diagnostics = check(&format!(
-        "{READER} fn answer() -> i64 {{ handle config() {{ config() => \"wrong\" }} }}"
+        "{READER} func answer() -> i64 {{ do config() {{ config() => \"wrong\" }} }}"
     ))
     .unwrap_err();
     assert!(
-        diagnostics.iter().any(|diagnostic| diagnostic.message.contains("handler clause")),
+        diagnostics.iter().any(|diagnostic| diagnostic.message.contains("`op` clause")),
         "{diagnostics:?}"
     );
 }
@@ -64,9 +64,9 @@ fn handler_clause_results_match_the_answer_type() {
 fn resumption_results_match_the_handler_answer_type() {
     let diagnostics = check(&format!(
         "{READER}
-        fn needs_string(value: String) -> String {{ value }}
-        fn answer() -> i64 {{
-            handle config() {{ config(): resume => <(<7 | resume) | needs_string }}
+        func needs_string(value: String) -> String {{ value }}
+        func answer() -> i64 {{
+            do config() {{ config(): resume => <(<7 | resume) | needs_string }}
         }}"
     ))
     .unwrap_err();
@@ -77,8 +77,8 @@ fn resumption_results_match_the_handler_answer_type() {
 fn return_clause_determines_the_resumption_answer_type() {
     assert!(
         check(&format!(
-            "{READER} fn answer() -> String {{
-            handle config() {{
+            "{READER} func answer() -> String {{
+            do config() {{
                 config(): resume => <7 | resume,
                 return(value) => \"answer\",
             }}
@@ -88,8 +88,8 @@ fn return_clause_determines_the_resumption_answer_type() {
     );
     assert!(
         check(&format!(
-            "{READER} fn answer() -> String {{
-            handle config() {{
+            "{READER} func answer() -> String {{
+            do config() {{
                 config() => 7,
                 return(value) => \"answer\",
             }}
@@ -103,8 +103,8 @@ fn return_clause_determines_the_resumption_answer_type() {
 fn handler_clauses_may_leave_through_a_continuation() {
     assert!(
         check(&format!(
-            "{READER} fn answer(out: -i64) -> i64 {{
-            handle config() {{ config() => <7 | out> }}
+            "{READER} func answer(out: -i64) -> i64 {{
+            do config() {{ config() => <7 | out> }}
         }}"
         ))
         .is_ok()
@@ -116,13 +116,13 @@ fn a_handler_without_return_has_its_bodys_type() {
     // The body is an `i64`, so the handler is one.
     assert!(
         check(&format!(
-            "{READER} fn answer() -> i64 {{ handle config() {{ config(): resume => <10 | resume }} }}"
+            "{READER} func answer() -> i64 {{ do config() {{ config(): resume => <10 | resume }} }}"
         ))
         .is_ok()
     );
     // And it is not a `String`.
     let diags = check(&format!(
-        "{READER} fn answer() -> String {{ handle config() {{ config(): resume => <10 | resume }} }}"
+        "{READER} func answer() -> String {{ do config() {{ config(): resume => <10 | resume }} }}"
     ))
     .unwrap_err();
     assert!(diags.iter().any(|d| d.message.contains("the body of `answer`")), "{diags:?}");

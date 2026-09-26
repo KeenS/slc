@@ -23,22 +23,22 @@ enum Size {
 // ─── Positive ────────────────────────────────────────────────────────────
 
 // Takes a record and returns one: build a new value from the old.
-fn translate(p: Point, dx: i64, dy: i64) -> Point {
+func translate(p: Point, dx: i64, dy: i64) -> Point {
     Point { x: (<(p.x, dx) | add), y: (<(p.y, dy) | add) }
 }
 
 // Takes a record and returns an enum: the result is one tagged variant.
-fn classify(p: Point) -> Size {
+func classify(p: Point) -> Size {
     let area = <(p.x, p.y) | mul;
-    match (<(area, 100) | gt) {
+    of (<(area, 100) | gt) {
         True => Size::Big(<(area, 100) | sub),
         False => Size::Small,
     }
 }
 
-// Takes an enum: `match` chooses the branch the variant selects.
-fn overshoot(s: Size) -> i64 {
-    match s {
+// Takes an enum: `of` chooses the branch the variant selects.
+func overshoot(s: Size) -> i64 {
+    of s {
         Small => 0,
         Big(over) => over,
     }
@@ -48,24 +48,24 @@ fn overshoot(s: Size) -> i64 {
 
 // "Takes" a record: the function is a consumer of `Point`, and the arm
 // binds every field at once.
-fn area_of(out: i64) <- Point {
-    select Point {
+func area_of(out: i64) <- Point {
+    mu Point {
         Point { x, y } => <(x, y) | mul | out>,
     }
 }
 
 // Takes a record and "returns" one: the new value is cut against `out`
 // instead of travelling back through a return.
-fn reflect(out: Point) <- Point {
-    select Point {
+func reflect(out: Point) <- Point {
+    mu Point {
         Point { x, y } => <Point { x: y, y: x } | out>,
     }
 }
 
 // "Returns" an enum: consume a bare number, send one variant onward.
-fn classify_to(out: Size) <- i64 {
-    select i64 {
-        area => match (<(area, 100) | gt) {
+func classify_to(out: Size) <- i64 {
+    mu i64 {
+        area => of (<(area, 100) | gt) {
             True => <Size::Big(<(area, 100) | sub) | out>,
             False => <Size::Small | out>,
         },
@@ -73,14 +73,14 @@ fn classify_to(out: Size) <- i64 {
 }
 
 // "Takes" an enum: one arm per variant; only the arriving variant runs.
-fn overshoot_of(out: i64) <- Size {
-    select Size {
+func overshoot_of(out: i64) <- Size {
+    mu Size {
         Small => <0 | out>,
         Big(over) => <over | out>,
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // Positive: data flows inward through the calls and back out.
     let p = <(Point { x: 3, y: 4 }, 7, 16) | translate; // Point { x: 10, y: 20 }
     <p.x | println; // 10

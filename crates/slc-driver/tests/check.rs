@@ -18,7 +18,7 @@ fn slc_check(files: &[&PathBuf]) -> Output {
 }
 
 const PRINTS: &str =
-    "command main | (exit: i32) / {IO} {\n    <\"ran\" | println;\n    <0 | exit>\n}\n";
+    "proc main | (exit: i32) / {IO} {\n    <\"ran\" | println;\n    <0 | exit>\n}\n";
 
 #[test]
 fn a_well_typed_program_passes_and_is_not_run() {
@@ -30,19 +30,19 @@ fn a_well_typed_program_passes_and_is_not_run() {
 
 #[test]
 fn a_program_that_would_not_stop_is_still_checked() {
-    let source = "fn spin(n: i32) -> i32 { <n | spin }\n\
-                  command main | (exit: i32) / {IO} { <(<0 | spin) | exit> }\n";
+    let source = "func spin(n: i32) -> i32 { <n | spin }\n\
+                  proc main | (exit: i32) / {IO} { <(<0 | spin) | exit> }\n";
     assert!(slc_check(&[&scratch("spin", source)]).status.success());
 }
 
 #[test]
 fn each_phase_reports_as_it_does_under_run() {
     for (name, source, expected) in [
-        ("parse", "fn f() -> i64 { a && b }", "parse error:"),
-        ("type", "fn f() -> i64 { \"text\" }", "type:"),
+        ("parse", "func f() -> i64 { a && b }", "parse error:"),
+        ("type", "func f() -> i64 { \"text\" }", "type:"),
         (
             "exhaustive",
-            "enum C { A, B }\nfn f(c: C) -> i64 { match c { A => 1 } }",
+            "enum C { A, B }\nfunc f(c: C) -> i64 { of c { A => 1 } }",
             "exhaustiveness:",
         ),
     ] {
@@ -57,13 +57,13 @@ fn each_phase_reports_as_it_does_under_run() {
 
 #[test]
 fn a_file_with_no_main_is_a_library_and_checks() {
-    let out = slc_check(&[&scratch("library", "fn double(n: i64) -> i64 { <(n, 2) | mul }\n")]);
+    let out = slc_check(&[&scratch("library", "func double(n: i64) -> i64 { <(n, 2) | mul }\n")]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]
 fn a_main_of_the_wrong_shape_is_refused() {
-    let out = slc_check(&[&scratch("main", "fn main() -> i64 { 0 }\n")]);
+    let out = slc_check(&[&scratch("main", "func main() -> i64 { 0 }\n")]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("entry point must be"));
 }
@@ -71,7 +71,7 @@ fn a_main_of_the_wrong_shape_is_refused() {
 #[test]
 fn every_file_is_checked_and_one_failure_fails_the_command() {
     let good = scratch("good", PRINTS);
-    let bad = scratch("bad", "fn f() -> i64 { \"text\" }");
+    let bad = scratch("bad", "func f() -> i64 { \"text\" }");
     let out = slc_check(&[&bad, &good]);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);

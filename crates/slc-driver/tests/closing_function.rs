@@ -6,10 +6,10 @@ use std::process::Command;
 fn refused(name: &str, body: &str) -> String {
     let path = std::env::temp_dir().join(format!("slc_closing_function_{name}.sl"));
     let source = format!(
-        "effect Reader {{ fn config() -> i64; }}
-        fn inc(n: i64) -> i64 {{ <(n, 1) | add }}
+        "hook Reader {{ func config() -> i64; }}
+        func inc(n: i64) -> i64 {{ <(n, 1) | add }}
 
-        command main | (exit: -i32) / {{IO}} {{
+        proc main | (exit: -i32) / {{IO}} {{
             {body}
             <0 | exit>
         }}"
@@ -28,14 +28,14 @@ fn refused(name: &str, body: &str) -> String {
 fn resume_closed_with_a_bracket_is_diagnosed() {
     let stderr = refused(
         "resume_value",
-        "let r = handle config() { config(): resume => <42 | resume> };\n<r | println;",
+        "let r = do config() { config(): resume => <42 | resume> };\n<r | println;",
     );
     assert!(stderr.contains("`resume` is a function"), "{stderr}");
     assert!(stderr.contains("`<… | resume`"), "{stderr}");
 
     let stderr = refused(
         "resume_alternative",
-        "let s: (i64 | String) = handle ::0(1) { config(): resume => <::0(3) | resume> };",
+        "let s: (i64 | String) = do ::0(1) { config(): resume => <::0(3) | resume> };",
     );
     assert!(stderr.contains("`resume` is a function"), "{stderr}");
     assert!(!stderr.contains("is an alternative of a sum"), "{stderr}");

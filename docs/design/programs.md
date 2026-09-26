@@ -2,11 +2,11 @@ Part of the [language design](../../DESIGN.md).
 
 ## 9. Entry point and exit
 
-A program is a command, so its entry point is a `command`. It takes no values
+A program is a command, so its entry point is a `proc`. It takes no values
 and exactly one continuation — the exit status:
 
 ```sl
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <"Hello, SLC!" | println;
     <0 | exit>
 }
@@ -22,20 +22,20 @@ one it takes for itself. (An earlier design had a top-level `EXIT`; it let any
 function end the program behind `main`'s back, and it is gone.)
 
 ```sl
-command main | (exit: i32) / {IO} {
-    let complain = select String { message => { <message | println; <1 | exit> } };
+proc main | (exit: i32) / {IO} {
+    let complain = mu String { message => { <message | println; <1 | exit> } };
     <(,) | fs::real_command | (fn {
-        <"input.txt" | fs::read | (select String { text => { <text | print; <0 | exit> } } & complain)>
+        <"input.txt" | fs::read | (mu String { text => { <text | print; <0 | exit> } } & complain)>
     })>
 }
 ```
 
-Because a `command` body must be `⊥`, **every terminating path of a program
+Because a `proc` body must be `⊥`, **every terminating path of a program
 leaves through `exit`** — a `main` that falls off the end is rejected by the
 type checker, not by a runtime convention.
 
 There is no final-result value. A program's output is exactly what it prints;
-its status is what it sends to `exit`. A `fn main`, a `main` with value
+its status is what it sends to `exit`. A `func main`, a `main` with value
 parameters, a `main` whose row is not one exit status, and a missing `main`
 are all rejected.
 
@@ -95,7 +95,7 @@ Compiler failures are categorized by the phase that produces them:
 | `parse`          | the source is not a valid surface program                                            |
 | `type`           | a term has the wrong type or an inference rule cannot apply                          |
 | `polarity`       | a value or continuation is used with the wrong polarity                              |
-| `exhaustiveness` | a `match` or `select` does not cover its alternatives exactly once                   |
+| `exhaustiveness` | an `of` or `mu` does not cover its alternatives exactly once                   |
 | `lowering`       | an otherwise accepted surface construct cannot be translated to the core calculus    |
 
 The compiler applies these phases in order:
@@ -153,14 +153,14 @@ brings one name into scope:
 mod geometry {
     pub enum Shape { Circle(i64), Rect(i64, i64) }
 
-    fn squared(n: i64) -> i64 { <(n, n) | mul }   // private: the module's own
+    func squared(n: i64) -> i64 { <(n, n) | mul }   // private: the module's own
 
-    pub fn area(s: Shape) -> i64 { … }    // its own names are bare here
+    pub func area(s: Shape) -> i64 { … }    // its own names are bare here
 }
 
 use geometry::area;
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <geometry::Shape::Circle(5) | area | println;
     <0 | exit>
 }
@@ -187,7 +187,7 @@ imports never reach into the library. The root scope, though, is one scope
 over every unit, so a library unit imports names only inside its `mod` —
 at its top level a `use` may be a variant import, which is per-unit, and
 nothing else. A program's `mod` of a library module's name shadows it
-whole, as its `fn` shadows a prelude function. `use list;` — naming a
+whole, as its `func` shadows a prelude function. `use list;` — naming a
 module already reachable at the root — is allowed, so a program can say
 what it draws on.
 

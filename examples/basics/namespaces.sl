@@ -25,23 +25,23 @@ mod geometry {
     // Inside the module, its own names are bare — `Shape`, `Circle`.
     // Private: `squared` is the module's own business, and reaching it
     // from outside `geometry` is an error.
-    fn squared(n: i64) -> i64 { <(n, n) | mul }
+    func squared(n: i64) -> i64 { <(n, n) | mul }
 
-    pub fn area(s: Shape) -> i64 {
-        match s {
+    pub func area(s: Shape) -> i64 {
+        of s {
             Circle(r) => <(3, <r | squared) | mul,
             Rect(w, h) => <(w, h) | mul,
         }
     }
 
-    pub fn origin() -> Point {
+    pub func origin() -> Point {
         Point { x: 0, y: 0 }
     }
 }
 
 mod physics {
     // A sibling module reaches another through its path.
-    pub fn weight(s: geometry::Shape) -> i64 {
+    pub func weight(s: geometry::Shape) -> i64 {
         <(<s | geometry::area, 10) | mul
     }
 }
@@ -49,10 +49,10 @@ mod physics {
 // `use` makes one name local; everything else stays qualified.
 use geometry::area;
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <geometry::Shape::Circle(5) | area | println;
     <geometry::Shape::Rect(6, 7) | physics::weight | println;
-    match geometry::origin() {
+    of geometry::origin() {
         geometry::Point { x, y } => <(x, y) | add | println,
     };
     <0 | exit>

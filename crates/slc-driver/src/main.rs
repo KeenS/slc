@@ -153,7 +153,7 @@ impl SourceMap {
     }
 }
 
-const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `command main | (exit: -i32) / {IO} { ... }`: a command with no value \
+const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `proc main | (exit: -i32) / {IO} { ... }`: a proc with no value \
      parameters and one continuation, the exit status";
 
 fn main() -> ExitCode {
@@ -495,7 +495,7 @@ fn run_file(path: &std::path::Path, fuel: usize) -> Result<RunOutcome, String> {
         .iter()
         .find(|(name, _)| name == "main")
         .map(|(_, root)| *root)
-        .ok_or("no `main`: define `command main | (exit: -i32) / {IO} { ... }`")?;
+        .ok_or("no `main`: define `proc main | (exit: -i32) / {IO} { ... }`")?;
     let eval_span = slc_core::span!("eval");
     let _eval_guard = eval_span.enter();
 
@@ -695,7 +695,7 @@ fn validate_main(program: &slc_syntax::ast::Program) -> Result<(), String> {
         .iter()
         .filter(|decl| matches!(&decl.kind, Decl::Command { name, .. } | Decl::Fn { name, .. } if name == "main"));
     let Some(main) = mains.next() else {
-        return Err("no `main`: define `command main | (exit: -i32) / {IO} { ... }`".into());
+        return Err("no `main`: define `proc main | (exit: -i32) / {IO} { ... }`".into());
     };
     if mains.next().is_some() {
         return Err("program contains multiple `main` declarations".into());
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn a_program_that_reaches_no_module_loads_only_the_prelude() {
         assert_eq!(
-            loaded(r#"command main | (exit: i32) / {IO} { <"hi" | println; <0 | exit> }"#),
+            loaded(r#"proc main | (exit: i32) / {IO} { <"hi" | println; <0 | exit> }"#),
             ["prelude"]
         );
     }

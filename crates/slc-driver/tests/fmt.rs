@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
-const UNFORMATTED: &str = "command main|(exit:i32)/{IO}{\n<0|exit>}\n";
-const FORMATTED: &str = "command main | (exit: i32) / {IO} {\n    <0 | exit>\n}\n";
+const UNFORMATTED: &str = "proc main|(exit:i32)/{IO}{\n<0|exit>}\n";
+const FORMATTED: &str = "proc main | (exit: i32) / {IO} {\n    <0 | exit>\n}\n";
 
 fn scratch(name: &str, source: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("slc-fmt-{}-{name}.sl", std::process::id()));
@@ -48,7 +48,7 @@ fn stdout_prints_the_layout_and_leaves_the_file_alone() {
 
 #[test]
 fn a_file_that_does_not_parse_is_reported_and_untouched() {
-    let broken = "command main | (exit: i32) { a && b }\n";
+    let broken = "proc main | (exit: i32) { a && b }\n";
     let path = scratch("broken", broken);
     let out = slc_fmt(&[path.to_str().unwrap()]);
     assert!(!out.status.success());

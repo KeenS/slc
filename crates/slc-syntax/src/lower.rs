@@ -425,7 +425,7 @@ fn is_delayed(span: Span) -> bool {
     DELAYS.with(|cell| cell.borrow().contains(&span))
 }
 
-/// Lower an expression standing as a command — a `match` or `select` arm, a
+/// Lower an expression standing as a command — a `of` or `mu` arm, a
 /// block's statement or its last expression. A name of type `(;)` there is
 /// demanded: it is run, by applying what it holds to the unit, so a delayed
 /// exit jumps where it is taken. Anywhere else it is passed on unrun.
@@ -1083,10 +1083,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             //
             //   labelled (enum, struct) ⟹ co(μ̃[T; L(x…). c | … ])
             //   product (tensor)        ⟹ co(μ̃(x…). c)
-            // Request arms belong to `mu`: `select` answers data.
+            // Request arms belong to `mu`: `mu` answers data.
             if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Dtor { .. })) {
                 return Err(LowerError::Unsupported(
-                    "`select` answers data; a menu answers demands and is built by \
+                    "`mu` answers data; a menu answers demands and is built by \
                      `mu Menu { item: k <= c, … }`"
                         .into(),
                 ));
@@ -1098,7 +1098,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 for arm in arms {
                     let Pattern::Inject { index, pattern } = &arm.pattern else {
                         return Err(LowerError::Unsupported(
-                            "a `select` over a sum covers its alternatives, `::0(x)` and \
+                            "a `mu` over a sum covers its alternatives, `::0(x)` and \
                              `::1(y)`, and nothing else"
                                 .into(),
                         ));
@@ -1149,7 +1149,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     Ok(Term::Co(Box::new(lower_cocase(qualifier, branches)?)))
                 }
                 _ => Err(LowerError::Unsupported(
-                    "a `select` covers either a labelled type or one product, not both".into(),
+                    "a `mu` covers either a labelled type or one product, not both".into(),
                 )),
             }
         }
@@ -1345,7 +1345,7 @@ fn cut_binder(consumer: &Expr) -> String {
 
 const CUT_BINDER: &str = "__cut";
 
-/// The owners the nullary additive tables retain: `select (|) {}` and `(&)`
+/// The owners the nullary additive tables retain: `mu (|) {}` and `(&)`
 /// have no declaration to name them.
 const EMPTY_SUM: &str = "(|)";
 const EMPTY_MENU: &str = "(&)";
@@ -1359,7 +1359,7 @@ const EMPTY_MENU: &str = "(&)";
 /// the bodyless form that scopes over the rest of its block — lower here.
 /// A binding: `let p = v` for the value `v` and the body it scopes over. A
 /// bare name is a μ̃ binder, exactly as it always was; any other pattern is
-/// the one-arm `match` it abbreviates, so destructuring needs nothing the
+/// the one-arm `of` it abbreviates, so destructuring needs nothing the
 /// core did not already have.
 fn lower_binding(
     pattern: &Pattern,
@@ -1500,7 +1500,7 @@ fn pack_group(mut terms: Vec<Term>) -> Term {
     }
 }
 
-/// The shape a `select` arm covers: the label it answers to, if it has one,
+/// The shape a `mu` arm covers: the label it answers to, if it has one,
 /// and the binders for that shape's components.
 fn select_arm_shape(
     pattern: &Pattern,
@@ -1534,10 +1534,10 @@ fn select_arm_shape(
             Ok((None, binders, command))
         }
         Pattern::Dtor { .. } => Err(LowerError::Unsupported(
-            "a `select` covers either a menu's requests or a data type's shapes, not both".into(),
+            "a `mu` covers either a menu's requests or a data type's shapes, not both".into(),
         )),
         other => Err(LowerError::Unsupported(format!(
-            "a `select` arm covers one shape of the type; found {other:?}"
+            "a `mu` arm covers one shape of the type; found {other:?}"
         ))),
     }
 }
@@ -1582,8 +1582,8 @@ fn components<'p>(
                 Ok((fresh, cut))
             }
             other => Err(LowerError::Unsupported(format!(
-                "a `select` arm covers one shape: a sum or a value inside a component needs \
-                 its own `match` in the arm; found {other:?}"
+                "a `mu` arm covers one shape: a sum or a value inside a component needs \
+                 its own `of` in the arm; found {other:?}"
             ))),
         }
     }
@@ -1604,11 +1604,11 @@ fn components<'p>(
     nested(patterns, "__s", command)
 }
 
-/// The μ binder a canonical `match` captures: each arm's value is cut
+/// The μ binder a canonical `of` captures: each arm's value is cut
 /// against it, so the whole expression answers with the taken branch.
 const MATCH_COVAR: &str = "__match";
 
-/// Lower a `match` to a genuine cut against its branch table when the core
+/// Lower a `of` to a genuine cut against its branch table when the core
 /// can express it: every arm is a shape — a variant, a record, a tuple, a
 /// request, or one whole-value binder — with components that are binders or
 /// nested products. `Ok(None)` means the match needs the runtime dispatch
@@ -1630,7 +1630,7 @@ fn lower_match_canonical(
 /// The consumer a set of arms builds, each already lowered to the command it
 /// runs: a labelled table, a single product, or a single whole-value binder.
 /// `Ok(None)` is a mix the core's branch tables cannot express, which a
-/// `match` answers with the runtime dispatch — and a binder refuses.
+/// `of` answers with the runtime dispatch — and a binder refuses.
 fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerError> {
     fn canonical_component(pattern: &Pattern) -> bool {
         match pattern {
@@ -1747,7 +1747,7 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
     }))
 }
 
-/// The command a canonical `match` arm runs: its value goes to the match's
+/// The command a canonical `of` arm runs: its value goes to the match's
 /// own continuation, unless the arm is already a cut against a named
 /// consumer, which stands as written.
 fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Command, LowerError> {
@@ -1874,7 +1874,7 @@ fn named_consumer(consumer: &Expr) -> Option<&String> {
     }
 }
 
-/// The command a `select` arm runs. A cut against a named consumer is that
+/// The command a `mu` arm runs. A cut against a named consumer is that
 /// command directly; any other command-typed expression is lowered as a term
 /// and cut against the arm's own co-variable, which nothing returns to.
 fn lower_select_command(
@@ -2229,7 +2229,7 @@ mod tests {
     #[test]
     fn lower_block_sequence_names_cannot_capture_user_continuations() {
         let out = lower_str(
-            "fn f(__seq0: -i32 & __ret0: -i32) <- i32 {
+            "func f(__seq0: -i32 & __ret0: -i32) <- i32 {
                 println(1);
                 println(2);
                 __seq0(1)
@@ -2248,7 +2248,7 @@ mod tests {
 
     #[test]
     fn a_block_returns_through_its_own_bound_continuation() {
-        let definitions = lower_str("fn result() -> i64 { 1; 2 }");
+        let definitions = lower_str("func result() -> i64 { 1; 2 }");
         let Term::Lam(_, body) = &definitions[0].1 else { panic!("expected a function") };
         let Term::Mu(bound, command) = body.as_ref() else { panic!("expected a block") };
         let Command::Cut(_, CoTerm::MuTilde(_, rest)) = command.as_ref() else {
@@ -2264,17 +2264,20 @@ mod tests {
 
     #[test]
     fn empty_menu_lowering_retains_its_owner() {
-        let out = lower_str("menu Top {} fn top() -> Top { mu Top {} }");
+        // Braces with no arms are the consumer of the written type.
+        let out = lower_str("menu Top {} func top() -> Top { mu Top {} }");
         let (_, Term::Lam(_, body)) = &out[0] else { panic!("expected a nullary function") };
+        let Term::Co(coterm) = body.as_ref() else { panic!("expected a consumer, got {body:?}") };
         assert!(matches!(
-            body.as_ref(),
-            Term::CoMatch { owner, branches } if owner == "Top" && branches.is_empty()
+            coterm.as_ref(),
+            slc_core::coterm::CoTerm::CoCase { owner, branches }
+                if owner == "Top" && branches.is_empty()
         ));
     }
 
     #[test]
     fn a_non_nullary_unit_shadow_keeps_its_label() {
-        let out = lower_str("data Unit { value: i64 } fn unit() -> Unit { Unit { value: 1 } }");
+        let out = lower_str("data Unit { value: i64 } func unit() -> Unit { Unit { value: 1 } }");
         let unit = out.iter().find(|(name, _)| name == "unit").unwrap();
         let Term::Lam(_, body) = &unit.1 else { panic!("expected a nullary function") };
         assert!(matches!(body.as_ref(), Term::Tag(label, _) if label == "Unit"));
@@ -2284,14 +2287,14 @@ mod tests {
     fn lower_block_sequence_handles_nested_shadowed_empty_and_single_forms() {
         // A positive function with no parameters binds the marker a call
         // with no arguments supplies, so it stays callable.
-        let single = lower_str("fn f() -> i32 { 1 }")[0].1.clone();
+        let single = lower_str("func f() -> i32 { 1 }")[0].1.clone();
         assert_eq!(single, Term::Lam("__no_args".into(), Box::new(Term::Var("$int_1".into()))));
 
-        let empty = lower_str("fn f() -> unit { }")[0].1.clone();
+        let empty = lower_str("func f() -> unit { }")[0].1.clone();
         assert_eq!(empty, Term::Lam("__no_args".into(), Box::new(Term::Var("$unit".into()))));
 
         let nested = lower_str(
-            "fn f() -> i32 {
+            "func f() -> i32 {
                 let x = 1;
                 {
                     let y = 2;
@@ -2312,10 +2315,10 @@ mod tests {
 
     #[test]
     fn lower_select_is_a_negative_additive_consumer() {
-        // `select` must lower to a genuine negative additive co-term — one
+        // `mu` must lower to a genuine negative additive co-term — one
         // branch per variant, each cutting the arm value against the arm's
         // consumer — and not to an opaque builtin marker.
-        let src = "enum Color { Red, Green, Blue } fn k(return: -i32) <- Color { select Color { Red => <0 | return>, Green => <1 | return>, Blue => <2 | return> } }";
+        let src = "enum Color { Red, Green, Blue } func k(return: -i32) <- Color { mu Color { Red => <0 | return>, Green => <1 | return>, Blue => <2 | return> } }";
         let out = lower_str(src);
         let k = out.iter().find(|(name, _)| name == "k").unwrap();
 
@@ -2325,10 +2328,10 @@ mod tests {
         };
         assert_eq!(covar, "return");
         let Term::Co(coterm) = body.as_ref() else {
-            panic!("`select` should lower to a reified co-term: {body}");
+            panic!("`mu` should lower to a reified co-term: {body}");
         };
         let CoTerm::CoCase { owner, branches } = coterm.as_ref() else {
-            panic!("`select` should lower to a negative additive consumer: {coterm}");
+            panic!("`mu` should lower to a negative additive consumer: {coterm}");
         };
         assert_eq!(owner, "Color");
         let labels: Vec<&str> = branches.iter().map(|b| b.label.as_str()).collect();
@@ -2347,8 +2350,8 @@ mod tests {
         // A product has one shape, so its consumer binds every component and
         // needs no label.
         let out = lower_str(
-            "fn total(out: -i64) <- (+i64, +i64) {
-                 select (+i64, +i64) { (left, right) => <(left, right) | __add | out> }
+            "func total(out: -i64) <- (+i64, +i64) {
+                 mu (+i64, +i64) { (left, right) => <(left, right) | __add | out> }
              }",
         );
         let Term::Lam(_, body) = &out[0].1 else { panic!("expected a co-abstraction") };
@@ -2369,7 +2372,7 @@ mod tests {
         // declaration, binding every field.
         let out = lower_str(
             "data R { value: i64, unit: String }
-             fn show(out: -String) <- R { select R { R { value, unit } => <unit | out> } }",
+             func show(out: -String) <- R { mu R { R { value, unit } => <unit | out> } }",
         );
         let show = out.iter().find(|(name, _)| name == "show").unwrap();
         let printed = format!("{}", show.1);
@@ -2378,7 +2381,7 @@ mod tests {
 
     #[test]
     fn lower_enum_value_is_a_labelled_injection() {
-        let out = lower_str("enum Color { Red, Green } fn main() -> i32 { 0 }");
+        let out = lower_str("enum Color { Red, Green } func main() -> i32 { 0 }");
         let red = out.iter().find(|(name, _)| name == "Color::Red").unwrap();
         assert_eq!(red.1, Term::Tag("Color::Red".into(), Box::new(Term::Var("$unit".into()))));
     }
@@ -2386,7 +2389,7 @@ mod tests {
     #[test]
     fn lower_select_rejects_an_arm_that_is_not_a_shape() {
         // An arm covers one shape of the type; a literal is not one.
-        let src = "enum Color { Red, Green } fn k(return: -i32) <- Color { select Color { 1 => <0 | return>, Green => <1 | return> } }";
+        let src = "enum Color { Red, Green } func k(return: -i32) <- Color { mu Color { 1 => <0 | return>, Green => <1 | return> } }";
         let toks = crate::lexer::lex(src).unwrap();
         let prog = crate::parser::parse(toks).unwrap();
         assert!(
@@ -2403,7 +2406,7 @@ mod tests {
         // right-nested tensor of its field values — the same labelled shape
         // an enum variant has.
         let out = lower_str(
-            "data D { left: i64, right: i64 } fn f() -> i64 { use_it(D { left: 1, right: 2 }) }",
+            "data D { left: i64, right: i64 } func f() -> i64 { use_it(D { left: 1, right: 2 }) }",
         );
         let printed = format!("{}", out.iter().find(|(name, _)| name == "f").unwrap().1);
         assert!(
@@ -2412,7 +2415,7 @@ mod tests {
         );
 
         // One field needs no tensor, and none is unit.
-        let one = lower_str("data One { only: i64 } fn f() -> i64 { use_it(One { only: 1 }) }");
+        let one = lower_str("data One { only: i64 } func f() -> i64 { use_it(One { only: 1 }) }");
         let printed = format!("{}", one.iter().find(|(name, _)| name == "f").unwrap().1);
         assert!(printed.contains("One($int_1)"), "{printed}");
     }
@@ -2422,7 +2425,7 @@ mod tests {
         // `v | k` is the command ⟨v ∥ k⟩. The μ binder that wraps it is never
         // referenced — a command has no result — and must not be the
         // consumer's own name, or the cut would send the value to itself.
-        let positive = lower_str("fn f(k: -i32) <- i32 { <1 | k> }");
+        let positive = lower_str("func f(k: -i32) <- i32 { <1 | k> }");
         assert_eq!(
             positive[0].1,
             Term::Lam(
@@ -2435,7 +2438,7 @@ mod tests {
         );
 
         // A consumer named `__cut` still receives the value.
-        let shadowed = lower_str("fn f(__cut: -i32) <- i32 { <1 | __cut> }");
+        let shadowed = lower_str("func f(__cut: -i32) <- i32 { <1 | __cut> }");
         assert_eq!(
             shadowed[0].1,
             Term::Lam(
@@ -2455,7 +2458,7 @@ mod tests {
     fn lower_flow_reads_its_brackets() {
         // The brackets say what a chain is, so lowering never guesses: the
         // same stages are a cut when closed and an application when not.
-        let cut = lower_str("fn f(ignored: +i32) -> i32 { <1 | pick(2)> }");
+        let cut = lower_str("func f(ignored: +i32) -> i32 { <1 | pick(2)> }");
         let Term::Lam(_, body) = &cut[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else {
             panic!("a cut is wrapped in a μ binder: {body}");
@@ -2471,7 +2474,7 @@ mod tests {
         assert!(format!("{consumer}").contains("pick"), "the consumer is evaluated: {consumer}");
         assert_eq!(value, &Term::Var("$int_1".into()));
 
-        let open = lower_str("fn f(ignored: +i32) -> i32 { <1 | pick(2) }");
+        let open = lower_str("func f(ignored: +i32) -> i32 { <1 | pick(2) }");
         let Term::Lam(_, body) = &open[0].1 else { panic!("expected a value binder") };
         let Term::Mu(binder, command) = body.as_ref() else { panic!("an application: {body}") };
         assert_eq!(binder, "$flow_binding");
@@ -2488,7 +2491,7 @@ mod tests {
         // μ̃[…], not a call into the dispatch builtin.
         let out = lower_str(
             "enum Colour { Red, Green } \
-             fn f(c: Colour) -> i32 { match c { Red => 1, Green(x) => 2 } }",
+             func f(c: Colour) -> i32 { of c { Red => 1, Green(x) => 2 } }",
         );
         let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
         let printed = format!("{}", f.1);
@@ -2499,7 +2502,7 @@ mod tests {
 
     #[test]
     fn a_literal_match_still_dispatches() {
-        let out = lower_str("fn f(n: +i32) -> i32 { match n { 1 => 1, _ => 0 } }");
+        let out = lower_str("func f(n: +i32) -> i32 { of n { 1 => 1, _ => 0 } }");
         let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
         let printed = format!("{}", f.1);
         assert!(printed.contains("__match_dispatch"), "literals need equality: {printed}");
@@ -2516,7 +2519,7 @@ mod tests {
         // A negative function's parameters are its menu of exits, and a
         // group is one argument: it binds that, then destructures it into
         // the exits the body names.
-        let out = lower_str("fn k(return: -i32 & other: -Bool) <- Bool { return(0) }");
+        let out = lower_str("func k(return: -i32 & other: -Bool) <- Bool { return(0) }");
         let printed = format!("{}", out[0].1);
         assert!(printed.starts_with("λ__args."), "the group is one binder: {printed}");
         assert!(
@@ -2529,7 +2532,7 @@ mod tests {
     fn lower_mu_binds_values_before_continuations() {
         // `mu f(values) | (continuations)` is called as
         // `f(values..., continuations...)`, so the λ binders come first.
-        let out = lower_str("command route(x: +i32) | (k: -i32) { k(x) }");
+        let out = lower_str("proc route(x: +i32) | (k: -i32) { k(x) }");
         let term = &out[0].1;
         let Term::Lam(value, rest) = term else {
             panic!("value parameter must be a λ binder: {term}");
@@ -2543,13 +2546,13 @@ mod tests {
 
     #[test]
     fn lower_lambda() {
-        let out = lower_str("fn id(x: +i32) -> i32 { x }");
+        let out = lower_str("func id(x: +i32) -> i32 { x }");
         assert_eq!(out[0].1, Term::Lam("x".into(), Box::new(Term::Var("x".into()))));
     }
 
     #[test]
     fn lower_negative_fn() {
-        let out = lower_str("fn k(x: -i32) <- i32 { x }");
+        let out = lower_str("func k(x: -i32) <- i32 { x }");
         assert_eq!(out[0].1, Term::Lam("x".into(), Box::new(Term::Var("x".into()))));
     }
 
@@ -2557,7 +2560,7 @@ mod tests {
     fn lower_uses_explicit_lexical_continuation_scopes() {
         // A local mu adds its binder only inside its own body.
         let out = lower_str(
-            "fn f(ok: -i32) <- i32 {
+            "func f(ok: -i32) <- i32 {
                 mu i32 { inner <= ok(escape(1, inner)) }
             }",
         );
@@ -2567,13 +2570,13 @@ mod tests {
 
     #[test]
     fn generic_positive_and_negative_functions_lower_structurally() {
-        let positive = lower_str("fn id<+T>(value: T) -> T { value }")[0].1.clone();
+        let positive = lower_str("func id<+T>(value: T) -> T { value }")[0].1.clone();
         assert!(
             matches!(&positive, Term::Lam(name, body) if name == "value" && matches!(&**body, Term::Var(v) if v == "value")),
             "positive generic parameter should lower as a lambda binder: {positive:?}"
         );
 
-        let negative = lower_str("fn k<+T>(ok: -T) <- T { ok(0) }")[0].1.clone();
+        let negative = lower_str("func k<+T>(ok: -T) <- T { ok(0) }")[0].1.clone();
         assert!(
             matches!(&negative, Term::Lam(name, _) if name == "ok"),
             "negative generic continuation parameter should lower as a co-abstraction binder: {negative:?}"

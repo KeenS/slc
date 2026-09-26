@@ -12,7 +12,7 @@
 //   nullable   does it match the empty word?
 //   derive     what is left of it after this character?
 //
-// There is no syntax tree below and no `match` on one. Each constructor is
+// There is no syntax tree below and no `of` on one. Each constructor is
 // a `mu` that answers the two questions for its own shape, the textbook
 // equations read off as arms:
 //
@@ -41,16 +41,16 @@ menu Regex {
     unit: Bool,
 }
 
-fn and(a: Bool, b: Bool) -> Bool {
-    match a { True => b, False => False }
+func and(a: Bool, b: Bool) -> Bool {
+    of a { True => b, False => False }
 }
 
-fn or(a: Bool, b: Bool) -> Bool {
-    match a { True => True, False => b }
+func or(a: Bool, b: Bool) -> Bool {
+    of a { True => True, False => b }
 }
 
 // ∅, the language with no words.
-fn empty() -> Regex {
+func empty() -> Regex {
     mu Regex {
         nullable <= <False | nullable>,
         derive <= <fn(c: char) { empty() } | derive>,
@@ -62,7 +62,7 @@ fn empty() -> Regex {
 }
 
 // ε, the language of the empty word alone.
-fn epsilon() -> Regex {
+func epsilon() -> Regex {
     mu Regex {
         nullable <= <True | nullable>,
         derive <= <fn(c: char) { empty() } | derive>,
@@ -73,11 +73,11 @@ fn epsilon() -> Regex {
     }
 }
 
-fn chr(wanted: char) -> Regex {
+func chr(wanted: char) -> Regex {
     mu Regex {
         nullable <= <False | nullable>,
         derive <= <fn(c: char) {
-            match (<(c, wanted) | eq) { True => epsilon(), False => empty() }
+            of (<(c, wanted) | eq) { True => epsilon(), False => empty() }
         } | derive>,
         show <= <wanted | to_string | show>,
         atom <= <True | atom>,
@@ -87,10 +87,10 @@ fn chr(wanted: char) -> Regex {
 }
 
 // `r|s`. ∅ is its identity, so a side that is plainly ∅ is dropped.
-fn alt(r: Regex, s: Regex) -> Regex {
-    match r.void {
+func alt(r: Regex, s: Regex) -> Regex {
+    of r.void {
         True => s,
-        False => match s.void {
+        False => of s.void {
             True => r,
             False => mu Regex {
                 nullable <= <(r.nullable, s.nullable) | or | nullable>,
@@ -110,18 +110,18 @@ fn alt(r: Regex, s: Regex) -> Regex {
 }
 
 // `rs`. ∅ annihilates it and ε is its identity.
-fn seq(r: Regex, s: Regex) -> Regex {
-    match (<(r.void, s.void) | or) {
+func seq(r: Regex, s: Regex) -> Regex {
+    of (<(r.void, s.void) | or) {
         True => empty(),
-        False => match r.unit {
+        False => of r.unit {
             True => s,
-            False => match s.unit {
+            False => of s.unit {
                 True => r,
                 False => mu Regex {
                     nullable <= <(r.nullable, s.nullable) | and | nullable>,
                     derive <= <fn(c: char) {
                         let first = <(<c | r.derive, s) | seq;
-                        match r.nullable {
+                        of r.nullable {
                             True => <(first, <c | s.derive) | alt,
                             False => first,
                         }
@@ -137,12 +137,12 @@ fn seq(r: Regex, s: Regex) -> Regex {
 }
 
 // `r*`, which offers itself again: the arm that says so runs only on demand.
-fn star(r: Regex) -> Regex {
+func star(r: Regex) -> Regex {
     mu Regex {
         nullable <= <True | nullable>,
         derive <= <fn(c: char) { <(<c | r.derive, <r | star) | seq } | derive>,
         show <= <(
-            match r.atom {
+            of r.atom {
                 True => r.show,
                 False => <("(", r.show) | add | x => (x, ")") | add,
             },
@@ -155,21 +155,21 @@ fn star(r: Regex) -> Regex {
 }
 
 // Matching: derive by each character, then ask whether ε is left.
-fn matches_from(r: Regex, word: String, at: i64) -> Bool {
-    match (<(at, <word | str_len) | lt) {
+func matches_from(r: Regex, word: String, at: i64) -> Bool {
+    of (<(at, <word | str_len) | lt) {
         True => <(<(word, at) | index | r.derive, word, <(at, 1) | add) | matches_from,
         False => r.nullable,
     }
 }
 
-fn matches(r: Regex, word: String) -> Bool {
+func matches(r: Regex, word: String) -> Bool {
     <(r, word, 0) | matches_from
 }
 
 // The derivation itself, a line per character: what was read, and what is
 // left to match.
-fn derivation(r: Regex, word: String, at: i64) -> (,) / {IO} {
-    match (<(at, <word | str_len) | lt) {
+func derivation(r: Regex, word: String, at: i64) -> (,) / {IO} {
+    of (<(at, <word | str_len) | lt) {
         True => {
             let c = <(word, at) | index;
             let rest = <c | r.derive;
@@ -184,7 +184,7 @@ fn derivation(r: Regex, word: String, at: i64) -> (,) / {IO} {
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let a = <'a' | chr;
     let b = <'b' | chr;
 

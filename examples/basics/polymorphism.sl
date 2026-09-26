@@ -15,13 +15,13 @@
 
 enum Maybe<+T> { Nothing, Just(T) }
 
-fn id<+T>(x: T) -> T { x }
+func id<+T>(x: T) -> T { x }
 
-fn or_else<+T>(m: Maybe<T>, fallback: T) -> T {
-    match m { Maybe::Just(x) => x, Maybe::Nothing => fallback }
+func or_else<+T>(m: Maybe<T>, fallback: T) -> T {
+    of m { Maybe::Just(x) => x, Maybe::Nothing => fallback }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // A generic declaration: every call chooses its own `T`.
     <(<7 | id, 1) | add | println;
     <"seven" | id | str_len | println;

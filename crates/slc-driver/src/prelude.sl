@@ -19,14 +19,14 @@
 // `println` and `print` are the friendly front: they render a value through
 // `Display`, below, and then perform `write_line`/`write` with the text.
 
-effect IO {
-    fn write(text: String) -> (,);
-    fn write_line(text: String) -> (,);
+hook IO {
+    func write(text: String) -> (,);
+    func write_line(text: String) -> (,);
 }
 
 // ── Bool ─────────────────────────────────────────────────────────────────
 //
-// An ordinary enum, so a `match` on one is exhaustive the way a match on any
+// An ordinary enum, so a `of` on one is exhaustive the way a match on any
 // enum is. The builtins that answer yes or no answer with it.
 
 enum Bool { False, True }
@@ -37,38 +37,38 @@ enum Bool { False, True }
 // person should see — `fmt("hi")` is `hi`, unquoted — and `to_string` is
 // the same act as a plain function.
 
-trait Display {
-    fn fmt(self: Self) -> String;
+spec Display {
+    func fmt(self: Self) -> String;
 }
 
 impl Display for i64 {
-    fn fmt(self: i64) -> String { <self | int_to_str }
+    func fmt(self: i64) -> String { <self | int_to_str }
 }
 
-impl Display for i8 { fn fmt(self: i8) -> String { <self | __display } }
-impl Display for u8 { fn fmt(self: u8) -> String { <self | __display } }
-impl Display for f32 { fn fmt(self: f32) -> String { <self | __display } }
-impl Display for f64 { fn fmt(self: f64) -> String { <self | __display } }
+impl Display for i8 { func fmt(self: i8) -> String { <self | __display } }
+impl Display for u8 { func fmt(self: u8) -> String { <self | __display } }
+impl Display for f32 { func fmt(self: f32) -> String { <self | __display } }
+impl Display for f64 { func fmt(self: f64) -> String { <self | __display } }
 
 impl Display for String {
-    fn fmt(self: String) -> String { self }
+    func fmt(self: String) -> String { self }
 }
 
 impl Display for Bool {
-    fn fmt(self: Bool) -> String { match self { True => { "true" }, False => { "false" } } }
+    func fmt(self: Bool) -> String { of self { True => { "true" }, False => { "false" } } }
 }
 
-fn to_string<+T: Display>(x: T) -> String { <x | fmt }
+func to_string<+T: Display>(x: T) -> String { <x | fmt }
 
-impl Display for i32 { fn fmt(self: i32) -> String { <self | __display } }
-impl Display for u32 { fn fmt(self: u32) -> String { <self | __display } }
-impl Display for u64 { fn fmt(self: u64) -> String { <self | __display } }
-impl Display for char { fn fmt(self: char) -> String { <self | __display } }
-impl Display for File { fn fmt(self: File) -> String { <self | __display } }
+impl Display for i32 { func fmt(self: i32) -> String { <self | __display } }
+impl Display for u32 { func fmt(self: u32) -> String { <self | __display } }
+impl Display for u64 { func fmt(self: u64) -> String { <self | __display } }
+impl Display for char { func fmt(self: char) -> String { <self | __display } }
+impl Display for File { func fmt(self: File) -> String { <self | __display } }
 
 // Printing renders through `Display`, then performs `IO`'s operation.
-fn println<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write_line }
-fn print<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write }
+func println<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write_line }
+func print<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write }
 
 // ── Arithmetic and comparison ────────────────────────────────────────────
 //
@@ -76,247 +76,247 @@ fn print<+T: Display>(x: T) -> (,) / {IO} { <(<x | fmt) | write }
 // dispatches on the type the two agree on, and an integer literal takes its
 // width from the other operand.
 
-trait Add { fn add(self: Self, other: Self) -> Self; }
-impl Add for i64 { fn add(self: i64, other: i64) -> i64 { <(self, other) | __add } }
-impl Add for i8 { fn add(self: i8, other: i8) -> i8 { <(self, other) | __add } }
-impl Add for i32 { fn add(self: i32, other: i32) -> i32 { <(self, other) | __add } }
-impl Add for u8 { fn add(self: u8, other: u8) -> u8 { <(self, other) | __add } }
-impl Add for u64 { fn add(self: u64, other: u64) -> u64 { <(self, other) | __add } }
-impl Add for u32 { fn add(self: u32, other: u32) -> u32 { <(self, other) | __add } }
-impl Add for f32 { fn add(self: f32, other: f32) -> f32 { <(self, other) | __add } }
-impl Add for f64 { fn add(self: f64, other: f64) -> f64 { <(self, other) | __add } }
-impl Add for String { fn add(self: String, other: String) -> String { <(self, other) | __add } }
+spec Add { func add(self: Self, other: Self) -> Self; }
+impl Add for i64 { func add(self: i64, other: i64) -> i64 { <(self, other) | __add } }
+impl Add for i8 { func add(self: i8, other: i8) -> i8 { <(self, other) | __add } }
+impl Add for i32 { func add(self: i32, other: i32) -> i32 { <(self, other) | __add } }
+impl Add for u8 { func add(self: u8, other: u8) -> u8 { <(self, other) | __add } }
+impl Add for u64 { func add(self: u64, other: u64) -> u64 { <(self, other) | __add } }
+impl Add for u32 { func add(self: u32, other: u32) -> u32 { <(self, other) | __add } }
+impl Add for f32 { func add(self: f32, other: f32) -> f32 { <(self, other) | __add } }
+impl Add for f64 { func add(self: f64, other: f64) -> f64 { <(self, other) | __add } }
+impl Add for String { func add(self: String, other: String) -> String { <(self, other) | __add } }
 
-trait Sub { fn sub(self: Self, other: Self) -> Self; }
-impl Sub for i64 { fn sub(self: i64, other: i64) -> i64 { <(self, other) | __sub } }
-impl Sub for i8 { fn sub(self: i8, other: i8) -> i8 { <(self, other) | __sub } }
-impl Sub for i32 { fn sub(self: i32, other: i32) -> i32 { <(self, other) | __sub } }
-impl Sub for u8 { fn sub(self: u8, other: u8) -> u8 { <(self, other) | __sub } }
-impl Sub for u64 { fn sub(self: u64, other: u64) -> u64 { <(self, other) | __sub } }
-impl Sub for u32 { fn sub(self: u32, other: u32) -> u32 { <(self, other) | __sub } }
-impl Sub for f32 { fn sub(self: f32, other: f32) -> f32 { <(self, other) | __sub } }
-impl Sub for f64 { fn sub(self: f64, other: f64) -> f64 { <(self, other) | __sub } }
+spec Sub { func sub(self: Self, other: Self) -> Self; }
+impl Sub for i64 { func sub(self: i64, other: i64) -> i64 { <(self, other) | __sub } }
+impl Sub for i8 { func sub(self: i8, other: i8) -> i8 { <(self, other) | __sub } }
+impl Sub for i32 { func sub(self: i32, other: i32) -> i32 { <(self, other) | __sub } }
+impl Sub for u8 { func sub(self: u8, other: u8) -> u8 { <(self, other) | __sub } }
+impl Sub for u64 { func sub(self: u64, other: u64) -> u64 { <(self, other) | __sub } }
+impl Sub for u32 { func sub(self: u32, other: u32) -> u32 { <(self, other) | __sub } }
+impl Sub for f32 { func sub(self: f32, other: f32) -> f32 { <(self, other) | __sub } }
+impl Sub for f64 { func sub(self: f64, other: f64) -> f64 { <(self, other) | __sub } }
 
-trait Mul { fn mul(self: Self, other: Self) -> Self; }
-impl Mul for i64 { fn mul(self: i64, other: i64) -> i64 { <(self, other) | __mul } }
-impl Mul for i8 { fn mul(self: i8, other: i8) -> i8 { <(self, other) | __mul } }
-impl Mul for i32 { fn mul(self: i32, other: i32) -> i32 { <(self, other) | __mul } }
-impl Mul for u8 { fn mul(self: u8, other: u8) -> u8 { <(self, other) | __mul } }
-impl Mul for u64 { fn mul(self: u64, other: u64) -> u64 { <(self, other) | __mul } }
-impl Mul for u32 { fn mul(self: u32, other: u32) -> u32 { <(self, other) | __mul } }
-impl Mul for f32 { fn mul(self: f32, other: f32) -> f32 { <(self, other) | __mul } }
-impl Mul for f64 { fn mul(self: f64, other: f64) -> f64 { <(self, other) | __mul } }
+spec Mul { func mul(self: Self, other: Self) -> Self; }
+impl Mul for i64 { func mul(self: i64, other: i64) -> i64 { <(self, other) | __mul } }
+impl Mul for i8 { func mul(self: i8, other: i8) -> i8 { <(self, other) | __mul } }
+impl Mul for i32 { func mul(self: i32, other: i32) -> i32 { <(self, other) | __mul } }
+impl Mul for u8 { func mul(self: u8, other: u8) -> u8 { <(self, other) | __mul } }
+impl Mul for u64 { func mul(self: u64, other: u64) -> u64 { <(self, other) | __mul } }
+impl Mul for u32 { func mul(self: u32, other: u32) -> u32 { <(self, other) | __mul } }
+impl Mul for f32 { func mul(self: f32, other: f32) -> f32 { <(self, other) | __mul } }
+impl Mul for f64 { func mul(self: f64, other: f64) -> f64 { <(self, other) | __mul } }
 
-trait Div { fn div(self: Self, other: Self) -> Self; }
-impl Div for i64 { fn div(self: i64, other: i64) -> i64 { <(self, other) | __div } }
-impl Div for i8 { fn div(self: i8, other: i8) -> i8 { <(self, other) | __div } }
-impl Div for i32 { fn div(self: i32, other: i32) -> i32 { <(self, other) | __div } }
-impl Div for u8 { fn div(self: u8, other: u8) -> u8 { <(self, other) | __div } }
-impl Div for u64 { fn div(self: u64, other: u64) -> u64 { <(self, other) | __div } }
-impl Div for u32 { fn div(self: u32, other: u32) -> u32 { <(self, other) | __div } }
-impl Div for f32 { fn div(self: f32, other: f32) -> f32 { <(self, other) | __div } }
-impl Div for f64 { fn div(self: f64, other: f64) -> f64 { <(self, other) | __div } }
+spec Div { func div(self: Self, other: Self) -> Self; }
+impl Div for i64 { func div(self: i64, other: i64) -> i64 { <(self, other) | __div } }
+impl Div for i8 { func div(self: i8, other: i8) -> i8 { <(self, other) | __div } }
+impl Div for i32 { func div(self: i32, other: i32) -> i32 { <(self, other) | __div } }
+impl Div for u8 { func div(self: u8, other: u8) -> u8 { <(self, other) | __div } }
+impl Div for u64 { func div(self: u64, other: u64) -> u64 { <(self, other) | __div } }
+impl Div for u32 { func div(self: u32, other: u32) -> u32 { <(self, other) | __div } }
+impl Div for f32 { func div(self: f32, other: f32) -> f32 { <(self, other) | __div } }
+impl Div for f64 { func div(self: f64, other: f64) -> f64 { <(self, other) | __div } }
 
-trait Rem { fn rem(self: Self, other: Self) -> Self; }
-impl Rem for i64 { fn rem(self: i64, other: i64) -> i64 { <(self, other) | __rem } }
-impl Rem for i8 { fn rem(self: i8, other: i8) -> i8 { <(self, other) | __rem } }
-impl Rem for i32 { fn rem(self: i32, other: i32) -> i32 { <(self, other) | __rem } }
-impl Rem for u8 { fn rem(self: u8, other: u8) -> u8 { <(self, other) | __rem } }
-impl Rem for u64 { fn rem(self: u64, other: u64) -> u64 { <(self, other) | __rem } }
-impl Rem for u32 { fn rem(self: u32, other: u32) -> u32 { <(self, other) | __rem } }
-impl Rem for f32 { fn rem(self: f32, other: f32) -> f32 { <(self, other) | __rem } }
-impl Rem for f64 { fn rem(self: f64, other: f64) -> f64 { <(self, other) | __rem } }
+spec Rem { func rem(self: Self, other: Self) -> Self; }
+impl Rem for i64 { func rem(self: i64, other: i64) -> i64 { <(self, other) | __rem } }
+impl Rem for i8 { func rem(self: i8, other: i8) -> i8 { <(self, other) | __rem } }
+impl Rem for i32 { func rem(self: i32, other: i32) -> i32 { <(self, other) | __rem } }
+impl Rem for u8 { func rem(self: u8, other: u8) -> u8 { <(self, other) | __rem } }
+impl Rem for u64 { func rem(self: u64, other: u64) -> u64 { <(self, other) | __rem } }
+impl Rem for u32 { func rem(self: u32, other: u32) -> u32 { <(self, other) | __rem } }
+impl Rem for f32 { func rem(self: f32, other: f32) -> f32 { <(self, other) | __rem } }
+impl Rem for f64 { func rem(self: f64, other: f64) -> f64 { <(self, other) | __rem } }
 
-trait Neg { fn neg(self: Self) -> Self; }
-impl Neg for i64 { fn neg(self: i64) -> i64 { <self | __neg } }
-impl Neg for i8 { fn neg(self: i8) -> i8 { <self | __neg } }
-impl Neg for i32 { fn neg(self: i32) -> i32 { <self | __neg } }
-impl Neg for f32 { fn neg(self: f32) -> f32 { <self | __neg } }
-impl Neg for f64 { fn neg(self: f64) -> f64 { <self | __neg } }
+spec Neg { func neg(self: Self) -> Self; }
+impl Neg for i64 { func neg(self: i64) -> i64 { <self | __neg } }
+impl Neg for i8 { func neg(self: i8) -> i8 { <self | __neg } }
+impl Neg for i32 { func neg(self: i32) -> i32 { <self | __neg } }
+impl Neg for f32 { func neg(self: f32) -> f32 { <self | __neg } }
+impl Neg for f64 { func neg(self: f64) -> f64 { <self | __neg } }
 
 // A value moves between integer widths by `Into`. The expected type picks
 // the destination. The number is kept when it fits there; otherwise the
 // conversion overflows, as `add` does. There is no truncating cast.
-trait Into<+U> {
-    fn into(self: Self) -> U;
+spec Into<+U> {
+    func into(self: Self) -> U;
 }
-impl Into<i32> for i8 { fn into(self: i8) -> i32 { <self | __to_i32 } }
-impl Into<i64> for i8 { fn into(self: i8) -> i64 { <self | __to_i64 } }
-impl Into<u8> for i8 { fn into(self: i8) -> u8 { <self | __to_u8 } }
-impl Into<u32> for i8 { fn into(self: i8) -> u32 { <self | __to_u32 } }
-impl Into<u64> for i8 { fn into(self: i8) -> u64 { <self | __to_u64 } }
-impl Into<i8> for i32 { fn into(self: i32) -> i8 { <self | __to_i8 } }
-impl Into<i64> for i32 { fn into(self: i32) -> i64 { <self | __to_i64 } }
-impl Into<u8> for i32 { fn into(self: i32) -> u8 { <self | __to_u8 } }
-impl Into<u32> for i32 { fn into(self: i32) -> u32 { <self | __to_u32 } }
-impl Into<u64> for i32 { fn into(self: i32) -> u64 { <self | __to_u64 } }
-impl Into<i8> for i64 { fn into(self: i64) -> i8 { <self | __to_i8 } }
-impl Into<i32> for i64 { fn into(self: i64) -> i32 { <self | __to_i32 } }
-impl Into<u8> for i64 { fn into(self: i64) -> u8 { <self | __to_u8 } }
-impl Into<u32> for i64 { fn into(self: i64) -> u32 { <self | __to_u32 } }
-impl Into<u64> for i64 { fn into(self: i64) -> u64 { <self | __to_u64 } }
-impl Into<i8> for u8 { fn into(self: u8) -> i8 { <self | __to_i8 } }
-impl Into<i32> for u8 { fn into(self: u8) -> i32 { <self | __to_i32 } }
-impl Into<i64> for u8 { fn into(self: u8) -> i64 { <self | __to_i64 } }
-impl Into<u32> for u8 { fn into(self: u8) -> u32 { <self | __to_u32 } }
-impl Into<u64> for u8 { fn into(self: u8) -> u64 { <self | __to_u64 } }
-impl Into<i8> for u32 { fn into(self: u32) -> i8 { <self | __to_i8 } }
-impl Into<i32> for u32 { fn into(self: u32) -> i32 { <self | __to_i32 } }
-impl Into<i64> for u32 { fn into(self: u32) -> i64 { <self | __to_i64 } }
-impl Into<u8> for u32 { fn into(self: u32) -> u8 { <self | __to_u8 } }
-impl Into<u64> for u32 { fn into(self: u32) -> u64 { <self | __to_u64 } }
-impl Into<i8> for u64 { fn into(self: u64) -> i8 { <self | __to_i8 } }
-impl Into<i32> for u64 { fn into(self: u64) -> i32 { <self | __to_i32 } }
-impl Into<i64> for u64 { fn into(self: u64) -> i64 { <self | __to_i64 } }
-impl Into<u8> for u64 { fn into(self: u64) -> u8 { <self | __to_u8 } }
-impl Into<u32> for u64 { fn into(self: u64) -> u32 { <self | __to_u32 } }
+impl Into<i32> for i8 { func into(self: i8) -> i32 { <self | __to_i32 } }
+impl Into<i64> for i8 { func into(self: i8) -> i64 { <self | __to_i64 } }
+impl Into<u8> for i8 { func into(self: i8) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i8 { func into(self: i8) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i8 { func into(self: i8) -> u64 { <self | __to_u64 } }
+impl Into<i8> for i32 { func into(self: i32) -> i8 { <self | __to_i8 } }
+impl Into<i64> for i32 { func into(self: i32) -> i64 { <self | __to_i64 } }
+impl Into<u8> for i32 { func into(self: i32) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i32 { func into(self: i32) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i32 { func into(self: i32) -> u64 { <self | __to_u64 } }
+impl Into<i8> for i64 { func into(self: i64) -> i8 { <self | __to_i8 } }
+impl Into<i32> for i64 { func into(self: i64) -> i32 { <self | __to_i32 } }
+impl Into<u8> for i64 { func into(self: i64) -> u8 { <self | __to_u8 } }
+impl Into<u32> for i64 { func into(self: i64) -> u32 { <self | __to_u32 } }
+impl Into<u64> for i64 { func into(self: i64) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u8 { func into(self: u8) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u8 { func into(self: u8) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u8 { func into(self: u8) -> i64 { <self | __to_i64 } }
+impl Into<u32> for u8 { func into(self: u8) -> u32 { <self | __to_u32 } }
+impl Into<u64> for u8 { func into(self: u8) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u32 { func into(self: u32) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u32 { func into(self: u32) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u32 { func into(self: u32) -> i64 { <self | __to_i64 } }
+impl Into<u8> for u32 { func into(self: u32) -> u8 { <self | __to_u8 } }
+impl Into<u64> for u32 { func into(self: u32) -> u64 { <self | __to_u64 } }
+impl Into<i8> for u64 { func into(self: u64) -> i8 { <self | __to_i8 } }
+impl Into<i32> for u64 { func into(self: u64) -> i32 { <self | __to_i32 } }
+impl Into<i64> for u64 { func into(self: u64) -> i64 { <self | __to_i64 } }
+impl Into<u8> for u64 { func into(self: u64) -> u8 { <self | __to_u8 } }
+impl Into<u32> for u64 { func into(self: u64) -> u32 { <self | __to_u32 } }
 
-trait Eq {
-    fn eq(self: Self, other: Self) -> Bool;
-    fn ne(self: Self, other: Self) -> Bool { <(<(self, other) | eq) | not }
+spec Eq {
+    func eq(self: Self, other: Self) -> Bool;
+    func ne(self: Self, other: Self) -> Bool { <(<(self, other) | eq) | not }
 }
 impl Eq for i64 {
-    fn eq(self: i64, other: i64) -> Bool { <(self, other) | __eq }
-    fn ne(self: i64, other: i64) -> Bool { <(self, other) | __ne }
+    func eq(self: i64, other: i64) -> Bool { <(self, other) | __eq }
+    func ne(self: i64, other: i64) -> Bool { <(self, other) | __ne }
 }
 impl Eq for i8 {
-    fn eq(self: i8, other: i8) -> Bool { <(self, other) | __eq }
-    fn ne(self: i8, other: i8) -> Bool { <(self, other) | __ne }
+    func eq(self: i8, other: i8) -> Bool { <(self, other) | __eq }
+    func ne(self: i8, other: i8) -> Bool { <(self, other) | __ne }
 }
 impl Eq for i32 {
-    fn eq(self: i32, other: i32) -> Bool { <(self, other) | __eq }
-    fn ne(self: i32, other: i32) -> Bool { <(self, other) | __ne }
+    func eq(self: i32, other: i32) -> Bool { <(self, other) | __eq }
+    func ne(self: i32, other: i32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u8 {
-    fn eq(self: u8, other: u8) -> Bool { <(self, other) | __eq }
-    fn ne(self: u8, other: u8) -> Bool { <(self, other) | __ne }
+    func eq(self: u8, other: u8) -> Bool { <(self, other) | __eq }
+    func ne(self: u8, other: u8) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u64 {
-    fn eq(self: u64, other: u64) -> Bool { <(self, other) | __eq }
-    fn ne(self: u64, other: u64) -> Bool { <(self, other) | __ne }
+    func eq(self: u64, other: u64) -> Bool { <(self, other) | __eq }
+    func ne(self: u64, other: u64) -> Bool { <(self, other) | __ne }
 }
 impl Eq for u32 {
-    fn eq(self: u32, other: u32) -> Bool { <(self, other) | __eq }
-    fn ne(self: u32, other: u32) -> Bool { <(self, other) | __ne }
+    func eq(self: u32, other: u32) -> Bool { <(self, other) | __eq }
+    func ne(self: u32, other: u32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for f32 {
-    fn eq(self: f32, other: f32) -> Bool { <(self, other) | __eq }
-    fn ne(self: f32, other: f32) -> Bool { <(self, other) | __ne }
+    func eq(self: f32, other: f32) -> Bool { <(self, other) | __eq }
+    func ne(self: f32, other: f32) -> Bool { <(self, other) | __ne }
 }
 impl Eq for f64 {
-    fn eq(self: f64, other: f64) -> Bool { <(self, other) | __eq }
-    fn ne(self: f64, other: f64) -> Bool { <(self, other) | __ne }
+    func eq(self: f64, other: f64) -> Bool { <(self, other) | __eq }
+    func ne(self: f64, other: f64) -> Bool { <(self, other) | __ne }
 }
 impl Eq for char {
-    fn eq(self: char, other: char) -> Bool { <(self, other) | __eq }
-    fn ne(self: char, other: char) -> Bool { <(self, other) | __ne }
+    func eq(self: char, other: char) -> Bool { <(self, other) | __eq }
+    func ne(self: char, other: char) -> Bool { <(self, other) | __ne }
 }
 impl Eq for String {
-    fn eq(self: String, other: String) -> Bool { <(self, other) | __eq }
-    fn ne(self: String, other: String) -> Bool { <(self, other) | __ne }
+    func eq(self: String, other: String) -> Bool { <(self, other) | __eq }
+    func ne(self: String, other: String) -> Bool { <(self, other) | __ne }
 }
 impl Eq for Bool {
-    fn eq(self: Bool, other: Bool) -> Bool { <(self, other) | __eq }
-    fn ne(self: Bool, other: Bool) -> Bool { <(self, other) | __ne }
+    func eq(self: Bool, other: Bool) -> Bool { <(self, other) | __eq }
+    func ne(self: Bool, other: Bool) -> Bool { <(self, other) | __ne }
 }
 
-trait Ord {
-    fn lt(self: Self, other: Self) -> Bool;
-    fn gt(self: Self, other: Self) -> Bool;
-    fn le(self: Self, other: Self) -> Bool;
-    fn ge(self: Self, other: Self) -> Bool;
+spec Ord {
+    func lt(self: Self, other: Self) -> Bool;
+    func gt(self: Self, other: Self) -> Bool;
+    func le(self: Self, other: Self) -> Bool;
+    func ge(self: Self, other: Self) -> Bool;
 }
 impl Ord for i64 {
-    fn lt(self: i64, other: i64) -> Bool { <(self, other) | __lt }
-    fn gt(self: i64, other: i64) -> Bool { <(self, other) | __gt }
-    fn le(self: i64, other: i64) -> Bool { <(self, other) | __le }
-    fn ge(self: i64, other: i64) -> Bool { <(self, other) | __ge }
+    func lt(self: i64, other: i64) -> Bool { <(self, other) | __lt }
+    func gt(self: i64, other: i64) -> Bool { <(self, other) | __gt }
+    func le(self: i64, other: i64) -> Bool { <(self, other) | __le }
+    func ge(self: i64, other: i64) -> Bool { <(self, other) | __ge }
 }
 impl Ord for i8 {
-    fn lt(self: i8, other: i8) -> Bool { <(self, other) | __lt }
-    fn gt(self: i8, other: i8) -> Bool { <(self, other) | __gt }
-    fn le(self: i8, other: i8) -> Bool { <(self, other) | __le }
-    fn ge(self: i8, other: i8) -> Bool { <(self, other) | __ge }
+    func lt(self: i8, other: i8) -> Bool { <(self, other) | __lt }
+    func gt(self: i8, other: i8) -> Bool { <(self, other) | __gt }
+    func le(self: i8, other: i8) -> Bool { <(self, other) | __le }
+    func ge(self: i8, other: i8) -> Bool { <(self, other) | __ge }
 }
 impl Ord for i32 {
-    fn lt(self: i32, other: i32) -> Bool { <(self, other) | __lt }
-    fn gt(self: i32, other: i32) -> Bool { <(self, other) | __gt }
-    fn le(self: i32, other: i32) -> Bool { <(self, other) | __le }
-    fn ge(self: i32, other: i32) -> Bool { <(self, other) | __ge }
+    func lt(self: i32, other: i32) -> Bool { <(self, other) | __lt }
+    func gt(self: i32, other: i32) -> Bool { <(self, other) | __gt }
+    func le(self: i32, other: i32) -> Bool { <(self, other) | __le }
+    func ge(self: i32, other: i32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u8 {
-    fn lt(self: u8, other: u8) -> Bool { <(self, other) | __lt }
-    fn gt(self: u8, other: u8) -> Bool { <(self, other) | __gt }
-    fn le(self: u8, other: u8) -> Bool { <(self, other) | __le }
-    fn ge(self: u8, other: u8) -> Bool { <(self, other) | __ge }
+    func lt(self: u8, other: u8) -> Bool { <(self, other) | __lt }
+    func gt(self: u8, other: u8) -> Bool { <(self, other) | __gt }
+    func le(self: u8, other: u8) -> Bool { <(self, other) | __le }
+    func ge(self: u8, other: u8) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u64 {
-    fn lt(self: u64, other: u64) -> Bool { <(self, other) | __lt }
-    fn gt(self: u64, other: u64) -> Bool { <(self, other) | __gt }
-    fn le(self: u64, other: u64) -> Bool { <(self, other) | __le }
-    fn ge(self: u64, other: u64) -> Bool { <(self, other) | __ge }
+    func lt(self: u64, other: u64) -> Bool { <(self, other) | __lt }
+    func gt(self: u64, other: u64) -> Bool { <(self, other) | __gt }
+    func le(self: u64, other: u64) -> Bool { <(self, other) | __le }
+    func ge(self: u64, other: u64) -> Bool { <(self, other) | __ge }
 }
 impl Ord for u32 {
-    fn lt(self: u32, other: u32) -> Bool { <(self, other) | __lt }
-    fn gt(self: u32, other: u32) -> Bool { <(self, other) | __gt }
-    fn le(self: u32, other: u32) -> Bool { <(self, other) | __le }
-    fn ge(self: u32, other: u32) -> Bool { <(self, other) | __ge }
+    func lt(self: u32, other: u32) -> Bool { <(self, other) | __lt }
+    func gt(self: u32, other: u32) -> Bool { <(self, other) | __gt }
+    func le(self: u32, other: u32) -> Bool { <(self, other) | __le }
+    func ge(self: u32, other: u32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for f32 {
-    fn lt(self: f32, other: f32) -> Bool { <(self, other) | __lt }
-    fn gt(self: f32, other: f32) -> Bool { <(self, other) | __gt }
-    fn le(self: f32, other: f32) -> Bool { <(self, other) | __le }
-    fn ge(self: f32, other: f32) -> Bool { <(self, other) | __ge }
+    func lt(self: f32, other: f32) -> Bool { <(self, other) | __lt }
+    func gt(self: f32, other: f32) -> Bool { <(self, other) | __gt }
+    func le(self: f32, other: f32) -> Bool { <(self, other) | __le }
+    func ge(self: f32, other: f32) -> Bool { <(self, other) | __ge }
 }
 impl Ord for f64 {
-    fn lt(self: f64, other: f64) -> Bool { <(self, other) | __lt }
-    fn gt(self: f64, other: f64) -> Bool { <(self, other) | __gt }
-    fn le(self: f64, other: f64) -> Bool { <(self, other) | __le }
-    fn ge(self: f64, other: f64) -> Bool { <(self, other) | __ge }
+    func lt(self: f64, other: f64) -> Bool { <(self, other) | __lt }
+    func gt(self: f64, other: f64) -> Bool { <(self, other) | __gt }
+    func le(self: f64, other: f64) -> Bool { <(self, other) | __le }
+    func ge(self: f64, other: f64) -> Bool { <(self, other) | __ge }
 }
 impl Ord for char {
-    fn lt(self: char, other: char) -> Bool { <(self, other) | __lt }
-    fn gt(self: char, other: char) -> Bool { <(self, other) | __gt }
-    fn le(self: char, other: char) -> Bool { <(self, other) | __le }
-    fn ge(self: char, other: char) -> Bool { <(self, other) | __ge }
+    func lt(self: char, other: char) -> Bool { <(self, other) | __lt }
+    func gt(self: char, other: char) -> Bool { <(self, other) | __gt }
+    func le(self: char, other: char) -> Bool { <(self, other) | __le }
+    func ge(self: char, other: char) -> Bool { <(self, other) | __ge }
 }
 impl Ord for String {
-    fn lt(self: String, other: String) -> Bool { <(self, other) | __lt }
-    fn gt(self: String, other: String) -> Bool { <(self, other) | __gt }
-    fn le(self: String, other: String) -> Bool { <(self, other) | __le }
-    fn ge(self: String, other: String) -> Bool { <(self, other) | __ge }
+    func lt(self: String, other: String) -> Bool { <(self, other) | __lt }
+    func gt(self: String, other: String) -> Bool { <(self, other) | __gt }
+    func le(self: String, other: String) -> Bool { <(self, other) | __le }
+    func ge(self: String, other: String) -> Bool { <(self, other) | __ge }
 }
 impl Ord for Bool {
-    fn lt(self: Bool, other: Bool) -> Bool { <(self, other) | __lt }
-    fn gt(self: Bool, other: Bool) -> Bool { <(self, other) | __gt }
-    fn le(self: Bool, other: Bool) -> Bool { <(self, other) | __le }
-    fn ge(self: Bool, other: Bool) -> Bool { <(self, other) | __ge }
+    func lt(self: Bool, other: Bool) -> Bool { <(self, other) | __lt }
+    func gt(self: Bool, other: Bool) -> Bool { <(self, other) | __gt }
+    func le(self: Bool, other: Bool) -> Bool { <(self, other) | __le }
+    func ge(self: Bool, other: Bool) -> Bool { <(self, other) | __ge }
 }
 
 // The machine word's product in the ring of its 64-bit patterns, and the
 // exclusive or of two such words. Checked `mul` refuses what this wraps.
-fn wrapping_mul(a: i64, b: i64) -> i64 { <(a, b) | __wrapping_mul }
-fn xor(a: i64, b: i64) -> i64 { <(a, b) | __xor }
+func wrapping_mul(a: i64, b: i64) -> i64 { <(a, b) | __wrapping_mul }
+func xor(a: i64, b: i64) -> i64 { <(a, b) | __xor }
 
 // A non-negative `u64` derived from the value. Equal values hash equal.
 // The mix multiplies the word by the bit pattern of `0x9E3779B97F4A7C15`
 // and clears the high bit, so `rem` of a hash is a slot in `0 .. width`.
 // A `String` is FNV-1a over its scalar values, from `char_to_code`.
-fn sign_bit() -> i64 { <(-9_223_372_036_854_775_807, 1) | sub }
+func sign_bit() -> i64 { <(-9_223_372_036_854_775_807, 1) | sub }
 
-fn clear_sign(n: i64) -> i64 {
-    match (<(n, 0) | lt) {
+func clear_sign(n: i64) -> i64 {
+    of (<(n, 0) | lt) {
         True => <(n, sign_bit()) | sub,
         False => n,
     }
 }
 
-fn hash_mix(n: i64) -> u64 {
+func hash_mix(n: i64) -> u64 {
     <(<(<(n, -7_046_029_254_386_353_131) | wrapping_mul) | clear_sign) | into
 }
 
-fn hash_chars(s: String, i: i64, acc: i64) -> i64 {
-    match (<(i, <s | str_len) | lt) {
+func hash_chars(s: String, i: i64, acc: i64) -> i64 {
+    of (<(i, <s | str_len) | lt) {
         True => {
             let code = <(<(s, i) | index) | char_to_code;
             let folded = <(<(acc, code) | xor, 1_099_511_628_211) | wrapping_mul;
@@ -326,24 +326,24 @@ fn hash_chars(s: String, i: i64, acc: i64) -> i64 {
     }
 }
 
-trait Hash {
-    fn hash(self: Self) -> u64;
+spec Hash {
+    func hash(self: Self) -> u64;
 }
-impl Hash for i64 { fn hash(self: i64) -> u64 { <self | hash_mix } }
-impl Hash for i8 { fn hash(self: i8) -> u64 { <self | into | hash_mix } }
-impl Hash for i32 { fn hash(self: i32) -> u64 { <self | into | hash_mix } }
-impl Hash for u64 { fn hash(self: u64) -> u64 { <self | into | hash_mix } }
-impl Hash for u8 { fn hash(self: u8) -> u64 { <self | into | hash_mix } }
-impl Hash for u32 { fn hash(self: u32) -> u64 { <self | into | hash_mix } }
-impl Hash for char { fn hash(self: char) -> u64 { <self | char_to_code | hash_mix } }
+impl Hash for i64 { func hash(self: i64) -> u64 { <self | hash_mix } }
+impl Hash for i8 { func hash(self: i8) -> u64 { <self | into | hash_mix } }
+impl Hash for i32 { func hash(self: i32) -> u64 { <self | into | hash_mix } }
+impl Hash for u64 { func hash(self: u64) -> u64 { <self | into | hash_mix } }
+impl Hash for u8 { func hash(self: u8) -> u64 { <self | into | hash_mix } }
+impl Hash for u32 { func hash(self: u32) -> u64 { <self | into | hash_mix } }
+impl Hash for char { func hash(self: char) -> u64 { <self | char_to_code | hash_mix } }
 impl Hash for String {
-    fn hash(self: String) -> u64 {
+    func hash(self: String) -> u64 {
         <(<(<(self, 0, -3_750_763_034_362_895_579) | hash_chars) | clear_sign) | into
     }
 }
 impl Hash for Bool {
-    fn hash(self: Bool) -> u64 {
-        match self {
+    func hash(self: Bool) -> u64 {
+        of self {
             False => <0 | hash_mix,
             True => <1 | hash_mix,
         }
@@ -352,7 +352,7 @@ impl Hash for Bool {
 
 // The character of a `String` at a position, failing at run time when the
 // position is out of range; `char_at` offers that outcome to a continuation.
-fn index(s: String, i: i64) -> char { <(s, i) | __index }
+func index(s: String, i: i64) -> char { <(s, i) | __index }
 
 // ── Display for anonymous data ───────────────────────────────────────────
 //
@@ -360,11 +360,11 @@ fn index(s: String, i: i64) -> char { <(s, i) | __index }
 // is written: `(1, a)`, `::1(right)`, `(,)`.
 
 impl Display for (,) {
-    fn fmt(self: (,)) -> String { "(,)" }
+    func fmt(self: (,)) -> String { "(,)" }
 }
 
 impl<+A: Display, +B: Display> Display for (A, B) {
-    fn fmt(self: (A, B)) -> String {
+    func fmt(self: (A, B)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -374,7 +374,7 @@ impl<+A: Display, +B: Display> Display for (A, B) {
 }
 
 impl<+A: Display, +B: Display, +C: Display> Display for (A, B, C) {
-    fn fmt(self: (A, B, C)) -> String {
+    func fmt(self: (A, B, C)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -386,7 +386,7 @@ impl<+A: Display, +B: Display, +C: Display> Display for (A, B, C) {
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A, B, C, D) {
-    fn fmt(self: (A, B, C, D)) -> String {
+    func fmt(self: (A, B, C, D)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -400,7 +400,7 @@ impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A, B, C, D
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display, +E: Display> Display for (A, B, C, D, E) {
-    fn fmt(self: (A, B, C, D, E)) -> String {
+    func fmt(self: (A, B, C, D, E)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -423,7 +423,7 @@ impl<
     +E: Display,
     +F: Display,
 > Display for (A, B, C, D, E, F) {
-    fn fmt(self: (A, B, C, D, E, F)) -> String {
+    func fmt(self: (A, B, C, D, E, F)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -449,7 +449,7 @@ impl<
     +F: Display,
     +G: Display,
 > Display for (A, B, C, D, E, F, G) {
-    fn fmt(self: (A, B, C, D, E, F, G)) -> String {
+    func fmt(self: (A, B, C, D, E, F, G)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -478,7 +478,7 @@ impl<
     +G: Display,
     +H: Display,
 > Display for (A, B, C, D, E, F, G, H) {
-    fn fmt(self: (A, B, C, D, E, F, G, H)) -> String {
+    func fmt(self: (A, B, C, D, E, F, G, H)) -> String {
         (<("(", <self.0 | fmt)
             | add
             | x => (x, ", ") | add
@@ -500,8 +500,8 @@ impl<
 }
 
 impl<+A: Display, +B: Display> Display for (A | B) {
-    fn fmt(self: (A | B)) -> String {
-        match self {
+    func fmt(self: (A | B)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
         }
@@ -509,8 +509,8 @@ impl<+A: Display, +B: Display> Display for (A | B) {
 }
 
 impl<+A: Display, +B: Display, +C: Display> Display for (A | B | C) {
-    fn fmt(self: (A | B | C)) -> String {
-        match self {
+    func fmt(self: (A | B | C)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -519,8 +519,8 @@ impl<+A: Display, +B: Display, +C: Display> Display for (A | B | C) {
 }
 
 impl<+A: Display, +B: Display, +C: Display, +D: Display> Display for (A | B | C | D) {
-    fn fmt(self: (A | B | C | D)) -> String {
-        match self {
+    func fmt(self: (A | B | C | D)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -536,8 +536,8 @@ impl<
     +D: Display,
     +E: Display,
 > Display for (A | B | C | D | E) {
-    fn fmt(self: (A | B | C | D | E)) -> String {
-        match self {
+    func fmt(self: (A | B | C | D | E)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -555,8 +555,8 @@ impl<
     +E: Display,
     +F: Display,
 > Display for (A | B | C | D | E | F) {
-    fn fmt(self: (A | B | C | D | E | F)) -> String {
-        match self {
+    func fmt(self: (A | B | C | D | E | F)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -576,8 +576,8 @@ impl<
     +F: Display,
     +G: Display,
 > Display for (A | B | C | D | E | F | G) {
-    fn fmt(self: (A | B | C | D | E | F | G)) -> String {
-        match self {
+    func fmt(self: (A | B | C | D | E | F | G)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -599,8 +599,8 @@ impl<
     +G: Display,
     +H: Display,
 > Display for (A | B | C | D | E | F | G | H) {
-    fn fmt(self: (A | B | C | D | E | F | G | H)) -> String {
-        match self {
+    func fmt(self: (A | B | C | D | E | F | G | H)) -> String {
+        of self {
             ::0(x) => (<("::0(", <x | fmt) | add | y => (y, ")") | add),
             ::1(x) => (<("::1(", <x | fmt) | add | y => (y, ")") | add),
             ::2(x) => (<("::2(", <x | fmt) | add | y => (y, ")") | add),
@@ -618,6 +618,6 @@ impl<
 // There is no `!`: negation is an ordinary function a `Bool` flows into,
 // `<b | not`.
 
-fn not(b: Bool) -> Bool {
-    match b { True => False, False => True }
+func not(b: Bool) -> Bool {
+    of b { True => False, False => True }
 }

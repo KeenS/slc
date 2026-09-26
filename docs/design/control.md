@@ -1,16 +1,16 @@
 Part of the [language design](../../DESIGN.md).
 
-## 5. `command`: consumer abstraction
+## 5. `proc`: consumer abstraction
 
-A `command` declaration is the form that takes **both** values and
+A `proc` declaration is the form that takes **both** values and
 continuations: value parameters and continuation parameters appear in separate
 parenthesized groups, and the body is a command — hence the name. A
-declaration that consumes values and consumes a continuation is a `command`; a
-returning `fn` may still receive a consumer as a value it forwards — `-String`
+declaration that consumes values and consumes a continuation is a `proc`; a
+returning `func` may still receive a consumer as a value it forwards — `-String`
 is a value type like any other — but it returns rather than ending in a cut.
 
 ```sl
-command route(x: i32) | (k: i32) {
+proc route(x: i32) | (k: i32) {
     <x | k>
 }
 ```
@@ -18,11 +18,11 @@ command route(x: i32) | (k: i32) {
 The declaration denotes a command. Its return type is bottom; an optional
 `-> (;)` annotation may be used as documentation and does not change lowering.
 
-A group with nothing in it is left out rather than written empty: `command
-main | (exit: i32)` takes no values, and `command log(message: String)` takes
+A group with nothing in it is left out rather than written empty: `proc
+main | (exit: i32)` takes no values, and `proc log(message: String)` takes
 no continuations. An empty `()` is a parse error saying so.
 
-Conceptually, `command f(x: A) | (k: B) { E }` lowers to `λx. λk. E`: the
+Conceptually, `proc f(x: A) | (k: B) { E }` lowers to `λx. λk. E`: the
 value parameters bind first, so a call supplies arguments in the order the
 parameters are written. Control leaves the body only by activating one of its
 continuations. `k` is a *parameter*: the caller passes it.
@@ -44,7 +44,7 @@ Every exit must return the same type; mixing returning functions and
 non-returning consumers is rejected. With a closing `>`, exits remain
 consumers and the chain is a command. Yielding is an adapter that captures
 the result continuation and composes each callback into it, not a change to
-`select`: its arms still end in commands. The selected callback's forcing
+`mu`: its arms still end in commands. The selected callback's forcing
 and activation effects remain under the handlers around the yielding call;
 unselected callbacks are not demanded. `examples/duality/yielding_commands.sl`
 compares this syntax with an explicit `mu`. The file-system handlers use
@@ -61,17 +61,17 @@ only a context, and in λ̄μμ̃ a context *is* the co-term on the right of a c
 ⟨ μk. c ∥ e ⟩  →  c[e/k]
 ```
 
-`mu` is uniformly `mu [Type] { arms }`, mirroring `select`: one binder arm,
+`mu` is uniformly `mu [Type] { arms }`, mirroring `mu`: one binder arm,
 `k <= c`, is the atom form and captures the ambient continuation whole;
 request arms, `item: out <= c`, are the copattern form and build a menu.
 When the continuation binder has the item's name, `item <= c` abbreviates
 `item: item <= c`; an untyped single bare arm remains the local binder form.
-Every `mu` arm writes `<=`, and every `select` arm `=>` — the arrow marks
+Every `mu` arm writes `<=`, and every `mu` arm `=>` — the arrow marks
 what arrives: data flows forward into an arm, a demand reaches back.
 A binder arm stands alone — it takes the whole continuation, so a second
 arm would have nothing left to answer. There is no value-binding `mu`
 because a binder whose body is a *command* rather than an expression is
-`select`, the μ̃.
+`mu`, the μ̃.
 
 So `k` is bound to whatever consumer the expression meets. The type written
 in front is what the expression produces — `mu String { k <= c }` is a
@@ -94,8 +94,8 @@ This is how a fallible operation is written. Rather than returning a result
 that a caller inspects, it takes the continuations its outcomes belong to:
 
 ```sl
-command parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
-    match <(input, pos) | at {
+proc parse_value(input: String, pos: i64) | (ok: i64 & failed: String) {
+    of <(input, pos) | at {
         QUOTE => <(input, pos) | parse_string | (ok & failed)>,
         _ => <"expected JSON value" | failed>,
     }
@@ -106,7 +106,7 @@ Each path ends in a cut: either forwarding both continuations to another
 command, or sending an outcome to one of them. One continuation per outcome
 *is* the outcome type — see [§12](core.md#12-error-continuations). A helper
 that only computes with values — `at` above — stays an ordinary returning
-`fn`.
+`func`.
 
 A handler delimits `mu`. `k` holds the whole rest of the program, but a
 jump to it replaces the running continuation only down to the nearest
@@ -116,15 +116,15 @@ answers back, even when the resumed code jumps to a `k` captured before it
 performed:
 
 ```sl
-effect Choose { fn flip() -> Bool; }
+hook Choose { func flip() -> Bool; }
 
-fn pick() -> String / {Choose} {
-    let a = mu String { r <= <(match flip() { True => "H", False => "T" }) | r> };
+func pick() -> String / {Choose} {
+    let a = mu String { r <= <(of flip() { True => "H", False => "T" }) | r> };
     a
 }
 
 // "H T": `r` is the `let`'s own continuation, and each resumption has its own.
-handle pick() {
+do pick() {
     flip(): resume => <(<True | resume, " ") | add | x => (x, <False | resume) | add,
 }
 ```
@@ -144,7 +144,7 @@ to a continuation captured outside it is refused — so code run under `reset`
 cannot leave through a continuation it was handed:
 
 ```sl
-fn escape(k: -i64) -> i64 { <5 | k> }
+func escape(k: -i64) -> i64 { <5 | k> }
 
 mu i64 { out <= <(<out | escape) | out> }          // 5
 mu i64 { out <= <(reset <out | escape) | out> }    // refused: the jump would leave the `reset`
@@ -160,7 +160,7 @@ takes an explicit computation thunk. Inside it, `control::shift` receives a
 callback whose argument is the captured, returning continuation:
 
 ```sl
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let result = <fn {
         let value = <fn(resume: (i64 -> i64)) {
             <(<1 | resume, <2 | resume) | add

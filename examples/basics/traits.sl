@@ -1,6 +1,6 @@
 // Traits: ad-hoc polymorphism by dispatch on a value's type.
 //
-// A `trait` names operations; an `impl` gives them for a type; a bound
+// A `spec` names operations; an `impl` gives them for a type; a bound
 // `<T: Show>` lets a generic call them. A method is a free function
 // overloaded on its argument — `show(x)`, never `x.show()` — resolved to the
 // right impl by the argument's type. A generic function dispatches at the
@@ -12,25 +12,25 @@ enum IntList {
     Cons(i64, IntList),
 }
 
-trait Show {
-    fn show(self: Self) -> String;
+spec Show {
+    func show(self: Self) -> String;
 }
 
 impl Show for i64 {
-    fn show(self: i64) -> String { <self | int_to_str }
+    func show(self: i64) -> String { <self | int_to_str }
 }
 
 impl Show for Bool {
-    fn show(self: Bool) -> String {
-        match self { True => "true", False => "false" }
+    func show(self: Bool) -> String {
+        of self { True => "true", False => "false" }
     }
 }
 
 // An impl that calls the trait on its elements: `show(h)` dispatches on the
 // element, `show(t)` on the tail.
 impl Show for IntList {
-    fn show(self: IntList) -> String {
-        match self {
+    func show(self: IntList) -> String {
+        of self {
             // Qualified: the prelude's List also has Nil and Cons, so the
             // bare names are ambiguous here.
             IntList::Nil => "nil",
@@ -41,11 +41,11 @@ impl Show for IntList {
 
 // A bound generic: `T: Show` lets it call `show` on a value whose type is not
 // known here, discharged to a real impl at each call.
-fn labelled<+T: Show>(label: String, x: T) -> String {
+func labelled<+T: Show>(label: String, x: T) -> String {
     <(label, ": ") | add | y => (y, <x | show) | add
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // dispatch on the argument's type
     <42 | show | println;
     <True | show | println;

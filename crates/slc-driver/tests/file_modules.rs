@@ -32,7 +32,7 @@ const MAIN: &str = "mod geometry;
 
 use geometry::area;
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <geometry::Shape::Rect(6, 7) | area | println;
     <0 | exit>
 }
@@ -42,10 +42,10 @@ const GEOMETRY: &str = "pub enum Shape { Circle(i64), Rect(i64, i64) }
 
 use Shape::*;
 
-fn squared(n: i64) -> i64 { <(n, n) | mul }
+func squared(n: i64) -> i64 { <(n, n) | mul }
 
-pub fn area(s: Shape) -> i64 {
-    match s {
+pub func area(s: Shape) -> i64 {
+    of s {
         Circle(r) => <(3, <r | squared) | mul,
         Rect(w, h) => <(w, h) | mul,
     }
@@ -68,7 +68,7 @@ fn a_module_file_keeps_its_private_names() {
         &[
             (
                 "main.sl",
-                "mod geometry;\ncommand main | (exit: i32) / {IO} {\n    <4 | geometry::squared | println;\n    <0 | exit>\n}\n",
+                "mod geometry;\nproc main | (exit: i32) / {IO} {\n    <4 | geometry::squared | println;\n    <0 | exit>\n}\n",
             ),
             ("geometry.sl", GEOMETRY),
         ],
@@ -87,11 +87,11 @@ fn a_module_file_declares_its_own_modules_a_directory_down() {
         &[
             (
                 "main.sl",
-                "mod geometry;\nmod outer { pub mod inner; }\ncommand main | (exit: i32) / {IO} {\n    <geometry::shapes::unit() | println;\n    <outer::inner::deep() | println;\n    <0 | exit>\n}\n",
+                "mod geometry;\nmod outer { pub mod inner; }\nproc main | (exit: i32) / {IO} {\n    <geometry::shapes::unit() | println;\n    <outer::inner::deep() | println;\n    <0 | exit>\n}\n",
             ),
             ("geometry.sl", "pub mod shapes;\n"),
-            ("geometry/shapes.sl", "pub fn unit() -> i64 { 1 }\n"),
-            ("outer/inner.sl", "pub fn deep() -> i64 { 2 }\n"),
+            ("geometry/shapes.sl", "pub func unit() -> i64 { 1 }\n"),
+            ("outer/inner.sl", "pub func deep() -> i64 { 2 }\n"),
         ],
     );
     let (ok, stdout, stderr) = slc("run", &main);
@@ -109,11 +109,11 @@ fn a_module_file_reaches_the_library_and_the_program_s_menus() {
         &[
             (
                 "main.sl",
-                "mod tools;\nmenu Offer { price: i64 }\ncommand main | (exit: i32) / {IO} {\n    <tools::total() | println;\n    <tools::offer().price | println;\n    <0 | exit>\n}\n",
+                "mod tools;\nmenu Offer { price: i64 }\nproc main | (exit: i32) / {IO} {\n    <tools::total() | println;\n    <tools::offer().price | println;\n    <0 | exit>\n}\n",
             ),
             (
                 "tools.sl",
-                "use list::List::*;\npub fn total() -> i64 { <Cons(1, Cons(2, Nil)) | list::length }\npub fn offer() -> Offer { mu Offer { price <= <9 | price> } }\n",
+                "use list::List::*;\npub func total() -> i64 { <Cons(1, Cons(2, Nil)) | list::length }\npub func offer() -> Offer { mu Offer { price <= <9 | price> } }\n",
             ),
         ],
     );
@@ -127,8 +127,8 @@ fn a_diagnostic_in_a_module_file_names_the_file_and_its_own_line() {
     let main = project(
         "diagnostic",
         &[
-            ("main.sl", "mod broken;\ncommand main | (exit: i32) { <0 | exit> }\n"),
-            ("broken.sl", "// a comment line\n\npub fn f() -> i64 { \"text\" }\n"),
+            ("main.sl", "mod broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("broken.sl", "// a comment line\n\npub func f() -> i64 { \"text\" }\n"),
         ],
     );
     let (ok, _, stderr) = slc("check", &main);
@@ -140,16 +140,16 @@ fn a_diagnostic_in_a_module_file_names_the_file_and_its_own_line() {
 #[test]
 fn a_syntax_error_in_a_module_file_stays_in_that_file() {
     for (name, source) in [
-        ("string", "pub fn f() -> String { \"left open }\n"),
-        ("brace", "pub fn f() -> i64 { 1\n"),
-        ("token", "pub fn f() -> i64 { 1 + 2 }\n"),
+        ("string", "pub func f() -> String { \"left open }\n"),
+        ("brace", "pub func f() -> i64 { 1\n"),
+        ("token", "pub func f() -> i64 { 1 + 2 }\n"),
     ] {
         let main = project(
             name,
             &[
                 (
                     "main.sl",
-                    "mod broken;\ncommand main | (exit: i32) / {IO} {\n    <\"fine\" | println;\n    <0 | exit>\n}\n",
+                    "mod broken;\nproc main | (exit: i32) / {IO} {\n    <\"fine\" | println;\n    <0 | exit>\n}\n",
                 ),
                 ("broken.sl", source),
             ],
@@ -161,19 +161,19 @@ fn a_syntax_error_in_a_module_file_stays_in_that_file() {
     let main = project(
         "located",
         &[
-            ("main.sl", "mod broken;\ncommand main | (exit: i32) { <0 | exit> }\n"),
-            ("broken.sl", "pub fn f() -> i64 { 1 + 2 }\n"),
+            ("main.sl", "mod broken;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("broken.sl", "pub func f() -> i64 { 1 + 2 }\n"),
         ],
     );
     let (_, _, stderr) = slc("run", &main);
-    assert!(stderr.contains("broken.sl:1:23 `+`"), "{stderr}");
+    assert!(stderr.contains("broken.sl:1:25 `+`"), "{stderr}");
 }
 
 #[test]
 fn a_module_with_no_file_is_reported_where_it_is_declared() {
     let main = project(
         "missing",
-        &[("main.sl", "\nmod nowhere;\ncommand main | (exit: i32) { <0 | exit> }\n")],
+        &[("main.sl", "\nmod nowhere;\nproc main | (exit: i32) { <0 | exit> }\n")],
     );
     let (ok, _, stderr) = slc("run", &main);
     assert!(!ok);
@@ -186,8 +186,8 @@ fn a_file_is_not_loaded_twice() {
     let main = project(
         "twice",
         &[
-            ("main.sl", "mod a;\nmod a;\ncommand main | (exit: i32) { <0 | exit> }\n"),
-            ("a.sl", "pub fn f() -> i64 { 1 }\n"),
+            ("main.sl", "mod a;\nmod a;\nproc main | (exit: i32) { <0 | exit> }\n"),
+            ("a.sl", "pub func f() -> i64 { 1 }\n"),
         ],
     );
     let (ok, _, stderr) = slc("run", &main);
@@ -201,8 +201,8 @@ fn a_variant_import_is_scoped_to_the_file_that_wrote_it() {
     // and each file's import pins it for that file alone: geometry.sl's
     // `use Shape::*;` and the program's `use Frame::*;` never meet.
     let frame = "mod geometry;\nenum Frame { Rect(i64, i64) }\n";
-    let main = "fn width(f: Frame) -> i64 { match f { Rect(w, h) => w } }
-command main | (exit: i32) / {IO} {
+    let main = "func width(f: Frame) -> i64 { of f { Rect(w, h) => w } }
+proc main | (exit: i32) / {IO} {
     <Rect(6, 7) | width | println;
     <geometry::Shape::Rect(6, 7) | geometry::area | println;
     <0 | exit>

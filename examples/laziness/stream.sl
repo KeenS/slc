@@ -17,7 +17,7 @@ use stream::Stream;
 use stream::repeat;
 use stream::take;
 
-fn count_from(n: i64) -> Stream<i64> {
+func count_from(n: i64) -> Stream<i64> {
     mu Stream {
         head: out <= <n | out>,
         tail: head: out <= <(n, 1) | add | out>,
@@ -25,9 +25,9 @@ fn count_from(n: i64) -> Stream<i64> {
     }
 }
 
-fn double(n: i64) -> i64 { <(n, 2) | mul }
+func double(n: i64) -> i64 { <(n, 2) | mul }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let s = <10 | count_from;
     <s.head | println; // 10
     <s.tail.head | println; // 11

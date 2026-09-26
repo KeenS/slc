@@ -22,11 +22,11 @@ it, so `Shape::Point` is a `Shape` while `Shape::Circle` is only a `Shape`
 once it is applied to an `i64`. Several payload values are packed into one
 tensor, so every variant carries exactly one payload.
 
-`match` decomposes an enum by choosing the corresponding arm, and a variant
+`of` decomposes an enum by choosing the corresponding arm, and a variant
 pattern binds exactly the payload its variant declares:
 
 ```sl
-match shape {
+of shape {
     Point => 0,
     Circle(r) => (<(3, r) | mul | x => (x, r) | mul),
     Rect(w, h) => (<(w, h) | mul),
@@ -35,13 +35,13 @@ match shape {
 
 ### Negative additive construction
 
-`select` builds the consumer of any positive type by giving, for each shape
+`mu` builds the consumer of any positive type by giving, for each shape
 that type can take, a command. For an `enum` that is one arm per variant — the
 negative additive:
 
 ```sl
-fn k(return: i32) <- Color {
-    select Color {
+func k(return: i32) <- Color {
+    mu Color {
         Red => <0 | return>,
         Green => <1 | return>,
         Blue => <2 | return>,
@@ -60,8 +60,8 @@ is how a value reaches the continuation the variant selects:
 ```sl
 enum Reading { Measured(i64), Missing }
 
-fn report(value: -i64, absent: -i64) <- Reading {
-    select Reading {
+func report(value: -i64, absent: -i64) <- Reading {
+    mu Reading {
         Measured(measurement) => <measurement | value>,
         Missing => <-1 | absent>,
     }
@@ -75,17 +75,17 @@ taken apart in place, `Rect((w, h))` or `At(Point { x, y }, d)`: a product
 has one shape, so deeper destructuring keeps the one-arm-per-shape law. A
 *sum* inside a component cannot be split across arms, and there are no
 literal arms: a branch table answers each shape exactly once, unordered,
-while literals make the arm list ordered, first-match — that is `match`,
+while literals make the arm list ordered, first-match — that is `of`,
 inside the arm.
 
-An arm writes `=>`, exactly as a `match` arm does, because the arrow marks
+An arm writes `=>`, exactly as an `of` arm does, because the arrow marks
 which side of the mirror the scrutinee is on: **data flows forward into an
-arm (`=>`); a demand reaches back into it (`<=`)**. A `select` matches data,
-so its arms are `pattern => command`; a `mu` answers demands, so its arms are
-`copattern <= command`; and a `match` writes whichever its scrutinee calls
+arm (`=>`); a demand reaches back into it (`<=`)**. A `mu` matches data,
+so its arms are `pattern => proc`; a `mu` answers demands, so its arms are
+`copattern <= proc`; and an `of` writes whichever its scrutinee calls
 for — `p => e` over a value, `.item(out) <= e` over a continuation. The
 command an arm runs must be a cut `v | k` whose consumer is a visible
-negative binding. The arm lowers to it, so a `select` expression is a genuine negative
+negative binding. The arm lowers to it, so a `mu` expression is a genuine negative
 additive consumer — one branch per variant — and not an opaque builtin. Activation
 chooses exactly one branch: the branches of the arms that were not selected
 are never evaluated, neither when the consumer is constructed nor when it is
@@ -116,7 +116,7 @@ type native, so the boxes and the encoding disappear.
 Each keyword owns one core family, so the branch tables split by what
 arrives at them:
 
-- **`select` answers data** — it builds the μ̃ family: the consumer of an
+- **`mu` answers data** — it builds the μ̃ family: the consumer of an
   atom, a product, an enum, or the record a `form` consumes. One arm per
   shape the data can take.
 - A `mu` arm is `item: out <= c`: it binds the demand's continuation — its
@@ -137,24 +137,24 @@ arrives at them:
   `tail: head: out` — and the arms sharing an outer destructor group into
   an inner menu, which must again cover every item
   (`examples/laziness/stream.sl`).
-- **`match` — a branch table applied to a named scrutinee, on either side.**
+- **`of` — a branch table applied to a named scrutinee, on either side.**
   Over an enum value it takes data apart; over a continuation of a menu type
   (`k: -Config`) it takes the *request* apart: `.item(out) => e` binds the
   request's own continuation, and the arms are ordinary expressions —
   typically other requests. An arm has no guard: a test on what a pattern
-  bound is a `match` inside the arm. A choice on a `Bool` is a `match` on
-  it, `match c { True => …, False => … }`.
+  bound is an `of` inside the arm. A choice on a `Bool` is an `of` on
+  it, `of c { True => …, False => … }`.
 
 ```sl
-fn config() -> Config {
+func config() -> Config {
     mu Config {
         retries: out <= <3 | out>,
         name: out <= <"slant" | out>,
     }
 }
 
-fn reroute(k: -Config) -> -Config {
-    match k {
+func reroute(k: -Config) -> -Config {
+    of k {
         .retries(out) <= .retries(out),
         .name(out) <= .name(out),
     }
@@ -199,14 +199,14 @@ declared type.
 
 A record *value* is that tensor labelled by the declaration's name, exactly as
 an `enum` variant is its payload labelled by the variant's name. One core form
-covers both, which is why one surface form — `match` — takes either apart.
+covers both, which is why one surface form — `of` — takes either apart.
 
 A `data` value carries every field at once, which is what `⊗` means: the
 positive product of its field types, one component each. `data
 Direction { left: i32, right: i32 }` describes `+i32 ⊗ +i32`, and the surface
 tuple `(a, b)` is the same connective written anonymously.
 
-A product is taken apart by `match`/`select`, which binds every component, or
+A product is taken apart by `of`/`mu`, which binds every component, or
 by **projection** for a single one: `t.0`, `t.1`, … reads a tuple component,
 and `s.field` reads a record field. Projection is resolved against the
 value's type — the checker turns `.i` and `.field` into the component index —
@@ -242,8 +242,8 @@ parenthesized; a paren joins any number of components with one connective,
 and nesting is significant — `(A, (B, C))` is not `(A, B, C)`:
 
 ```sl
-fn sum_pair(p: (i64, i64)) -> i64 { … }
-command consume_pair | (k: (-i64 ; -i64)) { … }
+func sum_pair(p: (i64, i64)) -> i64 { … }
+proc consume_pair | (k: (-i64 ; -i64)) { … }
 ```
 
 | Type syntax | Meaning |
@@ -292,8 +292,8 @@ pair is a pair of punctuation marks.
   meets the component at that position of the choice type its context gives
   — a return type, an annotation, a parameter or a cut — once the
   declaration is checked. `(T1 | (T2 | T3))` has two positions, the second
-  itself a choice, so a value of it is `::1(::0(v))`. A `select` over a
-  choice answers each position exactly once; a `match` covers every one, or
+  itself a choice, so a value of it is `::1(::0(v))`. A `mu` over a
+  choice answers each position exactly once; an `of` covers every one, or
   has an arm that matches anything. The consumer of a choice `(A | B)` is the
   bundle `(-A & -B)`, so a bundle of exits consumes a choice as it is: the
   position picks the exit. And a choice flows into a function that consumes
@@ -305,17 +305,17 @@ pair is a pair of punctuation marks.
   left, with `a` sent to `k1`. A genuine consumer does not return, so this
   transfer prevents delivery to `k2`; constructing a joint does not promise
   that all its components run. Its latent row includes the component rows.
-  It is the consumer `select (A, B) { (a, b) => … }`
+  It is the consumer `mu (A, B) { (a, b) => … }`
   builds, so a joint and a `form` value keep one runtime shape. It has no
   pattern form, for the reason a form has none. A joint value is one
   consumer, a closure over a single command, and does not hold the
-  continuations it was built from; one built by `select` never had separate
+  continuations it was built from; one built by `mu` never had separate
   ones. A pattern `(k1 ; k2)` would have to invent them, as `form.field`
-  would. What can be matched is what a joint is fed: `select (A, B)` takes
+  would. What can be matched is what a joint is fed: `mu (A, B)` takes
   the product apart.
 - **`A -> B`** stays, as the spelling of `(dual(A) ; B)`.
 - **The units are structural.** `(;)` is the type of a command; `(|)` has no
-  value, is consumed by `select (|) {}`, and a `match` on one needs no arm;
+  value, is consumed by `mu (|) {}`, and an `of` on one needs no arm;
   `(&)` is ⊤'s unique value. No unit has a name besides its spelling, and
   the core has all four: 1, 0, ⊤ and ⊥.
 
@@ -323,7 +323,7 @@ pair is a pair of punctuation marks.
 
 ### Negative multiplicative construction
 
-The consumer of a product is built the same way, by `select`. A product has
+The consumer of a product is built the same way, by `mu`. A product has
 exactly one shape, so it has exactly one arm, and that arm binds every
 component — which is what makes it multiplicative rather than additive: the
 halves arrive together, in one command, sharing its context.
@@ -332,8 +332,8 @@ halves arrive together, in one command, sharing its context.
 data Reading { value: i64, unit: String }
 
 // dual(Reading) is `(-i64 ; -String)`: one consumer with both halves
-fn show(out: -String) <- Reading {
-    select Reading {
+func show(out: -String) <- Reading {
+    mu Reading {
         Reading { value, unit } => <(<value | int_to_str, unit) | add | out>,
     }
 }
@@ -342,8 +342,8 @@ fn show(out: -String) <- Reading {
 A bare product needs no declaration; its shape is written as the type:
 
 ```sl
-fn total(out: -i64) <- (+i64, +i64) {
-    select (+i64, +i64) {
+func total(out: -i64) <- (+i64, +i64) {
+    mu (+i64, +i64) {
         (left, right) => <(left, right) | add | out>,
     }
 }
@@ -369,14 +369,14 @@ form Report { value: i64, label: String }   // ;  every field, wanted
 
 The two negative declarations follow one rule: **the literal syntax builds
 the demand, and the value is built by the keyword of its core family.** A
-form is a consumer — μ̃ family — so `select` builds it; a menu is a μ[…]
+form is a consumer — μ̃ family — so `mu` builds it; a menu is a μ[…]
 value, so `mu` builds it. A menu's demand is one labelled request,
 `.item(k)`; a form's is the whole record, `Report { … }`, whose type is the
 form's dual.
 
 ```sl
-fn printer(out: -i64) -> Report {
-    select Report {
+func printer(out: -i64) -> Report {
+    mu Report {
         Report { value, label } => { <label | println; <value | out> },
     }
 }
@@ -385,7 +385,7 @@ fn printer(out: -i64) -> Report {
 ```
 
 `form` needs nothing new in the core: a form value is the `co(μ̃[…])` that
-`select` over a product already builds, and its demand is that product
+`mu` over a product already builds, and its demand is that product
 labelled — so the two meet by the existing labelled rule. What the
 declaration adds is a *name* for the consumer side, so a signature can say
 `-> Report` instead of spelling out `dual(…)`, and the fields of that
@@ -397,12 +397,12 @@ record discards the others, and a form would instead have to *invent* them.
 That is not a gap in the implementation but the shape of the connective, and
 it is why a joint is not a record in any usable sense.
 
-An atom is the degenerate product: one shape, one component. `select` covers
+An atom is the degenerate product: one shape, one component. `mu` covers
 it too, and the arm's pattern is a plain binder that names the whole value:
 
 ```sl
-fn show(out: -String) <- +i64 {
-    select +i64 {
+func show(out: -String) <- +i64 {
+    mu +i64 {
         n => <n | int_to_str | out>,
     }
 }
@@ -410,7 +410,7 @@ fn show(out: -String) <- +i64 {
 
 That is the surface spelling of the core's value abstraction `μ̃x. c` — the
 same binder `let` lowers to, written directly; `examples/duality/mu_tilde.sl` writes
-that one co-term every way the surface offers. So `select` builds the consumer
+that one co-term every way the surface offers. So `mu` builds the consumer
 of *any* positive type, with no exceptions: one arm per variant for a sum, one
 arm binding every component for a product, one arm binding the value for an
 atom.
@@ -421,10 +421,10 @@ specified in [Effects](effects.md).
 ### Polymorphism
 
 Two forms, one discipline. A declaration may take type parameters —
-`fn id<+T>(x: T) -> T` — which are rigid inside their own body and
+`func id<+T>(x: T) -> T` — which are rigid inside their own body and
 instantiated afresh at every call. And a `let` generalizes, under the
 **value restriction**: only when its right-hand side is a syntactic value —
-a literal, a `fn`, a `select`, a constructor, record, tuple, or box of
+a literal, a `func`, a `mu`, a constructor, record, tuple, or box of
 values, a plain name. Every use of such a binding instantiates its variables
 afresh:
 
@@ -437,7 +437,7 @@ let nothing = Maybe::Nothing;
 A lambda is a value too, but its parameter must have a known polarity by
 the end of the declaration, so `let f = fn(x) { x }`, which nothing pins
 down, is refused and asks for an annotation: a polymorphic function is a
-declaration, `fn id<+T>(x: T) -> T`.
+declaration, `func id<+T>(x: T) -> T`.
 
 Anything that computes stays monomorphic — `mu { k <= c }` above all, and every
 application. A value ran nothing, so no two instantiations can disagree
@@ -445,7 +445,7 @@ about anything that happened; a computation may have captured its
 continuation, and generalizing that is the classical unsoundness (the
 Harper–Lillibridge counterexample is a `mu` returning a polymorphic
 function; with continuations that resume, it would execute). When the
-per-use behaviour is wanted, write it: `fn { mu { k <= … } }` is a
+per-use behaviour is wanted, write it: `func { mu { k <= … } }` is a
 value, and visibly re-runs its capture at each use.
 `examples/basics/polymorphism.sl` shows all three: the generic declaration, the
 generalized `let`, and the by-name idiom.
@@ -464,7 +464,7 @@ menu Stream<+T> { head: T, tail: Stream<T> }
 A use applies the declaration — `List<i64>`, `Stream<String>` — and every
 construction instantiates the parameters fresh: a variant, a record
 literal, a bare `List::Nil`, or a `mu` over a generic menu, whose arms then
-constrain the arguments. Patterns and `select` arms instantiate from the
+constrain the arguments. Patterns and `mu` arms instantiate from the
 scrutinee's arguments instead, so `Cons(n, rest)` over a `List<i64>` binds
 `n: +i64` and `rest: List<i64>`. Recursion through the declaration's own
 name gives inductive data — `List` — and, through a `menu`, coinductive
@@ -472,7 +472,7 @@ codata: `Stream<T>` is an infinite structure of which only the demanded
 branches ever run.
 
 Lists themselves are not built in: `List<T>` and its functions (`length`,
-`map`, `append`, and the outcome-offering `command nth`) are prelude
+`map`, `append`, and the outcome-offering `proc nth`) are prelude
 declarations like any other. There is no list literal — a list is written
 the way any enum value is.
 
@@ -504,13 +504,13 @@ call-by-name: repeated demands repeat construction. Neither caches results.
 `examples/laziness/delayed_and_lazy.sl` contrasts the interfaces and their handlers.
 
 So a consumer travels bare everywhere a value does: an enum payload
-(`Refutes(-i64)`), a record field, a `fn` value parameter — passing a
-continuation is an ordinary application, `<k | handle`. `dual` is an
+(`Refutes(-i64)`), a record field, a `func` value parameter — passing a
+continuation is an ordinary application, `<k | do`. `dual` is an
 involution on the nose: `-(-T)` *is* `T`, and double-negation elimination
 is the identity function.
 
 ```sl
-fn dne<+T>(t: -(-T)) -> T { t }
+func dne<+T>(t: -(-T)) -> T { t }
 
 <42 | dne   // 42: -(-i64) and +i64 are one type
 ```
@@ -519,7 +519,7 @@ One orientation rule remains, and it is load-bearing: **the left of `|` is
 the value side**. Without it, the involution would let any positive value
 pass for a consumer of consumers — `dual(-i64) = +i64`, so `⟨k ∥ 42⟩`
 would type — and the machine only runs cuts whose right side really
-consumes. For the same reason `select` still consumes a positive type. A
+consumes. For the same reason `mu` still consumes a positive type. A
 continuation is a value everywhere except there, where it must be the one
 doing the consuming.
 
@@ -532,14 +532,14 @@ inside one may leave a type out when something else already says it:
 |-------------------------------------------------|-----------------------------------------------------------------------------------------|
 | a lambda's parameter and result: `fn(x) { … }` | how the value is used fixes the parameter's polarity by the end of the declaration    |
 | a `mu`'s produced type: `mu { k <= … }`        | the arm hands `k` to a slot whose type is declared, or cuts a value against it          |
-| a `select`'s type: `select { … }`              | an arm's pattern names it, or the enclosing consumer transformer already said what it consumes |
+| a `mu`'s type: `mu { … }`              | an arm's pattern names it, or the enclosing consumer transformer already said what it consumes |
 | a type's sign: `x: +i64`, `k: -i64`             | it agrees with the position — see below                                                 |
 
 **A sign is omitted where the position implies it.** The table in
 [§4](polarity.md#polarity-by-position) has a
 diagonal: a value parameter is positive, a continuation row is negative, and
 the type after `<-` is positive. On the diagonal the sign says nothing the
-position had not already said, so it is left out — `command nth<+T>(xs:
+position had not already said, so it is left out — `proc nth<+T>(xs:
 List<T>, i: i64) | (found: T & missing: String)` is the same declaration as
 the fully signed one. Off the diagonal the sign *is* the information, and is
 written: `note: -String` receives a consumer as data, `-> -T` returns one,
@@ -560,22 +560,22 @@ let source = mu { k <=
 };
 
 // `Red` is a variant of exactly one enum, so the type is `Color`.
-fn code(return: i32) <- Color {
-    select {
+func code(return: i32) <- Color {
+    mu {
         Red => <0 | return>,
         Green => <1 | return>,
     }
 }
 
 // Nothing in the arm names a type, but `<- i64` did.
-fn twice(out: i64) <- i64 {
-    select {
+func twice(out: i64) <- i64 {
+    mu {
         n => <(n, 2) | mul | out>,
     }
 }
 ```
 
-What is left is what nothing else says. `select { n => <n | k> }` bound to
+What is left is what nothing else says. `mu { n => <n | k> }` bound to
 a `let`, outside any consumer transformer, is rejected: no arm names a type and no
 declaration supplied one, so it is written.
 
@@ -583,5 +583,5 @@ declaration supplied one, so it is written.
 progress independently. There is no way to feed one half at a time: a joint
 is supplied whole, and has no destructuring pattern. Sequencing returning
 sinks uses ordinary functions of type `A -> (,)`, not consumers `-A`.
-A `select` arm must be a command, never a unit-valued returning sink; a cut
+A `mu` arm must be a command, never a unit-valued returning sink; a cut
 does not return to the statement following it.

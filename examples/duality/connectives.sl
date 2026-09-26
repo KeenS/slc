@@ -10,13 +10,13 @@
 //   (A ; B) form       a consumer wanting all        its record   (,)
 //   (A & B) menu       a value answering one item    its request  (|)
 //
-// Three constructs cover all four. `match` takes a *named* scrutinee apart,
-// on either side. `select` answers data: it builds the consumer of whatever
+// Three constructs cover all four. `of` takes a *named* scrutinee apart,
+// on either side. `mu` answers data: it builds the consumer of whatever
 // shape arrives — so it also builds a form, which consumes a record. `mu`
 // answers demands: with arms it builds a menu, whose requests choose.
 //
 // The negative connectives do not need a declaration — every positive type
-// already has a dual, and `select` builds it. What `form` and `menu` add is
+// already has a dual, and `mu` builds it. What `form` and `menu` add is
 // a *name* for the negative side, so a signature can speak of it directly.
 
 // ─── (A, B) ─── the positive product: a value carries every part.
@@ -26,8 +26,8 @@ data Pair {
     right: i64,
 }
 
-fn sum(p: Pair) -> i64 {
-    match p {
+func sum(p: Pair) -> i64 {
+    of p {
         Pair { left, right } => <(left, right) | add,
     }
 }
@@ -35,8 +35,8 @@ fn sum(p: Pair) -> i64 {
 // ─── (A ; B) ─── its dual: one consumer that must be given every part.
 // `dual(Pair)` is `(-i64 ; -i64)`, so the arm binds both fields at once.
 
-fn report_sum(out: i64) <- Pair {
-    select Pair {
+func report_sum(out: i64) <- Pair {
+    mu Pair {
         Pair { left, right } => <(left, right) | add | out>,
     }
 }
@@ -49,16 +49,16 @@ form Total {
     right: i64,
 }
 
-fn total(out: -i64) -> Total {
-    select Total {
+func total(out: -i64) -> Total {
+    mu Total {
         Total { left, right } => <(left, right) | add | out>,
     }
 }
 
 // A bare product needs no declaration either; its shape is written as the type.
 
-fn report_first(out: i64) <- (i64, String) {
-    select (i64, String) {
+func report_first(out: i64) <- (i64, String) {
+    mu (i64, String) {
         (count, label) => <count | out>,
     }
 }
@@ -71,8 +71,8 @@ enum Colour {
     Blue,
 }
 
-fn name(c: Colour) -> String {
-    match c {
+func name(c: Colour) -> String {
+    of c {
         Red => "red",
         Green => "green",
         Blue => "blue",
@@ -82,8 +82,8 @@ fn name(c: Colour) -> String {
 // ─── A & B ─── its dual: one branch per variant, and the variant that
 // arrives chooses exactly one of them. The others are never evaluated.
 
-fn code(out: i64) <- Colour {
-    select Colour {
+func code(out: i64) <- Colour {
+    mu Colour {
         Red => <0 | out>,
         Green => <1 | out>,
         Blue => <2 | out>,
@@ -101,7 +101,7 @@ menu Config {
     name: String,
 }
 
-fn config() -> Config {
+func config() -> Config {
     mu Config {
         retries <= <3 | retries>,
         name <= <"slant" | name>,
@@ -112,11 +112,11 @@ fn config() -> Config {
 // the empty product, and its dual, the consumer that accepts it. The additive
 // units are `(|)` and `(&)` (examples/duality/logical_units.sl).
 
-fn done(k: -(;)) <- unit {
+func done(k: -(;)) <- unit {
     <(,) | k>
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     // , : build every part, then take them apart.
     <Pair { left: 2, right: 40 } | sum | println;
 

@@ -1,16 +1,16 @@
 use lazy::Lazy;
 
-effect Build { fn build() -> i64; }
-effect Use { fn use_value(input: i64) -> i64; }
+hook Build { func build() -> i64; }
+hook Use { func use_value(input: i64) -> i64; }
 
 data Saved { callback: Delayed<(i64 -> i64 / {Use}), {Build}> }
 
-fn make() -> (i64 -> i64 / {Use}) / {Build} {
+func make() -> (i64 -> i64 / {Use}) / {Build} {
     let offset = build();
     fn(input: i64) { <(input, offset) | add | use_value }
 }
 
-fn source() -> Lazy<(i64 -> i64 / {Use}), {Build}> {
+func source() -> Lazy<(i64 -> i64 / {Use}), {Build}> {
     mu Lazy<(i64 -> i64 / {Use}), {Build}> {
         force <= {
             let+ ready = make();
@@ -19,10 +19,10 @@ fn source() -> Lazy<(i64 -> i64 / {Use}), {Build}> {
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let saved = Saved { callback: make() };
     let pending = saved.callback;
-    let+ ready = handle {
+    let+ ready = do {
         let+ value = pending;
         value
     } {
@@ -32,13 +32,13 @@ command main | (exit: i32) / {IO} {
         },
     };
     <"ready" | println;
-    let first = handle (<1 | ready) {
+    let first = do (<1 | ready) {
         use_value(input): resume => {
             <"use" | println;
             <input | resume
         },
     };
-    let second = handle (<2 | ready) {
+    let second = do (<2 | ready) {
         use_value(input): resume => {
             <"use" | println;
             <input | resume
@@ -49,7 +49,7 @@ command main | (exit: i32) / {IO} {
 
     let explicit = <pending | lazy::of_delayed;
     let round_trip = <explicit | lazy::to_delayed;
-    let third = handle (<3 | round_trip) {
+    let third = do (<3 | round_trip) {
         build(): resume => {
             <"build again" | println;
             <20 | resume
@@ -59,14 +59,14 @@ command main | (exit: i32) / {IO} {
     <third | println;
 
     let thunk = source();
-    let+ from_lazy = handle thunk.force {
+    let+ from_lazy = do thunk.force {
         build(): resume => {
             <"lazy build" | println;
             <30 | resume
         },
     };
     <"lazy ready" | println;
-    let fourth = handle (<4 | from_lazy) {
+    let fourth = do (<4 | from_lazy) {
         use_value(input): resume => {
             <"lazy use" | println;
             <input | resume

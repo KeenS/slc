@@ -2,17 +2,17 @@
 // continuation. Its body is just the value `x`, so control falls off the
 // end instead of ending in a cut.
 //
-// A `command` body is `(;)` — every terminating path leaves through a
+// A `proc` body is `(;)` — every terminating path leaves through a
 // continuation. (The core is classical, so *which* continuation, and how
 // many, is up to the program; only reaching one is required.) Run it to see
 // the diagnostic:
 //
 //   slc run examples/errors/command_falls_through.sl
 
-command bad(x: i32) | (k: i32) {
+proc bad(x: i32) | (k: i32) {
     x
 }
 
-command main | (exit: i32) {
+proc main | (exit: i32) {
     <0 | exit>
 }

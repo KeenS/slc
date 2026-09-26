@@ -19,7 +19,7 @@ menu Config {
     name: String,
 }
 
-fn defaults() -> Config {
+func defaults() -> Config {
     mu Config {
         retries <= <3 | retries>,
         name <= <"slant" | name>,
@@ -38,9 +38,9 @@ menu Session {
     config: Config,
 }
 
-fn session(n: i64) -> Session {
+func session(n: i64) -> Session {
     mu Session {
-        next <= <(match (<(n, 0) | gt) { True => Step(n), False => Quit }) | next>,
+        next <= <(of (<(n, 0) | gt) { True => Step(n), False => Quit }) | next>,
         config <= <(mu Config { retries <= <n | retries>, name <= <"session" | name> }) | config>,
     }
 }
@@ -51,9 +51,9 @@ form CommandSink {
     out: -String,
 }
 
-fn command_sink() -> CommandSink {
-    select CommandSink {
-        CommandSink { cmd, out } => match cmd {
+func command_sink() -> CommandSink {
+    mu CommandSink {
+        CommandSink { cmd, out } => of cmd {
             Quit => <"quit" | out>,
             Step(k) => <k | to_string | out>,
         },
@@ -66,9 +66,9 @@ enum Slot {
     Holds(CommandSink),
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let app = App { title: "demo", config: defaults() };
-    match app {
+    of app {
         App { title, config } => {
             <title | println;
             <config.name | println
@@ -77,14 +77,14 @@ command main | (exit: i32) / {IO} {
 
     let s = <2 | session;
     <s.config.retries | println;
-    match s.next {
+    of s.next {
         Quit => <"quit" | println,
         Step(k) => <k | println,
     };
 
     <mu String { ans <= <CommandSink { cmd: Step(7), out: ans } | command_sink()> } | println;
 
-    match Holds(command_sink()) {
+    of Holds(command_sink()) {
         Vacant => <"idle" | println,
         Holds(h) => <mu String { ans <= <CommandSink { cmd: Quit, out: ans } | h> } | println,
     };

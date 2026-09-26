@@ -65,7 +65,7 @@ fn check_params(
             diags.push(Diagnostic {
                 message: format!(
                     "a parameter binds every value of its type, and {} does not match all \
-                     of them; take it apart with `match` in the body",
+                     of them; take it apart with `of` in the body",
                     refutable_shape(&p.pattern)
                 ),
                 span,
@@ -113,7 +113,7 @@ fn check_expr(
             {
                 if !arms.is_empty() {
                     diags.push(Diagnostic {
-                        message: "`(|)` has no values, so `select (|)` has no arms".into(),
+                        message: "`(|)` has no values, so `mu (|)` has no arms".into(),
                         span: e.span,
                     });
                 }
@@ -122,7 +122,7 @@ fn check_expr(
                 }
                 return;
             }
-            // A `select` covers each shape of its type exactly once: one arm
+            // A `mu` covers each shape of its type exactly once: one arm
             // per variant of an `enum`, and exactly one for a product.
             // The written type, or the one an arm names: `Red` is a variant
             // of exactly one enum, and `S { … }` names its struct.
@@ -138,7 +138,7 @@ fn check_expr(
             };
             match written {
                 Some(name) if enums.variants_of(&name).is_some() => {
-                    check_branch_coverage("select", &name, "variant", arms, enums, e.span, diags);
+                    check_branch_coverage("mu", &name, "variant", arms, enums, e.span, diags);
                 }
                 // A bare name that is neither declared nor built in is not
                 // a type.
@@ -149,7 +149,7 @@ fn check_expr(
                             .is_none_or(|ty| slc_syntax::lower::lower_type(&ty.kind).is_err()) =>
                 {
                     diags.push(Diagnostic {
-                        message: format!("`select {name}` refers to an unknown type"),
+                        message: format!("`mu {name}` refers to an unknown type"),
                         span: e.span,
                     });
                 }
@@ -157,7 +157,7 @@ fn check_expr(
                 _ if arms.len() != 1 => {
                     diags.push(Diagnostic {
                         message: format!(
-                            "a `select` over a product has exactly one arm; this one has {}",
+                            "a `mu` over a product has exactly one arm; this one has {}",
                             arms.len()
                         ),
                         span: e.span,
@@ -171,7 +171,7 @@ fn check_expr(
         }
         Expr::CoMatch { ty, arms } => {
             // `mu T { … }` covers each item of its menu exactly once, the
-            // way `select` covers each variant of its enum.
+            // way `mu` covers each variant of its enum.
             let written = match ty {
                 Some(ty) => written_type_name(&ty.kind),
                 None => arms.iter().find_map(|arm| {
@@ -219,12 +219,12 @@ fn check_expr(
         Expr::Let { pattern, value, body, .. } => {
             // A binder stands for every value of its type: there is no other
             // arm to fall to. Anything that can fail to match belongs in a
-            // `match`, which says what happens when it does.
+            // `of`, which says what happens when it does.
             if !is_irrefutable(pattern, enums) {
                 diags.push(Diagnostic {
                     message: format!(
                         "`let` binds every value of its type, and {} does not match all of \
-                         them; use `match` to say what happens when it does not",
+                         them; use `of` to say what happens when it does not",
                         refutable_shape(pattern)
                     ),
                     span: e.span,
@@ -383,7 +383,7 @@ fn check_comatch_coverage(
 }
 
 /// Every arm names one label of `name`, no label repeats, and none is
-/// missing — the coverage law a branch table obeys, shared by `select` over
+/// missing — the coverage law a branch table obeys, shared by `mu` over
 /// an enum and `mu` over a menu.
 fn check_branch_coverage(
     keyword: &str,
@@ -428,7 +428,7 @@ fn check_branch_coverage(
     }
 }
 
-/// The variant a `select` arm's pattern selects, if it names one.
+/// The variant a `mu` arm's pattern selects, if it names one.
 fn arm_variant(pattern: &Pattern) -> Option<String> {
     match pattern {
         Pattern::Ident(name) => Some(name.clone()),
@@ -571,7 +571,7 @@ fn check_match(
         if !missing.is_empty() {
             diags.push(Diagnostic {
                 message: format!(
-                    "non-exhaustive match: missing variant{} {} of enum `{enum_name}`",
+                    "non-exhaustive of: missing variant{} {} of enum `{enum_name}`",
                     if missing.len() > 1 { "s" } else { "" },
                     missing.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>().join(", ")
                 ),
@@ -583,7 +583,7 @@ fn check_match(
 
     // Without enum coverage information, a match is exhaustive only when it
     // has a wildcard. This conservatively rejects literal-only matches.
-    diags.push(Diagnostic { message: "non-exhaustive match: add a `_` arm".into(), span });
+    diags.push(Diagnostic { message: "non-exhaustive of: add a `_` arm".into(), span });
 }
 
 #[cfg(test)]
@@ -607,7 +607,7 @@ mod tests {
             check(
                 "data Point { x: i64, y: i64 }
                  enum Wrapped { Only(i64) }
-                 command main | (exit: -i32) / {IO} {
+                 proc main | (exit: -i32) / {IO} {
                      let (a, b) = (1, 2);
                      let Point { x, y } = Point { x: 3, y: 4 };
                      let Only(n) = Only(5);
@@ -617,10 +617,10 @@ mod tests {
             )
             .is_ok()
         );
-        // A sum of many does not, so it belongs in a `match`.
+        // A sum of many does not, so it belongs in a `of`.
         let diags = check(
             "enum Shape { Circle(i64), Rect(i64, i64) }
-             command main | (exit: -i32) / {IO} { let Circle(r) = Circle(5); <r | exit> }",
+             proc main | (exit: -i32) / {IO} { let Circle(r) = Circle(5); <r | exit> }",
         )
         .unwrap_err();
         assert!(
@@ -633,15 +633,15 @@ mod tests {
     fn a_parameter_binds_a_pattern_and_an_exit_binds_a_name() {
         assert!(
             check(
-                "fn skew((a, b): (+i64, +i64), c: +i64) -> i64 { (<(a, c) | __mul | x => (x, b) | __sub) }
-                 command main | (exit: -i32) / {IO} { <((1, 2), 3) | skew | exit> }"
+                "func skew((a, b): (+i64, +i64), c: +i64) -> i64 { (<(a, c) | __mul | x => (x, b) | __sub) }
+                 proc main | (exit: -i32) / {IO} { <((1, 2), 3) | skew | exit> }"
             )
             .is_ok()
         );
         // Control leaves through a name, so an exit cannot be taken apart.
         let diags = check(
-            "command route(n: +i64) | ((a & b): (-i64 & -i64)) { <n | a> }
-             command main | (exit: -i32) / {IO} { <0 | exit> }",
+            "proc route(n: +i64) | ((a & b): (-i64 & -i64)) { <n | a> }
+             proc main | (exit: -i32) / {IO} { <0 | exit> }",
         )
         .unwrap_err();
         assert!(
@@ -655,7 +655,7 @@ mod tests {
         assert!(
             check(
                 "enum Color { Red, Green, Blue }
-             fn f(c: Color) -> i32 { match c { _ => 0 } }"
+             func f(c: Color) -> i32 { of c { _ => 0 } }"
             )
             .is_ok()
         );
@@ -665,7 +665,7 @@ mod tests {
     fn non_exhaustive_detected() {
         let r = check(
             "enum Color { Red, Green, Blue }
-             fn f(c: Color) -> i32 { match c { Red => 1, Green => 2 } }",
+             func f(c: Color) -> i32 { of c { Red => 1, Green => 2 } }",
         );
         assert!(r.is_err());
         let msg = &r.unwrap_err()[0].message;
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn a_literal_only_match_is_not_exhaustive() {
-        let r = check("fn f(c: +i64) -> i64 { match c { 0 => 1 } }");
+        let r = check("func f(c: +i64) -> i64 { of c { 0 => 1 } }");
         assert!(r.is_err());
         assert!(r.unwrap_err()[0].message.contains("non-exhaustive"));
     }
@@ -685,7 +685,7 @@ mod tests {
         assert!(
             check(
                 "enum Color { Red, Green, Blue }
-             fn f(c: Color) -> i32 { match c { x @ Red => x, Green => 2, Blue => 3 } }"
+             func f(c: Color) -> i32 { of c { x @ Red => x, Green => 2, Blue => 3 } }"
             )
             .is_ok()
         );
@@ -698,14 +698,14 @@ mod tests {
         assert!(
             check(
                 "enum Shape { Circle(i64), Square(i64) }
-             fn area(s: Shape) -> i64 { match s { Circle(r) => r, Square(w) => w } }"
+             func area(s: Shape) -> i64 { of s { Circle(r) => r, Square(w) => w } }"
             )
             .is_ok()
         );
 
         let diags = check(
             "enum Shape { Circle(i64), Square(i64), Dot }
-             fn area(s: Shape) -> i64 { match s { Circle(r) => r, Square(w) => w } }",
+             func area(s: Shape) -> i64 { of s { Circle(r) => r, Square(w) => w } }",
         )
         .unwrap_err();
         assert!(
@@ -719,7 +719,7 @@ mod tests {
         assert!(
             check(
                 "enum Color { Red, Green, Blue }
-             fn f(c: Color) -> i32 { match c { Red => 1, Green => 2, Blue => 3 } }"
+             func f(c: Color) -> i32 { of c { Red => 1, Green => 2, Blue => 3 } }"
             )
             .is_ok()
         );
@@ -730,7 +730,7 @@ mod tests {
         assert!(
             check(
                 "enum Empty {}
-                 fn absurd<+T>(empty: Empty) -> T { match empty {} }"
+                 func absurd<+T>(empty: Empty) -> T { of empty {} }"
             )
             .is_ok()
         );
@@ -740,8 +740,8 @@ mod tests {
     fn variant_pattern_must_bind_the_declared_payload() {
         let diags = check(
             "enum Shape { Point, Circle(i64) }
-             fn f(s: Shape) -> i64 {
-                 match s {
+             func f(s: Shape) -> i64 {
+                 of s {
                      Point => 0,
                      Circle(r, extra) => r,
                  }
@@ -760,8 +760,8 @@ mod tests {
     fn variant_pattern_with_the_declared_payload_is_accepted() {
         let r = check(
             "enum Shape { Point, Circle(i64) }
-             fn f(s: Shape) -> i64 {
-                 match s {
+             func f(s: Shape) -> i64 {
+                 of s {
                      Point => 0,
                      Circle(r) => r,
                  }
@@ -775,8 +775,8 @@ mod tests {
         assert!(
             check(
                 "enum Color { Red, Green, Blue }
-             fn main() -> i32 {
-                 let cont = select Color {
+             func main() -> i32 {
+                 let cont = mu Color {
                      Red => <0 | out>,
                      Green => <1 | out>,
                      Blue => <2 | out>,
@@ -792,8 +792,8 @@ mod tests {
     fn select_missing_variant_rejected() {
         let r = check(
             "enum Color { Red, Green, Blue }
-             fn main() -> i32 {
-                 let cont = select Color {
+             func main() -> i32 {
+                 let cont = mu Color {
                      Red => <0 | out>,
                      Green => <1 | out>,
                  };
@@ -808,8 +808,8 @@ mod tests {
     fn select_duplicate_variant_rejected() {
         let r = check(
             "enum Color { Red, Green, Blue }
-             fn main() -> i32 {
-                 let cont = select Color {
+             func main() -> i32 {
+                 let cont = mu Color {
                      Red => <0 | out>,
                      Red => <1 | out>,
                      Blue => <2 | out>,
@@ -825,8 +825,8 @@ mod tests {
     fn select_unknown_variant_rejected() {
         let r = check(
             "enum Color { Red, Green, Blue }
-             fn main() -> i32 {
-                 let cont = select Color {
+             func main() -> i32 {
+                 let cont = mu Color {
                      Red => <0 | out>,
                      Green => <1 | out>,
                      Purple => <2 | out>,
@@ -844,8 +844,8 @@ mod tests {
         assert!(
             check(
                 "enum Color { Red, Green }
-                 fn code(return: -i32) <- Color {
-                     select { Red => <0 | return>, Green => <1 | return> }
+                 func code(return: -i32) <- Color {
+                     mu { Red => <0 | return>, Green => <1 | return> }
                  }"
             )
             .is_ok()
@@ -853,7 +853,7 @@ mod tests {
 
         let diags = check(
             "enum Color { Red, Green }
-             fn code(return: -i32) <- Color { select { Red => <0 | return> } }",
+             func code(return: -i32) <- Color { mu { Red => <0 | return> } }",
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("missing variants Green")), "{diags:?}");
@@ -862,8 +862,8 @@ mod tests {
     #[test]
     fn select_unknown_enum_rejected() {
         let r = check(
-            "fn main() -> i32 {
-                 let cont = select Color {
+            "func main() -> i32 {
+                 let cont = mu Color {
                      Red => 0 | out>,
                      Green => 1 | out>,
                      Blue => 2 | out>,

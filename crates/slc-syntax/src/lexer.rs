@@ -8,6 +8,10 @@ pub struct LexError {
     pub span: Span,
 }
 
+fn retired(found: &'static str, replacement: &'static str) -> TokenKind {
+    TokenKind::Retired { found, replacement }
+}
+
 pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = source.chars().collect();
@@ -63,28 +67,36 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             }
             let kind = match ident.as_str() {
                 "fn" => TokenKind::Fn,
+                "func" => TokenKind::Func,
                 "mu" => TokenKind::Mu,
-                "command" => TokenKind::Command,
+                "proc" => TokenKind::Command,
                 "mod" => TokenKind::Mod,
                 "use" => TokenKind::Use,
-                "trait" => TokenKind::Trait,
+                "spec" => TokenKind::Trait,
                 "impl" => TokenKind::Impl,
                 "for" => TokenKind::For,
-                "effect" => TokenKind::Effect,
-                "handle" => TokenKind::Handle,
-                "handler" => TokenKind::Handler,
-                "with" => TokenKind::With,
+                "hook" => TokenKind::Effect,
+                "do" => TokenKind::Handle,
+                "op" => TokenKind::Handler,
                 "reset" => TokenKind::Reset,
-                "match" => TokenKind::Match,
-                "select" => TokenKind::Select,
+                "of" => TokenKind::Match,
                 "let" => TokenKind::Let,
                 "data" => TokenKind::Data,
                 "enum" => TokenKind::Enum,
                 "menu" => TokenKind::Menu,
                 "form" => TokenKind::Form,
                 "dual" => TokenKind::Dual,
-                "const" => TokenKind::Const,
+                "def" => TokenKind::Const,
                 "pub" => TokenKind::Pub,
+                "command" => retired("command", "proc"),
+                "trait" => retired("trait", "spec"),
+                "effect" => retired("effect", "hook"),
+                "const" => retired("const", "def"),
+                "match" => retired("match", "of"),
+                "handle" => retired("handle", "do"),
+                "handler" => retired("handler", "op"),
+                "with" => retired("with", "op"),
+                "select" => retired("select", "mu"),
                 _ => TokenKind::Ident(ident),
             };
             tokens.push(Token { kind, span: Span { start, end: i } });
@@ -298,11 +310,24 @@ mod tests {
 
     #[test]
     fn lex_keywords() {
-        let toks = lex("fn mu match let").unwrap();
+        let toks = lex("fn func mu of let proc").unwrap();
         assert_eq!(toks[0].kind, TokenKind::Fn);
-        assert_eq!(toks[1].kind, TokenKind::Mu);
-        assert_eq!(toks[2].kind, TokenKind::Match);
-        assert_eq!(toks[3].kind, TokenKind::Let);
+        assert_eq!(toks[1].kind, TokenKind::Func);
+        assert_eq!(toks[2].kind, TokenKind::Mu);
+        assert_eq!(toks[3].kind, TokenKind::Match);
+        assert_eq!(toks[4].kind, TokenKind::Let);
+        assert_eq!(toks[5].kind, TokenKind::Command);
+    }
+
+    #[test]
+    fn lex_retired_keywords_keep_their_word() {
+        let toks = lex("command match select").unwrap();
+        assert!(matches!(
+            &toks[0].kind,
+            TokenKind::Retired { found: "command", replacement: "proc" }
+        ));
+        assert!(matches!(&toks[1].kind, TokenKind::Retired { found: "match", .. }));
+        assert!(matches!(&toks[2].kind, TokenKind::Retired { found: "select", .. }));
     }
 
     #[test]
@@ -370,7 +395,7 @@ mod tests {
 
     #[test]
     fn a_number_too_large_is_a_lex_error() {
-        let error = lex("fn main() -> i64 { 99999999999999999999 }").unwrap_err();
+        let error = lex("func main() -> i64 { 99999999999999999999 }").unwrap_err();
         assert!(error.message.contains("does not fit in 64 bits"), "{error:?}");
     }
 }

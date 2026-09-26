@@ -1,6 +1,6 @@
 // A continuation-based JSON parser.
 //
-// Every parser here is a `command`: it takes values in the first parameter
+// Every parser here is a `proc`: it takes values in the first parameter
 // group and continuations in the second, and it denotes a command. Nothing
 // returns a position — a parser sends its result to one of its continuations,
 // one per outcome it can have:
@@ -17,7 +17,7 @@
 // fail, but only `parse_json` can succeed with a value.
 //
 // A helper that only computes with values, like `at` or `is_hex`, stays an
-// ordinary positive `fn`: it takes no continuation and returns a value.
+// ordinary positive `func`: it takes no continuation and returns a value.
 //
 // Where one parser's result feeds the next, a local `mu` captures the
 // continuation of the `let` it stands in — the language's `call/cc` — so the
@@ -28,52 +28,52 @@
 // The parser validates the complete input, including trailing characters
 // and trailing commas.
 
-const COMMA: char = ',';
-const COLON: char = ':';
-const OPEN_BRACKET: char = '[';
-const CLOSE_BRACKET: char = ']';
-const OPEN_BRACE: char = '{';
-const CLOSE_BRACE: char = '}';
-const QUOTE: char = '"';
-const BACKSLASH: char = '\\';
+def COMMA: char = ',';
+def COLON: char = ':';
+def OPEN_BRACKET: char = '[';
+def CLOSE_BRACKET: char = ']';
+def OPEN_BRACE: char = '{';
+def CLOSE_BRACE: char = '}';
+def QUOTE: char = '"';
+def BACKSLASH: char = '\\';
 
 // Reading one character past the end is not an error while looking ahead:
 // the end of the input cannot continue a JSON value. `at` reports a space
 // there, which no JSON value accepts and every value may be followed by.
-fn at(input: String, pos: i64) -> char {
-    match (<(pos, <input | str_len) | lt) {
+func at(input: String, pos: i64) -> char {
+    of (<(pos, <input | str_len) | lt) {
         True => <(input, pos) | index,
         False => ' ',
     }
 }
 
-fn parse_digits(input: String, pos: i64) -> i64 {
-    let more = match (<(pos, <input | str_len) | lt) {
+func parse_digits(input: String, pos: i64) -> i64 {
+    let more = of (<(pos, <input | str_len) | lt) {
         True => <(input, pos) | at | is_digit,
         False => False,
     };
-    match more {
+    of more {
         True => <(input, <(pos, 1) | add) | parse_digits,
         False => pos,
     }
 }
 
-fn is_hex(c: char) -> Bool {
-    match c {
+func is_hex(c: char) -> Bool {
+    of c {
         '0'..='9' | 'a'..='f' | 'A'..='F' => True,
         _ => False,
     }
 }
 
-command parse_json<E>(input: String) | (
+proc parse_json<E>(input: String) | (
     parsed: (-String / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let start = <(input, 0) | skip_ws;
-    match (<(start, <input | str_len) | lt) {
+    of (<(start, <input | str_len) | lt) {
         True => {
             let end = mu { k <= <(input, start) | parse_value | (k & failed)> };
-            match (<(<(input, end) | skip_ws, <input | str_len) | eq) {
+            of (<(<(input, end) | skip_ws, <input | str_len) | eq) {
                 True => <(input, start, end) | substring | parsed>,
                 False => <"trailing characters after JSON value" | failed>,
             }
@@ -82,11 +82,11 @@ command parse_json<E>(input: String) | (
     }
 }
 
-command parse_value<E>(input: String, pos: i64) | (
+proc parse_value<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(input, pos) | at) {
+    of (<(input, pos) | at) {
         '0'..='9' | '-' => <(input, pos) | parse_number | (ok & failed)>,
         QUOTE => <(input, pos) | parse_string | (ok & failed)>,
         OPEN_BRACKET => <(input, pos) | parse_array | (ok & failed)>,
@@ -98,26 +98,26 @@ command parse_value<E>(input: String, pos: i64) | (
     }
 }
 
-command parse_number<E>(input: String, pos: i64) | (
+proc parse_number<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    let after_sign = match (<(<(input, pos) | at, '-') | eq) {
+    let after_sign = of (<(<(input, pos) | at, '-') | eq) {
         True => <(pos, 1) | add,
         False => pos,
     };
     let integer_end = <(input, after_sign) | parse_digits;
-    match (<(integer_end, after_sign) | gt) {
+    of (<(integer_end, after_sign) | gt) {
         True => <(input, integer_end) | parse_number_tail | (ok & failed)>,
         False => <"expected integer part in number" | failed>,
     }
 }
 
-command parse_number_tail<E>(input: String, pos: i64) | (
+proc parse_number_tail<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(<(input, pos) | at, '.') | eq) {
+    of (<(<(input, pos) | at, '.') | eq) {
         True => {
             let after_fraction = mu {
                 k <= <(input, <(pos, 1) | add) | parse_fraction | (k & failed)>,
@@ -128,66 +128,66 @@ command parse_number_tail<E>(input: String, pos: i64) | (
     }
 }
 
-command parse_fraction<E>(input: String, pos: i64) | (
+proc parse_fraction<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(input, pos) | at | is_digit) {
+    of (<(input, pos) | at | is_digit) {
         True => <(input, pos) | parse_digits | ok>,
         False => <"expected digit after decimal point" | failed>,
     }
 }
 
-command parse_exponent<E>(input: String, pos: i64) | (
+proc parse_exponent<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let ch = <(input, pos) | at;
-    let exponent = match (<(ch, 'e') | eq) { True => True, False => <(ch, 'E') | eq };
-    match exponent {
+    let exponent = of (<(ch, 'e') | eq) { True => True, False => <(ch, 'E') | eq };
+    of exponent {
         True => <(input, <(pos, 1) | add) | parse_exponent_tail | (ok & failed)>,
         False => <pos | ok>,
     }
 }
 
-command parse_exponent_tail<E>(input: String, pos: i64) | (
+proc parse_exponent_tail<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    let signed = match (<(<(input, pos) | at, '-') | eq) {
+    let signed = of (<(<(input, pos) | at, '-') | eq) {
         True => True,
         False => <(<(input, pos) | at, '+') | eq,
     };
-    let after_sign = match signed {
+    let after_sign = of signed {
         True => <(pos, 1) | add,
         False => pos,
     };
-    match (<(input, after_sign) | at | is_digit) {
+    of (<(input, after_sign) | at | is_digit) {
         True => <(input, after_sign) | parse_digits | ok>,
         False => <"expected digit in exponent" | failed>,
     }
 }
 
-command parse_string<E>(input: String, pos: i64) | (
+proc parse_string<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     <(input, <(pos, 1) | add) | parse_string_tail | (ok & failed)>
 }
 
-command parse_string_tail<E>(input: String, pos: i64) | (
+proc parse_string_tail<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(pos, <input | str_len) | ge) {
+    of (<(pos, <input | str_len) | ge) {
         True => <"unterminated JSON string" | failed>,
         False => {
             let ch = <(input, pos) | at;
-            match (<(ch, QUOTE) | eq) {
+            of (<(ch, QUOTE) | eq) {
                 True => <(pos, 1) | add | ok>,
-                False => match (<(ch, BACKSLASH) | eq) {
+                False => of (<(ch, BACKSLASH) | eq) {
                     True => <(input, <(pos, 1) | add) | parse_escape | (ok & failed)>,
-                    False => match (<(ch, ' ') | lt) {
+                    False => of (<(ch, ' ') | lt) {
                         True => <"raw control character in JSON string" | failed>,
                         False => <(input, <(pos, 1) | add) | parse_string_tail | (ok & failed)>,
                     },
@@ -197,11 +197,11 @@ command parse_string_tail<E>(input: String, pos: i64) | (
     }
 }
 
-command parse_escape<E>(input: String, pos: i64) | (
+proc parse_escape<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(input, pos) | at) {
+    of (<(input, pos) | at) {
         '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => <(input, <(pos, 1) | add)
             | parse_string_tail
             | (ok & failed)>,
@@ -212,95 +212,95 @@ command parse_escape<E>(input: String, pos: i64) | (
 
 // Whether `count` hexadecimal digits start at `pos`, looking no further than
 // the first that is not one.
-fn hex_digits(input: String, pos: i64, count: i64) -> Bool {
-    match (<(count, 0) | eq) {
+func hex_digits(input: String, pos: i64, count: i64) -> Bool {
+    of (<(count, 0) | eq) {
         True => True,
-        False => match (<(input, pos) | at | is_hex) {
+        False => of (<(input, pos) | at | is_hex) {
             True => <(input, <(pos, 1) | add, <(count, 1) | sub) | hex_digits,
             False => False,
         },
     }
 }
 
-command parse_hex4<E>(input: String, pos: i64) | (
+proc parse_hex4<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(input, pos, 4) | hex_digits) {
+    of (<(input, pos, 4) | hex_digits) {
         True => <(input, <(pos, 4) | add) | parse_string_tail | (ok & failed)>,
         False => <"invalid hexadecimal digit in \\u escape" | failed>,
     }
 }
 
-command parse_literal<E>(input: String, pos: i64, text: String) | (
+proc parse_literal<E>(input: String, pos: i64, text: String) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let end = <(pos, <text | str_len) | add;
     // The slice is taken only once it is known to be in range.
-    let matches = match (<(end, <input | str_len) | le) {
+    let matches = of (<(end, <input | str_len) | le) {
         True => <(<(input, pos, end) | substring, text) | eq,
         False => False,
     };
-    match matches {
+    of matches {
         True => <end | ok>,
         False => <"invalid JSON literal" | failed>,
     }
 }
 
-command parse_array<E>(input: String, pos: i64) | (
+proc parse_array<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let first = <(input, <(pos, 1) | add) | skip_ws;
-    match (<(<(input, first) | at, CLOSE_BRACKET) | eq) {
+    of (<(<(input, first) | at, CLOSE_BRACKET) | eq) {
         True => <(first, 1) | add | ok>,
         False => <(input, first) | parse_array_body | (ok & failed)>,
     }
 }
 
-command parse_array_body<E>(input: String, pos: i64) | (
+proc parse_array_body<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let value_end = mu { k <= <(input, pos) | parse_value | (k & failed)> };
     let after_value = <(input, value_end) | skip_ws;
     let ch = <(input, after_value) | at;
-    match (<(ch, COMMA) | eq) {
+    of (<(ch, COMMA) | eq) {
         True => {
             let next = <(input, <(after_value, 1) | add) | skip_ws;
-            match (<(<(input, next) | at, CLOSE_BRACKET) | eq) {
+            of (<(<(input, next) | at, CLOSE_BRACKET) | eq) {
                 True => <"trailing comma in array" | failed>,
                 False => <(input, next) | parse_array_body | (ok & failed)>,
             }
         },
-        False => match (<(ch, CLOSE_BRACKET) | eq) {
+        False => of (<(ch, CLOSE_BRACKET) | eq) {
             True => <(after_value, 1) | add | ok>,
             False => <"expected `,` or `]` in array" | failed>,
         },
     }
 }
 
-command parse_object<E>(input: String, pos: i64) | (
+proc parse_object<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
     let first = <(input, <(pos, 1) | add) | skip_ws;
-    match (<(<(input, first) | at, CLOSE_BRACE) | eq) {
+    of (<(<(input, first) | at, CLOSE_BRACE) | eq) {
         True => <(first, 1) | add | ok>,
         False => <(input, first) | parse_object_body | (ok & failed)>,
     }
 }
 
-command parse_object_body<E>(input: String, pos: i64) | (
+proc parse_object_body<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    match (<(<(input, pos) | at, QUOTE) | eq) {
+    of (<(<(input, pos) | at, QUOTE) | eq) {
         True => {
             let key_end = mu { k <= <(input, pos) | parse_string | (k & failed)> };
             let after_key = <(input, key_end) | skip_ws;
-            match (<(<(input, after_key) | at, COLON) | eq) {
+            of (<(<(input, after_key) | at, COLON) | eq) {
                 True => {
                     let value_end = mu {
                         k <= <(input, <(input, <(after_key, 1) | add) | skip_ws)
@@ -309,15 +309,15 @@ command parse_object_body<E>(input: String, pos: i64) | (
                     };
                     let after_value = <(input, value_end) | skip_ws;
                     let ch = <(input, after_value) | at;
-                    match (<(ch, COMMA) | eq) {
+                    of (<(ch, COMMA) | eq) {
                         True => {
                             let next = <(input, <(after_value, 1) | add) | skip_ws;
-                            match (<(<(input, next) | at, CLOSE_BRACE) | eq) {
+                            of (<(<(input, next) | at, CLOSE_BRACE) | eq) {
                                 True => <"trailing comma in object" | failed>,
                                 False => <(input, next) | parse_object_body | (ok & failed)>,
                             }
                         },
-                        False => match (<(ch, CLOSE_BRACE) | eq) {
+                        False => of (<(ch, CLOSE_BRACE) | eq) {
                             True => <(after_value, 1) | add | ok>,
                             False => <"expected `,` or `}` in object" | failed>,
                         },
@@ -330,17 +330,17 @@ command parse_object_body<E>(input: String, pos: i64) | (
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let source = "{\"name\":\"slant\",\"tags\":[1,2,-3.25],\"active\":true,\"none\":null,\"escaped\":\"a\\\"b\\u0041\"}";
 
     // One consumer per outcome, each ending in a cut against `exit`.
-    let parsed = select String {
+    let parsed = mu String {
         value => {
             <("parsed: ", value) | add | println;
             <0 | exit>
         },
     };
-    let failed = select String {
+    let failed = mu String {
         message => {
             <("error: ", message) | add | println;
             <1 | exit>

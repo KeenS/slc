@@ -13,14 +13,14 @@ use list::length; // one function, bare
 use option::*; // every `pub` member of `option`, bare: `Option`, `unwrap_or`
 use option::Option::*;
 
-fn first(xs: List<i64>) -> Option<i64> {
-    match xs {
+func first(xs: List<i64>) -> Option<i64> {
+    of xs {
         Nil => None,
         Cons(h, _) => Some(h),
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let xs = Cons(3, Cons(1, Cons(2, Nil)));
     <xs | length | println; // 3
     <(<xs | first, 0) | unwrap_or | println; // 3

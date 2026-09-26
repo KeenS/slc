@@ -15,9 +15,9 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const CHOOSE: &str = "command choose<E>(input: i64) |
+const CHOOSE: &str = "proc choose<E>(input: i64) |
     (positive: (-i64 / {..E}) & negative: (-i64 / {..E})) / {..E} {
-        match (<(input, 0) | gt) {
+        of (<(input, 0) | gt) {
             True => <input | positive>,
             False => <input | negative>
         }
@@ -29,8 +29,8 @@ fn returning_exits_yield_the_selected_result_and_compose_on() {
         "results",
         &format!(
             "{CHOOSE}
-            command single(input: i64) | (answer: i64) {{ <input | answer> }}
-            command main | (exit: i32) / {{IO}} {{
+            proc single(input: i64) | (answer: i64) {{ <input | answer> }}
+            proc main | (exit: i32) / {{IO}} {{
                 <4 | choose | (fn(value: i64) {{ <(value, 10) | add }} & fn(value: i64) {{ 0 }}) | println;
                 <-4 | choose | (fn(value: i64) {{ 0 }} & fn(value: i64) {{ <(value, 10) | sub }}) | println;
                 <7 | single | fn(value: i64) {{ <(value, 2) | mul }} | println;
@@ -49,10 +49,10 @@ fn returning_exits_preserve_effects_and_run_only_the_selected_callback() {
         "selected_effect",
         &format!(
             "{CHOOSE}
-            effect Read {{ fn read() -> i64; }}
-            fn callback(input: i64) -> i64 / {{Read}} {{ <(input, read()) | add }}
-            command main | (exit: i32) / {{IO}} {{
-                let value = handle (<2 | choose | (callback & fn(input: i64) {{ <100 | callback }})) {{
+            hook Read {{ func read() -> i64; }}
+            func callback(input: i64) -> i64 / {{Read}} {{ <(input, read()) | add }}
+            proc main | (exit: i32) / {{IO}} {{
+                let value = do (<2 | choose | (callback & fn(input: i64) {{ <100 | callback }})) {{
                     read(): resume => {{ <\"read\" | println; <40 | resume }}
                 }};
                 <value | println;
@@ -68,14 +68,14 @@ fn returning_exits_preserve_effects_and_run_only_the_selected_callback() {
 #[test]
 fn returning_exits_reject_mixed_callbacks_and_incompatible_answers() {
     for (name, exits, message) in [
-        ("mixed", "(fn(value: i64) { value } & select i64 { value => <0 | exit> })", "consumer"),
+        ("mixed", "(fn(value: i64) { value } & mu i64 { value => <0 | exit> })", "consumer"),
         ("answers", "(fn(value: i64) { value } & fn(value: i64) { \"text\" })", "result"),
     ] {
         let (success, _, stderr) = run(
             name,
             &format!(
                 "{CHOOSE}
-                command main | (exit: i32) / {{IO}} {{
+                proc main | (exit: i32) / {{IO}} {{
                     let answer = <1 | choose | {exits};
                     <0 | exit>
                 }}"
@@ -92,8 +92,8 @@ fn returning_exit_effects_cannot_escape_unhandled() {
         "unhandled",
         &format!(
             "{CHOOSE}
-            effect Read {{ fn read() -> i64; }}
-            command main | (exit: i32) / {{IO}} {{
+            hook Read {{ func read() -> i64; }}
+            proc main | (exit: i32) / {{IO}} {{
                 let answer = <1 | choose | (fn(value: i64) {{ read() }} & fn(value: i64) {{ 0 }});
                 <0 | exit>
             }}"
@@ -109,16 +109,16 @@ fn returning_exits_preserve_value_order_and_delay_unselected_construction() {
         "construction_order",
         &format!(
             "{CHOOSE}
-            fn input() -> i64 / {{IO}} {{ <\"input\" | println; 2 }}
-            fn make_callback(label: String) -> (i64 -> i64) / {{IO}} {{
+            func input() -> i64 / {{IO}} {{ <\"input\" | println; 2 }}
+            func make_callback(label: String) -> (i64 -> i64) / {{IO}} {{
                 <label | println;
                 fn(value: i64) {{ value }}
             }}
-            fn callbacks() -> (Delayed<(i64 -> i64), {{IO}}> & Delayed<(i64 -> i64), {{IO}}>) / {{IO}} {{
+            func callbacks() -> (Delayed<(i64 -> i64), {{IO}}> & Delayed<(i64 -> i64), {{IO}}>) / {{IO}} {{
                 <\"bundle\" | println;
                 (<\"selected\" | make_callback & <\"unselected\" | make_callback)
             }}
-            command main | (exit: i32) / {{IO}} {{
+            proc main | (exit: i32) / {{IO}} {{
                 <input() | choose | callbacks() | println;
                 <0 | exit>
             }}"
@@ -135,10 +135,10 @@ fn returning_exits_resume_into_the_remainder_of_the_chain() {
         "multishot",
         &format!(
             "{CHOOSE}
-            effect Read {{ fn read() -> i64; }}
-            fn scale(value: i64) -> i64 {{ <(value, 10) | mul }}
-            command main | (exit: i32) / {{IO}} {{
-                let answer = handle (<1 | choose | (
+            hook Read {{ func read() -> i64; }}
+            func scale(value: i64) -> i64 {{ <(value, 10) | mul }}
+            proc main | (exit: i32) / {{IO}} {{
+                let answer = do (<1 | choose | (
                     fn(value: i64) {{ read() }} & fn(value: i64) {{ 0 }}
                 ) | scale) {{ read(): resume => <(<1 | resume, <2 | resume) | add }};
                 <answer | println;

@@ -5,37 +5,37 @@
 enum Hue { Red, Blue }
 
 impl Eq for Hue {
-    fn eq(self: Hue, other: Hue) -> Bool {
-        match self {
-            Red => match other { Red => True, _ => False },
-            Blue => match other { Blue => True, _ => False },
+    func eq(self: Hue, other: Hue) -> Bool {
+        of self {
+            Red => of other { Red => True, _ => False },
+            Blue => of other { Blue => True, _ => False },
         }
     }
 }
 
-trait Rank: Eq {
-    fn place(self: Self) -> i64;
+spec Rank: Eq {
+    func place(self: Self) -> i64;
 }
 
 impl Rank for Hue {
-    fn place(self: Hue) -> i64 {
-        match self { Red => 0, Blue => 1 }
+    func place(self: Hue) -> i64 {
+        of self { Red => 0, Blue => 1 }
     }
 }
 
-fn same<+T: Rank>(a: T, b: T) -> Bool {
+func same<+T: Rank>(a: T, b: T) -> Bool {
     <(a, b) | eq
 }
 
-fn placed<+T: Rank>(a: T) -> i64 {
+func placed<+T: Rank>(a: T) -> i64 {
     <a | place
 }
 
 data Pair<+T> { left: T, right: T }
 
 impl<+T: Eq> Eq for Pair<T> {
-    fn eq(self: Pair<T>, other: Pair<T>) -> Bool {
-        match (<(self.left, other.left) | eq) {
+    func eq(self: Pair<T>, other: Pair<T>) -> Bool {
+        of (<(self.left, other.left) | eq) {
             True => <(self.right, other.right) | eq,
             False => False,
         }
@@ -43,12 +43,12 @@ impl<+T: Eq> Eq for Pair<T> {
 }
 
 impl<+T: Rank> Rank for Pair<T> {
-    fn place(self: Pair<T>) -> i64 {
+    func place(self: Pair<T>) -> i64 {
         <self.left | place
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <(Red, Blue) | same | println;
     <(Red, Red) | same | println;
     <Blue | placed | println;

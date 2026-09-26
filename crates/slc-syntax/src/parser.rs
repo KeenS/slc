@@ -13,12 +13,14 @@ pub struct ParseError {
 /// The wrong-arrow guidance, one line per direction. The arrow says which
 /// side of the mirror the scrutinee is on: data flows forward into an arm,
 /// `=>`; a demand reaches back into it, `<=`.
-const SELECT_ARROW: &str = "a `select` arm matches data, which flows forward: `pattern => command`";
-const SELECT_LE: &str = "a `select` arm matches data, which flows forward: `pattern => command` — `<=` belongs to \
-     `mu`, whose arms answer demands";
-const MU_LE: &str = "a `mu` arm answers a demand, which reaches back: `copattern <= command`";
-const MU_ARROW: &str = "a `mu` arm answers a demand, which reaches back: `copattern <= command` — `=>` belongs to \
-     arms that match data";
+/// Every arm of one `mu` uses the same arrow. `<=` answers a demand, and the
+/// type in front is what the expression produces. `=>` builds the consumer,
+/// and the type in front is what that consumer takes.
+const MU_SAME_ARROW: &str = "every arm of a `mu` uses the same arrow: a demand reaches back \
+     (`copattern <= …`) and a consumer flows forward (`pattern => …`)";
+const MU_LE: &str = "a `mu` arm answers a demand, which reaches back: `copattern <= …`";
+const MU_ARROW: &str = "a `mu` arm that builds a consumer matches data, which flows forward: \
+     `pattern => …`";
 
 /// Whether a pattern matches a continuation — a request shape — so that its
 /// `match` arm writes `<=`.
@@ -173,6 +175,10 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
 /// Type parameters with their trait bounds.
 type TypeParams = (Vec<String>, Vec<TraitBound>, Vec<(String, ParamPolarity)>);
 
+/// Clauses of `do` and `op`: the operation clauses, the `return` clause, and
+/// whether the last clause forwards.
+type HandlerClauses = (Vec<HandleClause>, Option<(String, Box<Node<Expr>>)>, bool);
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
@@ -220,6 +226,66 @@ impl Parser {
         self.tokens.get(self.pos).map(|t| &t.kind)
     }
 
+    /// An old keyword is a parse error that names the spelling to write.
+    fn reject_retired(&self) -> Result<(), ParseError> {
+        let Some(TokenKind::Retired { found, replacement }) = self.peek_kind() else {
+            return Ok(());
+        };
+        let message = if *found == "with" {
+            "`with h handle e` is written `op h do e`".into()
+        } else {
+            format!("`{found}` is written `{replacement}`")
+        };
+        Err(ParseError {
+            message,
+            span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+        })
+    }
+
+    /// The arrow of the arm at the current position, if this arm has one
+    /// before its comma or the closing brace. Nested brackets are skipped.
+    fn arm_arrow(&self) -> Option<TokenKind> {
+        let mut depth = 0i32;
+        for token in &self.tokens[self.pos..] {
+            match &token.kind {
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket if depth > 0 => {
+                    depth -= 1;
+                }
+                TokenKind::RBrace | TokenKind::Comma if depth == 0 => return None,
+                TokenKind::FatArrow | TokenKind::Le if depth == 0 => {
+                    return Some(token.kind.clone());
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// `op Effect { … }` and `op [E] { … }` are handler values. Anything else
+    /// after `op` is `op h do e`. The current token is the first of that head.
+    fn op_is_handler_literal(&self) -> bool {
+        match self.peek_kind() {
+            Some(TokenKind::LBrace | TokenKind::LBracket) => true,
+            Some(TokenKind::Ident(_)) => {
+                let mut i = self.pos;
+                loop {
+                    if !matches!(self.tokens.get(i).map(|t| &t.kind), Some(TokenKind::Ident(_))) {
+                        return false;
+                    }
+                    i += 1;
+                    if self.tokens.get(i).map(|t| &t.kind) == Some(&TokenKind::ColonColon) {
+                        i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                self.tokens.get(i).map(|t| &t.kind) == Some(&TokenKind::LBrace)
+            }
+            _ => false,
+        }
+    }
+
     fn next(&mut self) -> Option<Token> {
         let t = self.tokens.get(self.pos).cloned();
         if t.is_some() {
@@ -250,6 +316,7 @@ impl Parser {
     }
 
     fn expect(&mut self, kind: TokenKind, what: &str) -> Result<Token, ParseError> {
+        self.reject_retired()?;
         if self.peek_kind() == Some(&kind) {
             Ok(self.next().unwrap())
         } else {
@@ -308,6 +375,7 @@ impl Parser {
         // in no module — the program's own, and the prelude's — is visible
         // everywhere, so `pub` there says nothing and is allowed.
         self.pending_pub = self.eat(&TokenKind::Pub);
+        self.reject_retired()?;
         match self.peek_kind() {
             Some(TokenKind::Data) => self.parse_data(),
             Some(TokenKind::Enum) => self.parse_enum(),
@@ -328,8 +396,10 @@ impl Parser {
                     span: Span { start, end: self.span_end() },
                 })
             }
+            Some(TokenKind::Func) => self.parse_fn(),
             Some(TokenKind::Fn) => {
-                // fn( or fn { — lambda expression, not declaration
+                // `fn(` or `fn {` is the lambda. A name after `fn` is the old
+                // declaration spelling.
                 if matches!(
                     self.tokens.get(self.pos + 1).map(|t| &t.kind),
                     Some(TokenKind::LParen | TokenKind::LBrace)
@@ -351,7 +421,10 @@ impl Parser {
                         },
                     })
                 } else {
-                    self.parse_fn()
+                    Err(ParseError {
+                        message: "`fn` names a lambda; a declaration is `func`".into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+                    })
                 }
             }
             Some(TokenKind::Command) => self.parse_command_decl(),
@@ -368,7 +441,7 @@ impl Parser {
                 ) =>
             {
                 Err(ParseError {
-                    message: "a declaration is a `command`; `mu` captures the current continuation"
+                    message: "a declaration is a `proc`; `mu` captures the current continuation"
                         .into(),
                     span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
                 })
@@ -588,7 +661,7 @@ impl Parser {
 
     fn parse_fn(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Fn, "`fn`")?;
+        let t = self.expect(TokenKind::Func, "`func`")?;
         let name = self.expect_ident("function name")?;
         let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         let (params, separator) = self.parse_params_with()?;
@@ -696,8 +769,8 @@ impl Parser {
 
     fn parse_command_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Command, "`command`")?;
-        let name = self.expect_ident("`command` name")?;
+        let t = self.expect(TokenKind::Command, "`proc`")?;
+        let name = self.expect_ident("`proc` name")?;
         let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         let (value_params, continuation_params) = self.parse_command_params()?;
         let return_type =
@@ -706,7 +779,7 @@ impl Parser {
             && !ty.is_bottom()
         {
             return Err(ParseError {
-                message: "a `command` returns `(;)`; remove the arrow or write `(;)`".into(),
+                message: "a `proc` returns `(;)`; remove the arrow or write `(;)`".into(),
                 span: t.span,
             });
         }
@@ -841,31 +914,37 @@ impl Parser {
 
     fn parse_effect_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Effect, "`effect`")?;
-        let name = self.expect_ident("effect name")?;
+        let t = self.expect(TokenKind::Effect, "`hook`")?;
+        let name = self.expect_ident("hook name")?;
         let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
-                message: "effect parameters do not support trait bounds".into(),
+                message: "a hook's parameters carry no bounds".into(),
                 span: t.span,
             });
         }
         if type_params.iter().collect::<std::collections::HashSet<_>>().len() != type_params.len() {
             return Err(ParseError {
-                message: "an effect cannot repeat a type parameter".into(),
+                message: "a hook cannot repeat a type parameter".into(),
                 span: t.span,
             });
         }
-        self.expect(TokenKind::LBrace, "`{` after the effect name")?;
+        self.expect(TokenKind::LBrace, "`{` after the hook name")?;
         let mut operations = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
             if self.peek().is_none() {
                 return Err(ParseError {
-                    message: format!("effect `{name}` is missing its closing `}}`"),
+                    message: format!("hook `{name}` is missing its closing `}}`"),
                     span: t.span,
                 });
             }
-            self.expect(TokenKind::Fn, "`fn` for an operation")?;
+            if self.peek_kind() == Some(&TokenKind::Fn) {
+                return Err(ParseError {
+                    message: "`fn` names a lambda; an operation is `func`".into(),
+                    span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                });
+            }
+            self.expect(TokenKind::Func, "`func` for an operation")?;
             let op = self.expect_ident("operation name")?;
             let params = self.parse_params()?;
             let return_type =
@@ -881,25 +960,25 @@ impl Parser {
 
     fn parse_trait_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Trait, "`trait`")?;
-        let name = self.expect_ident("trait name")?;
+        let t = self.expect(TokenKind::Trait, "`spec`")?;
+        let name = self.expect_ident("spec name")?;
         let (type_params, bounds, type_param_signs) = self.parse_type_params_bounded()?;
         if !bounds.is_empty() {
             return Err(ParseError {
-                message: "a trait's type parameters carry no bounds; the bound goes on the \
-                          function or the impl that uses the trait"
+                message: "a spec's type parameters carry no bounds; the bound goes on the \
+                          function or the impl that uses the spec"
                     .into(),
                 span: t.span,
             });
         }
         let supers = self.parse_supertraits()?;
-        self.expect(TokenKind::LBrace, "`{` after the trait name")?;
+        self.expect(TokenKind::LBrace, "`{` after the spec name")?;
         let mut methods = Vec::new();
         let mut assocs = Vec::new();
         while !self.eat(&TokenKind::RBrace) {
             if self.peek().is_none() {
                 return Err(ParseError {
-                    message: format!("trait `{name}` is missing its closing `}}`"),
+                    message: format!("spec `{name}` is missing its closing `}}`"),
                     span: t.span,
                 });
             }
@@ -1066,10 +1145,16 @@ impl Parser {
         Ok(args)
     }
 
-    /// A method: a `fn` or `command` header, then `;` or a default body.
+    /// A method: a `func` or `proc` header, then `;` or a default body.
     fn parse_trait_method(&mut self) -> Result<TraitMethod, ParseError> {
+        if self.peek_kind() == Some(&TokenKind::Fn) {
+            return Err(ParseError {
+                message: "`fn` names a lambda; a method is `func`".into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            });
+        }
         match self.peek_kind() {
-            Some(TokenKind::Fn) => {
+            Some(TokenKind::Func) => {
                 self.pos += 1;
                 let name = self.expect_ident("method name")?;
                 let (params, separator) = self.parse_params_with()?;
@@ -1110,7 +1195,7 @@ impl Parser {
                 })
             }
             _ => Err(ParseError {
-                message: "a trait method is a `fn` or `command` signature".into(),
+                message: "a spec method is a `func` or `proc` signature".into(),
                 span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
             }),
         }
@@ -1181,11 +1266,11 @@ impl Parser {
 
     fn parse_const_decl(&mut self) -> Result<Node<Decl>, ParseError> {
         let is_public = self.take_pub();
-        let t = self.expect(TokenKind::Const, "`const`")?;
-        let name = self.expect_ident("constant name")?;
-        self.expect(TokenKind::Colon, "`:` in constant declaration")?;
+        let t = self.expect(TokenKind::Const, "`def`")?;
+        let name = self.expect_ident("definition name")?;
+        self.expect(TokenKind::Colon, "`:` in a definition")?;
         let ty = self.parse_type()?;
-        self.expect(TokenKind::Assign, "`=` in constant declaration")?;
+        self.expect(TokenKind::Assign, "`=` in a definition")?;
         let value = self.parse_expr()?;
         let end = self.span_end();
         self.eat(&TokenKind::Semicolon);
@@ -1368,6 +1453,7 @@ impl Parser {
     }
 
     fn expect_name(&mut self, what: &str) -> Result<String, ParseError> {
+        self.reject_retired()?;
         match self.peek_kind().cloned() {
             Some(TokenKind::Ident(s)) => {
                 self.pos += 1;
@@ -1394,6 +1480,7 @@ impl Parser {
     }
 
     pub fn parse_type(&mut self) -> Result<Node<TypeExpr>, ParseError> {
+        self.reject_retired()?;
         let start = self.span_start();
         let kind = match self.peek_kind().cloned() {
             Some(TokenKind::Plus) => {
@@ -1712,8 +1799,8 @@ impl Parser {
         // tokens stay only so that writing one says so.
         if matches!(self.peek_kind(), Some(TokenKind::AmpAmp | TokenKind::PipePipe)) {
             return Err(ParseError {
-                message: "there is no `&&` or `||`: a choice on a `bool` is a `match`, \
-                          `match a { True => b, _ => False }`"
+                message: "there is no `&&` or `||`: a choice on a `bool` is `of`, \
+                          `of a { True => b, _ => False }`"
                     .into(),
                 span,
             });
@@ -1863,8 +1950,331 @@ impl Parser {
         }
     }
 
+    /// `mu [Type] { arms }`. `<=` answers a demand: one binder arm captures
+    /// the continuation, and item arms build a menu. The type in front is
+    /// what that expression produces. `=>` builds the consumer `select` used
+    /// to build, and the type in front is what the consumer takes. Braces
+    /// with no arms are that consumer for the written type.
+    fn parse_mu(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+        self.pos += 1;
+        let old_form_here = |parser: &Self, at: usize| {
+            matches!(parser.tokens.get(at).map(|t| &t.kind), Some(TokenKind::LParen))
+                && matches!(parser.tokens.get(at + 1).map(|t| &t.kind), Some(TokenKind::Ident(_)))
+                && matches!(
+                    parser.tokens.get(at + 2).map(|t| &t.kind),
+                    Some(TokenKind::Colon) | Some(TokenKind::RParen)
+                )
+        };
+        // `mu(k)` / `mu name(k: -T)` — the retired parenthesised binder.
+        // `(` can also open a tensor type, so only the binder shape gets
+        // the guidance.
+        if old_form_here(self, self.pos)
+            || (matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+                && old_form_here(self, self.pos + 1))
+        {
+            return Err(ParseError {
+                message: "the parenthesised `mu(k)` form is gone; bind the \
+                          continuation as an arm — `mu { k <= c }`, with the produced \
+                          type in front: `mu i64 { k <= c }`"
+                    .into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
+            });
+        }
+        let ty = match self.peek_kind() {
+            Some(TokenKind::LBrace) => None,
+            _ => Some(Box::new(self.parse_type()?)),
+        };
+        self.expect(TokenKind::LBrace, "`{` after `mu`")?;
+        if self.eat(&TokenKind::RBrace) {
+            return Ok(Node {
+                span: Span { start, end: self.span_end() },
+                kind: Expr::Select { ty, arms: Vec::new() },
+            });
+        }
+        let copattern = self.peek_kind() == Some(&TokenKind::Dot)
+            || (matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+                && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Colon));
+        // A copattern answers a demand. `=>` on one is the wrong arrow, so
+        // the demand parser reports it rather than reading a consumer.
+        let demands = match self.arm_arrow() {
+            Some(TokenKind::Le) => true,
+            Some(TokenKind::FatArrow) => copattern,
+            _ => copattern,
+        };
+        if demands { self.parse_mu_demand(start, ty) } else { self.parse_mu_consumer(start, ty) }
+    }
+
+    /// Arms written `<=`: a continuation capture, or a menu.
+    fn parse_mu_demand(
+        &mut self,
+        start: usize,
+        ty: Option<Box<Node<TypeExpr>>>,
+    ) -> Result<Node<Expr>, ParseError> {
+        let mut arms = Vec::new();
+        let mut shorthand_arms = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            let arm = self.pos;
+            if self.peek_kind() == Some(&TokenKind::Dot) {
+                let span = self.peek().expect("peeked a token").span;
+                self.skip_past_arm_list(arm);
+                return Err(ParseError {
+                    message: "a `mu` copattern mirrors a menu field: write `item: out <= c` \
+                              instead of `.item(out) <= c`"
+                        .into(),
+                    span,
+                });
+            }
+            let explicit_copattern = matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+                && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Colon);
+            let pattern = match if explicit_copattern {
+                self.parse_mu_copattern()
+            } else {
+                self.parse_pattern()
+            } {
+                Ok(pattern) => pattern,
+                Err(e) => {
+                    return Err(self.reversed_arm_error(arm, TokenKind::Le, MU_LE, e));
+                }
+            };
+            if !self.eat(&TokenKind::Le) {
+                let expected = self.expect(TokenKind::Le, "`<=` in a `mu` arm").unwrap_err();
+                return Err(self.reversed_arm_error(
+                    arm,
+                    TokenKind::FatArrow,
+                    MU_SAME_ARROW,
+                    expected,
+                ));
+            }
+            let command = self.parse_expr()?;
+            arms.push(SelectArm { pattern, command });
+            shorthand_arms.push(!explicit_copattern);
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}` after a `mu` arm")?;
+                break;
+            }
+        }
+        let has_explicit_copattern = arms
+            .iter()
+            .zip(&shorthand_arms)
+            .any(|(arm, shorthand)| !shorthand && matches!(arm.pattern, Pattern::Dtor { .. }));
+        let multiple_arms = arms.len() > 1;
+        for (arm, shorthand) in arms.iter_mut().zip(&shorthand_arms) {
+            let Pattern::Ident(label) = &arm.pattern else { continue };
+            if *shorthand
+                && (has_explicit_copattern
+                    || multiple_arms
+                    || self.type_is_menu_item(ty.as_deref(), label))
+            {
+                let label = label.clone();
+                arm.pattern =
+                    Pattern::Dtor { dtor: label.clone(), arg: Box::new(Pattern::Ident(label)) };
+            }
+        }
+        // One binder arm — `mu { k <= c }` — is the atom form: it captures
+        // the ambient continuation whole. Anything else is the copattern
+        // form, a menu. A demand-answering `mu` has an arm; empty braces
+        // were returned as the consumer before this loop.
+        let binder = match arms.as_slice() {
+            [SelectArm { pattern: Pattern::Ident(name), .. }] => Some(name.clone()),
+            [SelectArm { pattern: Pattern::Wildcard, .. }] => Some("__unused".to_string()),
+            _ => None,
+        };
+        if let Some(name) = binder {
+            let command = arms.pop().expect("matched one arm").command;
+            let param = Param::named(name, ty.map(TypeExpr::Negative), true);
+            return Ok(Node {
+                span: Span { start, end: self.span_end() },
+                kind: Expr::Mu { continuation_params: vec![param], body: Box::new(command) },
+            });
+        }
+        if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Ident(_) | Pattern::Wildcard)) {
+            return Err(ParseError {
+                message: "a `mu` either binds its continuation with one arm, or \
+                          answers a menu's items — a binder arm stands alone"
+                    .into(),
+                span: Span { start, end: self.span_end() },
+            });
+        }
+        Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::CoMatch { ty, arms } })
+    }
+
+    /// Arms written `=>`: the consumer of the type in front.
+    fn parse_mu_consumer(
+        &mut self,
+        start: usize,
+        ty: Option<Box<Node<TypeExpr>>>,
+    ) -> Result<Node<Expr>, ParseError> {
+        let mut arms = Vec::new();
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            let arm = self.pos;
+            let pattern = match self.parse_pattern() {
+                Ok(pattern) => pattern,
+                Err(e) => {
+                    return Err(self.reversed_arm_error(arm, TokenKind::FatArrow, MU_ARROW, e));
+                }
+            };
+            if !self.eat(&TokenKind::FatArrow) {
+                let expected = self.expect(TokenKind::FatArrow, "`=>` in a `mu` arm").unwrap_err();
+                return Err(self.reversed_arm_error(arm, TokenKind::Le, MU_SAME_ARROW, expected));
+            }
+            let command = self.parse_expr()?;
+            arms.push(SelectArm { pattern, command });
+            if !self.eat(&TokenKind::Comma) {
+                self.expect(TokenKind::RBrace, "`}` after a `mu` arm")?;
+                break;
+            }
+        }
+        Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Select { ty, arms } })
+    }
+
+    /// `do e { clauses }`: run `e` under the clauses.
+    fn parse_do(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+        self.pos += 1;
+        let body = self.parse_scrutinee()?;
+        let (clauses, ret, forward) = self.parse_handler_clauses()?;
+        Ok(Node {
+            span: Span { start, end: self.span_end() },
+            kind: Expr::Handle { body: Box::new(body), clauses, ret, forward },
+        })
+    }
+
+    /// `op Effect { clauses }`, or `op h do e`.
+    fn parse_op(&mut self, start: usize) -> Result<Node<Expr>, ParseError> {
+        self.pos += 1;
+        if !self.op_is_handler_literal() {
+            let handler = self.parse_scrutinee()?;
+            self.expect(TokenKind::Handle, "`do` after the handler value")?;
+            let body = self.parse_expr()?;
+            return Ok(Node {
+                span: Span { start, end: self.span_end() },
+                kind: Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) },
+            });
+        }
+        let mut effects = Vec::new();
+        let bracketed = self.eat(&TokenKind::LBracket);
+        if self.peek_kind() != Some(&TokenKind::LBrace)
+            && (!bracketed || self.peek_kind() != Some(&TokenKind::RBracket))
+        {
+            loop {
+                let mut effect = self.expect_ident("an effect name after `op`")?;
+                while self.eat(&TokenKind::ColonColon) {
+                    effect.push_str("::");
+                    effect.push_str(&self.expect_ident("an effect name after `::`")?);
+                }
+                effects.push(effect);
+                if !bracketed
+                    || !self.eat(&TokenKind::Comma)
+                    || self.peek_kind() == Some(&TokenKind::RBracket)
+                {
+                    break;
+                }
+            }
+        }
+        if bracketed {
+            self.expect(TokenKind::RBracket, "`]` after the handled effects")?;
+        }
+        let (clauses, ret, forward) = self.parse_handler_clauses()?;
+        Ok(Node {
+            span: Span { start, end: self.span_end() },
+            kind: Expr::Handler { effects, clauses, ret, forward },
+        })
+    }
+
+    /// The `{ clauses }` of `do` and `op`, from the `{` through the `}`.
+    fn parse_handler_clauses(&mut self) -> Result<HandlerClauses, ParseError> {
+        self.expect(TokenKind::LBrace, "`{` after the handled expression")?;
+        let mut clauses = Vec::new();
+        let mut ret = None;
+        let mut forward = false;
+        loop {
+            if self.eat(&TokenKind::RBrace) {
+                break;
+            }
+            if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "_") {
+                self.pos += 1;
+                self.expect(TokenKind::FatArrow, "`=>` after `_` in a forwarding clause")?;
+                let action = self.expect_ident("`forward` after `_ =>`")?;
+                if action != "forward" {
+                    return Err(ParseError {
+                        message: "a forwarding clause is written `_ => forward`".into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                }
+                forward = true;
+                self.eat(&TokenKind::Comma);
+                self.expect(TokenKind::RBrace, "`}` after the final `_ => forward` clause")?;
+                break;
+            }
+            // `return(x) => body` names the body's result. `return` is
+            // otherwise an ordinary identifier.
+            if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "return") {
+                if ret.is_some() {
+                    return Err(ParseError {
+                        message: "a handler has only one `return` clause".into(),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                }
+                self.pos += 1;
+                self.expect(TokenKind::LParen, "`(` after `return`")?;
+                let binder = self.expect_ident("the return binder")?;
+                self.expect(TokenKind::RParen, "`)`")?;
+                self.expect(TokenKind::FatArrow, "`=>` in a return clause")?;
+                ret = Some((binder, Box::new(self.parse_expr()?)));
+            } else {
+                // An operation is named as its effect is, by its path when
+                // it is a module's: `fs::read_file`.
+                let mut op = self.expect_ident("an operation name")?;
+                while self.eat(&TokenKind::ColonColon) {
+                    op.push_str("::");
+                    op.push_str(&self.expect_ident("an operation name after `::`")?);
+                }
+                self.expect(TokenKind::LParen, "`(` after the operation")?;
+                let mut params = Vec::new();
+                if !self.eat(&TokenKind::RParen) {
+                    loop {
+                        params.push(self.expect_ident("an operation parameter")?);
+                        if !self.eat(&TokenKind::Comma) {
+                            self.expect(TokenKind::RParen, "`)`")?;
+                            break;
+                        }
+                    }
+                }
+                // The operation is a demand, and its carried continuation is
+                // bound the copattern way: after a colon — `read(): k => body`
+                // — or not at all, for a clause that never resumes.
+                let resume = if self.eat(&TokenKind::Colon) {
+                    self.expect_ident("the continuation binder after `:`")?
+                } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
+                    let name = name.clone();
+                    return Err(ParseError {
+                        message: format!(
+                            "a clause binds its continuation after a colon: \
+                             `{op}(…): {name} => …` — or omits it when it never resumes: \
+                             `{op}(…) => …`"
+                        ),
+                        span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                    });
+                } else {
+                    "__never_resumed".to_string()
+                };
+                self.expect(TokenKind::FatArrow, "`=>` in an `op` clause")?;
+                let body = self.parse_expr()?;
+                clauses.push(HandleClause { op, params, resume, body });
+            }
+            self.eat(&TokenKind::Comma);
+        }
+        Ok((clauses, ret, forward))
+    }
+
     fn parse_primary(&mut self) -> Result<Node<Expr>, ParseError> {
         let start = self.span_start();
+        self.reject_retired()?;
         match self.peek_kind().cloned() {
             // `.item(k)` — a request literal: one demand on a menu, carrying
             // the continuation that wants the answer.
@@ -1927,142 +2337,7 @@ impl Parser {
                 }
                 Ok(Node { span: Span { start, end: self.span_end() }, kind: Expr::Ident(s) })
             }
-            Some(TokenKind::Mu) => {
-                self.pos += 1;
-                // `mu` is uniformly `mu [Type] { arms }`. The type is what
-                // the expression produces — a menu for the copattern form,
-                // any type for the binder form — and may be left out when
-                // the arms say it.
-                let old_form_here = |parser: &Self, at: usize| {
-                    matches!(parser.tokens.get(at).map(|t| &t.kind), Some(TokenKind::LParen))
-                        && matches!(
-                            parser.tokens.get(at + 1).map(|t| &t.kind),
-                            Some(TokenKind::Ident(_))
-                        )
-                        && matches!(
-                            parser.tokens.get(at + 2).map(|t| &t.kind),
-                            Some(TokenKind::Colon) | Some(TokenKind::RParen)
-                        )
-                };
-                // `mu(k)` / `mu name(k: -T)` — the retired parenthesised
-                // binder. `(` can also open a tensor type, so only the
-                // binder shape gets the guidance.
-                if old_form_here(self, self.pos)
-                    || (matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
-                        && old_form_here(self, self.pos + 1))
-                {
-                    return Err(ParseError {
-                        message: "the parenthesised `mu(k)` form is gone; bind the \
-                                  continuation as an arm — `mu { k <= c }`, with the produced \
-                                  type in front: `mu i64 { k <= c }`"
-                            .into(),
-                        span: self.peek().map(|t| t.span).unwrap_or(Span { start, end: start }),
-                    });
-                }
-                let ty = match self.peek_kind() {
-                    Some(TokenKind::LBrace) => None,
-                    _ => Some(Box::new(self.parse_type()?)),
-                };
-                self.expect(TokenKind::LBrace, "`{` after `mu`")?;
-                let mut arms = Vec::new();
-                let mut shorthand_arms = Vec::new();
-                loop {
-                    if self.eat(&TokenKind::RBrace) {
-                        break;
-                    }
-                    let arm = self.pos;
-                    if self.peek_kind() == Some(&TokenKind::Dot) {
-                        let span = self.peek().expect("peeked a token").span;
-                        self.skip_past_arm_list(arm);
-                        return Err(ParseError {
-                            message: "a `mu` copattern mirrors a menu field: write `item: out <= c` instead of `.item(out) <= c`".into(),
-                            span,
-                        });
-                    }
-                    let explicit_copattern = matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
-                        && self.tokens.get(self.pos + 1).map(|t| &t.kind)
-                            == Some(&TokenKind::Colon);
-                    let pattern = match if explicit_copattern {
-                        self.parse_mu_copattern()
-                    } else {
-                        self.parse_pattern()
-                    } {
-                        Ok(pattern) => pattern,
-                        Err(e) => {
-                            return Err(self.reversed_arm_error(arm, TokenKind::Le, MU_LE, e));
-                        }
-                    };
-                    if !self.eat(&TokenKind::Le) {
-                        let expected = self.expect(TokenKind::Le, "`<=` in `mu` arm").unwrap_err();
-                        return Err(self.reversed_arm_error(
-                            arm,
-                            TokenKind::FatArrow,
-                            MU_ARROW,
-                            expected,
-                        ));
-                    }
-                    let command = self.parse_expr()?;
-                    arms.push(SelectArm { pattern, command });
-                    shorthand_arms.push(!explicit_copattern);
-                    if !self.eat(&TokenKind::Comma) {
-                        self.expect(TokenKind::RBrace, "`}` after `mu` arm")?;
-                        break;
-                    }
-                }
-                let has_explicit_copattern =
-                    arms.iter().zip(&shorthand_arms).any(|(arm, shorthand)| {
-                        !shorthand && matches!(arm.pattern, Pattern::Dtor { .. })
-                    });
-                let multiple_arms = arms.len() > 1;
-                for (arm, shorthand) in arms.iter_mut().zip(&shorthand_arms) {
-                    let Pattern::Ident(label) = &arm.pattern else { continue };
-                    if *shorthand
-                        && (has_explicit_copattern
-                            || multiple_arms
-                            || self.type_is_menu_item(ty.as_deref(), label))
-                    {
-                        let label = label.clone();
-                        arm.pattern = Pattern::Dtor {
-                            dtor: label.clone(),
-                            arg: Box::new(Pattern::Ident(label)),
-                        };
-                    }
-                }
-                // One binder arm — `mu { k <= c }` — is the atom form: it
-                // captures the ambient continuation whole. Anything else is
-                // the copattern form, a menu.
-                let binder = match arms.as_slice() {
-                    [SelectArm { pattern: Pattern::Ident(name), .. }] => Some(name.clone()),
-                    [SelectArm { pattern: Pattern::Wildcard, .. }] => Some("__unused".to_string()),
-                    _ => None,
-                };
-                if let Some(name) = binder {
-                    let command = arms.pop().expect("matched one arm").command;
-                    let param = Param::named(name, ty.map(TypeExpr::Negative), true);
-                    return Ok(Node {
-                        span: Span { start, end: self.span_end() },
-                        kind: Expr::Mu {
-                            continuation_params: vec![param],
-                            body: Box::new(command),
-                        },
-                    });
-                }
-                if arms
-                    .iter()
-                    .any(|arm| matches!(arm.pattern, Pattern::Ident(_) | Pattern::Wildcard))
-                {
-                    return Err(ParseError {
-                        message: "a `mu` either binds its continuation with one arm, or \
-                                  answers a menu's items — a binder arm stands alone"
-                            .into(),
-                        span: Span { start, end: self.span_end() },
-                    });
-                }
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::CoMatch { ty, arms },
-                })
-            }
+            Some(TokenKind::Mu) => self.parse_mu(start),
             Some(TokenKind::Fn) => {
                 self.pos += 1;
                 // `fn { body }` takes nothing — the computation a handler
@@ -2079,7 +2354,13 @@ impl Parser {
                         },
                     });
                 }
-                // fn(x: T) -> R { body }
+                // `fn(x: T) -> R { body }`. A name here is the old declaration.
+                if self.peek_kind() != Some(&TokenKind::LParen) {
+                    return Err(ParseError {
+                        message: "`fn` names a lambda; a declaration is `func`".into(),
+                        span: Span { start, end: self.span_end() },
+                    });
+                }
                 self.expect(TokenKind::LParen, "`(`")?;
                 let param = self.expect_ident("parameter name")?;
                 let param_type =
@@ -2108,143 +2389,8 @@ impl Parser {
                     },
                 })
             }
-            Some(TokenKind::With) => {
-                self.pos += 1;
-                let handler = self.parse_scrutinee()?;
-                self.expect(TokenKind::Handle, "`handle` after the handler value")?;
-                let body = self.parse_expr()?;
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) },
-                })
-            }
-            Some(TokenKind::Handle | TokenKind::Handler) => {
-                let literal = self.peek_kind() == Some(&TokenKind::Handler);
-                self.pos += 1;
-                let mut effects = Vec::new();
-                let body = if literal {
-                    let bracketed = self.eat(&TokenKind::LBracket);
-                    if self.peek_kind() != Some(&TokenKind::LBrace)
-                        && (!bracketed || self.peek_kind() != Some(&TokenKind::RBracket))
-                    {
-                        loop {
-                            let mut effect = self.expect_ident("an effect name after `handler`")?;
-                            while self.eat(&TokenKind::ColonColon) {
-                                effect.push_str("::");
-                                effect.push_str(&self.expect_ident("an effect name after `::`")?);
-                            }
-                            effects.push(effect);
-                            if !bracketed
-                                || !self.eat(&TokenKind::Comma)
-                                || self.peek_kind() == Some(&TokenKind::RBracket)
-                            {
-                                break;
-                            }
-                        }
-                    }
-                    if bracketed {
-                        self.expect(TokenKind::RBracket, "`]` after the handled effects")?;
-                    }
-                    None
-                } else {
-                    Some(self.parse_scrutinee()?)
-                };
-                self.expect(TokenKind::LBrace, "`{` after the handled expression")?;
-                let mut clauses = Vec::new();
-                let mut ret = None;
-                let mut forward = false;
-                loop {
-                    if self.eat(&TokenKind::RBrace) {
-                        break;
-                    }
-                    if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "_") {
-                        self.pos += 1;
-                        self.expect(TokenKind::FatArrow, "`=>` after `_` in a forwarding clause")?;
-                        let action = self.expect_ident("`forward` after `_ =>`")?;
-                        if action != "forward" {
-                            return Err(ParseError {
-                                message: "a forwarding clause is written `_ => forward`".into(),
-                                span: Span { start, end: self.span_end() },
-                            });
-                        }
-                        forward = true;
-                        self.eat(&TokenKind::Comma);
-                        self.expect(
-                            TokenKind::RBrace,
-                            "`}` after the final `_ => forward` clause",
-                        )?;
-                        break;
-                    }
-                    // `return(x) => body` names the body's result. `return` is
-                    // otherwise an ordinary identifier.
-                    if matches!(self.peek_kind(), Some(TokenKind::Ident(name)) if name == "return")
-                    {
-                        if ret.is_some() {
-                            return Err(ParseError {
-                                message: "a handler has only one `return` clause".into(),
-                                span: Span { start, end: self.span_end() },
-                            });
-                        }
-                        self.pos += 1;
-                        self.expect(TokenKind::LParen, "`(` after `return`")?;
-                        let binder = self.expect_ident("the return binder")?;
-                        self.expect(TokenKind::RParen, "`)`")?;
-                        self.expect(TokenKind::FatArrow, "`=>` in a return clause")?;
-                        ret = Some((binder, Box::new(self.parse_expr()?)));
-                    } else {
-                        // An operation is named as its effect is, by its
-                        // path when it is a module's: `fs::read_file`.
-                        let mut op = self.expect_ident("an operation name")?;
-                        while self.eat(&TokenKind::ColonColon) {
-                            op.push_str("::");
-                            op.push_str(&self.expect_ident("an operation name after `::`")?);
-                        }
-                        self.expect(TokenKind::LParen, "`(` after the operation")?;
-                        let mut params = Vec::new();
-                        if !self.eat(&TokenKind::RParen) {
-                            loop {
-                                params.push(self.expect_ident("an operation parameter")?);
-                                if !self.eat(&TokenKind::Comma) {
-                                    self.expect(TokenKind::RParen, "`)`")?;
-                                    break;
-                                }
-                            }
-                        }
-                        // The operation is a demand, and its carried
-                        // continuation is bound the copattern way: after a
-                        // colon — `op(args): k => body` — or not at all,
-                        // for a clause that never resumes.
-                        let resume = if self.eat(&TokenKind::Colon) {
-                            self.expect_ident("the continuation binder after `:`")?
-                        } else if let Some(TokenKind::Ident(name)) = self.peek_kind() {
-                            let name = name.clone();
-                            return Err(ParseError {
-                                message: format!(
-                                    "a clause binds its continuation after a colon:                                      `{op}(…): {name} => …` — or omits it when it                                      never resumes: `{op}(…) => …`"
-                                ),
-                                span: self
-                                    .peek()
-                                    .map(|t| t.span)
-                                    .unwrap_or(Span { start: 0, end: 0 }),
-                            });
-                        } else {
-                            // Never resumed: nothing in the body can name it.
-                            "__never_resumed".to_string()
-                        };
-                        self.expect(TokenKind::FatArrow, "`=>` in a handler clause")?;
-                        let body = self.parse_expr()?;
-                        clauses.push(HandleClause { op, params, resume, body });
-                    }
-                    self.eat(&TokenKind::Comma);
-                }
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: match body {
-                        Some(body) => Expr::Handle { body: Box::new(body), clauses, ret, forward },
-                        None => Expr::Handler { effects, clauses, ret, forward },
-                    },
-                })
-            }
+            Some(TokenKind::Handle) => self.parse_do(start),
+            Some(TokenKind::Handler) => self.parse_op(start),
             Some(TokenKind::Match) => {
                 self.pos += 1;
                 let scrutinee = self.parse_scrutinee()?;
@@ -2258,7 +2404,7 @@ impl Parser {
                     // A request arm matches a continuation, so its demand
                     // reaches back: `.item(out) <= e`. A data arm flows
                     // forward, `pattern => e`. An arm has no guard: a test
-                    // on what the pattern bound is a `match` inside the arm.
+                    // on what the pattern bound is an `of` inside the arm.
                     let copattern = pattern_is_copattern(&pattern);
                     if copattern {
                         if self.peek_kind() == Some(&TokenKind::FatArrow) {
@@ -2294,59 +2440,6 @@ impl Parser {
                 Ok(Node {
                     span: Span { start, end: self.span_end() },
                     kind: Expr::Match { scrutinee: Box::new(scrutinee), arms },
-                })
-            }
-            Some(TokenKind::Select) => {
-                self.pos += 1;
-                // The type whose consumer this builds: a declaration name, or
-                // an explicit connective such as `(+i64, +String)`. It may be
-                // left out when an arm's pattern names it.
-                let ty = match self.peek_kind() {
-                    Some(TokenKind::LBrace) => None,
-                    _ => Some(Box::new(self.parse_type()?)),
-                };
-                self.expect(TokenKind::LBrace, "`{` after the `select` type")?;
-                let mut arms = Vec::new();
-                loop {
-                    if self.eat(&TokenKind::RBrace) {
-                        break;
-                    }
-                    // A `select` arm matches data, and data flows forward
-                    // into the command: `pattern => command`. The demands a
-                    // `mu` answers reach back, `<=` — the arrow says which
-                    // side of the mirror the scrutinee is on.
-                    let arm = self.pos;
-                    let pattern = match self.parse_pattern() {
-                        Ok(pattern) => pattern,
-                        Err(e) => {
-                            return Err(self.reversed_arm_error(
-                                arm,
-                                TokenKind::FatArrow,
-                                SELECT_ARROW,
-                                e,
-                            ));
-                        }
-                    };
-                    if !self.eat(&TokenKind::FatArrow) {
-                        let expected =
-                            self.expect(TokenKind::FatArrow, "`=>` in `select` arm").unwrap_err();
-                        return Err(self.reversed_arm_error(
-                            arm,
-                            TokenKind::Le,
-                            SELECT_LE,
-                            expected,
-                        ));
-                    }
-                    let command = self.parse_expr()?;
-                    arms.push(SelectArm { pattern, command });
-                    if !self.eat(&TokenKind::Comma) {
-                        self.expect(TokenKind::RBrace, "`}` after `select` arm")?;
-                        break;
-                    }
-                }
-                Ok(Node {
-                    span: Span { start, end: self.span_end() },
-                    kind: Expr::Select { ty, arms },
                 })
             }
             Some(TokenKind::Let) => {
@@ -2602,6 +2695,7 @@ impl Parser {
     }
 
     fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
+        self.reject_retired()?;
         match self.peek_kind().cloned() {
             // `.item(p)` — a request shape: the demanded destructor, and a
             // pattern for the continuation the request carries.
@@ -2821,7 +2915,7 @@ mod tests {
 
     #[test]
     fn parse_fn_def() {
-        let p = parse_str("fn add(x: +i32, y: +i32) -> i32 { <(x, y) | __add }");
+        let p = parse_str("func add(x: +i32, y: +i32) -> i32 { <(x, y) | __add }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
         assert!(
@@ -2831,7 +2925,7 @@ mod tests {
 
     #[test]
     fn parse_negative_fn_def() {
-        let p = parse_str("fn run(k: -i32) <- i32 { k(1) }");
+        let p = parse_str("func run(k: -i32) <- i32 { k(1) }");
         assert_eq!(p.decls.len(), 1);
         assert!(matches!(
             &p.decls[0].kind,
@@ -2844,7 +2938,7 @@ mod tests {
 
     #[test]
     fn parse_fn_polarity_comes_from_arrow_not_lookahead() {
-        let p = parse_str("fn run(k: -i32) <- i32 { k(1) }");
+        let p = parse_str("func run(k: -i32) <- i32 { k(1) }");
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Fn { polarity, params, .. }
@@ -2852,7 +2946,7 @@ mod tests {
                     && params.iter().all(|p| p.is_continuation)
         ));
 
-        let p = parse_str("fn run(k: -i32) -> i32 { k(1) }");
+        let p = parse_str("func run(k: -i32) -> i32 { k(1) }");
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Fn { polarity, params, .. }
@@ -2864,14 +2958,14 @@ mod tests {
     #[test]
     fn parse_return_in_ordinary_positions() {
         // `return` may be declared as a continuation parameter...
-        let p = parse_str("fn k(return: -i32) <- i32 { return(0) }");
+        let p = parse_str("func k(return: -i32) <- i32 { return(0) }");
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Fn { params, .. } if params.first().is_some_and(|p| p.name() == Some("return"))
         ));
 
         // ...and used as an expression callee and an expression argument.
-        let p = parse_str("fn main() -> i32 { return(0, return) }");
+        let p = parse_str("func main() -> i32 { return(0, return) }");
         let body = match &p.decls[0].kind {
             Decl::Fn { body, .. } => body.clone(),
             _ => panic!("expected fn declaration"),
@@ -2888,7 +2982,7 @@ mod tests {
         ));
 
         // In ordinary call syntax it can also be a struct-name marker.
-        let p = parse_str("fn main() -> i32 { return(return { x: 0 }) }");
+        let p = parse_str("func main() -> i32 { return(return { x: 0 }) }");
         let body = match &p.decls[0].kind {
             Decl::Fn { body, .. } => body.clone(),
             _ => panic!("expected fn declaration"),
@@ -2907,14 +3001,14 @@ mod tests {
 
     #[test]
     fn a_match_arm_has_no_guard() {
-        let tokens = lex("fn f(c: +i64) -> i64 { match c { _ if c > 0 => 1, _ => 2 } }").unwrap();
+        let tokens = lex("func f(c: +i64) -> i64 { of c { _ if c > 0 => 1, _ => 2 } }").unwrap();
         let errors = parse(tokens).unwrap_err();
         assert!(errors[0].message.contains("expected `=>`"), "got: {errors:?}");
     }
 
     #[test]
     fn parse_rejects_bare_fn() {
-        let tokens = lex("fn f(x: +i32) { x }").unwrap();
+        let tokens = lex("func f(x: +i32) { x }").unwrap();
         let errors = parse(tokens).unwrap_err();
         assert!(
             errors[0]
@@ -2922,6 +3016,25 @@ mod tests {
                 .contains("expected `->` for a positive function or `<-` for a negative function"),
             "got: {errors:?}"
         );
+    }
+
+    #[test]
+    fn parse_rejects_retired_keywords() {
+        for (source, spelling) in [
+            ("command f | (k: i32) { <0 | k> }", "`proc`"),
+            ("match x { _ => 0 }", "`of`"),
+            ("select Colour { Red => 0 }", "`mu`"),
+            ("trait Show { func show(self: Self) -> String; }", "`spec`"),
+            ("effect E { func read() -> i64; }", "`hook`"),
+            ("const N: i64 = 1;", "`def`"),
+            ("handle e { read(): k => <1 | k> }", "`do`"),
+            ("handler E { read(): k => <1 | k> }", "`op`"),
+            ("with h handle e", "`op h do e`"),
+            ("fn f() -> i64 { 1 }", "`func`"),
+        ] {
+            let errors = parse(lex(source).unwrap()).unwrap_err();
+            assert!(errors[0].message.contains(spelling), "source: {source}; errors: {errors:?}");
+        }
     }
 
     #[test]
@@ -2937,14 +3050,14 @@ mod tests {
 
     #[test]
     fn parse_rejects_old_to_parameter_marker() {
-        let source = "command step(x: +i32, to k: -i32) { k(x) }";
+        let source = "proc step(x: +i32, to k: -i32) { k(x) }";
         let errors = parse(lex(source).unwrap()).unwrap_err();
         assert!(errors[0].message.contains("expected `:`"), "source: {source}; errors: {errors:?}");
     }
 
     #[test]
     fn parse_mu_def() {
-        let p = parse_str("command step(x: +i32) | (k: -i32) { k(x) }");
+        let p = parse_str("proc step(x: +i32) | (k: -i32) { k(x) }");
         assert_eq!(p.decls.len(), 1);
         let d = &p.decls[0];
         assert!(matches!(&d.kind, Decl::Command { name, value_params, continuation_params, .. }
@@ -2953,7 +3066,7 @@ mod tests {
 
     #[test]
     fn parse_command_bottom_annotation() {
-        let p = parse_str("command step(x: +i32) | (k: -i32) -> (;) { k(x) }");
+        let p = parse_str("proc step(x: +i32) | (k: -i32) -> (;) { k(x) }");
         assert!(matches!(
             &p.decls[0].kind,
             Decl::Command { return_type: Some(ty), .. } if ty.is_bottom()
@@ -2963,8 +3076,8 @@ mod tests {
     #[test]
     fn parse_command_rejects_non_bottom_return() {
         let errors =
-            parse(lex("command step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
-        assert!(errors[0].message.contains("a `command` returns `(;)`"), "got: {errors:?}");
+            parse(lex("proc step(x: +i32) | (k: -i32) -> i32 { k(x) }").unwrap()).unwrap_err();
+        assert!(errors[0].message.contains("a `proc` returns `(;)`"), "got: {errors:?}");
     }
 
     #[test]
@@ -2975,14 +3088,14 @@ mod tests {
 
     #[test]
     fn parse_match() {
-        let p = parse_str("match x { _ => 0, }");
+        let p = parse_str("of x { _ => 0, }");
         assert_eq!(p.decls.len(), 1);
     }
 
     #[test]
     fn parse_select() {
         // One arm per variant of an enum.
-        let p = parse_str("select Color { Red => 0 | return>, Green => 1 | return> }");
+        let p = parse_str("mu Color { Red => 0 | return>, Green => 1 | return> }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -3006,7 +3119,7 @@ mod tests {
 
         // The produced type may be written in front; the binder then
         // consumes it — `mu i32 { k <= c }` gives `k` the type `-i32`.
-        let p = parse_str("fn f() -> i32 { mu i32 { k <= <42 | k> } }");
+        let p = parse_str("func f() -> i32 { mu i32 { k <= <42 | k> } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block: {:?}", body.kind) };
         let Expr::Mu { continuation_params, .. } = &exprs[0].kind else {
@@ -3021,9 +3134,9 @@ mod tests {
     #[test]
     fn a_handler_forwarding_clause_is_explicit_and_last() {
         for source in [
-            "handle 1 { _ => forward }",
-            "handle 1 { return(value) => value, _ => forward, }",
-            "handle 1 { read(): resume => <1 | resume, _ => forward }",
+            "do 1 { _ => forward }",
+            "do 1 { return(value) => value, _ => forward, }",
+            "do 1 { read(): resume => <1 | resume, _ => forward }",
         ] {
             let program = parse_str(source);
             let Decl::Fn { body, .. } = &program.decls[0].kind else {
@@ -3032,11 +3145,11 @@ mod tests {
             assert!(matches!(body.kind, Expr::Handle { forward: true, .. }));
         }
         for source in [
-            "handle 1 { _ => forward, read() => 1 }",
-            "handle 1 { _ => forward, return(value) => value }",
-            "handle 1 { _ => forward, _ => forward }",
-            "handle 1 { _ => ignore }",
-            "handle 1 { _ => forward() }",
+            "do 1 { _ => forward, read() => 1 }",
+            "do 1 { _ => forward, return(value) => value }",
+            "do 1 { _ => forward, _ => forward }",
+            "do 1 { _ => ignore }",
+            "do 1 { _ => forward() }",
         ] {
             assert!(parse(lex(source).unwrap()).is_err(), "{source}");
         }
@@ -3051,9 +3164,9 @@ mod tests {
     fn a_declaration_is_a_command_and_mu_is_the_expression() {
         // A declaration over parameters is a `command`; `mu` is the
         // expression capturing the ambient continuation.
-        let p = parse_str("command f | (k: -i32) { <1 | k> }");
+        let p = parse_str("proc f | (k: -i32) { <1 | k> }");
         assert!(matches!(&p.decls[0].kind, Decl::Command { .. }));
-        let p = parse_str("fn g() -> i32 { mu { k <= <1 | k> } }");
+        let p = parse_str("func g() -> i32 { mu { k <= <1 | k> } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&exprs[0].kind, Expr::Mu { .. }));
@@ -3063,9 +3176,10 @@ mod tests {
     fn the_parenthesised_mu_form_is_gone() {
         // `mu(k) { c }` and `mu name(k: -T) { c }` both point at the arm
         // syntax now.
-        for source in
-            ["fn f() -> i32 { mu(k: -i32) { 1 | k> } }", "fn f() -> i32 { mu here(k) { 1 | k> } }"]
-        {
+        for source in [
+            "func f() -> i32 { mu(k: -i32) { 1 | k> } }",
+            "func f() -> i32 { mu here(k) { 1 | k> } }",
+        ] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
                 errors.iter().any(|e| e.message.contains("mu { k <= c }")),
@@ -3075,8 +3189,8 @@ mod tests {
 
         // A binder arm stands alone: it captures the whole continuation, so
         // a second arm has nothing left to answer.
-        let errors =
-            parse(lex("fn f() -> i32 { mu { _ <= 1, item: x <= 2 | x> } }").unwrap()).unwrap_err();
+        let errors = parse(lex("func f() -> i32 { mu { _ <= 1, item: x <= 2 | x> } }").unwrap())
+            .unwrap_err();
         assert!(errors.iter().any(|e| e.message.contains("binder arm stands alone")), "{errors:?}");
     }
 
@@ -3084,7 +3198,7 @@ mod tests {
     fn mu_copatterns_mirror_menu_fields() {
         let p = parse_str(
             "menu Stream { head: i32, tail: Stream }
-             fn stream() -> Stream {
+             func stream() -> Stream {
                  mu Stream {
                      head: out <= <1 | out>,
                      tail: head: out <= <2 | out>,
@@ -3112,7 +3226,7 @@ mod tests {
     #[test]
     fn mu_item_label_is_its_default_binder() {
         let p = parse_str(
-            "fn lazy() -> Lazy { mu Lazy { force <= <1 | force> } }
+            "func lazy() -> Lazy { mu Lazy { force <= <1 | force> } }
              menu Lazy { force: i32 }",
         );
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
@@ -3124,7 +3238,7 @@ mod tests {
                 if dtor == "force" && matches!(&**arg, Pattern::Ident(name) if name == "force")
         ));
 
-        let p = parse_str("fn captured() -> i32 { mu i32 { out <= <1 | out> } }");
+        let p = parse_str("func captured() -> i32 { mu i32 { out <= <1 | out> } }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a function") };
         let Expr::Block(items) = &body.kind else { panic!("expected a block") };
         assert!(matches!(&items[0].kind, Expr::Mu { .. }));
@@ -3139,7 +3253,7 @@ mod tests {
     #[test]
     fn a_mu_writes_only_the_parameter_groups_it_has() {
         // No values: the group is left out, not written empty.
-        let p = parse_str("command main | (exit: -i32) / {IO} { <0 | exit> }");
+        let p = parse_str("proc main | (exit: -i32) / {IO} { <0 | exit> }");
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
@@ -3148,7 +3262,7 @@ mod tests {
         assert!(continuation_params[0].is_continuation);
 
         // No continuations: the `|` goes with the group it introduces.
-        let p = parse_str("command log(message: +String) { println(message) }");
+        let p = parse_str("proc log(message: +String) { println(message) }");
         let Decl::Command { value_params, continuation_params, .. } = &p.decls[0].kind else {
             panic!("expected a mu declaration: {:?}", p.decls[0].kind)
         };
@@ -3156,7 +3270,7 @@ mod tests {
         assert!(continuation_params.is_empty());
 
         for source in
-            ["command main() | (exit: -i32) { 0 | exit> }", "command log(m: +String) | () { m }"]
+            ["proc main() | (exit: -i32) { 0 | exit> }", "proc log(m: +String) | () { m }"]
         {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(
@@ -3168,7 +3282,7 @@ mod tests {
 
     #[test]
     fn a_declaration_still_needs_its_parameter_types() {
-        let errors = parse(lex("fn f(x) -> i32 { x }").unwrap()).unwrap_err();
+        let errors = parse(lex("func f(x) -> i32 { x }").unwrap()).unwrap_err();
         assert!(
             errors.iter().any(|e| e.message.contains("a declaration's parameters carry types")),
             "errors: {errors:?}"
@@ -3177,7 +3291,7 @@ mod tests {
 
     #[test]
     fn a_select_may_leave_out_its_type() {
-        let p = parse_str("select { Red => 0 | return> }");
+        let p = parse_str("mu { Red => 0 | return> }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -3188,27 +3302,27 @@ mod tests {
 
     #[test]
     fn parse_rejects_the_wrong_arrow_on_either_side() {
-        // The arrow marks the scrutinee's side of the mirror: data flows
-        // forward (`=>`), a demand reaches back (`<=`). Each wrong way gets
-        // the guidance, not a token-soup error.
+        // Every arm of one `mu` uses the same arrow. A consumer arm (`=>`)
+        // followed by a demand arm (`<=`) says so, rather than a token-soup
+        // error.
         let errors = parse(
             lex("enum Color { Red, Green }
-                 fn k(return: -i32) <- Color {
-                     select Color {
-                         Red <= 0 | return>,
-                         Green <= 1 | return>,
+                 func k(return: -i32) <- Color {
+                     mu Color {
+                         Red => <0 | return>,
+                         Green <= <1 | return>,
                      }
                  }")
             .unwrap(),
         )
         .unwrap_err();
-        assert!(errors.iter().any(|e| e.message.contains("flows forward")), "errors: {errors:?}",);
+        assert!(errors.iter().any(|e| e.message.contains("the same arrow")), "errors: {errors:?}",);
         // One arm with the wrong arrow is one error, not one per arm after.
         assert_eq!(errors.len(), 1, "errors: {errors:?}");
 
         let errors = parse(
             lex("menu Config { retries: i64 }
-                 fn f(k: -Config) -> -Config { match k { .retries(out) => .retries(out) } }")
+                 func f(k: -Config) -> -Config { of k { .retries(out) => .retries(out) } }")
             .unwrap(),
         )
         .unwrap_err();
@@ -3216,7 +3330,7 @@ mod tests {
 
         let errors = parse(
             lex("menu Config { retries: i64 }
-                 fn config() -> Config { mu Config { retries => 3 } }")
+                 func config() -> Config { mu Config { retries: out => <3 | out> } }")
             .unwrap(),
         )
         .unwrap_err();
@@ -3226,7 +3340,7 @@ mod tests {
     #[test]
     fn parse_select_over_a_product() {
         // A product has one shape, so one arm, binding its components.
-        let p = parse_str("select (+i64, +String) { (end, text) => end | done> }");
+        let p = parse_str("mu (+i64, +String) { (end, text) => end | done> }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { ty, arms } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -3238,7 +3352,7 @@ mod tests {
 
     #[test]
     fn parse_select_over_a_struct() {
-        let p = parse_str("select Reading { Reading { value: v, unit: u } => 0 | out> }");
+        let p = parse_str("mu Reading { Reading { value: v, unit: u } => 0 | out> }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected a declaration") };
         let Expr::Select { arms, .. } = &body.kind else {
             panic!("expected a select: {:?}", body.kind)
@@ -3258,7 +3372,7 @@ mod tests {
             [("<1 + 2 | k>", "+", "add"), ("<a < b | k>", "<", "lt"), ("<a == b | k>", "==", "eq")]
         {
             let errors =
-                parse(lex(&format!("fn main() -> i32 {{ {source} }}")).unwrap()).unwrap_err();
+                parse(lex(&format!("func main() -> i32 {{ {source} }}")).unwrap()).unwrap_err();
             assert!(
                 errors[0].message.contains(&format!("there is no `{operator}` operator"))
                     && errors[0].message.contains(&format!("`{function}`")),
@@ -3272,7 +3386,7 @@ mod tests {
         // Composition is associative, so the chain is one flat list of
         // stages — where a consumer may stand is the checker's rule, not
         // the grammar's.
-        let p = parse_str("fn main() -> i32 { <1 | j | k> }");
+        let p = parse_str("func main() -> i32 { <1 | j | k> }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else { panic!("expected fn") };
         let Expr::Block(exprs) = &body.kind else { panic!("expected block") };
         let Expr::Flow { stages, .. } = &exprs[0].kind else {
@@ -3283,7 +3397,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_removed_expression_level_dual() {
-        let errors = parse(lex("fn main() -> i32 { dual(42) }").unwrap()).unwrap_err();
+        let errors = parse(lex("func main() -> i32 { dual(42) }").unwrap()).unwrap_err();
         assert!(
             errors.iter().any(|e| e.message.contains("expected expression, found `dual`")),
             "errors: {errors:?}"
@@ -3295,7 +3409,7 @@ mod tests {
         // `Name<…>` is ordinary generic syntax now — the removed `Command`
         // type former parses as an application and is rejected downstream,
         // where the checker finds no such declaration.
-        let p = parse_str("fn f(x: Command<i64, +i64>) -> i64 { 0 }");
+        let p = parse_str("func f(x: Command<i64, +i64>) -> i64 { 0 }");
         let Decl::Fn { params, .. } = &p.decls[0].kind else { panic!("expected a fn") };
         assert!(matches!(
             &params[0].ty,
@@ -3313,7 +3427,7 @@ mod tests {
         assert_eq!(type_params, &["A", "B", "E"]);
         assert_eq!(type_param_signs, &[("A".to_string(), Positive), ("B".to_string(), Negative)]);
         // `<-` lexes as one token; opening a parameter list it is `<` and `-`.
-        let p = parse_str("fn f<-T: Show>(k: T) <- i64 { k }");
+        let p = parse_str("func f<-T: Show>(k: T) <- i64 { k }");
         let Decl::Fn { type_param_signs, bounds, .. } = &p.decls[0].kind else {
             panic!("expected a fn")
         };
@@ -3332,9 +3446,9 @@ mod tests {
     #[test]
     fn a_trait_takes_type_parameters_and_a_bound_may_apply_it() {
         let p = parse_str(
-            "trait Into<+U> { fn into(self: Self) -> U; }
-             fn f<+T: Into<String> + Show>(x: T) -> String { x }
-             impl Into<i64> for i64 { fn into(self: i64) -> i64 { self } }",
+            "spec Into<+U> { func into(self: Self) -> U; }
+             func f<+T: Into<String> + Show>(x: T) -> String { x }
+             impl Into<i64> for i64 { func into(self: i64) -> i64 { self } }",
         );
         let Decl::Trait { type_params, type_param_signs, methods, .. } = &p.decls[0].kind else {
             panic!("expected a trait")
@@ -3378,14 +3492,14 @@ mod tests {
 
     #[test]
     fn the_type_bool_is_refused() {
-        let errors = parse(lex("fn f(b: bool) -> i64 { 0 }").unwrap()).unwrap_err();
+        let errors = parse(lex("func f(b: bool) -> i64 { 0 }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("there is no `bool`"), "{errors:?}");
     }
 
     #[test]
     fn released_words_are_identifiers() {
         parse_str(
-            "fn if(true: i64, false: i64) -> i64 { let else = true; let return = false; else }",
+            "func if(true: i64, false: i64) -> i64 { let else = true; let return = false; else }",
         );
     }
 
@@ -3457,15 +3571,15 @@ mod tests {
 
     #[test]
     fn parse_interaction() {
-        let p = parse_str("fn f() -> i32 { mu { k <= <1 | k> } }");
+        let p = parse_str("func f() -> i32 { mu { k <= <1 | k> } }");
         assert_eq!(p.decls.len(), 1);
     }
 
     #[test]
     fn there_is_no_and_or() {
         for source in [
-            "fn f(a: Bool, b: Bool) -> Bool { a && b }",
-            "fn f(a: Bool, b: Bool) -> Bool { a || b }",
+            "func f(a: Bool, b: Bool) -> Bool { a && b }",
+            "func f(a: Bool, b: Bool) -> Bool { a || b }",
         ] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(errors[0].message.contains("there is no `&&` or `||`"), "{source}: {errors:?}");
@@ -3515,10 +3629,10 @@ mod tests {
     fn a_consumer_binder_needs_a_consumer_after_it() {
         for (source, expected) in [
             (
-                "fn f(p: i64) -> i64 { <p | read | ok <= (ok & failed) | size }",
+                "func f(p: i64) -> i64 { <p | read | ok <= (ok & failed) | size }",
                 "closes on a consumer",
             ),
-            ("fn f(p: i64) -> i64 { <p | read | ok <= (ok & failed)> }", "nothing follows"),
+            ("func f(p: i64) -> i64 { <p | read | ok <= (ok & failed)> }", "nothing follows"),
         ] {
             let errors = parse(lex(source).unwrap()).unwrap_err();
             assert!(errors[0].message.contains(expected), "{source}: {errors:?}");
@@ -3527,13 +3641,13 @@ mod tests {
 
     #[test]
     fn a_value_alone_is_not_opened() {
-        let errors = parse(lex("fn f() -> i64 { <1 }").unwrap()).unwrap_err();
+        let errors = parse(lex("func f() -> i64 { <1 }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("has none"), "got: {errors:?}");
     }
 
     #[test]
     fn there_is_no_bang() {
-        let errors = parse(lex("fn f(b: Bool) -> Bool { !b }").unwrap()).unwrap_err();
+        let errors = parse(lex("func f(b: Bool) -> Bool { !b }").unwrap()).unwrap_err();
         assert!(errors[0].message.contains("there is no `!`"), "got: {errors:?}");
     }
 
@@ -3563,7 +3677,7 @@ mod tests {
 
     #[test]
     fn parse_match_range_binding() {
-        let p = parse_str("match c { c @ '0'..='9' => 1, 'x' | 'y' => 2, _ => 3 }");
+        let p = parse_str("of c { c @ '0'..='9' => 1, 'x' | 'y' => 2, _ => 3 }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
         };
@@ -3576,7 +3690,7 @@ mod tests {
 
     #[test]
     fn parse_data_pattern_with_shorthand() {
-        let p = parse_str("match p { Point { x, y: rest } => 1 }");
+        let p = parse_str("of p { Point { x, y: rest } => 1 }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
         };
@@ -3592,7 +3706,7 @@ mod tests {
 
     #[test]
     fn parse_negative_int_pattern() {
-        let p = parse_str("match n { -3 => 1 }");
+        let p = parse_str("of n { -3 => 1 }");
         let Decl::Fn { body, .. } = &p.decls[0].kind else {
             panic!("expected main declaration");
         };
@@ -3604,7 +3718,7 @@ mod tests {
 
     #[test]
     fn parse_const_decl() {
-        let p = parse_str("const X: +char = 'x';");
+        let p = parse_str("def X: +char = 'x';");
         assert!(matches!(&p.decls[0].kind, Decl::Const { name, .. } if name == "X"));
     }
 

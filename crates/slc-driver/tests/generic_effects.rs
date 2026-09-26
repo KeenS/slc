@@ -16,11 +16,11 @@ fn generic_operations_and_handlers_share_their_effect_arguments() {
     let (success, stdout, stderr) = run(
         "reader",
         "
-        effect Reader<+T> { fn read() -> T; }
-        fn get<+T>() -> T / {Reader<T>} { read() }
-        command main | (exit: i32) / {IO} {
-            let number = handle get() { read(): resume => <42 | resume };
-            let text = handle get() { read(): resume => <\"hello\" | resume };
+        hook Reader<+T> { func read() -> T; }
+        func get<+T>() -> T / {Reader<T>} { read() }
+        proc main | (exit: i32) / {IO} {
+            let number = do get() { read(): resume => <42 | resume };
+            let text = do get() { read(): resume => <\"hello\" | resume };
             <number | println;
             <text | println;
             <0 | exit>
@@ -35,12 +35,12 @@ fn nested_handlers_may_use_different_instantiations() {
     let (success, stdout, stderr) = run(
         "nested",
         "
-        effect Reader<+T> { fn read() -> T; }
-        fn number() -> i64 / {Reader<i64>} { read() }
-        fn text() -> String / {Reader<String>} { read() }
-        command main | (exit: i32) / {IO} {
-            let result = handle {
-                let inner = handle text() { read(): resume => <\"inner\" | resume };
+        hook Reader<+T> { func read() -> T; }
+        func number() -> i64 / {Reader<i64>} { read() }
+        func text() -> String / {Reader<String>} { read() }
+        proc main | (exit: i32) / {IO} {
+            let result = do {
+                let inner = do text() { read(): resume => <\"inner\" | resume };
                 <inner | println;
                 number()
             } { read(): resume => <42 | resume };
@@ -57,11 +57,11 @@ fn incompatible_same_name_interception_is_rejected() {
     let (success, _, stderr) = run(
         "wrong_handler",
         "
-        effect Reader<+T> { fn read() -> T; }
-        fn number() -> i64 / {Reader<i64>} { read() }
-        command main | (exit: i32) / {IO} {
-            let result = handle {
-                handle number() { read(): resume => <\"wrong\" | resume }
+        hook Reader<+T> { func read() -> T; }
+        func number() -> i64 / {Reader<i64>} { read() }
+        proc main | (exit: i32) / {IO} {
+            let result = do {
+                do number() { read(): resume => <\"wrong\" | resume }
             } { read(): resume => <42 | resume };
             <result | println;
             <0 | exit>
@@ -84,9 +84,9 @@ fn generic_effect_rows_validate_names_arity_kinds_and_polarity() {
             name,
             &format!(
                 "
-            effect Reader<+T> {{ fn read() -> T; }}
-            fn unused() -> i64 / {{{row}}} {{ 0 }}
-            command main | (exit: i32) {{ <0 | exit> }}"
+            hook Reader<+T> {{ func read() -> T; }}
+            func unused() -> i64 / {{{row}}} {{ 0 }}
+            proc main | (exit: i32) {{ <0 | exit> }}"
             ),
         );
         assert!(!success, "{name}: invalid effect row accepted");
@@ -99,12 +99,12 @@ fn generic_handler_values_keep_their_capabilities() {
     let (success, stdout, stderr) = run(
         "stored",
         "
-        effect Reader<+T> { fn read() -> T; }
-        command main | (exit: i32) / {IO} {
-            let reader: Handler<i64, i64, {Reader<i64>}, {}> = handler Reader {
+        hook Reader<+T> { func read() -> T; }
+        proc main | (exit: i32) / {IO} {
+            let reader: Handler<i64, i64, {Reader<i64>}, {}> = op Reader {
                 read(): resume => <42 | resume
             };
-            <(with reader handle read()) | println;
+            <(op reader do read()) | println;
             <0 | exit>
         }",
     );
@@ -117,9 +117,9 @@ fn operations_of_one_effect_share_one_handler_instantiation() {
     let (success, stdout, stderr) = run(
         "pair",
         "
-        effect Pair<+T> { fn first() -> T; fn second() -> T; }
-        command main | (exit: i32) / {IO} {
-            let result = handle <(first(), second()) | add {
+        hook Pair<+T> { func first() -> T; func second() -> T; }
+        proc main | (exit: i32) / {IO} {
+            let result = do <(first(), second()) | add {
                 first(): resume => <10 | resume,
                 second(): resume => <32 | resume
             };
@@ -132,9 +132,9 @@ fn operations_of_one_effect_share_one_handler_instantiation() {
     let (success, _, stderr) = run(
         "wrong_pair",
         "
-        effect Pair<+T> { fn first() -> T; fn second() -> T; }
-        command main | (exit: i32) / {IO} {
-            let result = handle first() {
+        hook Pair<+T> { func first() -> T; func second() -> T; }
+        proc main | (exit: i32) / {IO} {
+            let result = do first() {
                 first(): resume => <10 | resume,
                 second(): resume => <\"wrong\" | resume
             };
@@ -150,9 +150,9 @@ fn composable_capture_resumes_twice_and_preserves_unrelated_effects() {
     let (success, stdout, stderr) = run(
         "capture",
         "
-        effect Factor { fn factor() -> i64; }
-        command main | (exit: i32) / {IO} {
-            let result = handle (<fn {
+        hook Factor { func factor() -> i64; }
+        proc main | (exit: i32) / {IO} {
+            let result = do (<fn {
                 let value = <fn(resume: (i64 -> i64 / {Factor})) {
                     <(<1 | resume, <2 | resume) | add
                 } | control::shift;
@@ -169,7 +169,7 @@ fn composable_capture_resumes_twice_and_preserves_unrelated_effects() {
 #[test]
 fn capture_handlers_nest_with_distinct_answer_types() {
     let (success, stdout, stderr) = run("nested_capture", "
-        command main | (exit: i32) / {IO} {
+        proc main | (exit: i32) / {IO} {
             let result = <fn {
                 let inner = <fn {
                     let value = <fn(resume: (String -> String)) { <\"inner\" | resume } | control::shift;
@@ -205,7 +205,7 @@ fn bare_reset_does_not_handle_shift_and_answers_must_agree() {
             name,
             &format!(
                 "
-            command main | (exit: i32) / {{IO}} {{
+            proc main | (exit: i32) / {{IO}} {{
                 let result = {expression}; <result | println; <0 | exit>
             }}"
             ),
@@ -222,11 +222,11 @@ fn module_resolution_preserves_generic_scopes_and_effect_paths() {
         "
         mod provider {
             pub data T { value: String }
-            pub effect Reader<+T> { fn read() -> T; }
-            pub fn get<+T>() -> T / {Reader<T>} { read() }
+            pub hook Reader<+T> { func read() -> T; }
+            pub func get<+T>() -> T / {Reader<T>} { read() }
         }
-        command main | (exit: i32) / {IO} {
-            let result = handle provider::get() { provider::read(): resume => <42 | resume };
+        proc main | (exit: i32) / {IO} {
+            let result = do provider::get() { provider::read(): resume => <42 | resume };
             <result | println;
             <0 | exit>
         }",
@@ -240,11 +240,11 @@ fn capture_forces_callback_construction_without_caching_resumptions() {
     let (success, stdout, stderr) = run(
         "callback_factory",
         "
-        fn make() -> ((i64 -> i64 / {IO}) -> i64 / {IO}) / {IO} {
+        func make() -> ((i64 -> i64 / {IO}) -> i64 / {IO}) / {IO} {
             <\"build\" | println;
             fn(resume: (i64 -> i64 / {IO})) { <(<1 | resume, <2 | resume) | add }
         }
-        command main | (exit: i32) / {IO} {
+        proc main | (exit: i32) / {IO} {
             let result = <fn {
                 let value = <make() | control::shift;
                 <\"resumed\" | println;
@@ -264,10 +264,10 @@ fn generic_forwarding_keeps_the_intercepted_instantiation() {
     let (success, stdout, stderr) = run(
         "forward",
         "
-        effect Pair<+T> { fn first() -> T; fn second() -> T; }
-        command main | (exit: i32) / {IO} {
-            let result = handle {
-                handle <(first(), second()) | add {
+        hook Pair<+T> { func first() -> T; func second() -> T; }
+        proc main | (exit: i32) / {IO} {
+            let result = do {
+                do <(first(), second()) | add {
                     first(): resume => <7 | resume,
                     _ => forward
                 }
@@ -286,18 +286,18 @@ fn generic_forwarding_keeps_the_intercepted_instantiation() {
 #[test]
 fn generic_effect_parameters_and_local_row_annotations_are_checked() {
     for (name, declarations, body) in [
-        ("duplicate", "effect Reader<+T, +T> { fn read() -> T; }", ""),
-        ("unsigned", "effect Reader<T> { fn read() -> T; }", ""),
-        ("unknown", "effect Reader<+T> { fn read(value: Missing) -> T; }", ""),
+        ("duplicate", "hook Reader<+T, +T> { func read() -> T; }", ""),
+        ("unsigned", "hook Reader<T> { func read() -> T; }", ""),
+        ("unknown", "hook Reader<+T> { func read(value: Missing) -> T; }", ""),
         (
             "local_polarity",
-            "effect Reader<+T> { fn read() -> T; }",
+            "hook Reader<+T> { func read() -> T; }",
             "let callback: ((,) -> i64 / {Reader<-i64>}) = fn { 0 };",
         ),
         (
             "capability",
-            "effect Reader<+T> { fn read() -> T; }",
-            "let wrong: Handler<i64, i64, {Reader<String>}, {}> = handler Reader { read(): resume => <42 | resume };",
+            "hook Reader<+T> { func read() -> T; }",
+            "let wrong: Handler<i64, i64, {Reader<String>}, {}> = op Reader { read(): resume => <42 | resume };",
         ),
     ] {
         let (success, _, stderr) = run(
@@ -305,7 +305,7 @@ fn generic_effect_parameters_and_local_row_annotations_are_checked() {
             &format!(
                 "
             {declarations}
-            command main | (exit: i32) {{ {body} <0 | exit> }}"
+            proc main | (exit: i32) {{ {body} <0 | exit> }}"
             ),
         );
         assert!(!success, "{name}: invalid generic effect accepted");
@@ -318,15 +318,15 @@ fn generic_latent_rows_keep_demand_time_handlers() {
     let (success, stdout, stderr) = run(
         "latent",
         "
-        effect Reader<+T> { fn read() -> T; }
+        hook Reader<+T> { func read() -> T; }
         menu Source<+T> / {Reader<T>} { value: T }
-        fn make<+T>() -> Source<T> {
+        func make<+T>() -> Source<T> {
             mu Source<T> { value <= <read() | value> }
         }
-        command main | (exit: i32) / {IO} {
+        proc main | (exit: i32) / {IO} {
             let source: Source<i64> = make();
-            <(handle source.value { read(): resume => <10 | resume }) | println;
-            <(handle source.value { read(): resume => <20 | resume }) | println;
+            <(do source.value { read(): resume => <10 | resume }) | println;
+            <(do source.value { read(): resume => <20 | resume }) | println;
             <0 | exit>
         }",
     );
@@ -339,8 +339,8 @@ fn capture_cannot_erase_an_unhandled_residual_effect() {
     let (success, _, stderr) = run(
         "unhandled_residual",
         "
-        effect Factor { fn factor() -> i64; }
-        command main | (exit: i32) / {IO} {
+        hook Factor { func factor() -> i64; }
+        proc main | (exit: i32) / {IO} {
             let result = <fn {
                 let value = <fn(resume: (i64 -> i64 / {Factor})) { <2 | resume } | control::shift;
                 <(value, factor()) | mul

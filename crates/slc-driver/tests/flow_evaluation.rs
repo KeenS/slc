@@ -15,13 +15,13 @@ fn run(name: &str, source: &str) -> (bool, String, String) {
     )
 }
 
-const BUILD: &str = "effect Build { fn build() -> i64; }
-    fn make(input: i64) -> (i64 -> i64) / {Build} {
+const BUILD: &str = "hook Build { func build() -> i64; }
+    func make(input: i64) -> (i64 -> i64) / {Build} {
         let offset = build();
         fn(value: i64) { <(value, offset) | add }
     }
-    fn ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
-    fn twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+    func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
+    func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
         <(<1 | callback, <2 | callback) | add
     }";
 
@@ -37,7 +37,7 @@ fn regrouping_discarded_negative_intermediates_performs_nothing() {
             &format!("discard_{name}"),
             &format!(
                 "{BUILD}
-                command main | (exit: i32) / {{IO}} {{
+                proc main | (exit: i32) / {{IO}} {{
                     <({expression}) | println;
                     <0 | exit>
                 }}"
@@ -61,8 +61,8 @@ fn regrouping_preserves_repeated_demand_and_handler_selection() {
             &format!("repeat_{name}"),
             &format!(
                 "{BUILD}
-                command main | (exit: i32) / {{IO}} {{
-                    let result = handle ({expression}) {{
+                proc main | (exit: i32) / {{IO}} {{
+                    let result = do ({expression}) {{
                         build(): resume => {{ <\"build\" | println; <10 | resume }}
                     }};
                     <result | println;
@@ -85,11 +85,11 @@ fn regrouping_preserves_command_value_and_exit_groups() {
             &format!("command_{name}"),
             &format!(
                 "{BUILD}
-                command send(callback: Delayed<(i64 -> i64), {{Build}}>) | (answer: i64) / {{Build}} {{
+                proc send(callback: Delayed<(i64 -> i64), {{Build}}>) | (answer: i64) / {{Build}} {{
                     <(<callback | twice) | answer>
                 }}
-                command main | (exit: i32) / {{IO}} {{
-                    let result = handle (mu i64 {{ answer <= {expression} }}) {{
+                proc main | (exit: i32) / {{IO}} {{
+                    let result = do (mu i64 {{ answer <= {expression} }}) {{
                         build(): resume => {{ <\"build\" | println; <10 | resume }}
                     }};
                     <result | println;
@@ -114,12 +114,12 @@ fn an_intermediate_runs_under_the_callees_handler() {
             &format!("callee_handler_{name}"),
             &format!(
                 "{BUILD}
-                fn locally_twice(callback: Delayed<(i64 -> i64), {{Build}}>) -> i64 / {{IO}} {{
-                    handle (<callback | twice) {{
+                func locally_twice(callback: Delayed<(i64 -> i64), {{Build}}>) -> i64 / {{IO}} {{
+                    do (<callback | twice) {{
                         build(): resume => {{ <\"callee build\" | println; <10 | resume }}
                     }}
                 }}
-                command main | (exit: i32) / {{IO}} {{
+                proc main | (exit: i32) / {{IO}} {{
                     <({expression}) | println;
                     <0 | exit>
                 }}"
@@ -141,9 +141,9 @@ fn regrouping_keeps_positive_computations_eager_and_ordered() {
         let (success, stdout, stderr) = run(
             &format!("positive_{name}"),
             &format!(
-                "fn first(value: i64) -> i64 / {{IO}} {{ <\"first\" | println; value }}
-                fn second(value: i64) -> i64 / {{IO}} {{ <\"second\" | println; value }}
-                command main | (exit: i32) / {{IO}} {{
+                "func first(value: i64) -> i64 / {{IO}} {{ <\"first\" | println; value }}
+                func second(value: i64) -> i64 / {{IO}} {{ <\"second\" | println; value }}
+                proc main | (exit: i32) / {{IO}} {{
                     <({expression}) | println;
                     <0 | exit>
                 }}"
@@ -165,14 +165,14 @@ fn regrouping_preserves_the_order_of_computed_stages() {
         let (success, stdout, stderr) = run(
             &format!("computed_stages_{name}"),
             &format!(
-                "fn input() -> i64 / {{IO}} {{ <\"input\" | println; 1 }}
-                fn first() -> (i64 -> i64) / {{IO}} {{
+                "func input() -> i64 / {{IO}} {{ <\"input\" | println; 1 }}
+                func first() -> (i64 -> i64) / {{IO}} {{
                     <\"first stage\" | println; fn(value: i64) {{ value }}
                 }}
-                fn second() -> (i64 -> i64) / {{IO}} {{
+                func second() -> (i64 -> i64) / {{IO}} {{
                     <\"second stage\" | println; fn(value: i64) {{ value }}
                 }}
-                command main | (exit: i32) / {{IO}} {{
+                proc main | (exit: i32) / {{IO}} {{
                     <({expression}) | println;
                     <0 | exit>
                 }}"
@@ -195,13 +195,13 @@ fn computed_consumers_follow_positive_inputs_in_every_grouping() {
         let (success, stdout, stderr) = run(
             &format!("consumer_order_{name}"),
             &format!(
-                "fn input() -> i64 / {{IO}} {{ <\"input\" | println; 42 }}
-                 fn identity(value: i64) -> i64 {{ value }}
-                 fn sink(exit: -i32) -> (-i64 / {{IO}}) / {{IO}} {{
+                "func input() -> i64 / {{IO}} {{ <\"input\" | println; 42 }}
+                 func identity(value: i64) -> i64 {{ value }}
+                 func sink(exit: -i32) -> (-i64 / {{IO}}) / {{IO}} {{
                      <\"consumer\" | println;
-                     select i64 {{ value => {{ <value | println; <0 | exit> }} }}
+                     mu i64 {{ value => {{ <value | println; <0 | exit> }} }}
                  }}
-                 command main | (exit: i32) / {{IO}} {{ {expression} }}"
+                 proc main | (exit: i32) / {{IO}} {{ {expression} }}"
             ),
         );
         assert!(success, "{name}: {stderr}");

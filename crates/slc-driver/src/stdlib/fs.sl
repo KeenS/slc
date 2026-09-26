@@ -16,25 +16,22 @@
 // handler's clause runs below the handler, so the commands, not the
 // clauses, activate the continuations, and whatever runs next stays
 // under the handler.
-pub effect Fs {
-    fn read_file(path: String) -> (String | String);
-    fn write_file(path: String, contents: String) -> (unit | String);
-    fn open_file(path: String) -> (File | String);
-    fn read_line_of(file: File) -> (String | unit);
-    fn close_file(file: File) -> (,);
-    fn file_exists(path: String) -> Bool;
+pub hook Fs {
+    func read_file(path: String) -> (String | String);
+    func write_file(path: String, contents: String) -> (unit | String);
+    func open_file(path: String) -> (File | String);
+    func read_line_of(file: File) -> (String | unit);
+    func close_file(file: File) -> (,);
+    func file_exists(path: String) -> Bool;
 }
 
 // The whole file, or why not.
-pub command read<E>(path: String) | (
-    ok: (-String / {..E})
-    & failed: (-String / {..E})
-) / {Fs, ..E} {
+pub proc read<E>(path: String) | (ok: (-String / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
     <path | read_file | (ok & failed)>
 }
 
 // Replace a file's contents, or say why not.
-pub command write<E>(path: String, contents: String) | (
+pub proc write<E>(path: String, contents: String) | (
     ok: (-unit / {..E})
     & failed: (-String / {..E})
 ) / {Fs, ..E} {
@@ -42,37 +39,31 @@ pub command write<E>(path: String, contents: String) | (
 }
 
 // A handle to read line by line, or why not.
-pub command open<E>(path: String) | (
-    opened: (-File / {..E})
-    & failed: (-String / {..E})
-) / {Fs, ..E} {
+pub proc open<E>(path: String) | (opened: (-File / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
     <path | open_file | (opened & failed)>
 }
 
 // The next line, or the end of the file.
-pub command read_line<E>(file: File) | (
-    line: (-String / {..E})
-    & end: (-unit / {..E})
-) / {Fs, ..E} {
+pub proc read_line<E>(file: File) | (line: (-String / {..E}) & end: (-unit / {..E})) / {Fs, ..E} {
     <file | read_line_of | (line & end)>
 }
 
 // Spend the handle: a later read through it fails. Composing a close
 // onto an exit closes paths routed through that wrapper, not earlier
 // captured exits; see `examples/programs/file_io.sl`.
-pub fn close(file: File) -> (,) / {Fs} {
+pub func close(file: File) -> (,) / {Fs} {
     <file | close_file
 }
 
-pub fn exists(path: String) -> Bool / {Fs} {
+pub func exists(path: String) -> Bool / {Fs} {
     <path | file_exists
 }
 
 // The file system itself. It runs `program`, answers every operation of
 // `Fs` it performs with the runtime's primitive, and passes on whatever
 // else it performs.
-pub fn real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
-    handle <(,) | program {
+pub func real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
+    do <(,) | program {
         read_file(path): resume => <path
             | __read_file
             | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })
@@ -95,12 +86,12 @@ pub fn real<+A, E>(program: ((,) -> A / {Fs, ..E})) -> A / {IO, ..E} {
 }
 
 // The same file system, for a program that leaves through continuations
-// of its own: `fn { …; <0 | exit> }` has type `(;)`, so it is handed to a
+// of its own: `func { …; <0 | exit> }` has type `(;)`, so it is handed to a
 // command as its exit, `<(,) | fs::real_command | (fn { … })>`. The
 // clauses are `real`'s; `real` cannot run through this command, since its
 // own continuation was captured outside the handler.
-pub command real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
-    handle program {
+pub proc real_command<E> | (program: ((;) / {Fs, ..E})) / {IO, ..E} {
+    do program {
         read_file(path): resume => <path
             | __read_file
             | (fn(text: String) { ::0(text) } & fn(why: String) { ::1(why) })

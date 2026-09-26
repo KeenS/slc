@@ -16,29 +16,43 @@ pub enum TokenKind {
 
     // Identifiers and keywords
     Ident(String),
+    /// The lambda, `fn(x) { … }` and `fn { … }`. A named function is `Func`.
     Fn,
+    /// A named function, `func`.
+    Func,
     Mu,
+    /// A `proc`.
     Command,
     Mod,
     Use,
+    /// A `spec`.
     Trait,
     Impl,
     For,
+    /// A `hook`.
     Effect,
+    /// Inline handling, `do`.
     Handle,
+    /// A handler value, `op`, and the `op h do e` form.
     Handler,
-    With,
     Reset,
+    /// Scrutinee matching, `of`.
     Match,
-    Select,
     Let,
     Data,
     Enum,
     Menu,
     Form,
     Dual,
+    /// A definition, `def`.
     Const,
     Pub,
+    /// A keyword the surface no longer spells this way. `replacement` is the
+    /// spelling the parser names in the error.
+    Retired {
+        found: &'static str,
+        replacement: &'static str,
+    },
 
     // Punctuation
     LParen,
@@ -98,28 +112,28 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Char(_) => write!(f, "char"),
             TokenKind::Ident(_) => write!(f, "identifier"),
             TokenKind::Fn => write!(f, "`fn`"),
+            TokenKind::Func => write!(f, "`func`"),
             TokenKind::Mu => write!(f, "`mu`"),
-            TokenKind::Command => write!(f, "`command`"),
+            TokenKind::Command => write!(f, "`proc`"),
             TokenKind::Mod => write!(f, "`mod`"),
             TokenKind::Use => write!(f, "`use`"),
-            TokenKind::Trait => write!(f, "`trait`"),
+            TokenKind::Trait => write!(f, "`spec`"),
             TokenKind::Impl => write!(f, "`impl`"),
             TokenKind::For => write!(f, "`for`"),
-            TokenKind::Effect => write!(f, "`effect`"),
-            TokenKind::Handle => write!(f, "`handle`"),
-            TokenKind::Handler => write!(f, "`handler`"),
-            TokenKind::With => write!(f, "`with`"),
+            TokenKind::Effect => write!(f, "`hook`"),
+            TokenKind::Handle => write!(f, "`do`"),
+            TokenKind::Handler => write!(f, "`op`"),
             TokenKind::Reset => write!(f, "`reset`"),
-            TokenKind::Match => write!(f, "`match`"),
-            TokenKind::Select => write!(f, "`select`"),
+            TokenKind::Match => write!(f, "`of`"),
             TokenKind::Let => write!(f, "`let`"),
             TokenKind::Data => write!(f, "`data`"),
             TokenKind::Enum => write!(f, "`enum`"),
             TokenKind::Menu => write!(f, "`menu`"),
             TokenKind::Form => write!(f, "`form`"),
             TokenKind::Dual => write!(f, "`dual`"),
-            TokenKind::Const => write!(f, "`const`"),
+            TokenKind::Const => write!(f, "`def`"),
             TokenKind::Pub => write!(f, "`pub`"),
+            TokenKind::Retired { found, .. } => write!(f, "`{found}`"),
             TokenKind::LParen => write!(f, "`(`"),
             TokenKind::RParen => write!(f, "`)`"),
             TokenKind::LBrace => write!(f, "`{{`"),

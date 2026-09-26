@@ -344,7 +344,7 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
 /// A consumer closes over its environment with its branch bodies
 /// unevaluated; a co-variable is already a value in the environment; and a
 /// request `.d(e)` becomes a labelled value carrying its own continuation
-/// reified, which is what lets `match` take a continuation apart with the
+/// reified, which is what lets `of` take a continuation apart with the
 /// same machinery that takes an `enum` value apart.
 fn reify_coterm(co: NodeId, env: &Env) -> Result<Value, EvalError> {
     Ok(match node(co) {
@@ -472,7 +472,7 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
     Ok(match node(e) {
         Node::Forward => State::Return(v),
         // ⟨v ∥ α⟩ sends v to α. When α names a consumer — a continuation
-        // parameter, a `select` consumer, a captured continuation — the cut
+        // parameter, a `mu` consumer, a captured continuation — the cut
         // activates it. A co-variable that only names the ambient
         // continuation, as the lowering of `let`, blocks, and applications
         // does, delivers the value onward.
@@ -591,11 +591,11 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
         // Activating a labelled consumer runs exactly one branch.
         Value::CoCase { co, env } => {
             let Node::CoCase(branches) = node(co) else {
-                return Err(EvalError::TypeMismatch("a `select` value must be a co-case".into()));
+                return Err(EvalError::TypeMismatch("a `mu` value must be a co-case".into()));
             };
             let Value::Tagged(label, payload) = arg else {
                 return Err(EvalError::TypeMismatch(format!(
-                    "activating a `select` consumer requires a labelled value, got {}",
+                    "activating a `mu` consumer requires a labelled value, got {}",
                     arg.display()
                 )));
             };
@@ -842,7 +842,7 @@ fn next_match_arm(scrutinee: Value, mut arms: Vec<Value>) -> Result<State, EvalE
         }
         return run_match_thunk(&thunk, &bindings);
     }
-    Err(EvalError::TypeMismatch("non-exhaustive match".into()))
+    Err(EvalError::TypeMismatch("non-exhaustive of".into()))
 }
 
 /// The chosen arm's body, with the pattern's bindings in scope. The bindings
@@ -851,7 +851,7 @@ fn next_match_arm(scrutinee: Value, mut arms: Vec<Value>) -> Result<State, EvalE
 /// slot the body's de Bruijn indices are relative to.
 fn run_match_thunk(thunk: &Value, bindings: &[(String, Value)]) -> Result<State, EvalError> {
     let Value::Closure { body, env } = thunk else {
-        return Err(EvalError::TypeMismatch("match arm body must be a thunk".into()));
+        return Err(EvalError::TypeMismatch("of arm body must be a thunk".into()));
     };
     let mut call_env = env.clone();
     for (name, value) in bindings {

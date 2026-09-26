@@ -9,32 +9,32 @@ fn an_alternative_is_read_through_a_consumer_function() {
     let path = std::env::temp_dir().join("slc_sum_through_consumer.sl");
     std::fs::write(
         &path,
-        r#"fn describe(out: String) <- (i64 | String) {
-            select (i64 | String) {
+        r#"func describe(out: String) <- (i64 | String) {
+            mu (i64 | String) {
                 ::0(n) => <("number ", <n | int_to_str) | add | out>,
                 ::1(s) => <("text ", s) | add | out>,
             }
         }
 
-        fn rank(out: String) <- (i64 | Bool | String) {
-            select (i64 | Bool | String) {
+        func rank(out: String) <- (i64 | Bool | String) {
+            mu (i64 | Bool | String) {
                 ::0(n) => <("first ", <n | int_to_str) | add | out>,
                 ::1(b) => <"second" | out>,
                 ::2(s) => <("third ", s) | add | out>,
             }
         }
 
-        command classify(n: i64) | (outcome: (i64 | String)) {
-            match (<(n, 10) | lt) { True => <::0(n) | outcome>, False => <::1("big") | outcome> }
+        proc classify(n: i64) | (outcome: (i64 | String)) {
+            of (<(n, 10) | lt) { True => <::0(n) | outcome>, False => <::1("big") | outcome> }
         }
 
-        command main | (exit: -i32) / {IO} {
+        proc main | (exit: -i32) / {IO} {
             <::0(7) | describe | println;
             <::1("hi") | describe | println;
             <::2("last") | rank | println;
             // A command still takes what flows in as its values.
             <mu String {
-                s <= <42 | classify | (select i64 { n => <"small" | s> } & select String { t => <t | s> })>
+                s <= <42 | classify | (mu i64 { n => <"small" | s> } & mu String { t => <t | s> })>
             } | println;
             <0 | exit>
         }"#,

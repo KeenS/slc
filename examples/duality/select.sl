@@ -1,9 +1,9 @@
 // Negative additive construction.
 //
 // `enum` constructs a positive additive sum: a value that is one of several
-// variants. `match` eliminates it by choosing a branch.
+// variants. `of` eliminates it by choosing a branch.
 //
-// `select` constructs the dual: a negative additive continuation. It consumes
+// `mu` constructs the dual: a negative additive continuation. It consumes
 // an existing enum and returns a continuation. Activating that continuation
 // with an enum value dispatches to the matching arm, binds the variant's
 // payload, and activates that arm's consumer. Exactly one arm runs; the
@@ -17,8 +17,8 @@ enum Color {
 
 // A negative function: it consumes the continuation `return` and produces the
 // continuation that a `Color` is cut against.
-fn code(return: i32) <- Color {
-    select Color {
+func code(return: i32) <- Color {
+    mu Color {
         Red => <0 | return>,
         Green => <1 | return>,
         Blue => <2 | return>,
@@ -31,8 +31,8 @@ enum Reading {
     Missing,
 }
 
-fn report(value: i64 & absent: i64) <- Reading {
-    select Reading {
+func report(value: i64 & absent: i64) <- Reading {
+    mu Reading {
         Measured(measurement) => <measurement | value>,
         Missing => <-1 | absent>,
     }
@@ -42,13 +42,13 @@ fn report(value: i64 & absent: i64) <- Reading {
 // arm, whose pattern is a plain binder naming the whole value. That consumer
 // is the core's value abstraction `μ̃x. c`: the same binder `let` lowers to,
 // written directly.
-fn twice(out: i64) <- i64 {
-    select i64 {
+func twice(out: i64) <- i64 {
+    mu i64 {
         n => <(n, 2) | mul | out>,
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <Color::Green | code | println;
     // Two exits: `mu` names the one both arms answer through.
     <mu i64 { answer <= <Reading::Measured(42) | (<(answer, answer) | report)> } | println;

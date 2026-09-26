@@ -7,15 +7,15 @@ enum Color {
     Blue,
 }
 
-fn name(c: Color) -> String {
-    match c {
+func name(c: Color) -> String {
+    of c {
         Red => "red",
         Green => "green",
         Blue => "blue",
     }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <Color::Red | name | println;
     <0 | exit>
 }

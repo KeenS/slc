@@ -17,7 +17,7 @@ mod report;
 
 use shapes::Shape;
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     <Shape::Circle(5) | report::line | println;
     <Shape::Rect(6, 7) | report::line | println;
     <0 | exit>

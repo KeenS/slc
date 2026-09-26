@@ -25,32 +25,32 @@ pub enum Map<+K, +V> {
 
 use Map::*;
 
-pub fn empty<+K, +V>() -> Map<K, V> {
+pub func empty<+K, +V>() -> Map<K, V> {
     Empty
 }
 
-pub fn length<+K, +V>(m: Map<K, V>) -> i64 {
-    match m {
+pub func length<+K, +V>(m: Map<K, V>) -> i64 {
+    of m {
         Empty => 0,
         Node(left, _, _, right, _) => (<(<(1, <left | length) | add, <right | length) | add),
     }
 }
 
-fn height<+K, +V>(m: Map<K, V>) -> i64 {
-    match m {
+func height<+K, +V>(m: Map<K, V>) -> i64 {
+    of m {
         Empty => 0,
         Node(_, _, _, _, h) => h,
     }
 }
 
-fn larger(a: i64, b: i64) -> i64 {
-    match (<(a, b) | lt) {
+func larger(a: i64, b: i64) -> i64 {
+    of (<(a, b) | lt) {
         True => b,
         _ => a,
     }
 }
 
-fn node<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
+func node<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
     let h = <(1, <(<left | height, <right | height) | larger) | add;
     Node(left, key, value, right, h)
 }
@@ -58,12 +58,12 @@ fn node<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V
 // The left child is at least two taller. Its lean decides whether one
 // rotation restores the bound, or its right spine has to come up first.
 // `balance_right` is the mirror.
-fn balance_left<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
-    match left {
+func balance_left<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
+    of left {
         Empty => <(left, key, value, right) | node,
-        Node(ll, lk, lv, lr, _) => match (<(<ll | height, <lr | height) | ge) {
+        Node(ll, lk, lv, lr, _) => of (<(<ll | height, <lr | height) | ge) {
             True => <(ll, lk, lv, <(lr, key, value, right) | node) | node,
-            _ => match lr {
+            _ => of lr {
                 Empty => <(ll, lk, lv, <(lr, key, value, right) | node) | node,
                 Node(lrl, lrk, lrv, lrr, _) => {
                     <(<(ll, lk, lv, lrl) | node, lrk, lrv, <(lrr, key, value, right) | node) | node
@@ -73,12 +73,12 @@ fn balance_left<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> 
     }
 }
 
-fn balance_right<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
-    match right {
+func balance_right<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
+    of right {
         Empty => <(left, key, value, right) | node,
-        Node(rl, rk, rv, rr, _) => match (<(<rr | height, <rl | height) | ge) {
+        Node(rl, rk, rv, rr, _) => of (<(<rr | height, <rl | height) | ge) {
             True => <(<(left, key, value, rl) | node, rk, rv, rr) | node,
-            _ => match rl {
+            _ => of rl {
                 Empty => <(<(left, key, value, rl) | node, rk, rv, rr) | node,
                 Node(rll, rlk, rlv, rlr, _) => {
                     <(<(left, key, value, rll) | node, rlk, rlv, <(rlr, rk, rv, rr) | node) | node
@@ -88,24 +88,24 @@ fn balance_right<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) ->
     }
 }
 
-fn balance<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
+func balance<+K, +V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>) -> Map<K, V> {
     let lh = <left | height;
     let rh = <right | height;
-    match (<(lh, <(rh, 1) | add) | gt) {
+    of (<(lh, <(rh, 1) | add) | gt) {
         True => <(left, key, value, right) | balance_left,
-        _ => match (<(rh, <(lh, 1) | add) | gt) {
+        _ => of (<(rh, <(lh, 1) | add) | gt) {
             True => <(left, key, value, right) | balance_right,
             _ => <(left, key, value, right) | node,
         },
     }
 }
 
-pub fn insert<+K: Ord, +V>(m: Map<K, V>, key: K, value: V) -> Map<K, V> {
-    match m {
+pub func insert<+K: Ord, +V>(m: Map<K, V>, key: K, value: V) -> Map<K, V> {
+    of m {
         Empty => <(Empty, key, value, Empty) | node,
-        Node(left, k, v, right, _) => match (<(key, k) | lt) {
+        Node(left, k, v, right, _) => of (<(key, k) | lt) {
             True => <(<(left, key, value) | insert, k, v, right) | balance,
-            _ => match (<(k, key) | lt) {
+            _ => of (<(k, key) | lt) {
                 True => <(left, k, v, <(right, key, value) | insert) | balance,
                 _ => <(left, key, value, right) | node,
             },
@@ -121,11 +121,11 @@ enum Least<+K, +V> {
 
 use Least::*;
 
-fn take_least<+K, +V>(m: Map<K, V>) -> Least<K, V> {
-    match m {
+func take_least<+K, +V>(m: Map<K, V>) -> Least<K, V> {
+    of m {
         Empty => Absent,
         Node(Empty, k, v, right, _) => Found(k, v, right),
-        Node(left, k, v, right, _) => match <left | take_least {
+        Node(left, k, v, right, _) => of <left | take_least {
             Absent => Absent,
             Found(mk, mv, new_left) => Found(mk, mv, <(new_left, k, v, right) | balance),
         },
@@ -134,22 +134,22 @@ fn take_least<+K, +V>(m: Map<K, V>) -> Least<K, V> {
 
 // Every key on the left is less than every key on the right: the two sides
 // of a key that was deleted.
-fn join<+K, +V>(left: Map<K, V>, right: Map<K, V>) -> Map<K, V> {
-    match left {
+func join<+K, +V>(left: Map<K, V>, right: Map<K, V>) -> Map<K, V> {
+    of left {
         Empty => right,
-        _ => match <right | take_least {
+        _ => of <right | take_least {
             Absent => left,
             Found(k, v, rest) => <(left, k, v, rest) | balance,
         },
     }
 }
 
-fn delete<+K: Ord, +V>(m: Map<K, V>, key: K) -> Map<K, V> {
-    match m {
+func delete<+K: Ord, +V>(m: Map<K, V>, key: K) -> Map<K, V> {
+    of m {
         Empty => Empty,
-        Node(left, k, v, right, _) => match (<(key, k) | lt) {
+        Node(left, k, v, right, _) => of (<(key, k) | lt) {
             True => <(<(left, key) | delete, k, v, right) | balance,
-            _ => match (<(k, key) | lt) {
+            _ => of (<(k, key) | lt) {
                 True => <(left, k, v, <(right, key) | delete) | balance,
                 _ => <(left, right) | join,
             },
@@ -157,19 +157,19 @@ fn delete<+K: Ord, +V>(m: Map<K, V>, key: K) -> Map<K, V> {
     }
 }
 
-pub fn remove<+K: Ord, +V>(m: Map<K, V>, key: K) -> Map<K, V> {
-    match (<(m, key) | contains) {
+pub func remove<+K: Ord, +V>(m: Map<K, V>, key: K) -> Map<K, V> {
+    of (<(m, key) | contains) {
         False => m,
         _ => <(m, key) | delete,
     }
 }
 
-pub fn contains<+K: Ord, +V>(m: Map<K, V>, key: K) -> Bool {
-    match m {
+pub func contains<+K: Ord, +V>(m: Map<K, V>, key: K) -> Bool {
+    of m {
         Empty => False,
-        Node(left, k, _, right, _) => match (<(key, k) | lt) {
+        Node(left, k, _, right, _) => of (<(key, k) | lt) {
             True => <(left, key) | contains,
-            _ => match (<(k, key) | lt) {
+            _ => of (<(k, key) | lt) {
                 True => <(right, key) | contains,
                 _ => True,
             },
@@ -177,15 +177,15 @@ pub fn contains<+K: Ord, +V>(m: Map<K, V>, key: K) -> Bool {
     }
 }
 
-pub command get<+K: Ord, +V, E>(m: Map<K, V>, key: K) | (
+pub proc get<+K: Ord, +V, E>(m: Map<K, V>, key: K) | (
     found: (-V / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match m {
+    of m {
         Empty => <"nothing for that key" | missing>,
-        Node(left, k, v, right, _) => match (<(key, k) | lt) {
+        Node(left, k, v, right, _) => of (<(key, k) | lt) {
             True => <(left, key) | get | (found & missing)>,
-            _ => match (<(k, key) | lt) {
+            _ => of (<(k, key) | lt) {
                 True => <(right, key) | get | (found & missing)>,
                 _ => <v | found>,
             },
@@ -193,8 +193,8 @@ pub command get<+K: Ord, +V, E>(m: Map<K, V>, key: K) | (
     }
 }
 
-fn to_list_onto<+K, +V>(m: Map<K, V>, tail: list::List<(K, V)>) -> list::List<(K, V)> {
-    match m {
+func to_list_onto<+K, +V>(m: Map<K, V>, tail: list::List<(K, V)>) -> list::List<(K, V)> {
+    of m {
         Empty => tail,
         Node(left, k, v, right, _) => {
             <(left, Cons((k, v), <(right, tail) | to_list_onto)) | to_list_onto
@@ -202,28 +202,28 @@ fn to_list_onto<+K, +V>(m: Map<K, V>, tail: list::List<(K, V)>) -> list::List<(K
     }
 }
 
-pub fn to_list<+K, +V>(m: Map<K, V>) -> list::List<(K, V)> {
+pub func to_list<+K, +V>(m: Map<K, V>) -> list::List<(K, V)> {
     <(m, Nil) | to_list_onto
 }
 
-fn of_list_onto<+K: Ord, +V>(pairs: list::List<(K, V)>, m: Map<K, V>) -> Map<K, V> {
-    match pairs {
+func of_list_onto<+K: Ord, +V>(pairs: list::List<(K, V)>, m: Map<K, V>) -> Map<K, V> {
+    of pairs {
         Nil => m,
         Cons((k, v), rest) => <(rest, <(m, k, v) | insert) | of_list_onto,
     }
 }
 
 // Left to right: a later pair with an equal key replaces the earlier one.
-pub fn of_list<+K: Ord, +V>(pairs: list::List<(K, V)>) -> Map<K, V> {
+pub func of_list<+K: Ord, +V>(pairs: list::List<(K, V)>) -> Map<K, V> {
     <(pairs, Empty) | of_list_onto
 }
 
-fn fmt_entry<+K: Display, +V: Display>(key: K, value: V) -> String {
+func fmt_entry<+K: Display, +V: Display>(key: K, value: V) -> String {
     (<(<key | fmt, ": ") | add | x => (x, <value | fmt) | add)
 }
 
-fn fmt_entries<+K: Display, +V: Display>(xs: list::List<(K, V)>) -> String {
-    match xs {
+func fmt_entries<+K: Display, +V: Display>(xs: list::List<(K, V)>) -> String {
+    of xs {
         Nil => "",
         Cons((k, v), Nil) => <(k, v) | fmt_entry,
         Cons((k, v), rest) => {
@@ -233,7 +233,7 @@ fn fmt_entries<+K: Display, +V: Display>(xs: list::List<(K, V)>) -> String {
 }
 
 impl<+K: Display + Ord, +V: Display> Display for Map<K, V> {
-    fn fmt(self: Map<K, V>) -> String {
+    func fmt(self: Map<K, V>) -> String {
         (<("{", <self | to_list | fmt_entries) | add | x => (x, "}") | add)
     }
 }
@@ -246,10 +246,10 @@ pub menu Builder<+K, +V> {
     finish: Map<K, V>,
 }
 
-fn holding<+K: Ord, +V>(m: Map<K, V>) -> Builder<K, V> {
+func holding<+K: Ord, +V>(m: Map<K, V>) -> Builder<K, V> {
     mu Builder {
         put <= <fn(entry: (K, V)) {
-            match entry {
+            of entry {
                 (key, value) => <(<(m, key, value) | insert) | holding,
             }
         } | put>,
@@ -257,10 +257,10 @@ fn holding<+K: Ord, +V>(m: Map<K, V>) -> Builder<K, V> {
     }
 }
 
-pub fn builder<+K: Ord, +V>() -> Builder<K, V> {
+pub func builder<+K: Ord, +V>() -> Builder<K, V> {
     <empty() | holding
 }
 
-pub fn put<+K: Ord, +V>(b: Builder<K, V>, key: K, value: V) -> Builder<K, V> {
+pub func put<+K: Ord, +V>(b: Builder<K, V>, key: K, value: V) -> Builder<K, V> {
     <(key, value) | b.put
 }

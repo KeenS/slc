@@ -234,7 +234,7 @@ fn infer_decl(
             }
             let output = Type::BOTTOM;
             let ty = inputs.into_iter().rev().fold(output, Type::arrow_from);
-            let ty = u.resolve_or_cannot_infer(&ty, &format!("command {name}"))?;
+            let ty = u.resolve_or_cannot_infer(&ty, &format!("proc {name}"))?;
             Ok(DeclarationType { name: name.clone(), ty })
         }
         Decl::Data { name, .. } | Decl::Enum { name, .. } => {
@@ -375,27 +375,27 @@ mod tests {
 
     #[test]
     fn fn_annotation_infers_function_type() {
-        let out = infer("fn id(x: +i32) -> i32 { x }").unwrap();
+        let out = infer("func id(x: +i32) -> i32 { x }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Pos(Base::I32), Type::Pos(Base::I32)));
     }
 
     #[test]
     fn negative_fn_infers_dual_function_type() {
         // It takes a consumer and produces one: `(-i32 -> -i32)`.
-        let out = infer("fn k(x: -i32) <- i32 { x }").unwrap();
+        let out = infer("func k(x: -i32) <- i32 { x }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
     }
 
     #[test]
     fn negative_fn_inference_covers_row_arities() {
-        let empty = infer("fn k() <- i32 { 0 }").unwrap()[0].ty.clone();
+        let empty = infer("func k() <- i32 { 0 }").unwrap()[0].ty.clone();
         assert_eq!(empty, Type::Neg(Base::I32));
 
-        let singleton = infer("fn k(ok: -i32) <- i32 { ok(0) }").unwrap()[0].ty.clone();
+        let singleton = infer("func k(ok: -i32) <- i32 { ok(0) }").unwrap()[0].ty.clone();
         assert_eq!(singleton, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
         let multi =
-            infer("fn k(ok: -i32 & err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
+            infer("func k(ok: -i32 & err: -i32) <- i32 { ok(0); err(0) }").unwrap()[0].ty.clone();
         assert_eq!(
             multi,
             Type::arrow(
@@ -407,11 +407,11 @@ mod tests {
 
     #[test]
     fn negative_fn_output_is_dual_not_collapsed_by_polarity_unification() {
-        let out = infer("fn k(return: -i32) <- i32 { return(0) }").unwrap();
+        let out = infer("func k(return: -i32) <- i32 { return(0) }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::I32)));
 
         // The row and the result stay independent: `(-i32 -> -char)`.
-        let out = infer("fn k(return: -i32) <- char { return('c') }").unwrap();
+        let out = infer("func k(return: -i32) <- char { return('c') }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Neg(Base::I32), Type::Neg(Base::Char)));
     }
 
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn command_infers_parametric_type() {
-        let out = infer("command step(x: +i32) | (k: -i32) { k(x) }").unwrap();
+        let out = infer("proc step(x: +i32) | (k: -i32) { k(x) }").unwrap();
         assert_eq!(
             out[0].ty,
             Type::arrow(Type::Pos(Base::I32), Type::arrow(Type::Neg(Base::I32), Type::BOTTOM))
@@ -433,13 +433,13 @@ mod tests {
 
     #[test]
     fn generic_type_variables_are_supported() {
-        let out = infer("fn id<+T>(x: +T) -> T { x }").unwrap();
+        let out = infer("func id<+T>(x: +T) -> T { x }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 
     #[test]
     fn generic_negative_functions_preserve_declared_polarity() {
-        let out = infer("fn k<+T>(ok: -T) <- T { ok(0) }").unwrap();
+        let out = infer("func k<+T>(ok: -T) <- T { ok(0) }").unwrap();
         // A bare generic atom erases its sign (it is polarity-polymorphic),
         // and the negative declaration produces the consumer of `T` — whose
         // dual now stays wrapped around the variable instead of collapsing.
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn generic_function_bare_type_positions_instantiate_to_variables() {
-        let out = infer("fn k<+T>(value: T) -> T { value }").unwrap();
+        let out = infer("func k<+T>(value: T) -> T { value }").unwrap();
         assert_eq!(out[0].ty, Type::arrow(Type::Var(0), Type::Var(0)));
     }
 
@@ -456,8 +456,8 @@ mod tests {
     fn select_expression_infers_dual_of_enum() {
         let p = parse(
             lex("enum Color { Red, Green, Blue }
-            fn k(return: -i32) <- Color {
-                select Color {
+            func k(return: -i32) <- Color {
+                mu Color {
                     Red => return(0),
                     Green => return(1),
                     Blue => return(2),
@@ -477,8 +477,8 @@ mod tests {
     #[test]
     fn select_expression_rejects_unknown_enum() {
         let p = parse(
-            lex("fn k(return: -i32) <- i32 {
-                select Color {
+            lex("func k(return: -i32) <- i32 {
+                mu Color {
                     Red => return(0),
                 }
             }")
@@ -519,13 +519,13 @@ mod tests {
 
     #[test]
     fn missing_return_cannot_infer() {
-        let p = parse(lex("fn f(x: +i32) { x }").unwrap());
+        let p = parse(lex("func f(x: +i32) { x }").unwrap());
         assert!(p.is_err(), "bare fn unexpectedly parsed: {p:?}");
     }
 
     #[test]
     fn polarity_constraint_rejects_wrong_polarity() {
-        let tokens = lex("fn f(x: -i32) -> i32 { x }").unwrap();
+        let tokens = lex("func f(x: -i32) -> i32 { x }").unwrap();
         let p = parse(tokens).unwrap();
         let out = infer_program(&p);
         assert!(out.is_err());

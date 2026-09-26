@@ -6,8 +6,8 @@ The library has two layers, and both are ordinary SLC source that goes
 through the same pipeline as user code.
 
 **The prelude** (`crates/slc-driver/src/prelude.sl`) is what every program
-sees unasked: the `effect IO` the runtime handles, and the
-**`Display` trait** (`fn fmt(self: Self) -> String`, user-facing formatting
+sees unasked: the `hook IO` the runtime handles, and the
+**`Display` trait** (`func fmt(self: Self) -> String`, user-facing formatting
 as in Rust) with impls for `i64`, `String`, `Bool`, and the unit, tuples and
 choices up to eight components, rendered as they are written — and
 `to_string<T: Display>`; `enum Bool { False, True }`, the type every yes-or-no
@@ -31,21 +31,21 @@ it offers `pub`; the rest is its own.
 
 | module | what it offers |
 |---|---|
-| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `command nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
-| `map` | `Map<K, V>`, an AVL tree: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, the outcome-offering `command get`, `Display` (`{a: 1, b: 2}`), and `Builder` |
+| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `proc nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `map` | `Map<K, V>`, an AVL tree: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, the outcome-offering `proc get`, `Display` (`{a: 1, b: 2}`), and `Builder` |
 | `set` | `Set<K>`, that tree with nothing beside the key: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, `Display` (`{1, 2, 3}`), and `Builder` |
 | `hashmap` | `HashMap<K, V>`, a 4-way hash trie: the same operations, keyed by `Hash` and `Eq`, and `Builder` |
 | `hashset` | `HashSet<K>`, that trie with nothing beside the key, and `Builder` |
 | `array` | `Array<T>`, an immutable 4-way trie: `empty`, `push`, `length`, `of_list`, `to_list`, and the outcome-offering `get` and `update` (`[1, 2, 3]`). `Array4<T>` is one branch, with `slots`, `slot_get`, and `slot_update` |
 | `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
-| `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `select`s — a `form` would want every field at once |
+| `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `mu`s — a `form` would want every field at once |
 | `num` | `min`, `max`, `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `Delayed<T, E>` |
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
-| `trace` | one **tap**, `command tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
+| `trace` | one **tap**, `proc tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
 
 `Map<K, V>` is that tree, and it is library code the way `List` is. Keys and
 values are positive. A key is compared with `Ord`; two keys are the same when
@@ -53,7 +53,7 @@ neither is less. That is equality only when `Ord` is a total order: a `NaN`
 compares that way with every float, so it collides with the node the search
 reaches. Each node stores its height, and `insert` and `remove` rebalance
 until a node leans by at most one. Both answer a new map and leave the map
-they were given unchanged. `get` can find nothing, so it is a `command`
+they were given unchanged. `get` can find nothing, so it is a `proc`
 offering `found` and `missing`, as `list::nth` does. The map itself has no
 menu: supplying a key and receiving a value is a function, and `Stream` and
 `Seq` remain the negative sequences. `dual(Map<K, V>)` is a consumer of that
@@ -139,16 +139,16 @@ demanded — under whatever handler is around `seq::to_list`. There is no
 `seq::to_list`, or `seq::take` first if it may not end.
 
 **A stdlib helper that takes both values and continuations is a
-`command`.** That is what the declaration square calls the shape, and the
+`proc`.** That is what the declaration square calls the shape, and the
 header says it: the value group before the `|`, the menu of exits after. It
-could instead be a returning `fn` returning `-T` — the same type, since
+could instead be a returning `func` returning `-T` — the same type, since
 `A → ⊥` *is* `-A`, and a consumer transformer cannot do it because its one
 parameter group *is* its row — but that spelling says the shape only in the
 return position, and it makes the caller build the consumer before cutting
 into it rather than write the call every other call is written as. Two
 combinators had it and are gone: `then(f, k)`, because composing a function
 with a continuation is `f | k>`, and `defaulting(fallback, k)`, because a row
-slot wants a consumer and `select String { m => <fallback | k> }` is the
+slot wants a consumer and `mu String { m => <fallback | k> }` is the
 consumer — the combinator only hid the arm. The `<- A` form remains the
 natural spelling for a consumer transformer whose inputs are all
 continuations.
@@ -172,12 +172,12 @@ it composes with an error consumer a program already has.
 
 ```sl
 <"input.json" | fs::read | (
-    select String { source => <source | parse_json | report> }
+    mu String { source => <source | parse_json | report> }
     & complain
 )>
 ```
 
-A consumer per outcome is what `select` builds, so an outcome's handler can be
+A consumer per outcome is what `mu` builds, so an outcome's handler can be
 written where it is passed rather than declared elsewhere.
 
 Everything else is a function: `println`, `print`, and `format`; arithmetic and
@@ -202,7 +202,7 @@ that wrapper. Shadow `exit` where the handle comes into scope:
 
 ```sl
 let file = mu { k <= <path | fs::open | (k & complain)> };
-let exit = select i32 { status => { <file | fs::close; <status | exit> } };
+let exit = mu i32 { status => { <file | fs::close; <status | exit> } };
 ```
 
 The arm's `exit` is the outer one. A later direct `| exit>` uses the wrapper,
@@ -217,7 +217,7 @@ Two failures stay fatal rather than becoming outcomes: an out-of-range
 functions, which have nowhere to put a continuation, and — as in Rust, where
 `v[i]` panics while `v.get(i)` does not — they report a bug in the program
 rather than a case it was meant to handle. The checked forms are the
-`command`-shaped builtins above, `char_at` among them.
+`proc`-shaped builtins above, `char_at` among them.
 
 A helper of your own that always ends in a cut is annotated `-> (;)`: it never
 returns, so it may stand where a consumer is expected.

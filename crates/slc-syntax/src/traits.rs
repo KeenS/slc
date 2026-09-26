@@ -1101,14 +1101,14 @@ fn method_mismatch(
             continuation_params.as_slice(),
             None,
         ),
-        _ => return Some("a trait method is implemented by a `fn` or a `command`".into()),
+        _ => return Some("a spec method is implemented by a `func` or a `proc`".into()),
     };
     if is_command != signature.is_command {
         return Some(format!(
             "`{}` is a {}, and this impl writes a {}",
             signature.name,
-            if signature.is_command { "command" } else { "function" },
-            if is_command { "command" } else { "function" }
+            if signature.is_command { "`proc`" } else { "`func`" },
+            if is_command { "`proc`" } else { "`func`" }
         ));
     }
     if !is_command && polarity != signature.polarity {

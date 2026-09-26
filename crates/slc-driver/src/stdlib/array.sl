@@ -18,8 +18,8 @@ pub enum Array4<+T> {
     Four(T, T, T, T),
 }
 
-pub fn slots<+T>(a: Array4<T>) -> i64 {
-    match a {
+pub func slots<+T>(a: Array4<T>) -> i64 {
+    of a {
         Array4::One(_) => 1,
         Array4::Two(_, _) => 2,
         Array4::Three(_, _, _) => 3,
@@ -27,19 +27,19 @@ pub fn slots<+T>(a: Array4<T>) -> i64 {
     }
 }
 
-fn at<+T>(a: Array4<T>, i: i64) -> T {
-    match a {
+func at<+T>(a: Array4<T>, i: i64) -> T {
+    of a {
         Array4::One(a0) => a0,
-        Array4::Two(a0, a1) => match i {
+        Array4::Two(a0, a1) => of i {
             0 => a0,
             _ => a1,
         },
-        Array4::Three(a0, a1, a2) => match i {
+        Array4::Three(a0, a1, a2) => of i {
             0 => a0,
             1 => a1,
             _ => a2,
         },
-        Array4::Four(a0, a1, a2, a3) => match i {
+        Array4::Four(a0, a1, a2, a3) => of i {
             0 => a0,
             1 => a1,
             2 => a2,
@@ -48,19 +48,19 @@ fn at<+T>(a: Array4<T>, i: i64) -> T {
     }
 }
 
-fn put<+T>(a: Array4<T>, i: i64, value: T) -> Array4<T> {
-    match a {
+func put<+T>(a: Array4<T>, i: i64, value: T) -> Array4<T> {
+    of a {
         Array4::One(_) => Array4::One(value),
-        Array4::Two(a0, a1) => match i {
+        Array4::Two(a0, a1) => of i {
             0 => Array4::Two(value, a1),
             _ => Array4::Two(a0, value),
         },
-        Array4::Three(a0, a1, a2) => match i {
+        Array4::Three(a0, a1, a2) => of i {
             0 => Array4::Three(value, a1, a2),
             1 => Array4::Three(a0, value, a2),
             _ => Array4::Three(a0, a1, value),
         },
-        Array4::Four(a0, a1, a2, a3) => match i {
+        Array4::Four(a0, a1, a2, a3) => of i {
             0 => Array4::Four(value, a1, a2, a3),
             1 => Array4::Four(a0, value, a2, a3),
             2 => Array4::Four(a0, a1, value, a3),
@@ -69,8 +69,8 @@ fn put<+T>(a: Array4<T>, i: i64, value: T) -> Array4<T> {
     }
 }
 
-fn snoc_slot<+T>(a: Array4<T>, value: T) -> Array4<T> {
-    match a {
+func snoc_slot<+T>(a: Array4<T>, value: T) -> Array4<T> {
+    of a {
         Array4::One(a0) => Array4::Two(a0, value),
         Array4::Two(a0, a1) => Array4::Three(a0, a1, value),
         Array4::Three(a0, a1, a2) => Array4::Four(a0, a1, a2, value),
@@ -78,43 +78,43 @@ fn snoc_slot<+T>(a: Array4<T>, value: T) -> Array4<T> {
     }
 }
 
-pub command slot_get<+T, E>(a: Array4<T>, i: i64) | (
+pub proc slot_get<+T, E>(a: Array4<T>, i: i64) | (
     found: (-T / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match (<(i, 0) | lt) {
+    of (<(i, 0) | lt) {
         True => <"nothing at that index" | missing>,
-        _ => match (<(i, <a | slots) | lt) {
+        _ => of (<(i, <a | slots) | lt) {
             True => <(<(a, i) | at) | found>,
             _ => <"nothing at that index" | missing>,
         },
     }
 }
 
-pub command slot_update<+T, E>(a: Array4<T>, i: i64, value: T) | (
+pub proc slot_update<+T, E>(a: Array4<T>, i: i64, value: T) | (
     updated: (-Array4<T> / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match (<(i, 0) | lt) {
+    of (<(i, 0) | lt) {
         True => <"nothing at that index" | missing>,
-        _ => match (<(i, <a | slots) | lt) {
+        _ => of (<(i, <a | slots) | lt) {
             True => <(<(a, i, value) | put) | updated>,
             _ => <"nothing at that index" | missing>,
         },
     }
 }
 
-fn wrap(body: String) -> String {
+func wrap(body: String) -> String {
     (<("[", body) | add | x => (x, "]") | add)
 }
 
-fn join(left: String, right: String) -> String {
+func join(left: String, right: String) -> String {
     (<(left, ", ") | add | x => (x, right) | add)
 }
 
 impl<+T: Display> Display for Array4<T> {
-    fn fmt(self: Array4<T>) -> String {
-        match self {
+    func fmt(self: Array4<T>) -> String {
+        of self {
             Array4::One(a) => <(<a | fmt) | wrap,
             Array4::Two(a, b) => <(<(<a | fmt, <b | fmt) | join) | wrap,
             Array4::Three(a, b, c) => <(<(<(<a | fmt, <b | fmt) | join, <c | fmt) | join) | wrap,
@@ -144,27 +144,27 @@ pub enum Array<+T> {
     Tree(i64, Trie<T>),
 }
 
-pub fn empty<+T>() -> Array<T> {
+pub func empty<+T>() -> Array<T> {
     Array::Empty
 }
 
-pub fn length<+T>(a: Array<T>) -> i64 {
-    match a {
+pub func length<+T>(a: Array<T>) -> i64 {
+    of a {
         Array::Empty => 0,
         Array::Tree(n, _) => n,
     }
 }
 
 // The smallest power of four that can hold `n` elements, and at least four.
-fn root_span(n: i64, c: i64) -> i64 {
-    match (<(c, n) | lt) {
+func root_span(n: i64, c: i64) -> i64 {
+    of (<(c, n) | lt) {
         True => <(n, <(c, 4) | mul) | root_span,
         _ => c,
     }
 }
 
-fn trie_at<+T>(trie: Trie<T>, i: i64, span: i64) -> T {
-    match trie {
+func trie_at<+T>(trie: Trie<T>, i: i64, span: i64) -> T {
+    of trie {
         Trie::Bucket(bucket) => <(bucket, i) | at,
         Trie::Node(children) => {
             let child_span = <(span, 4) | div;
@@ -176,8 +176,8 @@ fn trie_at<+T>(trie: Trie<T>, i: i64, span: i64) -> T {
     }
 }
 
-fn trie_put<+T>(trie: Trie<T>, i: i64, span: i64, value: T) -> Trie<T> {
-    match trie {
+func trie_put<+T>(trie: Trie<T>, i: i64, span: i64, value: T) -> Trie<T> {
+    of trie {
         Trie::Bucket(bucket) => Trie::Bucket(<(bucket, i, value) | put),
         Trie::Node(children) => {
             let child_span = <(span, 4) | div;
@@ -189,18 +189,18 @@ fn trie_put<+T>(trie: Trie<T>, i: i64, span: i64, value: T) -> Trie<T> {
     }
 }
 
-fn push_trie<+T>(trie: Trie<T>, span: i64, value: T) -> Grow<T> {
-    match trie {
-        Trie::Bucket(bucket) => match (<(<bucket | slots, 4) | lt) {
+func push_trie<+T>(trie: Trie<T>, span: i64, value: T) -> Grow<T> {
+    of trie {
+        Trie::Bucket(bucket) => of (<(<bucket | slots, 4) | lt) {
             True => Grow::Fits(Trie::Bucket(<(bucket, value) | snoc_slot)),
             _ => Grow::Overflow(Trie::Bucket(Array4::One(value))),
         },
         Trie::Node(children) => {
             let child_span = <(span, 4) | div;
             let ix = <(<children | slots, 1) | sub;
-            match <(<(children, ix) | at, child_span, value) | push_trie {
+            of <(<(children, ix) | at, child_span, value) | push_trie {
                 Grow::Fits(child) => Grow::Fits(Trie::Node(<(children, ix, child) | put)),
-                Grow::Overflow(extra) => match (<(<children | slots, 4) | lt) {
+                Grow::Overflow(extra) => of (<(<children | slots, 4) | lt) {
                     True => Grow::Fits(Trie::Node(<(children, extra) | snoc_slot)),
                     _ => Grow::Overflow(Trie::Node(Array4::One(extra))),
                 },
@@ -209,10 +209,10 @@ fn push_trie<+T>(trie: Trie<T>, span: i64, value: T) -> Grow<T> {
     }
 }
 
-pub fn push<+T>(a: Array<T>, value: T) -> Array<T> {
-    match a {
+pub func push<+T>(a: Array<T>, value: T) -> Array<T> {
+    of a {
         Array::Empty => Array::Tree(1, Trie::Bucket(Array4::One(value))),
-        Array::Tree(n, root) => match <(root, <(n, 4) | root_span, value) | push_trie {
+        Array::Tree(n, root) => of <(root, <(n, 4) | root_span, value) | push_trie {
             Grow::Fits(root) => Array::Tree(<(n, 1) | add, root),
             Grow::Overflow(extra) => Array::Tree(
                 <(n, 1) | add,
@@ -222,33 +222,33 @@ pub fn push<+T>(a: Array<T>, value: T) -> Array<T> {
     }
 }
 
-fn within(i: i64, n: i64) -> Bool {
-    match (<(i, 0) | lt) {
+func within(i: i64, n: i64) -> Bool {
+    of (<(i, 0) | lt) {
         True => False,
         _ => <(i, n) | lt,
     }
 }
 
-pub command get<+T, E>(a: Array<T>, i: i64) | (
+pub proc get<+T, E>(a: Array<T>, i: i64) | (
     found: (-T / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match a {
+    of a {
         Array::Empty => <"nothing at that index" | missing>,
-        Array::Tree(n, root) => match (<(i, n) | within) {
+        Array::Tree(n, root) => of (<(i, n) | within) {
             True => <(<(root, i, <(n, 4) | root_span) | trie_at) | found>,
             _ => <"nothing at that index" | missing>,
         },
     }
 }
 
-pub command update<+T, E>(a: Array<T>, i: i64, value: T) | (
+pub proc update<+T, E>(a: Array<T>, i: i64, value: T) | (
     updated: (-Array<T> / {..E})
     & missing: (-String / {..E})
 ) / {..E} {
-    match a {
+    of a {
         Array::Empty => <"nothing at that index" | missing>,
-        Array::Tree(n, root) => match (<(i, n) | within) {
+        Array::Tree(n, root) => of (<(i, n) | within) {
             True => {
                 <Array::Tree(n, <(root, i, <(n, 4) | root_span, value) | trie_put) | updated>
             },
@@ -257,8 +257,8 @@ pub command update<+T, E>(a: Array<T>, i: i64, value: T) | (
     }
 }
 
-fn bucket_onto<+T>(bucket: Array4<T>, tail: List<T>) -> List<T> {
-    match bucket {
+func bucket_onto<+T>(bucket: Array4<T>, tail: List<T>) -> List<T> {
+    of bucket {
         Array4::One(a) => Cons(a, tail),
         Array4::Two(a, b) => Cons(a, Cons(b, tail)),
         Array4::Three(a, b, c) => Cons(a, Cons(b, Cons(c, tail))),
@@ -266,10 +266,10 @@ fn bucket_onto<+T>(bucket: Array4<T>, tail: List<T>) -> List<T> {
     }
 }
 
-fn trie_onto<+T>(trie: Trie<T>, tail: List<T>) -> List<T> {
-    match trie {
+func trie_onto<+T>(trie: Trie<T>, tail: List<T>) -> List<T> {
+    of trie {
         Trie::Bucket(bucket) => <(bucket, tail) | bucket_onto,
-        Trie::Node(children) => match children {
+        Trie::Node(children) => of children {
             Array4::One(a) => <(a, tail) | trie_onto,
             Array4::Two(a, b) => <(a, <(b, tail) | trie_onto) | trie_onto,
             Array4::Three(a, b, c) => <(a, <(b, <(c, tail) | trie_onto) | trie_onto) | trie_onto,
@@ -280,26 +280,26 @@ fn trie_onto<+T>(trie: Trie<T>, tail: List<T>) -> List<T> {
     }
 }
 
-pub fn to_list<+T>(a: Array<T>) -> List<T> {
-    match a {
+pub func to_list<+T>(a: Array<T>) -> List<T> {
+    of a {
         Array::Empty => Nil,
         Array::Tree(_, root) => <(root, Nil) | trie_onto,
     }
 }
 
-fn push_all<+T>(xs: List<T>, a: Array<T>) -> Array<T> {
-    match xs {
+func push_all<+T>(xs: List<T>, a: Array<T>) -> Array<T> {
+    of xs {
         Nil => a,
         Cons(h, rest) => <(rest, <(a, h) | push) | push_all,
     }
 }
 
-pub fn of_list<+T>(xs: List<T>) -> Array<T> {
+pub func of_list<+T>(xs: List<T>) -> Array<T> {
     <(xs, Array::Empty) | push_all
 }
 
-fn fmt_list<+T: Display>(xs: List<T>) -> String {
-    match xs {
+func fmt_list<+T: Display>(xs: List<T>) -> String {
+    of xs {
         Nil => "",
         Cons(h, Nil) => <h | fmt,
         Cons(h, rest) => (<(<h | fmt, ", ") | add | x => (x, <rest | fmt_list) | add),
@@ -307,5 +307,5 @@ fn fmt_list<+T: Display>(xs: List<T>) -> String {
 }
 
 impl<+T: Display> Display for Array<T> {
-    fn fmt(self: Array<T>) -> String { <(<self | to_list | fmt_list) | wrap }
+    func fmt(self: Array<T>) -> String { <(<self | to_list | fmt_list) | wrap }
 }

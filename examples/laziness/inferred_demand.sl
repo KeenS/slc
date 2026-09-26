@@ -1,17 +1,17 @@
-effect Build { fn build() -> i64; }
+hook Build { func build() -> i64; }
 
-fn ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
+func ignore(callback: Delayed<(i64 -> i64), {Build}>) -> i64 { 0 }
 
-fn twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
+func twice(callback: Delayed<(i64 -> i64), {Build}>) -> i64 / {Build} {
     <(<1 | callback, <2 | callback) | add
 }
 
-fn answer() -> i64 / {IO} {
+func answer() -> i64 / {IO} {
     <"called" | println;
     42
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let discard = fn(value) {
         <{
             build();
@@ -25,7 +25,7 @@ command main | (exit: i32) / {IO} {
             build();
             value
         };
-        handle (<pending | twice) {
+        do (<pending | twice) {
             build(): resume => {
                 <"demand" | println;
                 <0 | resume

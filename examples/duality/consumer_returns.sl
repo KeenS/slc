@@ -1,9 +1,9 @@
-fn returning_sink(value: i64) -> (,) / {IO} {
+func returning_sink(value: i64) -> (,) / {IO} {
     <value | println
 }
 
-fn printing_consumer(exit: -i32) -> (-i64 / {IO}) {
-    select i64 {
+func printing_consumer(exit: -i32) -> (-i64 / {IO}) {
+    mu i64 {
         value => {
             <value | println;
             <0 | exit>
@@ -11,7 +11,7 @@ fn printing_consumer(exit: -i32) -> (-i64 / {IO}) {
     }
 }
 
-command main | (exit: -i32) / {IO} {
+proc main | (exit: -i32) / {IO} {
     <1 | returning_sink;
     <"returned from sink" | println;
 

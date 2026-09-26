@@ -24,8 +24,8 @@ serve the same pipeline, through an elaborated adapter rather than
 unrestricted type equality:
 
 ```sl
-fn area(s: Shape) -> i64                  // (-Shape ; +i64)
-fn area_of(out: i64) <- Shape             // (+i64 ; -Shape) — adapted orientation
+func area(s: Shape) -> i64                  // (-Shape ; +i64)
+func area_of(out: i64) <- Shape             // (+i64 ; -Shape) — adapted orientation
 ```
 
 Either stands as a stage, and what flows in picks the reading; the forward
@@ -70,11 +70,11 @@ declarations, rather than treating different representations as equal.
 ```sl
 data Box<-F> { value: F }
 
-fn deliver(out: String) <- i64 {
-    select i64 { number => <number | int_to_str | out> }
+func deliver(out: String) <- i64 {
+    mu i64 { number => <number | int_to_str | out> }
 }
 
-command main | (exit: i32) / {IO} {
+proc main | (exit: i32) / {IO} {
     let original = Box { value: deliver };
     let adapted: Box<(i64 -> String)> = original;
     <7 | adapted.value | println;
@@ -171,19 +171,19 @@ Primitive and trait-method calls retain their parenthesized compatibility
 forms, with the same argument demand rules as flow. A variant constructor
 `Cons(h, t)` *builds*, and keeps its parentheses.
 
-**A `command` is a stage too.** It takes two groups — values, then the
+**A `proc` is a stage too.** It takes two groups — values, then the
 menu of exits — and the chain hands it both: what flows in is the value
 group, and the closing stage is the row. So a command reads like every
 other call, and ends where control leaves it:
 
 ```sl
-command nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String)
+proc nth<+T>(xs: List<T>, i: i64) | (found: T & missing: String)
 
 <(xs, 2) | nth | (found & missing)>
 ```
 
 The row travels whole, so a command that takes one may hand it on
-unopened — `command forward(…) | (row: (-T & -String)) { <(xs, 2) | nth | row> }`.
+unopened — `proc forward(…) | (row: (-T & -String)) { <(xs, 2) | nth | row> }`.
 A consumer transformer is *not* this case: it answers a consumer rather than
 `⊥`, so it composes on, and its exits are the rest of the chain
 (`<shape | area_of | label_of | out>`).
@@ -213,7 +213,7 @@ A binder builds nothing itself, so every connective is written in its own
 syntax — `x => ::1(x)` for a choice, `k <= (k ; other)` for a joint — and the
 name says what is abstracted, where a placeholder would leave open which
 parenthesis it belongs to. Its body is one stage, ending at the next `|`,
-and only a stage after `|` can be one: the head of a chain and a `match` arm
+and only a stage after `|` can be one: the head of a chain and an `of` arm
 keep their meaning.
 
 **A cut** `<v | k>` sends the value `v` to the consumer `k`. It is the surface
@@ -222,7 +222,7 @@ that happens to return: control does not come back, so nothing after it in a
 block runs, and its type is `⊥`.
 
 ```sl
-command route(x: i32) | (k: i32) {
+proc route(x: i32) | (k: i32) {
     <x | k>
 }
 ```
@@ -241,7 +241,7 @@ consumer transformer applied to its row:
 ```
 
 Because a cut has type `⊥`, an arm that ends in one constrains nothing: in
-`match c { True => <(pos, 1) | add, False => <message | err> }` the `match` has the type of
+`of c { True => <(pos, 1) | add, False => <message | err> }` the `of` has the type of
 the arm that returns, and arms that both return must agree.
 
 Calling a continuation is rejected. `k(v)` reports that `k` is a consumer and

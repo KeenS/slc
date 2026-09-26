@@ -37,11 +37,11 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 
 ## [`duality/`](duality) — Both sides of the mirror
 
-What is SLC's own: polarity, continuations as values, `mu` and `select`, menus and forms, and `|` as flow. Start with `two_styles.sl`.
+What is SLC's own: polarity, continuations as values, `mu` for both capture and the consumer, menus and forms, and `|` as flow. Start with `two_styles.sl`.
 
 - [`classical.sl`](duality/classical.sl) — Classical control: double negation elimination and excluded middle
 - [`codata_impls.sl`](duality/codata_impls.sl) — Traits meet the negative side, in both directions
-- [`command.sl`](duality/command.sl) — A `command` declaration with a value parameter and a continuation parameter, and the `mu` expression that captures one to pass it
+- [`command.sl`](duality/command.sl) — A `proc` declaration with a value parameter and a continuation parameter, and the `mu` expression that captures one to pass it
 - [`composition.sl`](duality/composition.sl) — The declaration square composes: a field can hold a type from any column, because a menu or form value is a value like any other
 - [`connectives.sl`](duality/connectives.sl) — The connectives, in both polarities
 - [`consumer_returns.sl`](duality/consumer_returns.sl) — A sink that returns, beside a consumer that does not
@@ -69,7 +69,7 @@ Algebraic effects, handlers as values, delimited control, and rows on the negati
 - [`generic_effects.sl`](effects/generic_effects.sl) — An effect with a type parameter, instantiated twice, and a stored handler
 - [`handler_answers.sl`](effects/handler_answers.sl) — A handler's answer type, and the parameters of its clauses
 - [`handler_forwarding.sl`](effects/handler_forwarding.sl) — A complete handler against one that forwards with `_ => forward`
-- [`handler_values.sl`](effects/handler_values.sl) — Handlers as values: stored in a list, chosen, installed with `with … handle`
+- [`handler_values.sl`](effects/handler_values.sl) — Handlers as values: stored in a list, chosen, installed with `op … do`
 - [`io.sl`](effects/io.sl) — `IO`, the effect the runtime handles
 - [`latent_effects.sl`](effects/latent_effects.sl) — The dual of effects: latent rows on the negative side
 - [`multi.sl`](effects/multi.sl) — Several traits and several effects in one function
@@ -269,7 +269,7 @@ consumer constructed
 ```
 
 Use an ordinary function and leave off the closing `>` for a returning sink.
-A `select` arm must end in a command, not return unit.
+A `mu` arm must end in a command, not return unit.
 
 ### Stream rows and repeated demand
 
