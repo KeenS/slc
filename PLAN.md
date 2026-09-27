@@ -15,27 +15,16 @@ name, never by position.
 
 ## Status
 
-The acceptance suite covers the corrected runtime and effect rules as well
-as complete design programs. Traits (ad-hoc polymorphism) and algebraic
-effects with handlers are both shipped and specified in the design, and
-the execution model has been rebuilt around them: the evaluator is an
-abstract machine over a closed, flat, de-Bruijn instruction stream, its
-continuation first-class data (`docs/design/core.md`). So effect handlers are
-multi-shot, captured continuations are cheap and reusable, and trait
-dispatch is resolved entirely at compile time.
+The acceptance suite covers the corrected runtime and effect rules, and the
+complete design programs. The queue the redesign approved is complete, and
+the known limits below remain.
 
-The queue the redesign approved is complete. Generic effects, composable
-capture, and structural stage adapters are specified in the design, with
-runnable examples and regression coverage. The known design limits below
-remain.
-
-Call-by-name is the settled direction for delayed computation: every demand
-runs it afresh under the handlers around that demand. Future changes must keep
-the polarity-directed evaluation discipline and explicit eager evaluation;
-they do not replace it with a general call-by-value default. Call-by-need,
-memoized thunks and implicit result caching are out of scope, not deferred
-features. New features must preserve the separate forcing and activation
-rows and the demand-time handler boundaries specified in the design.
+Delayed computation is call-by-name: each demand runs afresh under the
+handlers around that demand. Later work keeps the polarity-directed
+evaluation discipline and explicit eagerness, the separate forcing and
+activation rows, and handler boundaries at demand time. Call-by-need,
+memoized thunks, and implicit result caching stay out of this file, as does
+a general call-by-value default.
 
 ## Known limits
 
@@ -50,13 +39,6 @@ rows and the demand-time handler boundaries specified in the design.
   present in `E`; an unknown handled-row tail does not grant capabilities.
   Abstraction over unknown capability tails remains unsupported; typed
   generic applications inside concrete capabilities are supported.
-
-- **Soundness is enforced by inference, argued informally.** What remains
-  short of a proof: no mechanized subject-reduction argument ties the checker
-  to the reduction rules, comparing two values nothing else constrains stays
-  unchecked, and the untyped evaluator remains the backstop for whatever that
-  gap hides. A type variable does carry the polarity of the generic parameters
-  it meets (`docs/design/polarity.md`, "Polarity by position").
 
 ## Next
 
@@ -92,36 +74,4 @@ rows and the demand-time handler boundaries specified in the design.
 
 ## Deferred, for discussion
 
-Each of these needs a decision before it is work. Once one is made it goes
-to the design, and whatever it leaves to build moves up to `Next`.
-
-- **A REPL.** Feasible, and what it turns on is settled by two decisions
-  rather than by work. The work is known: values kept between entries index
-  compiled code, which today is one fresh chunk per program, so the chunk
-  must grow append-only; and the checker checks whole programs, so it needs
-  an entry point for one entry against the declarations so far and the types
-  of earlier bindings.
-
-  The first decision is what a continuation captured in one entry means in a
-  later one. Nothing outlives its machine run today — a `def` is a
-  literal — so the prompt is where this first arises. Read off the jump code
-  and not yet run: entries run under the runtime's `IO` handler as `main`
-  does, each installation has its own prompt, and a jump that first meets a
-  prompt its target does not hold is refused (`ForeignPrompt`) — the rule
-  `examples/errors/delimited_error.sl` shows for `reset`. So a stale
-  continuation is refused with no new code. The alternative is Scheme's: the
-  jump re-enters the earlier entry, and what is left of it becomes the
-  current entry's result. Refusing is the rule the language already has.
-
-  The second is what an entry is: a value is printed through `Display`, a
-  command runs and prints nothing, `exit` leaves the REPL with its status,
-  and a later definition shadows an earlier one — where the driver's rule for
-  the prelude is that the first wins. And what `let` means at the prompt:
-  keep the value, which needs the work above, or re-evaluate it where it is
-  used, which needs none and repeats its effects.
-
-  A first version can decide only the second: keep the session as source,
-  recompile it whole for each entry, and re-evaluate `let`. Nothing persists
-  at run time, so no continuation crosses entries. An entry left incomplete
-  is already recognisable — its parse error is at the end of input, with no
-  extent — and `--fuel` bounds one that does not stop.
+Nothing is deferred.
