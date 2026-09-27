@@ -82,6 +82,13 @@ one
 ",
         ),
         (
+            "basics/menu_fields.sl",
+            "\
+hi!
+5
+",
+        ),
+        (
             "basics/sets.sl",
             "\
 {m: 1}

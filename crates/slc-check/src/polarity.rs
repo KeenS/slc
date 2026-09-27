@@ -97,8 +97,8 @@ fn check_decl(d: &Node<Decl>, declared: &Declarations, diags: &mut Vec<Diagnosti
             }
         }
         Decl::Menu { items, .. } => {
-            for (_, ty) in items {
-                if let Ok(core_ty) = lower_type(ty)
+            for item in items {
+                if let Ok(core_ty) = lower_type(&item.demanded())
                     && !is_usable_as_field(&core_ty)
                 {
                     diags.push(Diagnostic {
@@ -144,9 +144,17 @@ fn check_type_param_signs(d: &Node<Decl>, declared: &Declarations, diags: &mut V
             types.extend(variants.iter().flat_map(|(_, fields)| fields));
             (type_params, type_param_signs)
         }
-        Decl::Menu { type_params, type_param_signs, effects, items, .. }
-        | Decl::Form { type_params, type_param_signs, effects, fields: items, .. } => {
-            types.extend(items.iter().map(|(_, ty)| ty));
+        Decl::Form { type_params, type_param_signs, effects, fields, .. } => {
+            types.extend(fields.iter().map(|(_, ty)| ty));
+            rows.push(effects);
+            (type_params, type_param_signs)
+        }
+        Decl::Menu { type_params, type_param_signs, effects, items, .. } => {
+            for item in items {
+                types.extend(item.params.iter().filter_map(|param| param.ty.as_ref()));
+                types.push(&item.answer);
+                rows.push(&item.effects);
+            }
             rows.push(effects);
             (type_params, type_param_signs)
         }

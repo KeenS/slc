@@ -132,7 +132,16 @@ arrives at them:
   answering `A`), and the command that answers it. Arms cover each item
   exactly once, only the demanded branch ever runs, and the menu's name may
   be left out when a labelled copattern names it unambiguously. `item <= c`
-  is shorthand for `item: item <= c`. An arm may *refine*
+  is shorthand for `item: item <= c`. A field may take the values the
+  demand supplies, written where an enum variant writes its payload.
+  `append(part: String): Builder` is the answer `(String -> Builder)`.
+  The copattern binds those values and then the continuation,
+  `append(part): out <= c`, and `append(part) <= c` names the continuation
+  `append`. A demand `builder.append(part)` applies the function;
+  `builder.append` is the function, so `<part | builder.append` is the
+  same demand. Several parameters are one group. The function's row is
+  written on the answer, `append(part: String): Builder / {IO}`. An arm
+  may *refine*
   an item whose answer is itself a menu with a nested copattern —
   `tail: head: out` — and the arms sharing an outer destructor group into
   an inner menu, which must again cover every item

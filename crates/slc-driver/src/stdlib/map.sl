@@ -239,20 +239,16 @@ impl<+K: Display + Ord, +V: Display> Display for Map<K, V> {
 }
 
 // A builder is the map's negative side. Each state closes over one map.
-// Asking for `put` gives a function from an entry to the next state; asking
-// for `finish` gives the map that state holds.
+// `put` takes the entry and answers the next state; `finish` answers the
+// map that state holds. A bare `put` is still that function.
 pub menu Builder<+K, +V> {
-    put: ((K, V) -> Builder<K, V>),
+    put(key: K, value: V): Builder<K, V>,
     finish: Map<K, V>,
 }
 
 func holding<+K: Ord, +V>(m: Map<K, V>) -> Builder<K, V> {
     mu Builder {
-        put <= <fn(entry: (K, V)) {
-            of entry {
-                (key, value) => <(<(m, key, value) | insert) | holding,
-            }
-        } | put>,
+        put(key, value): out <= <(<(m, key, value) | insert) | holding | out>,
         finish <= <m | finish>,
     }
 }

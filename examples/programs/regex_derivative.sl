@@ -34,7 +34,7 @@
 
 menu Regex {
     nullable: Bool,
-    derive: (char -> Regex),
+    derive(c: char): Regex,
     show: String,
     atom: Bool,
     void: Bool,
@@ -53,7 +53,7 @@ func or(a: Bool, b: Bool) -> Bool {
 func empty() -> Regex {
     mu Regex {
         nullable <= <False | nullable>,
-        derive <= <fn(c: char) { empty() } | derive>,
+        derive(c): out <= <empty() | out>,
         show <= <"∅" | show>,
         atom <= <True | atom>,
         void <= <True | void>,
@@ -65,7 +65,7 @@ func empty() -> Regex {
 func epsilon() -> Regex {
     mu Regex {
         nullable <= <True | nullable>,
-        derive <= <fn(c: char) { empty() } | derive>,
+        derive(c): out <= <empty() | out>,
         show <= <"ε" | show>,
         atom <= <True | atom>,
         void <= <False | void>,
@@ -76,9 +76,10 @@ func epsilon() -> Regex {
 func chr(wanted: char) -> Regex {
     mu Regex {
         nullable <= <False | nullable>,
-        derive <= <fn(c: char) {
-            of (<(c, wanted) | eq) { True => epsilon(), False => empty() }
-        } | derive>,
+        derive(c): out <= <of (<(c, wanted) | eq) {
+            True => epsilon(),
+            False => empty(),
+        } | out>,
         show <= <wanted | to_string | show>,
         atom <= <True | atom>,
         void <= <False | void>,
@@ -100,7 +101,7 @@ func alt(r: Regex, s: Regex) -> Regex {
             };
             <mu Regex {
                 nullable <= <(r.nullable, s.nullable) | or | nullable>,
-                derive <= <fn(c: char) { <(<c | r.derive, <c | s.derive) | alt } | derive>,
+                derive(c): out <= <(<c | r.derive, <c | s.derive) | alt | out>,
                 show <= <("(", r.show)
                     | add
                     | x => (x, "|") | add
@@ -133,13 +134,14 @@ func seq(r: Regex, s: Regex) -> Regex {
             };
             <mu Regex {
                 nullable <= <(r.nullable, s.nullable) | and | nullable>,
-                derive <= <fn(c: char) {
+                derive(c): out <= {
                     let first = <(<c | r.derive, s) | seq;
-                    of r.nullable {
+                    let rest = of r.nullable {
                         True => <(first, <c | s.derive) | alt,
                         False => first,
-                    }
-                } | derive>,
+                    };
+                    <rest | out>
+                },
                 show <= <(r.show, s.show) | add | show>,
                 atom <= <False | atom>,
                 void <= <False | void>,
@@ -153,7 +155,7 @@ func seq(r: Regex, s: Regex) -> Regex {
 func star(r: Regex) -> Regex {
     mu Regex {
         nullable <= <True | nullable>,
-        derive <= <fn(c: char) { <(<c | r.derive, <r | star) | seq } | derive>,
+        derive(c): out <= <(<c | r.derive, <r | star) | seq | out>,
         show <= <(
             of r.atom {
                 True => r.show,

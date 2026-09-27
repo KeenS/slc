@@ -55,6 +55,9 @@ pub struct Declarations {
     /// arguments the trait takes. The projection is applied to those and
     /// then to the implementing type.
     projections: HashMap<String, (String, String, usize)>,
+    /// Qualified `Menu::item` → the caller's value types, when the field
+    /// is written `item(p: A, q: B): R`. Absent when the field is `item: R`.
+    item_params: HashMap<String, Vec<Type>>,
 }
 
 impl Declarations {
@@ -395,6 +398,11 @@ impl Declarations {
         self.signatures.get(label)
     }
 
+    /// The caller's value types of `Menu::item`, when the field takes them.
+    pub(crate) fn item_params(&self, label: &str) -> &[Type] {
+        self.item_params.get(label).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// The menu an item's answer is, if it is one — what a nested
     /// copattern `.item(.inner(k))` refines into.
     pub(crate) fn nested_menu(&self, label: &str) -> Option<&str> {
@@ -523,14 +531,46 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         // item's answer — the continuation a request carries.
         if let Decl::Menu { name, type_params, items, .. } = &d.kind {
             let params = param_scope(type_params);
-            enums.variants.insert(name.clone(), items.iter().map(|(i, _)| i.clone()).collect());
-            for (item, answer) in items {
-                let label = format!("{name}::{item}");
-                let answer = enums.resolve_in(answer, &params).unwrap_or(Type::ONE);
-                enums.signatures.insert(label.clone(), (name.clone(), vec![answer.dual()]));
+            enums
+                .variants
+                .insert(name.clone(), items.iter().map(|item| item.name.clone()).collect());
+            for item in items {
+                let label = format!("{name}::{}", item.name);
+                let param_tys = item
+                    .params
+                    .iter()
+                    .filter_map(|param| param.ty.as_ref())
+                    .map(|ty| enums.resolve_in(ty, &params).unwrap_or(Type::ONE))
+                    .collect::<Vec<_>>();
+                let answer = enums.resolve_in(&item.answer, &params).unwrap_or(Type::ONE);
+                let demanded = if param_tys.is_empty() {
+                    answer
+                } else {
+                    let domain = match param_tys.as_slice() {
+                        [one] => one.clone(),
+                        many => Type::Tensor(many.to_vec()),
+                    };
+                    let arrow = Type::arrow(domain, answer);
+                    let row = if item.effects.is_empty() {
+                        Row::default()
+                    } else {
+                        enums
+                            .resolve_row(
+                                &item.effects,
+                                |tail| params.get(tail).copied(),
+                                |ty| enums.resolve_in(ty, &params),
+                            )
+                            .unwrap_or_default()
+                    };
+                    Type::rowed(arrow, row)
+                };
+                if !param_tys.is_empty() {
+                    enums.item_params.insert(label.clone(), param_tys);
+                }
+                enums.signatures.insert(label.clone(), (name.clone(), vec![demanded.dual()]));
                 enums
                     .destructors
-                    .entry(item.clone())
+                    .entry(item.name.clone())
                     .and_modify(|existing| *existing = None)
                     .or_insert(Some(label));
             }

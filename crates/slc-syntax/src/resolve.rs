@@ -329,7 +329,12 @@ fn references(d: &Decl, out: &mut Vec<String>) {
                 }
             }
             Pattern::Inject { pattern: p, .. } => pattern(p, out),
-            Pattern::Dtor { arg, .. } => pattern(arg, out),
+            Pattern::Dtor { params, arg, .. } => {
+                for param in params {
+                    pattern(param, out);
+                }
+                pattern(arg, out);
+            }
             _ => {}
         }
     }
@@ -403,8 +408,16 @@ fn references(d: &Decl, out: &mut Vec<String>) {
             }
         }
         Decl::Menu { items, .. } => {
-            for (_, t) in items {
-                ty(t, out);
+            for item in items {
+                for param in &item.params {
+                    if let Some(t) = &param.ty {
+                        ty(t, out);
+                    }
+                }
+                ty(&item.answer, out);
+                for effect in &item.effects.effects {
+                    ty(&effect.kind, out);
+                }
             }
         }
         Decl::Enum { variants, .. } => {
@@ -709,8 +722,14 @@ fn resolve_decl(d: &mut Decl, stack: &[Scope], locals: &mut Vec<HashSet<String>>
         Decl::Menu { name, items, effects, .. } => {
             *name = scope.qualify(name);
             resolve_row(effects, stack);
-            for (_, ty) in items {
-                resolve_type(ty, stack);
+            for item in items {
+                for param in &mut item.params {
+                    if let Some(ty) = &mut param.ty {
+                        resolve_type(ty, stack);
+                    }
+                }
+                resolve_type(&mut item.answer, stack);
+                resolve_row(&mut item.effects, stack);
             }
         }
         Decl::Form { name, fields, effects, .. } => {
@@ -1070,7 +1089,14 @@ fn resolve_pattern(p: &mut Pattern, stack: &[Scope], locals: &[HashSet<String>])
     match p {
         // The destructor is resolved against the menu table after
         // flattening, like an unqualified variant name.
-        Pattern::Dtor { .. } => {}
+        Pattern::Dtor { params, arg, .. } => {
+            for param in params {
+                resolve_pattern(param, stack, locals);
+            }
+            if matches!(arg.as_ref(), Pattern::Dtor { .. }) {
+                resolve_pattern(arg, stack, locals);
+            }
+        }
         Pattern::Enum { name, fields, .. } => {
             if !is_local(name, locals) {
                 *name = resolve_name(name, stack);
@@ -1120,7 +1146,13 @@ fn collect_binders(p: &Pattern, out: &mut HashSet<String>) {
         Pattern::Ident(name) => {
             out.insert(name.clone());
         }
-        Pattern::Dtor { arg, .. } | Pattern::Inject { pattern: arg, .. } => {
+        Pattern::Dtor { params, arg, .. } => {
+            for param in params {
+                collect_binders(param, out);
+            }
+            collect_binders(arg, out);
+        }
+        Pattern::Inject { pattern: arg, .. } => {
             collect_binders(arg, out);
         }
         Pattern::Binding { name, pattern } => {
@@ -1430,7 +1462,12 @@ fn rewrite_pattern_imports(p: &mut Pattern, imported: &HashMap<String, String>) 
                 rewrite_pattern_imports(field, imported);
             }
         }
-        Pattern::Dtor { arg, .. } => rewrite_pattern_imports(arg, imported),
+        Pattern::Dtor { params, arg, .. } => {
+            for param in params {
+                rewrite_pattern_imports(param, imported);
+            }
+            rewrite_pattern_imports(arg, imported);
+        }
         _ => {}
     }
 }

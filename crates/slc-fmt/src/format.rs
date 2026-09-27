@@ -452,7 +452,8 @@ impl Formatter {
         }
         // `fn(` or `fn {` is a lambda, an expression at the top level.
         docs.push(match self.kind() {
-            Some(T::Data | T::Form | T::Menu) => self.fields_decl()?,
+            Some(T::Data | T::Form) => self.fields_decl()?,
+            Some(T::Menu) => self.menu_decl()?,
             Some(T::Enum) => self.enum_decl()?,
             Some(T::Func) => self.fn_decl()?,
             Some(T::Command) => self.command_decl()?,
@@ -522,7 +523,26 @@ impl Formatter {
         Ok(concat(head))
     }
 
-    /// `data`, `form` and `menu`: a name, and `label: Type` fields.
+    /// `menu`: a name, and fields. A field is `label: Type`, or
+    /// `label(p: P, q: Q): Type` when the demand supplies values.
+    fn menu_decl(&mut self) -> R<Doc> {
+        let mut docs = vec![self.bump(), text(" "), self.name("a type name")?];
+        docs.extend([self.type_params()?, self.effect_row()?, text(" ")]);
+        docs.push(self.braces(&[T::Comma], FIELDS, &mut |f| {
+            let mut docs = vec![f.name("a field name")?];
+            if f.at(&T::LParen) {
+                docs.push(f.params()?);
+            }
+            docs.extend([f.expect(&T::Colon)?, text(" "), f.ty()?]);
+            if f.at(&T::Slash) {
+                docs.push(f.effect_row()?);
+            }
+            Ok(plain(concat(docs)))
+        })?);
+        Ok(concat(docs))
+    }
+
+    /// `data` and `form`: a name, and `label: Type` fields.
     fn fields_decl(&mut self) -> R<Doc> {
         let mut docs = vec![self.bump(), text(" "), self.name("a type name")?];
         docs.extend([self.type_params()?, self.effect_row()?, text(" ")]);
@@ -1069,15 +1089,37 @@ impl Formatter {
     /// `pattern => body`, or `copattern <= command`. Which arrow is the
     /// author's, and the parser has already held them to it.
     fn arm(&mut self, in_mu: bool) -> R<Laid> {
-        let is_label =
-            |f: &Self| matches!(f.kind(), Some(T::Ident(_))) && f.kind_at(1) == Some(&T::Colon);
+        let is_label = |f: &Self| {
+            matches!(f.kind(), Some(T::Ident(_)))
+                && matches!(f.kind_at(1), Some(T::Colon | T::LParen))
+        };
         let mut docs = Vec::new();
-        // A `mu` copattern mirrors the menu's `label: Type`, nested as far
-        // as the labels go: `tail: head: out`.
+        // A `mu` copattern mirrors the menu's field, nested as far as the
+        // labels go: `tail: head: out`, and `append(part): out` when the
+        // field takes the caller's values. With the colon left off, the
+        // continuation is named by the item.
+        let mut bound = false;
         while in_mu && is_label(self) {
-            docs.extend([self.bump(), self.bump(), text(" ")]);
+            docs.push(self.bump());
+            if self.at(&T::LParen) {
+                let parens = (&T::LParen, &T::RParen);
+                docs.push(
+                    self.bracketed(parens, &[T::Comma], COMMAS, &mut |f| f.pattern().map(plain))?
+                        .doc,
+                );
+                if self.at(&T::Colon) {
+                    docs.extend([self.bump(), text(" ")]);
+                } else {
+                    bound = true;
+                    break;
+                }
+            } else {
+                docs.extend([self.bump(), text(" ")]);
+            }
         }
-        docs.push(self.pattern()?);
+        if !bound {
+            docs.push(self.pattern()?);
+        }
         match self.kind() {
             Some(T::FatArrow | T::Le) => docs.extend([text(" "), self.bump(), text(" ")]),
             _ => return self.error("`=>` or `<=`"),

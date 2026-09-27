@@ -343,7 +343,7 @@ fn check_comatch_coverage(
     let mut groups: std::collections::HashMap<&String, Vec<&Pattern>> =
         std::collections::HashMap::new();
     for pattern in rows {
-        let Pattern::Dtor { dtor, arg } = pattern else {
+        let Pattern::Dtor { dtor, arg, .. } = pattern else {
             diags.push(Diagnostic {
                 message: format!("`mu {menu}` arm must name an item of `{menu}`"),
                 span,

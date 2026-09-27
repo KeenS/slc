@@ -481,17 +481,13 @@ impl<+K: Display, +V: Display> Display for HashMap<K, V> {
 // Same menu as `map::Builder`. Membership is `Hash` and `Eq`, so `put`
 // follows the trie rather than the key order.
 pub menu Builder<+K, +V> {
-    put: ((K, V) -> Builder<K, V>),
+    put(key: K, value: V): Builder<K, V>,
     finish: HashMap<K, V>,
 }
 
 func holding<+K: Hash + Eq, +V>(m: HashMap<K, V>) -> Builder<K, V> {
     mu Builder {
-        put <= <fn(entry: (K, V)) {
-            of entry {
-                (key, value) => <(<(m, key, value) | insert) | holding,
-            }
-        } | put>,
+        put(key, value): out <= <(<(m, key, value) | insert) | holding | out>,
         finish <= <m | finish>,
     }
 }

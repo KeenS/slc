@@ -87,19 +87,20 @@ come out in order. `HashSet<K>` is `HashMap` in the same way.
 [`examples/basics/sets.sl`](../../examples/basics/sets.sl) runs all three.
 
 Each of the four also has a `Builder`, the negative way to assemble one.
-It is a menu in the shape of `string::Builder`: `put` answers a function to
+It is a menu in the shape of `string::Builder`: `put(key, value)` answers
 the next builder, and `finish` answers the collection that builder holds.
+The field is that function, so a bare `put` is what a chain flows into.
 A map's `put` takes the entry; a set's takes the key. The states are
 persistent. Adding returns a new builder, and a shared prefix can diverge.
-`builder` starts from nothing, and `put` is also the function a chain
-flows into. [`examples/basics/builders.sl`](../../examples/basics/builders.sl) runs
-them.
+`builder` starts from nothing.
+[`examples/basics/builders.sl`](../../examples/basics/builders.sl) runs them.
 
 String assembly is a library operation, not a new literal or variadic syntax.
-`string::new()` returns a `string::Builder`, whose `append` menu item answers
-with a function from a `String` to the next builder, while `finish` answers
-with the accumulated `String`. `string::push` renders any `Display` value and
-uses `append`. Each builder is persistent: its menu arms close over one
+`string::new()` returns a `string::Builder`. `append(part)` answers the next
+builder, and `finish` answers the accumulated `String`. The field is the
+function `(String -> Builder)`, so `<part | builder.append` is the same
+demand. `string::push` renders any `Display` value and uses `append`. Each
+builder is persistent: its menu arms close over one
 accumulated value, so adding returns a new state and a shared prefix can safely
 branch. [`examples/programs/string_builder.sl`](../../examples/programs/string_builder.sl)
 shows the complete program.

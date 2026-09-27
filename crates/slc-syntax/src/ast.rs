@@ -374,8 +374,12 @@ pub enum Pattern {
     /// pattern for the continuation the request carries. In `match` the
     /// pattern is a binder naming that continuation; in `mu` it may itself
     /// be a request shape — a nested copattern, `tail: head: out`.
+    /// `params` are the caller values a copattern binds, `item(p, q): out`.
+    /// A request literal's pattern leaves them empty: the request carries
+    /// the continuation, and the values travel with the function it answers.
     Dtor {
         dtor: String,
+        params: Vec<Pattern>,
         arg: Box<Pattern>,
     },
 }
@@ -451,6 +455,48 @@ pub enum LetMode {
     Delay,
 }
 
+/// One item of a `menu`. `params` empty is `name: answer`. Otherwise the
+/// item is `name(params): answer` and a demand returns the function of
+/// those parameters. `effects` is that function's row, written after the
+/// answer: `name(p: P): A / {E}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MenuItem {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub answer: TypeExpr,
+    pub effects: EffectRow,
+}
+
+impl MenuItem {
+    /// The type a demand of this item returns.
+    pub fn demanded(&self) -> TypeExpr {
+        if self.params.is_empty() {
+            return self.answer.clone();
+        }
+        let span = Span { start: 0, end: 0 };
+        let domain = match self.params.as_slice() {
+            [one] => one.ty.clone().unwrap_or(TypeExpr::Tensor(Vec::new())),
+            many => TypeExpr::Tensor(
+                many.iter()
+                    .map(|param| Node {
+                        span,
+                        kind: param.ty.clone().unwrap_or(TypeExpr::Tensor(Vec::new())),
+                    })
+                    .collect(),
+            ),
+        };
+        let fun = TypeExpr::Fun(
+            Box::new(Node { span, kind: domain }),
+            Box::new(Node { span, kind: self.answer.clone() }),
+        );
+        if self.effects.is_empty() {
+            fun
+        } else {
+            TypeExpr::Effectful(Box::new(Node { span, kind: fun }), self.effects.clone())
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decl {
     Data {
@@ -482,7 +528,9 @@ pub enum Decl {
     /// `menu Name { item: Type, … }` — the negative additive: the mirror of
     /// `enum`. An enum value is one variant the producer chose; a menu value
     /// answers one item the consumer demands. Each item names a destructor
-    /// and the type of the answer it delivers.
+    /// and the type of the answer it delivers. `item(p: P): A` delivers
+    /// `(P -> A)`: the parentheses are the caller's values, and the colon
+    /// still names the answer.
     Menu {
         name: String,
         /// `pub` — visible outside the module that declares it. A
@@ -499,7 +547,7 @@ pub enum Decl {
         /// and every demand incurs it — the work of codata runs on the
         /// demander's schedule, so the row belongs to the type.
         effects: EffectRow,
-        items: Vec<(String, TypeExpr)>,
+        items: Vec<MenuItem>,
     },
     /// `form Name { field: Type, … }` — the negative multiplicative: the
     /// mirror of `data`. A record carries every field at once; a form wants

@@ -21,6 +21,7 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`lambda.sl`](basics/lambda.sl) — Lambda abstraction and immediate application
 - [`lists.sl`](basics/lists.sl) — Lists — an ordinary recursive enum, defined in the prelude
 - [`maps.sl`](basics/maps.sl) — Ordered maps: a persistent AVL tree in the library
+- [`menu_fields.sl`](basics/menu_fields.sl) — A menu field taking the values a demand supplies
 - [`match_exhaustive.sl`](basics/match_exhaustive.sl) — Match exhaustiveness checking
 - [`namespaces.sl`](basics/namespaces.sl) — Modules: named scopes, flattened by resolution
 - [`nested_calls.sl`](basics/nested_calls.sl) — Nested calls compose with surface operators

@@ -1225,12 +1225,12 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     let mut dtor_labels: HashMap<String, Option<String>> = HashMap::new();
     for d in &p.decls {
         if let Decl::Menu { name, items, .. } = &d.kind {
-            for (item, _) in items {
-                let label = format!("{name}::{item}");
+            for item in items {
+                let label = format!("{name}::{}", item.name);
                 dtor_labels.insert(label.clone(), Some(label.clone()));
                 // An unqualified destructor is usable only while unambiguous.
                 dtor_labels
-                    .entry(item.clone())
+                    .entry(item.name.clone())
                     .and_modify(|existing| *existing = None)
                     .or_insert(Some(label));
             }
@@ -1466,6 +1466,17 @@ fn lower_let(name: &str, value: Term, body: Term) -> Term {
             ),
         )),
     )
+}
+
+/// The caller's values on a copattern, as one λ. Several patterns are one
+/// packed argument, the group a demand `item(a, b)` passes.
+fn bind_value_patterns(patterns: &[Pattern], body: Term) -> Result<Term, LowerError> {
+    let params = patterns
+        .iter()
+        .cloned()
+        .map(|pattern| Param { pattern, ty: None, is_continuation: false })
+        .collect::<Vec<_>>();
+    bind_group(&params, "field", body)
 }
 
 /// Wrap `body` in the λ binder a declared parameter introduces — value and
@@ -1758,9 +1769,12 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
                 let (binders, body) = components(items.iter(), body)?;
                 product = Some(CoTerm::MuTildeTensor(binders, Box::new(body)));
             }
-            Pattern::Dtor { dtor, arg } => {
-                // A matched request binds its continuation whole; its label
-                // dispatches like any other.
+            Pattern::Dtor { dtor, params, arg } => {
+                // A matched request binds its continuation whole. Caller
+                // values belong to a copattern, which is not this table.
+                if !params.is_empty() {
+                    return Ok(None);
+                }
                 let binder = match arg.as_ref() {
                     Pattern::Ident(name) => name.clone(),
                     Pattern::Wildcard => UNUSED_BINDER.to_string(),
@@ -1842,9 +1856,11 @@ fn lower_comatch(
     depth: usize,
 ) -> Result<Term, LowerError> {
     let mut order: Vec<&String> = Vec::new();
-    let mut groups: HashMap<&String, Vec<(&Pattern, &Node<Expr>)>> = HashMap::new();
+    // The caller's patterns, the continuation pattern, and the arm.
+    type FieldArm<'a> = (&'a [Pattern], &'a Pattern, &'a Node<Expr>);
+    let mut groups: HashMap<&String, Vec<FieldArm>> = HashMap::new();
     for (pattern, command) in rows {
-        let Pattern::Dtor { dtor, arg } = pattern else {
+        let Pattern::Dtor { dtor, params, arg } = pattern else {
             return Err(LowerError::Unsupported(
                 "`mu` with arms answers a menu's demands; every arm is `item: pattern`".into(),
             ));
@@ -1852,7 +1868,7 @@ fn lower_comatch(
         if !groups.contains_key(dtor) {
             order.push(dtor);
         }
-        groups.entry(dtor).or_default().push((arg.as_ref(), command));
+        groups.entry(dtor).or_default().push((params, arg.as_ref(), command));
     }
     let mut branches = Vec::new();
     for dtor in order {
@@ -1863,24 +1879,53 @@ fn lower_comatch(
                 LowerError::Unsupported(format!("`.{dtor}` does not name a declared menu item"))
             })?;
         let group = groups.remove(dtor).expect("grouped above");
-        if let [(Pattern::Ident(name), command)] = group.as_slice() {
+        if let [(&[], Pattern::Ident(name), command)] = *group.as_slice() {
             // The copattern binds the demand's continuation, so the arm's
             // body may reach it: it belongs to the arm's scope.
             let mut arm_scope = continuations.to_vec();
             arm_scope.push((*name).clone());
             let body = lower_select_command(command, &arm_scope)?;
             branches.push(CoMatchBranch { label, binder: name.clone(), body: Box::new(body) });
-        } else if let [(Pattern::Wildcard, command)] = group.as_slice() {
+        } else if let [(&[], Pattern::Wildcard, command)] = *group.as_slice() {
             let body = lower_select_command(command, continuations)?;
             branches.push(CoMatchBranch {
                 label,
                 binder: UNUSED_BINDER.into(),
                 body: Box::new(body),
             });
-        } else if group.iter().all(|(arg, _)| matches!(arg, Pattern::Dtor { .. })) {
+        } else if let [(params, arg, command)] = *group.as_slice()
+            && !params.is_empty()
+        {
+            // `item(p): out <= c` answers with the function of `p`. The
+            // arm's command runs when that function is applied, and `out`
+            // is where its result goes. The demand's own continuation
+            // receives the function.
+            let cont = match arg {
+                Pattern::Ident(name) => (*name).clone(),
+                Pattern::Wildcard => UNUSED_BINDER.to_string(),
+                _ => {
+                    return Err(LowerError::Unsupported(format!(
+                        "item `{dtor}` binds its continuation by name: `{dtor}(p): out`"
+                    )));
+                }
+            };
+            let mut arm_scope = continuations.to_vec();
+            arm_scope.push(cont.clone());
+            let command = lower_select_command(command, &arm_scope)?;
+            let value = Term::Mu(cont, Box::new(command));
+            let function = bind_value_patterns(params, value)?;
+            let binder = format!("__menu_k{depth}");
+            let body = Command::Cut(function, CoTerm::Covar(binder.clone()));
+            branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
+        } else if group
+            .iter()
+            .all(|(params, arg, _)| params.is_empty() && matches!(arg, Pattern::Dtor { .. }))
+        {
             // The item is refined: its answer is an inner menu, and the
             // whole of it goes to this request's continuation.
-            let inner = lower_comatch(None, group, continuations, depth + 1)?;
+            let nested: Vec<(&Pattern, &Node<Expr>)> =
+                group.iter().map(|(_, arg, command)| (*arg, *command)).collect();
+            let inner = lower_comatch(None, nested, continuations, depth + 1)?;
             let binder = format!("__k{depth}");
             let body = Command::Cut(inner, CoTerm::Covar(binder.clone()));
             branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
@@ -2258,7 +2303,7 @@ fn pattern_descriptor(pattern: &Pattern) -> String {
             Pattern::Rest => out.push_str(".."),
             // A request shape: its qualified label with the continuation as
             // the single bound field, exactly as an enum pattern encodes.
-            Pattern::Dtor { dtor, arg } => {
+            Pattern::Dtor { dtor, arg, .. } => {
                 let label = lookup_dtor(dtor).unwrap_or_else(|| dtor.clone());
                 out.push('"');
                 out.push_str(&escape(&label));

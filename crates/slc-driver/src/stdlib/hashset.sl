@@ -77,13 +77,13 @@ impl<+K: Display + Hash + Eq> Display for HashSet<K> {
 }
 
 pub menu Builder<+K> {
-    put: (K -> Builder<K>),
+    put(key: K): Builder<K>,
     finish: HashSet<K>,
 }
 
 func holding<+K: Hash + Eq>(s: HashSet<K>) -> Builder<K> {
     mu Builder {
-        put <= <fn(key: K) { <(<(s, key) | insert) | holding } | put>,
+        put(key): out <= <(<(s, key) | insert) | holding | out>,
         finish <= <s | finish>,
     }
 }

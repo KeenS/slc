@@ -1241,10 +1241,37 @@ fn check_declared_types(p: &Program, enums: &Declarations, diags: &mut Vec<Diagn
             }
             Decl::Menu { name, type_params, items, .. } => {
                 let params = scope(type_params);
-                for (item, ty) in items {
-                    if enums.resolve_in(ty, &params).is_none() {
-                        let what = format!("the type of item `{item}` of `{name}`");
-                        unresolved_type(&what, ty, d.span, enums, diags);
+                for item in items {
+                    for param in &item.params {
+                        let Some(ty) = &param.ty else { continue };
+                        if enums.resolve_in(ty, &params).is_none() {
+                            let what = format!(
+                                "the type of a parameter of item `{}` of `{name}`",
+                                item.name
+                            );
+                            unresolved_type(&what, ty, d.span, enums, diags);
+                        }
+                    }
+                    if enums.resolve_in(&item.answer, &params).is_none() {
+                        let what = format!("the type of item `{}` of `{name}`", item.name);
+                        unresolved_type(&what, &item.answer, d.span, enums, diags);
+                    }
+                    if !item.effects.is_empty()
+                        && enums
+                            .resolve_row(
+                                &item.effects,
+                                |tail| params.get(tail).copied(),
+                                |ty| enums.resolve_in(ty, &params),
+                            )
+                            .is_none()
+                    {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "the row of item `{}` of `{name}` is not a valid effect row",
+                                item.name
+                            ),
+                            span: d.span,
+                        });
                     }
                 }
             }
@@ -3140,7 +3167,7 @@ fn bind_match_pattern(
         // the payload is a live continuation — opaque at run time — so only
         // a binder can take it; nesting belongs to `mu`, where dispatch is
         // deferred.
-        Pattern::Dtor { dtor, arg } => {
+        Pattern::Dtor { dtor, arg, .. } => {
             if let Some(ty) = enums.destructor(dtor).and_then(|(_, p)| p.first()) {
                 bind_match_pattern(arg, &ty.instantiate(scrutinee_args(scrutinee)), enums, env);
             }
@@ -3178,6 +3205,102 @@ fn bind_match_pattern(
     }
 }
 
+/// The result and effect row of a function type. `A -> B` is `(dual(A) ; B)`,
+/// and a row rides outside that.
+fn function_result(ty: Type) -> Option<(Type, slc_core::types::Row)> {
+    let (ty, row) = match ty {
+        Type::Rowed(inner, row) => (*inner, row),
+        other => (other, slc_core::types::Row::default()),
+    };
+    match ty {
+        Type::Par(parts) if parts.len() == 2 => Some((parts[1].clone(), row)),
+        _ => None,
+    }
+}
+
+/// One parameterized copattern arm: the caller's patterns, the continuation
+/// pattern, and the command that becomes the function body.
+struct FieldArm<'a> {
+    menu: &'a str,
+    dtor: &'a str,
+    params: &'a [slc_syntax::ast::Pattern],
+    arg: &'a slc_syntax::ast::Pattern,
+    command: &'a Node<Expr>,
+    /// The request's continuation type: the consumer of the function.
+    answer: &'a Type,
+    type_args: &'a [Type],
+}
+
+/// `item(p, q): out <= c` — `p` and `q` are the caller's values, `out`
+/// consumes the answer, and `c` is the body of the function a demand
+/// returns. What `c` performs belongs to that function's row.
+fn check_field_arguments(
+    arm: &FieldArm<'_>,
+    enums: &Declarations,
+    env: &mut Env,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use slc_syntax::ast::Pattern;
+    let FieldArm { menu, dtor, params, arg, command, answer: k_ty, type_args } = arm;
+    let label = format!("{menu}::{dtor}");
+    let declared = enums.item_params(&label).to_vec();
+    if declared.is_empty() {
+        diags.push(Diagnostic {
+            message: format!("`{dtor}` takes no arguments"),
+            span: command.span,
+        });
+        return;
+    }
+    if params.len() != declared.len() {
+        diags.push(Diagnostic {
+            message: format!(
+                "`{dtor}` takes {} argument(s); the arm binds {}",
+                declared.len(),
+                params.len()
+            ),
+            span: command.span,
+        });
+        return;
+    }
+    let Some((result, row)) = function_result(k_ty.dual()) else {
+        diags.push(Diagnostic {
+            message: format!(
+                "`{dtor}` answers {}, which is not a function of its arguments",
+                k_ty.dual()
+            ),
+            span: command.span,
+        });
+        return;
+    };
+    env.push();
+    let body_row = env.uni.fresh_row();
+    let outer = env.current_row.replace(body_row);
+    for (pattern, ty) in params.iter().zip(declared.iter()) {
+        bind_match_pattern(pattern, &ty.instantiate(type_args), enums, env);
+    }
+    if let Pattern::Ident(name) = arg {
+        env.define(name, result.dual());
+    }
+    let ty = check_expr(command, enums, env, diags);
+    if let Some(ty) = ty
+        && ty != Type::BOTTOM
+        && ty != Type::ONE
+    {
+        diags.push(Diagnostic {
+            message: format!("a `mu` arm is a command; this one has type {ty}"),
+            span: command.span,
+        });
+    }
+    env.current_row = outer;
+    env.pop();
+    let runs = slc_core::types::Row { effects: Default::default(), tail: Some(body_row) };
+    env.constrain_row_for(
+        runs,
+        row,
+        crate::env::RowOrigin::Declaration { name: label, span: command.span },
+    );
+}
+
 /// Check the arms of a copattern `mu` against its menu, recursively: each
 /// arm binds its request's continuation (or refines it with nested
 /// copatterns into an inner menu) and answers with a command.
@@ -3191,7 +3314,9 @@ fn check_comatch_arms(
 ) {
     use slc_syntax::ast::Pattern;
     let mut order: Vec<&String> = Vec::new();
-    let mut groups: std::collections::HashMap<&String, Vec<(&Pattern, &Node<Expr>)>> =
+    // The caller's patterns, the continuation pattern, and the arm.
+    type GroupedArm<'a> = (&'a [Pattern], &'a Pattern, &'a Node<Expr>);
+    let mut groups: std::collections::HashMap<&String, Vec<GroupedArm>> =
         std::collections::HashMap::new();
     let check_command = |env: &mut Env, command: &Node<Expr>, diags: &mut Vec<Diagnostic>| {
         let ty = check_expr(command, enums, env, diags);
@@ -3206,7 +3331,7 @@ fn check_comatch_arms(
         }
     };
     for (pattern, command) in rows {
-        let Pattern::Dtor { dtor, arg } = pattern else {
+        let Pattern::Dtor { dtor, params, arg } = pattern else {
             diags.push(Diagnostic {
                 message: format!("`mu {menu}` answers demands; every arm is `.item(p)`"),
                 span: command.span,
@@ -3216,23 +3341,32 @@ fn check_comatch_arms(
         if !groups.contains_key(dtor) {
             order.push(dtor);
         }
-        groups.entry(dtor).or_default().push((arg.as_ref(), command));
+        groups.entry(dtor).or_default().push((params, arg.as_ref(), command));
     }
     for dtor in order {
         let group = groups.remove(dtor).expect("grouped above");
         let Some((_, payload)) = enums.destructor(&format!("{menu}::{dtor}")) else {
             diags.push(Diagnostic {
                 message: format!("`{menu}` has no item `{dtor}`"),
-                span: group[0].1.span,
+                span: group[0].2.span,
             });
-            for (_, command) in group {
+            for (_, _, command) in group {
                 check_command(env, command, diags);
             }
             continue;
         };
         let k_ty = payload.first().cloned().unwrap_or(Type::ONE).instantiate(type_args);
         let mut nested: Vec<(&Pattern, &Node<Expr>)> = Vec::new();
-        for (arg, command) in group {
+        for (params, arg, command) in group {
+            if !params.is_empty() {
+                check_field_arguments(
+                    &FieldArm { menu, dtor, params, arg, command, answer: &k_ty, type_args },
+                    enums,
+                    env,
+                    diags,
+                );
+                continue;
+            }
             match arg {
                 Pattern::Ident(name) => {
                     env.push();
@@ -3473,8 +3607,9 @@ fn contains_injection(pattern: &slc_syntax::ast::Pattern) -> bool {
         }
         Pattern::Enum { fields, .. } => fields.iter().any(contains_injection),
         Pattern::Data { fields, .. } => fields.iter().any(|(_, p)| contains_injection(p)),
-        Pattern::Binding { pattern, .. } | Pattern::Dtor { arg: pattern, .. } => {
-            contains_injection(pattern)
+        Pattern::Binding { pattern, .. } => contains_injection(pattern),
+        Pattern::Dtor { params, arg, .. } => {
+            params.iter().any(contains_injection) || contains_injection(arg)
         }
         _ => false,
     }

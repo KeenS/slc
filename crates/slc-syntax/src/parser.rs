@@ -155,9 +155,12 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
                 }
                 TokenKind::Comma if depth == 0 => at_item_start = true,
                 TokenKind::Ident(item)
-                    if at_item_start
-                        && tokens.get(cursor + 1).map(|token| &token.kind)
-                            == Some(&TokenKind::Colon) =>
+                    if depth == 0
+                        && at_item_start
+                        && matches!(
+                            tokens.get(cursor + 1).map(|token| &token.kind),
+                            Some(TokenKind::Colon | TokenKind::LParen)
+                        ) =>
                 {
                     items.insert(item.clone());
                     at_item_start = false;
@@ -566,9 +569,29 @@ impl Parser {
                 break;
             }
             let item = self.expect_ident("item name")?;
+            // `append(part: String): Builder` — the parentheses are the
+            // caller's values. The item's answer is the function of them.
+            let (params, separator) = if self.peek_kind() == Some(&TokenKind::LParen) {
+                self.parse_params_with()?
+            } else {
+                (Vec::new(), None)
+            };
+            if separator == Some(TokenKind::Amp) {
+                return Err(ParseError {
+                    message: "a menu field takes value parameters; the continuation \
+                              is the binder after `:`"
+                        .into(),
+                    span: self.peek().map(|t| t.span).unwrap_or(t.span),
+                });
+            }
             self.expect(TokenKind::Colon, "`:`")?;
-            let ty = self.parse_type()?;
-            items.push((item, ty.kind));
+            let answer = self.parse_type()?.kind;
+            let effects = if !params.is_empty() && self.peek_kind() == Some(&TokenKind::Slash) {
+                self.parse_effect_row()?
+            } else {
+                EffectRow::default()
+            };
+            items.push(MenuItem { name: item, params, answer, effects });
             if !self.eat(&TokenKind::Comma) {
                 self.expect(TokenKind::RBrace, "`}`")?;
                 break;
@@ -2034,6 +2057,9 @@ impl Parser {
                 kind: Expr::Select { ty, arms: Vec::new() },
             });
         }
+        // A colon names a copattern. Parentheses do not, on their own: a
+        // variant payload is `Red(x) =>`, and `append(part) <=` is told
+        // apart by the arrow once this is known to be a demand.
         let copattern = self.peek_kind() == Some(&TokenKind::Dot)
             || (matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
                 && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Colon));
@@ -2070,8 +2096,7 @@ impl Parser {
                     span,
                 });
             }
-            let explicit_copattern = matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
-                && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&TokenKind::Colon);
+            let explicit_copattern = self.copattern_label_here();
             let pattern = match if explicit_copattern {
                 self.parse_mu_copattern()
             } else {
@@ -2112,8 +2137,11 @@ impl Parser {
                     || self.type_is_menu_item(ty.as_deref(), label))
             {
                 let label = label.clone();
-                arm.pattern =
-                    Pattern::Dtor { dtor: label.clone(), arg: Box::new(Pattern::Ident(label)) };
+                arm.pattern = Pattern::Dtor {
+                    dtor: label.clone(),
+                    params: Vec::new(),
+                    arg: Box::new(Pattern::Ident(label)),
+                };
             }
         }
         // One binder arm — `mu { k <= c }` — is the atom form: it captures
@@ -2712,19 +2740,61 @@ impl Parser {
         self.pos = self.tokens.len();
     }
 
-    /// A menu copattern mirrors the declaration's `label: Type` shape:
-    /// `label: binder`, recursively for a nested menu item.
+    /// An item label starting a copattern: `item:` or `item(p, q)`.
+    fn copattern_label_here(&self) -> bool {
+        matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|token| &token.kind),
+                Some(TokenKind::Colon | TokenKind::LParen)
+            )
+    }
+
+    /// A menu copattern mirrors the declaration. `label: binder` answers an
+    /// item, nested as `tail: head: out`. `label(p, q): binder` binds the
+    /// caller's values and then the continuation; with the colon left off,
+    /// the continuation takes the item's name, as `item <= c` does.
     fn parse_mu_copattern(&mut self) -> Result<Pattern, ParseError> {
         let dtor = self.expect_ident("menu item label")?;
-        self.expect(TokenKind::Colon, "`:` after the menu item label")?;
-        let arg = if matches!(self.peek_kind(), Some(TokenKind::Ident(_)))
-            && self.tokens.get(self.pos + 1).map(|token| &token.kind) == Some(&TokenKind::Colon)
-        {
-            self.parse_mu_copattern()?
+        let params = if self.peek_kind() == Some(&TokenKind::LParen) {
+            self.pos += 1;
+            let mut params = Vec::new();
+            loop {
+                if self.eat(&TokenKind::RParen) {
+                    break;
+                }
+                params.push(self.parse_pattern()?);
+                if !self.eat(&TokenKind::Comma) {
+                    self.expect(TokenKind::RParen, "`)`")?;
+                    break;
+                }
+            }
+            params
         } else {
-            self.parse_pattern()?
+            Vec::new()
         };
-        Ok(Pattern::Dtor { dtor, arg: Box::new(arg) })
+        if self.eat(&TokenKind::Colon) {
+            if !params.is_empty() && self.copattern_label_here() {
+                return Err(ParseError {
+                    message: "a field that takes arguments binds its continuation by name: \
+                              `append(part): out`"
+                        .into(),
+                    span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+                });
+            }
+            let arg = if params.is_empty() && self.copattern_label_here() {
+                self.parse_mu_copattern()?
+            } else {
+                self.parse_pattern()?
+            };
+            return Ok(Pattern::Dtor { dtor, params, arg: Box::new(arg) });
+        }
+        if params.is_empty() {
+            return Err(ParseError {
+                message: "a `mu` copattern mirrors a menu field: write `item: out <= c`".into(),
+                span: self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 }),
+            });
+        }
+        Ok(Pattern::Dtor { dtor: dtor.clone(), params, arg: Box::new(Pattern::Ident(dtor)) })
     }
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
@@ -2770,7 +2840,7 @@ impl Parser {
                 self.expect(TokenKind::LParen, "`(` after the destructor")?;
                 let arg = self.parse_pattern()?;
                 self.expect(TokenKind::RParen, "`)`")?;
-                Ok(Pattern::Dtor { dtor, arg: Box::new(arg) })
+                Ok(Pattern::Dtor { dtor, params: Vec::new(), arg: Box::new(arg) })
             }
             // `::0(p)` — the alternative at a position of a sum.
             Some(TokenKind::ColonColon) => {
@@ -3276,16 +3346,54 @@ mod tests {
         let Expr::CoMatch { arms, .. } = &items[0].kind else { panic!("expected a menu mu") };
         assert!(matches!(
             &arms[0].pattern,
-            Pattern::Dtor { dtor, arg }
-                if dtor == "head" && matches!(&**arg, Pattern::Ident(name) if name == "out")
+            Pattern::Dtor { dtor, params, arg }
+                if dtor == "head"
+                    && params.is_empty()
+                    && matches!(&**arg, Pattern::Ident(name) if name == "out")
         ));
         assert!(matches!(
             &arms[1].pattern,
-            Pattern::Dtor { dtor, arg }
+            Pattern::Dtor { dtor, params, arg }
                 if dtor == "tail"
-                    && matches!(&**arg, Pattern::Dtor { dtor, arg }
+                    && params.is_empty()
+                    && matches!(&**arg, Pattern::Dtor { dtor, params, arg }
                         if dtor == "head"
+                            && params.is_empty()
                             && matches!(&**arg, Pattern::Ident(name) if name == "out"))
+        ));
+    }
+
+    #[test]
+    fn a_menu_field_takes_arguments_like_a_variant() {
+        let p = parse_str(
+            "menu Builder { append(part: String): Builder, finish: String }
+             func b(text: String) -> Builder {
+                 mu Builder {
+                     append(part): out <= <(text, part) | add | out>,
+                     finish <= <text | finish>,
+                 }
+             }",
+        );
+        let Decl::Menu { items, .. } = &p.decls[0].kind else { panic!("expected a menu") };
+        assert_eq!(items[0].name, "append");
+        assert_eq!(items[0].params.len(), 1);
+        assert!(matches!(&items[1].answer, TypeExpr::Base(name) if name == "String"));
+        let Decl::Fn { body, .. } = &p.decls[1].kind else { panic!("expected a function") };
+        let Expr::Block(items) = &body.kind else { panic!("expected a block") };
+        let Expr::CoMatch { arms, .. } = &items[0].kind else { panic!("expected a menu mu") };
+        assert!(matches!(
+            &arms[0].pattern,
+            Pattern::Dtor { dtor, params, arg }
+                if dtor == "append"
+                    && params.len() == 1
+                    && matches!(&**arg, Pattern::Ident(name) if name == "out")
+        ));
+        assert!(matches!(
+            &arms[1].pattern,
+            Pattern::Dtor { dtor, params, arg }
+                if dtor == "finish"
+                    && params.is_empty()
+                    && matches!(&**arg, Pattern::Ident(name) if name == "finish")
         ));
     }
 
@@ -3300,8 +3408,10 @@ mod tests {
         let Expr::CoMatch { arms, .. } = &items[0].kind else { panic!("expected a menu mu") };
         assert!(matches!(
             &arms[0].pattern,
-            Pattern::Dtor { dtor, arg }
-                if dtor == "force" && matches!(&**arg, Pattern::Ident(name) if name == "force")
+            Pattern::Dtor { dtor, params, arg }
+                if dtor == "force"
+                    && params.is_empty()
+                    && matches!(&**arg, Pattern::Ident(name) if name == "force")
         ));
 
         let p = parse_str("func captured() -> i32 { mu i32 { out <= <1 | out> } }");
