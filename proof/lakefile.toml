@@ -1,0 +1,6 @@
+name = "slc"
+version = "0.1.0"
+defaultTargets = ["Slc"]
+
+[[lean_lib]]
+name = "Slc"
