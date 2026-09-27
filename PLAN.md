@@ -60,7 +60,35 @@ rows and the demand-time handler boundaries specified in the design.
 
 ## Next
 
-Nothing is queued.
+- **Integers and floats meet.** `Into` converts among the integer widths.
+  A coordinate is computed from a pixel index, and a float result is
+  reported as an integer. `benches/mandelbrot.sl` steps by the literal
+  `0.0625` and counts the points that stay inside. Both directions are
+  part of this work, including the rule for a value that does not fit and
+  for an `i64` with no exact `f64`.
+
+- **Real functions.** The prelude's float operations are the arithmetic,
+  remainder, and comparisons. A distance needs a square root, so an
+  n-body simulation stays out of `benches/` until one exists. Square root
+  comes first. Its domain, and which functions sit beside it, are part of
+  this work. Printing a real result as an integer uses **Integers and
+  floats meet**.
+
+- **The list operations.** `list` exports `length`, `append`, `map`, and
+  `nth`. Range, filter, fold, reverse, take, drop, and sum are rebuilt in
+  the benchmark programs: the partition in `benches/quicksort.sl`, the
+  reversal in `benches/fannkuch.sl`, and the candidates in
+  `benches/sieve.sl`. `seq` has filter and take. `stream` has take and
+  drop.
+
+- **Program arguments.** `slc run` takes a file and an optional fuel
+  bound. Benchmark sizes are `def` bindings in the source. A program
+  reads the arguments it was given. The form they arrive in is part of
+  this work.
+
+- **A clock.** `benches/run.sh` times the process and subtracts a separate
+  `slc check`. A program reads the time and times its own work. Whether
+  that read is an effect is part of this work.
 
 ## Deferred, for discussion
 
