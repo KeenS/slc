@@ -1,0 +1,13 @@
+# name  checksum
+# The integer is what the program prints. benches/run.sh checks it.
+fib 17711
+loop 450015000
+match 42665
+list 640800
+tree 32752
+stream 180300
+map 12880
+array 101475
+hashmap 20100
+string 487500
+handler 24000

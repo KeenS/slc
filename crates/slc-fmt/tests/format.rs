@@ -282,8 +282,8 @@ fn source_that_does_not_parse_is_refused_and_says_why() {
     assert!(matches!(format_source("func f() -> i64 { \"open }"), Err(FormatError::Syntax { .. })));
 }
 
-/// Every `.sl` file the repository ships: the examples, the prelude, the
-/// standard library.
+/// Every `.sl` file the repository ships: the examples, the benchmarks, the
+/// prelude, the standard library.
 fn repository_sources() -> Vec<std::path::PathBuf> {
     fn collect(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("a source directory") {
@@ -298,6 +298,7 @@ fn repository_sources() -> Vec<std::path::PathBuf> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = Vec::new();
     collect(&root.join("examples"), &mut files);
+    collect(&root.join("benches"), &mut files);
     collect(&root.join("crates/slc-driver/src"), &mut files);
     assert!(files.len() > 50, "found only {} sources", files.len());
     files

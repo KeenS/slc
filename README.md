@@ -135,6 +135,13 @@ line, and column. The command exits non-zero if any file fails. A file
 with no `main` checks as a library. The programs in
 [`examples/errors/`](examples/errors) fail these checks on purpose.
 
+## Benchmarks
+
+[`benches/`](benches) holds programs with a fixed workload. Each prints one
+integer. [`benches/run.sh`](benches/run.sh) times `slc check` and `slc run`
+and checks that integer. The sizes and the expected integers are described
+in [`benches/README.md`](benches/README.md).
+
 ## Formatting
 
 ```sh
