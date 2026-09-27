@@ -25,6 +25,11 @@
 // failure path that continuation is simply never activated, and nothing
 // after the `let` runs.
 //
+// The same thing, without a `mu`, is an `of` that leaves on one arm. A cut
+// has type `(;)` and fixes nothing about the match, so the arm that
+// continues is `(,)` and the statements after the `of` are the rest of that
+// path. The cut never reaches them.
+//
 // The parser validates the complete input, including trailing characters
 // and trailing commas.
 
@@ -70,15 +75,14 @@ proc parse_json<E>(input: String) | (
     & failed: (-String / {..E})
 ) / {..E} {
     let start = <(input, 0) | skip_ws;
-    of (<(start, <input | str_len) | lt) {
-        True => {
-            let end = mu { k <= <(input, start) | parse_value | (k & failed)> };
-            of (<(<(input, end) | skip_ws, <input | str_len) | eq) {
-                True => <(input, start, end) | substring | parsed>,
-                False => <"trailing characters after JSON value" | failed>,
-            }
-        },
-        False => <"empty input" | failed>,
+    of (<(start, <input | str_len) | ge) {
+        True => <"empty input" | failed>,
+        False => (,),
+    };
+    let end = mu { k <= <(input, start) | parse_value | (k & failed)> };
+    of (<(<(input, end) | skip_ws, <input | str_len) | eq) {
+        True => <(input, start, end) | substring | parsed>,
+        False => <"trailing characters after JSON value" | failed>,
     }
 }
 
@@ -117,15 +121,14 @@ proc parse_number_tail<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    of (<(<(input, pos) | at, '.') | eq) {
-        True => {
-            let after_fraction = mu {
-                k <= <(input, <(pos, 1) | add) | parse_fraction | (k & failed)>,
-            };
-            <(input, after_fraction) | parse_exponent | (ok & failed)>
-        },
-        False => <(input, pos) | parse_exponent | (ok & failed)>,
-    }
+    of (<(<(input, pos) | at, '.') | ne) {
+        True => <(input, pos) | parse_exponent | (ok & failed)>,
+        False => (,),
+    };
+    let after_fraction = mu {
+        k <= <(input, <(pos, 1) | add) | parse_fraction | (k & failed)>,
+    };
+    <(input, after_fraction) | parse_exponent | (ok & failed)>
 }
 
 proc parse_fraction<E>(input: String, pos: i64) | (
@@ -181,20 +184,22 @@ proc parse_string_tail<E>(input: String, pos: i64) | (
 ) / {..E} {
     of (<(pos, <input | str_len) | ge) {
         True => <"unterminated JSON string" | failed>,
-        False => {
-            let ch = <(input, pos) | at;
-            of (<(ch, QUOTE) | eq) {
-                True => <(pos, 1) | add | ok>,
-                False => of (<(ch, BACKSLASH) | eq) {
-                    True => <(input, <(pos, 1) | add) | parse_escape | (ok & failed)>,
-                    False => of (<(ch, ' ') | lt) {
-                        True => <"raw control character in JSON string" | failed>,
-                        False => <(input, <(pos, 1) | add) | parse_string_tail | (ok & failed)>,
-                    },
-                },
-            }
-        },
-    }
+        False => (,),
+    };
+    let ch = <(input, pos) | at;
+    of (<(ch, QUOTE) | eq) {
+        True => <(pos, 1) | add | ok>,
+        False => (,),
+    };
+    of (<(ch, BACKSLASH) | eq) {
+        True => <(input, <(pos, 1) | add) | parse_escape | (ok & failed)>,
+        False => (,),
+    };
+    of (<(ch, ' ') | lt) {
+        True => <"raw control character in JSON string" | failed>,
+        False => (,),
+    };
+    <(input, <(pos, 1) | add) | parse_string_tail | (ok & failed)>
 }
 
 proc parse_escape<E>(input: String, pos: i64) | (
@@ -266,18 +271,18 @@ proc parse_array_body<E>(input: String, pos: i64) | (
     let value_end = mu { k <= <(input, pos) | parse_value | (k & failed)> };
     let after_value = <(input, value_end) | skip_ws;
     let ch = <(input, after_value) | at;
-    of (<(ch, COMMA) | eq) {
-        True => {
-            let next = <(input, <(after_value, 1) | add) | skip_ws;
-            of (<(<(input, next) | at, CLOSE_BRACKET) | eq) {
-                True => <"trailing comma in array" | failed>,
-                False => <(input, next) | parse_array_body | (ok & failed)>,
-            }
-        },
-        False => of (<(ch, CLOSE_BRACKET) | eq) {
-            True => <(after_value, 1) | add | ok>,
-            False => <"expected `,` or `]` in array" | failed>,
-        },
+    of (<(ch, CLOSE_BRACKET) | eq) {
+        True => <(after_value, 1) | add | ok>,
+        False => (,),
+    };
+    of (<(ch, COMMA) | ne) {
+        True => <"expected `,` or `]` in array" | failed>,
+        False => (,),
+    };
+    let next = <(input, <(after_value, 1) | add) | skip_ws;
+    of (<(<(input, next) | at, CLOSE_BRACKET) | eq) {
+        True => <"trailing comma in array" | failed>,
+        False => <(input, next) | parse_array_body | (ok & failed)>,
     }
 }
 
@@ -296,37 +301,32 @@ proc parse_object_body<E>(input: String, pos: i64) | (
     ok: (-i64 / {..E})
     & failed: (-String / {..E})
 ) / {..E} {
-    of (<(<(input, pos) | at, QUOTE) | eq) {
-        True => {
-            let key_end = mu { k <= <(input, pos) | parse_string | (k & failed)> };
-            let after_key = <(input, key_end) | skip_ws;
-            of (<(<(input, after_key) | at, COLON) | eq) {
-                True => {
-                    let value_end = mu {
-                        k <= <(input, <(input, <(after_key, 1) | add) | skip_ws)
-                            | parse_value
-                            | (k & failed)>,
-                    };
-                    let after_value = <(input, value_end) | skip_ws;
-                    let ch = <(input, after_value) | at;
-                    of (<(ch, COMMA) | eq) {
-                        True => {
-                            let next = <(input, <(after_value, 1) | add) | skip_ws;
-                            of (<(<(input, next) | at, CLOSE_BRACE) | eq) {
-                                True => <"trailing comma in object" | failed>,
-                                False => <(input, next) | parse_object_body | (ok & failed)>,
-                            }
-                        },
-                        False => of (<(ch, CLOSE_BRACE) | eq) {
-                            True => <(after_value, 1) | add | ok>,
-                            False => <"expected `,` or `}` in object" | failed>,
-                        },
-                    }
-                },
-                False => <"expected `:` after object key" | failed>,
-            }
-        },
-        False => <"expected object key" | failed>,
+    of (<(<(input, pos) | at, QUOTE) | ne) {
+        True => <"expected object key" | failed>,
+        False => (,),
+    };
+    let key_end = mu { k <= <(input, pos) | parse_string | (k & failed)> };
+    let after_key = <(input, key_end) | skip_ws;
+    of (<(<(input, after_key) | at, COLON) | ne) {
+        True => <"expected `:` after object key" | failed>,
+        False => (,),
+    };
+    let value_pos = <(input, <(after_key, 1) | add) | skip_ws;
+    let value_end = mu { k <= <(input, value_pos) | parse_value | (k & failed)> };
+    let after_value = <(input, value_end) | skip_ws;
+    let ch = <(input, after_value) | at;
+    of (<(ch, CLOSE_BRACE) | eq) {
+        True => <(after_value, 1) | add | ok>,
+        False => (,),
+    };
+    of (<(ch, COMMA) | ne) {
+        True => <"expected `,` or `}` in object" | failed>,
+        False => (,),
+    };
+    let next = <(input, <(after_value, 1) | add) | skip_ws;
+    of (<(<(input, next) | at, CLOSE_BRACE) | eq) {
+        True => <"trailing comma in object" | failed>,
+        False => <(input, next) | parse_object_body | (ok & failed)>,
     }
 }
 
