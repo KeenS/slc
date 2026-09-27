@@ -21,6 +21,7 @@ runs each program that many times and keeps the fastest run. `--check`
 compares the checksums and prints no times.
 
 `cargo test -p slc-driver --test benches` compares the same integers.
+The later programs are classic workloads.
 
 | Program | What the time is spent on |
 |---|---|
@@ -35,3 +36,13 @@ compares the checksums and prints no times.
 | [`hashmap.sl`](hashmap.sl) | Insert and lookup on the hash map |
 | [`string.sl`](string.sl) | Appending characters and reading them back |
 | [`handler.sl`](handler.sl) | Performing an operation and resuming |
+| [`ackermann.sl`](ackermann.sl) | Ackermann `A(3, N)` |
+| [`tak.sl`](tak.sl) | Takeuchi's function `tak(3N, 2N, N)` |
+| [`hanoi.sl`](hanoi.sl) | Towers of Hanoi, visiting every move |
+| [`queens.sl`](queens.sl) | Solutions of the N-queens puzzle |
+| [`fannkuch.sl`](fannkuch.sl) | Pancake flips over every permutation |
+| [`sieve.sl`](sieve.sl) | The sieve of Eratosthenes |
+| [`quicksort.sl`](quicksort.sl) | Sorting a fixed sequence |
+| [`matmul.sl`](matmul.sl) | The product of an integer matrix with itself |
+| [`mandelbrot.sl`](mandelbrot.sl) | Points that stay in the Mandelbrot set |
+| [`collatz.sl`](collatz.sl) | Hailstone steps for `1..=N` |

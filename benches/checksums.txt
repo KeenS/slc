@@ -11,3 +11,13 @@ array 101475
 hashmap 20100
 string 487500
 handler 24000
+ackermann 253
+tak 7
+hanoi 32767
+queens 92
+fannkuch 2115
+sieve 50078
+quicksort 1420266644081600919
+matmul 3404738736
+mandelbrot 269
+collatz 26143
