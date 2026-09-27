@@ -110,6 +110,9 @@ pub enum Value {
     Closure {
         body: crate::chunk::NodeId,
         env: Env,
+        /// The barrier generation in force where this closure was built.
+        /// Zero is outside every row-polymorphic call.
+        birth: u32,
     },
     /// A delayed computation of negative type, with the environment it was
     /// written in. It is passed on unrun — bound, stored, supplied as an
@@ -317,6 +320,7 @@ pub fn install_stdlib(env: &mut Env) {
         "__file_exists",
         "__match_dispatch",
         "__handle",
+        "__enter_poly",
         "char_at",
         "is_digit",
         "is_ws",

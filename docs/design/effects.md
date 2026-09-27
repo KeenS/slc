@@ -4,7 +4,12 @@ Part of the [language design](../../DESIGN.md).
 
 An `hook` names operations a computation may perform; a `do` answers
 them. Performing an operation suspends the computation and passes control to
-the nearest enclosing handler with a matching clause. An operation is a demand, so its clause binds
+the nearest enclosing handler with a matching clause that is aware of
+the operation. A handler installed in a function that takes a row
+parameter is aware of the concrete effects named in that function's
+type. It is not aware of an effect that arrived only through the row
+parameter, inside a closure the caller passed in; the operation passes
+through to the caller's handler. An operation is a demand, so its clause binds
 the carried continuation the copattern way — after a colon, under any name
 (`resume` by convention) — or omits it, for a clause that never resumes:
 
@@ -81,7 +86,9 @@ produces `A`, its common answer is `B`, it discharges the concrete effects
 in `E`, and its residual budget is `F`. The body's row must fit within
 `E` plus `F`; installing a handler around a pure body or a subset of `E`
 is valid. Clause effects must fit `F` too. All four arguments are invariant:
-an annotation cannot grant a handler additional capabilities. Open handled
+an annotation cannot grant a handler additional capabilities. The
+clause fixes those arguments before a `let` generalizes the handler, so
+a use cannot instantiate them at a type the clause has ruled out. Open handled
 row tails do not grant unknown capabilities; installation subtracts only
 the explicitly represented effects.
 

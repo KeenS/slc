@@ -1273,9 +1273,20 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
     CONSTANTS.with(|cell| {
         *cell.borrow_mut() = constants;
     });
+    let operations = effect_operations(p);
     for d in &p.decls {
         match &d.kind {
-            Decl::Fn { name, params, body, polarity, bounds, .. } => {
+            Decl::Fn {
+                name,
+                params,
+                body,
+                polarity,
+                bounds,
+                type_params,
+                type_param_signs,
+                effects,
+                ..
+            } => {
                 // Multi-param fn: nest lambdas. Continuation parameters form
                 // the declaration's explicit lexical continuation row.
                 // Negative functions are genuine co-abstractions: each
@@ -1283,6 +1294,14 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 let continuations: Vec<String> =
                     params.iter().filter(|p| p.is_continuation).map(continuation_name).collect();
                 let mut term = lower_expr(body, &continuations)?;
+                term = enter_poly(
+                    type_params,
+                    type_param_signs,
+                    effects,
+                    params.iter().filter_map(|param| param.ty.as_ref()),
+                    &operations,
+                    term,
+                );
                 // A function's parameters are one group — a product of values
                 // for `->`, a menu of exits for `<-` — so it binds one
                 // argument and the body destructures it.
@@ -1299,11 +1318,32 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 term = bind_dict_params(bounds, term);
                 out.push((name.clone(), term));
             }
-            Decl::Command { name, value_params, continuation_params, body, bounds, .. } => {
+            Decl::Command {
+                name,
+                value_params,
+                continuation_params,
+                body,
+                bounds,
+                type_params,
+                type_param_signs,
+                effects,
+                ..
+            } => {
                 // mu f(x: +A) | (k: -B) { E } → λx. μk. E
                 let continuations: Vec<String> =
                     continuation_params.iter().map(continuation_name).collect();
                 let mut term = lower_expr(body, &continuations)?;
+                term = enter_poly(
+                    type_params,
+                    type_param_signs,
+                    effects,
+                    value_params
+                        .iter()
+                        .chain(continuation_params.iter())
+                        .filter_map(|param| param.ty.as_ref()),
+                    &operations,
+                    term,
+                );
                 // Two groups, two binders: the product of values, then the
                 // menu of exits, each destructured when it holds several.
                 term = bind_group(continuation_params, "row", term)?;
@@ -1998,6 +2038,91 @@ const UNUSED_BINDER: &str = "__unused";
 /// The co-variable an arm's command is cut against when it is not already a
 /// cut against a named consumer. Nothing binds it: an arm does not return.
 const ARM_COVAR: &str = "__arm";
+
+/// A declaration with a row parameter runs its body under a fresh barrier.
+/// The operations of the concrete effects named in its type are the ones it
+/// is aware of. A closure the caller passed in is caught for those, and
+/// passes through for an effect that arrived only through the row parameter.
+fn enter_poly<'a>(
+    type_params: &[String],
+    signs: &[(String, ParamPolarity)],
+    effects: &EffectRow,
+    param_types: impl Iterator<Item = &'a TypeExpr>,
+    operations: &HashMap<String, Vec<String>>,
+    body: Term,
+) -> Term {
+    let polymorphic = type_params.iter().any(|param| signs.iter().all(|(name, _)| name != param));
+    if !polymorphic {
+        return body;
+    }
+    let mut effects_named = std::collections::HashSet::new();
+    collect_row_effects(effects, &mut effects_named);
+    for ty in param_types {
+        collect_type_effects(ty, &mut effects_named);
+    }
+    let mut aware: Vec<String> = effects_named
+        .into_iter()
+        .filter_map(|name| operations.get(&name))
+        .flatten()
+        .cloned()
+        .collect();
+    aware.sort();
+    // One string, not a tuple: a builtin of arity two spreads a tuple into
+    // its argument list, and an empty tuple would then not count as an argument.
+    let aware = Term::Var(format!("$str_\"{}\"", aware.join(",")));
+    call_curried(
+        Term::Var("__enter_poly".into()),
+        vec![Term::Lam("__poly".into(), Box::new(body)), aware],
+    )
+}
+
+fn effect_operations(p: &Program) -> HashMap<String, Vec<String>> {
+    let mut out = HashMap::new();
+    for decl in &p.decls {
+        if let Decl::Effect { name, operations, .. } = &decl.kind {
+            out.insert(name.clone(), operations.iter().map(|op| op.name.clone()).collect());
+        }
+    }
+    out
+}
+
+fn collect_row_effects(row: &EffectRow, out: &mut std::collections::HashSet<String>) {
+    for effect in &row.effects {
+        match &effect.kind {
+            TypeExpr::Base(name) | TypeExpr::Apply(name, _) => {
+                out.insert(name.clone());
+            }
+            other => collect_type_effects(other, out),
+        }
+    }
+}
+
+fn collect_type_effects(ty: &TypeExpr, out: &mut std::collections::HashSet<String>) {
+    match ty {
+        TypeExpr::Effectful(inner, row) => {
+            collect_row_effects(row, out);
+            collect_type_effects(&inner.kind, out);
+        }
+        TypeExpr::Row(row) => collect_row_effects(row, out),
+        TypeExpr::Apply(_, args)
+        | TypeExpr::Tensor(args)
+        | TypeExpr::Par(args)
+        | TypeExpr::With(args)
+        | TypeExpr::Sum(args) => {
+            for arg in args {
+                collect_type_effects(&arg.kind, out);
+            }
+        }
+        TypeExpr::Fun(left, right) => {
+            collect_type_effects(&left.kind, out);
+            collect_type_effects(&right.kind, out);
+        }
+        TypeExpr::Positive(inner) | TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
+            collect_type_effects(&inner.kind, out);
+        }
+        TypeExpr::Base(_) => {}
+    }
+}
 
 fn call_curried(callee: Term, args: Vec<Term>) -> Term {
     let mut result = callee;

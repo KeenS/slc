@@ -79,6 +79,19 @@ pub enum Frame {
     /// clause is `λarg. λresume. body`, so after `clause(arg)` we apply the
     /// result to `resume`.
     ApplyTo(Value),
+    /// Entry of a row-polymorphic function. `id` increases over the run.
+    /// A handler above this frame belongs to that function. `aware` is the
+    /// operations named concretely in its type. A closure born before `id`
+    /// passes through handlers for any other operation: that effect arrived
+    /// through the row parameter.
+    Barrier {
+        id: u32,
+        aware: std::rc::Rc<std::collections::HashSet<String>>,
+    },
+    /// Birth barrier of the code now running. The nearest frame wins.
+    Origin {
+        birth: u32,
+    },
 }
 
 /// The continuation as a persistent stack: a shared cons of frames with the
@@ -105,6 +118,13 @@ fn depth(link: &Option<Rc<KontNode>>) -> usize {
 /// A fresh id for a prompt being installed.
 pub(crate) fn fresh_prompt_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A fresh id for the barrier of a row-polymorphic call. Zero is reserved
+/// for code born under no barrier, so the first call is one.
+fn fresh_barrier_id() -> u32 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -215,18 +235,49 @@ impl Kont {
         }
     }
 
-    /// Split at the nearest handler above that handles `op`: hand back its
-    /// clause and the delimited continuation (the work up to and including
-    /// that `Prompt`, which therefore reinstates it on resume), and truncate
-    /// `self` to what lay below the handler. `None` if nothing above handles
-    /// `op`.
+    /// The birth barrier of the code running at the top. Zero when none.
+    fn origin_birth(&self) -> u32 {
+        let mut cursor = self.0.clone();
+        while let Some(node) = cursor {
+            if let Frame::Origin { birth } = &node.frame {
+                return *birth;
+            }
+            cursor = node.tail.clone();
+        }
+        0
+    }
+
+    /// The nearest barrier under `prompt` is a row-polymorphic call that
+    /// began after `origin` and does not name `op` in its type. The prompt
+    /// belongs to that call, and `op` arrived through its row parameter.
+    fn tunneled(prompt_tail: &Option<Rc<KontNode>>, origin: u32, op: &str) -> bool {
+        let mut cursor = prompt_tail.clone();
+        while let Some(node) = cursor {
+            if let Frame::Barrier { id, aware } = &node.frame {
+                return *id > origin && !aware.contains(op);
+            }
+            cursor = node.tail.clone();
+        }
+        false
+    }
+
+    /// Split at the nearest handler above that handles `op` and is aware of
+    /// the code performing it: hand back its clause and the delimited
+    /// continuation (the work up to and including that `Prompt`, which
+    /// therefore reinstates it on resume), and truncate `self` to what lay
+    /// below the handler. A handler installed inside a row-polymorphic call
+    /// is not aware of a closure born before that call. `None` if nothing
+    /// aware handles `op`.
     fn split_at_handler(&mut self, op: &str) -> Option<(Value, Kont)> {
+        let origin = self.origin_birth();
         let mut prefix: Vec<Frame> = Vec::new();
         let mut cursor = self.0.clone();
         loop {
             let node = cursor?;
             match &node.frame {
-                Frame::Prompt { clauses, .. } if clauses.contains_key(op) => {
+                Frame::Prompt { clauses, .. }
+                    if clauses.contains_key(op) && !Self::tunneled(&node.tail, origin, op) =>
+                {
                     let clause = clauses.get(op).cloned().expect("checked present");
                     prefix.push(node.frame.clone());
                     let mut captured = Kont::empty();
@@ -280,6 +331,12 @@ pub(crate) fn run_apply_under_io(
         clauses: Rc::new(clauses),
         ret: Value::Builtin("__io_done".into()),
     });
+    // Closures built while the program runs are born here, after every
+    // declaration's closure. A declaration stays at generation zero and
+    // adopts whoever calls it.
+    let id = fresh_barrier_id();
+    kont.push(Frame::Barrier { id, aware: Rc::new(std::collections::HashSet::new()) });
+    kont.push(Frame::Origin { birth: id });
     run(State::Apply { callee, arg }, kont, fuel)
 }
 
@@ -309,7 +366,7 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
             env.local(i).ok_or_else(|| EvalError::Unbound(format!("de Bruijn local #{i}")))?,
         ),
         Node::Dynamic(name) => State::Return(crate::eval::literal_or_lookup(&name, &env)?),
-        Node::Lam(body) => State::Return(Value::Closure { body, env }),
+        Node::Lam(body) => State::Return(Value::Closure { body, env, birth: kont.origin_birth() }),
         Node::Delay(body) => State::Return(Value::Delayed { body, env }),
         Node::Mu(command) => {
             // The μ: bind the co-variable (positional slot 0) to the
@@ -423,6 +480,8 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
             State::Apply { callee: ret, arg: v }
         }
         Frame::ApplyTo(arg) => State::Apply { callee: v, arg },
+        // Both are markers for effect search. A value returns through them.
+        Frame::Barrier { .. } | Frame::Origin { .. } => State::Return(v),
     })
 }
 
@@ -577,7 +636,14 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
             kont.push(Frame::ApplyTo(arg));
             force_value(Value::Adapted { adapter, value }, kont)
         }
-        Value::Closure { body, env } => {
+        Value::Closure { body, env, birth } => {
+            // A declaration's closure is born at generation zero and adopts
+            // the caller's origin, so a helper the function itself calls is
+            // the function's own code. A closure built during the run keeps
+            // the generation it was built at.
+            if birth != 0 {
+                kont.push(Frame::Origin { birth });
+            }
             let mut call_env = env;
             call_env.define_local(arg);
             State::Term(body, call_env)
@@ -793,6 +859,31 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         kont.push(Frame::Prompt { id: fresh_prompt_id(), clauses: Rc::new(clauses), ret });
         return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
     }
+    if name == "__enter_poly" {
+        // The body of a row-polymorphic function. Its handlers sit above
+        // this barrier and catch only code born inside the call. A closure
+        // the caller passed in was born earlier, so what it performs passes
+        // through to the caller's handler.
+        let mut args = args.into_iter();
+        let thunk = args.next().unwrap_or(Value::Unit);
+        let Value::Closure { body, env, .. } = thunk else {
+            return Err(EvalError::TypeMismatch(
+                "a row-polymorphic function body must be a thunk".into(),
+            ));
+        };
+        let id = fresh_barrier_id();
+        let mut aware = std::collections::HashSet::new();
+        if let Some(Value::Str(names)) = args.next() {
+            for name in names.split(',').filter(|name| !name.is_empty()) {
+                aware.insert(name.to_string());
+            }
+        }
+        kont.push(Frame::Barrier { id, aware: Rc::new(aware) });
+        kont.push(Frame::Origin { birth: id });
+        let mut call_env = env;
+        call_env.define_local(Value::Unit);
+        return Ok(State::Term(body, call_env));
+    }
     if name == "__match_dispatch" {
         let mut it = args.into_iter();
         let scrutinee = it.next().unwrap_or(Value::Unit);
@@ -850,7 +941,7 @@ fn next_match_arm(scrutinee: Value, mut arms: Vec<Value>) -> Result<State, EvalE
 /// `Dynamic`); the thunk's own `__match_arg` parameter is the positional
 /// slot the body's de Bruijn indices are relative to.
 fn run_match_thunk(thunk: &Value, bindings: &[(String, Value)]) -> Result<State, EvalError> {
-    let Value::Closure { body, env } = thunk else {
+    let Value::Closure { body, env, .. } = thunk else {
         return Err(EvalError::TypeMismatch("of arm body must be a thunk".into()));
     };
     let mut call_env = env.clone();
@@ -859,4 +950,56 @@ fn run_match_thunk(thunk: &Value, bindings: &[(String, Value)]) -> Result<State,
     }
     call_env.define_local(Value::Unit);
     Ok(State::Term(*body, call_env))
+}
+
+#[cfg(test)]
+mod tunnel {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn prompt_over(tail: Kont) -> Kont {
+        let mut kont = tail;
+        kont.push(Frame::Prompt {
+            id: 1,
+            clauses: Rc::new(std::collections::HashMap::from([("throw".into(), Value::Unit)])),
+            ret: Value::Unit,
+        });
+        kont
+    }
+
+    #[test]
+    fn an_older_closure_tunnels_through_an_unaware_handler() {
+        let mut under = Kont::empty();
+        under.push(Frame::Barrier { id: 2, aware: Rc::new(HashSet::new()) });
+        let prompt = prompt_over(under);
+        let tail = prompt.0.unwrap().tail.clone();
+        assert!(Kont::tunneled(&tail, 1, "throw"));
+    }
+
+    #[test]
+    fn an_older_closure_is_caught_for_an_effect_the_function_names() {
+        let mut aware = HashSet::new();
+        aware.insert("throw".into());
+        let mut under = Kont::empty();
+        under.push(Frame::Barrier { id: 2, aware: Rc::new(aware) });
+        let prompt = prompt_over(under);
+        let tail = prompt.0.unwrap().tail.clone();
+        assert!(!Kont::tunneled(&tail, 1, "throw"));
+    }
+
+    #[test]
+    fn code_born_inside_the_call_is_caught() {
+        let mut under = Kont::empty();
+        under.push(Frame::Barrier { id: 2, aware: Rc::new(HashSet::new()) });
+        let prompt = prompt_over(under);
+        let tail = prompt.0.unwrap().tail.clone();
+        assert!(!Kont::tunneled(&tail, 2, "throw"));
+    }
+
+    #[test]
+    fn a_handler_outside_every_polymorphic_call_is_caught() {
+        let prompt = prompt_over(Kont::empty());
+        let tail = prompt.0.unwrap().tail.clone();
+        assert!(!Kont::tunneled(&tail, 1, "throw"));
+    }
 }

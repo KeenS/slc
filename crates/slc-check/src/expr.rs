@@ -4676,9 +4676,22 @@ fn check_expr_unapplied(
             env.push();
             env.define("$handler_computation", thunk_type);
             let outer = env.current_row.replace(residual);
+            // The clause and the capability row start as two argument vectors.
+            // Equate them before the handler value is generalized: a `let`
+            // copies the capability's variables, and a copy made first can be
+            // instantiated at a type the clause has already ruled out.
+            let rows_from = env.uni.row_constraints().len();
             let answer = check_expr(&definition, enums, env, diags);
+            env.uni.infer_row_arguments(rows_from);
             env.current_row = outer;
             env.pop();
+            let declared = declared
+                .into_iter()
+                .map(|effect| slc_core::types::Effect {
+                    name: effect.name,
+                    args: effect.args.iter().map(|arg| env.uni.apply(arg)).collect(),
+                })
+                .collect();
             Some(Type::Named(
                 "Handler".into(),
                 vec![

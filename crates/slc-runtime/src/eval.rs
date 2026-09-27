@@ -183,6 +183,7 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         "char_at" | "__write_file" | "parse_int" => 4,
         "find_char" => 5,
         "__handle" => 2,
+        "__enter_poly" => 2,
         "format" => 0, // variadic: apply immediately
         _ => 0,
     }
