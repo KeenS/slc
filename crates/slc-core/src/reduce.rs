@@ -23,11 +23,11 @@ pub enum Step {
 pub fn step(c: &Command) -> Step {
     match c {
         // μ-rule: ⟨ μα.c ∥ e ⟩ → c[e/α]
-        // Substitution of co-terms for co-variables is handled during
-        // evaluation; here we return the command body. It is tried before the
-        // μ̃-rule, which settles the critical pair ⟨μα.c ∥ μ̃x.c'⟩ in favour of
-        // the producer.
-        Command::Cut(Term::Mu(_, c1), _) => Step::Reduced((**c1).clone()),
+        // Tried before the μ̃-rule, which settles the critical pair
+        // ⟨μα.c ∥ μ̃x.c'⟩ in favour of the producer.
+        Command::Cut(Term::Mu(a, c1), e) => {
+            Step::Reduced(crate::substitution::subst_covar_command(a, e, c1))
+        }
 
         // μ̃-rule: ⟨ v ∥ μ̃x.c ⟩ → c[v/x]
         // This is the binder: it takes what the cut delivers and runs `c`
@@ -150,6 +150,19 @@ mod tests {
     // Helper: λx. x
     fn identity() -> Term {
         Term::Lam("x".into(), Box::new(Term::Var("x".into())))
+    }
+
+    #[test]
+    fn mu_substitutes_the_continuation() {
+        // ⟨ μα. ⟨x ∥ α⟩ ∥ k ⟩ → ⟨x ∥ k⟩
+        let body = Command::Cut(Term::Var("x".into()), CoTerm::Covar("a".into()));
+        let mu = Term::Mu("a".into(), Box::new(body));
+        match step(&Command::Cut(mu, CoTerm::Covar("k".into()))) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into())));
+            }
+            Step::Normal => panic!("expected the μ-rule to substitute"),
+        }
     }
 
     #[test]

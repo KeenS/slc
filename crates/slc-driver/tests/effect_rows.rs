@@ -298,7 +298,8 @@ fn a_row_variable_forwards_an_arguments_row() {
         &["`main` performs `Exn`"],
     );
     // Handled at the call, the row is discharged.
-    let handled = "let r = do <(risky, 1) | app hn { throw(m) => -1, return(n) => n };\n<r | println;";
+    let handled =
+        "let r = do <(risky, 1) | app hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("forwards_handled", &with_main(&[EXN, RISKY, APP], handled)), "-1\n");
 }
 
@@ -324,7 +325,8 @@ fn an_undeclared_forwarded_row_is_rejected() {
 #[test]
 fn forwarding_composes_through_the_call_graph() {
     let twice = "func twice<F>(g: (i64 -> i64 / {..F}), x: i64) -> i64 / {..F} { <(g, (<(g, x) | app)) | app }\n";
-    let body = "let r = do <(risky, 8) | twice hn { throw(m) => -1, return(n) => n };\n<r | println;";
+    let body =
+        "let r = do <(risky, 8) | twice hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("composes", &with_main(&[EXN, RISKY, APP, twice], body)), "-1\n");
 }
 
@@ -344,7 +346,8 @@ fn a_row_extension_covers_the_named_part() {
     // only the rest flows through `E`.
     let guard =
         "func guard<E>(f: (i64 -> i64 / {Exn, ..E}), x: i64) -> i64 / {Exn, ..E} { <x | f }\n";
-    let body = "let r = do <(risky, 1) | guard hn { throw(m) => -1, return(n) => n };\n<r | println;";
+    let body =
+        "let r = do <(risky, 1) | guard hn { throw(m) => -1, return(n) => n };\n<r | println;";
     assert_eq!(accepted("extension", &with_main(&[EXN, RISKY, guard], body)), "-1\n");
 }
 

@@ -193,6 +193,9 @@ pub(crate) struct Env<'a> {
     /// Form values whose components' types are not settled yet.
     pub(crate) pending_pars: Vec<PendingPar>,
     pub(crate) pending_consumers: Vec<(slc_syntax::token::Span, Type)>,
+    /// `mu` scrutinees whose type was still a variable while checking.
+    /// Settled with the rest of the declaration: a `mu` consumes positive data.
+    pub(crate) pending_scrutinees: Vec<(slc_syntax::token::Span, Type)>,
     /// What lowering needs to dispatch traits without a runtime method value:
     /// how each trait-method call resolves, and the dictionaries each call to
     /// a bounded function must pass.
@@ -240,6 +243,7 @@ impl<'a> Env<'a> {
             pending_injections: Vec::new(),
             pending_pars: Vec::new(),
             pending_consumers: Vec::new(),
+            pending_scrutinees: Vec::new(),
             dispatch: slc_syntax::lower::DispatchInfo::default(),
             declarations: None,
             current_row: None,

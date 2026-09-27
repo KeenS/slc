@@ -162,8 +162,9 @@ this backend never sees an impl.
 - Separate compilation, object-file ABIs between SLC modules, or a dynamic
   loader.
 - Any target other than the host x86-64 System V ELF.
-- Mechanized soundness. `PLAN.md` already records that the argument is
-  informal.
+- Extending the core proof. Subject reduction of the calculus is
+  [`proof/Slc/Core.lean`](../../proof/Slc/Core.lean). This backend does not
+  re-prove it for the machine or the ELF.
 - Surface syntax changes, new primitives, or orientation adapters. `A -> B`
   is not rewritten to `B <- A` or the reverse, anywhere in this backend.
 - A bytecode interpreter, a bytecode milestone, or shipping the machine IR.

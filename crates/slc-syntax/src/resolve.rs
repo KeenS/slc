@@ -1178,7 +1178,9 @@ fn inline_hands(decls: &mut [Node<Decl>]) {
 
 fn inline_hands_decl(decl: &mut Decl, hands: &HashMap<String, HandBody>) {
     match decl {
-        Decl::Fn { body, .. } | Decl::Command { body, .. } => inline_hands_expr(&mut body.kind, hands),
+        Decl::Fn { body, .. } | Decl::Command { body, .. } => {
+            inline_hands_expr(&mut body.kind, hands)
+        }
         Decl::Const { value, .. } => inline_hands_expr(&mut value.kind, hands),
         Decl::Hand { clauses, ret, .. } => {
             for clause in clauses {
@@ -1204,7 +1206,9 @@ fn inline_hands_decl(decl: &mut Decl, hands: &HashMap<String, HandBody>) {
 
 fn inline_hands_expr(expr: &mut Expr, hands: &HashMap<String, HandBody>) {
     match expr {
-        Expr::Lambda { body, .. } | Expr::Mu { body, .. } => inline_hands_expr(&mut body.kind, hands),
+        Expr::Lambda { body, .. } | Expr::Mu { body, .. } => {
+            inline_hands_expr(&mut body.kind, hands)
+        }
         Expr::Call { callee, args } => {
             inline_hands_expr(&mut callee.kind, hands);
             for arg in args {

@@ -807,6 +807,14 @@ pub fn infer_command(
         Command::Cut(t, e) => {
             let tt = infer_term(t, gamma, delta)?;
             let et = infer_coterm(e, gamma, delta)?;
+            // An inference variable is not a type yet. `dual(?i)` meets
+            // `dual(?i)` by syntax and meets nothing that would solve it, so
+            // a cut whose sides are still unresolved is not a duality.
+            if contains_var(&tt) || contains_var(&et) {
+                return Err(TypeError::CannotInfer(
+                    "a cut's two sides are unresolved, so their duality is not known".into(),
+                ));
+            }
             if tt.dual() == et {
                 Ok(())
             } else {
@@ -1038,6 +1046,28 @@ mod tests {
             u.resolve_or_cannot_infer(&a, "lambda parameter"),
             Err(TypeError::CannotInfer(_))
         ));
+    }
+
+    #[test]
+    fn an_unresolved_cut_is_not_a_duality() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("x".into(), Type::Var(0));
+        d.insert("k".into(), Type::Var(1));
+        let c = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
+        assert!(matches!(infer_command(&c, &mut g, &mut d), Err(TypeError::CannotInfer(_))));
+    }
+
+    #[test]
+    fn a_variable_is_not_solved_by_being_dual_to_itself() {
+        // `dual(?0)` is the negative encoding of the same unknown. The two
+        // sides meet syntactically and still name no type.
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("x".into(), Type::Var(0));
+        d.insert("k".into(), Type::Var(0).dual());
+        let c = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
+        assert!(matches!(infer_command(&c, &mut g, &mut d), Err(TypeError::CannotInfer(_))));
     }
 
     #[test]

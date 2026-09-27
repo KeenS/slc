@@ -1,4 +1,5 @@
 /target
+/proof/.lake
 # Local agent/editor artifacts; never commit these.
 instructions.txt
 .#instructions.txt

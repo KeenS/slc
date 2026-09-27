@@ -123,6 +123,21 @@ Only the core's terms keep their own notation.
 ⟨ (v₁ ⊗ … ⊗ vₙ) ∥ μ̃(x₁, …, xₙ). c ⟩ → c[vᵢ/xᵢ]    product
 ```
 
+### Subject reduction
+
+A command is a term cut against a co-term of the same type: the term proves
+it and the co-term refutes it. Two distinct inference variables are not that
+one type, and `dual(?i)` is not `?j`, so a cut whose sides nothing else has
+solved is not a command. The proof is
+[`proof/Slc/Core.lean`](../../proof/Slc/Core.lean), checked with `lake build`
+in `proof/`. `step` returns a typed reduct — that is preservation — and
+`progress` says a command with no free variable is one of these redexes.
+`Ty.dual_dual`, `dual_var_ne_var`, and `distinct_vars_are_not_a_cut` are the
+type lemmas. The surface checker refuses the same unsolved cut: a `proc`
+body that is still a variable, a `mu` scrutinee nothing has signed positive,
+a consumer whose polarity is still unknown, and a pin whose sides are still
+flexible variables.
+
 The labelled rule is what makes `mu` lazy: the label of the value selects
 one branch, and the branches that were not selected are discarded unreduced.
 The copattern rule is its mirror: the request selects one branch of the menu

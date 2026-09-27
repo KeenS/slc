@@ -1640,11 +1640,8 @@ impl Parser {
                 // `List<-i64>` lexes its `<-` as one token: the bracket and
                 // the first argument's sign.
                 if s == "Delayed" || s == "Handler" {
-                    let spelling = if s == "Delayed" {
-                        "`(-> T / {E})`"
-                    } else {
-                        "`(A hn B / {E} / {F})`"
-                    };
+                    let spelling =
+                        if s == "Delayed" { "`(-> T / {E})`" } else { "`(A hn B / {E} / {F})`" };
                     return Err(ParseError {
                         message: format!("`{s}` is written {spelling}"),
                         span: Span { start, end: self.span_end() },
@@ -2185,8 +2182,11 @@ impl Parser {
         let is_public = self.take_pub();
         let t = self.expect(TokenKind::Hand, "`hand`")?;
         let name = self.expect_ident("handler name")?;
-        let effects =
-            if self.peek_kind() == Some(&TokenKind::Slash) { Some(self.parse_effect_row()?) } else { None };
+        let effects = if self.peek_kind() == Some(&TokenKind::Slash) {
+            Some(self.parse_effect_row()?)
+        } else {
+            None
+        };
         let (clauses, ret, forward) = self.parse_handler_clauses()?;
         Ok(Node {
             span: t.span,

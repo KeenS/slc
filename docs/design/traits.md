@@ -138,3 +138,9 @@ three.
 A method may be a `proc`, taking continuations like any other; the
 dispatch is unchanged. Method names are unique across traits, and bounds are
 on positive type parameters.
+
+The judgment is [`proof/Slc/Spec.lean`](../../proof/Slc/Spec.lean). An impl
+method inhabits the signature with `Self`, the trait arguments, and the
+associated types instantiated; the dictionary has that type; a coherent
+registry selects one impl; and the call reduces by the core's application
+rule.

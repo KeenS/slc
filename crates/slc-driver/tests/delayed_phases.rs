@@ -281,10 +281,9 @@ fn unrestricted_type_parameters_accept_both_polarities_but_not_assumptions() {
 
 #[test]
 fn turning_an_adapter_cannot_erase_delayed_forcing_effects() {
-    for (name, annotation) in [
-        ("pure_adapter", "(String ; -i64)"),
-        ("delayed_adapter", "(-> (String ; -i64) / {Build})"),
-    ] {
+    for (name, annotation) in
+        [("pure_adapter", "(String ; -i64)"), ("delayed_adapter", "(-> (String ; -i64) / {Build})")]
+    {
         let (success, _, stderr) = run(
             name,
             &format!(

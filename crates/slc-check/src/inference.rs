@@ -255,9 +255,7 @@ fn infer_decl(
         Decl::Mod { name, .. }
         | Decl::Trait { name, .. }
         | Decl::Effect { name, .. }
-        | Decl::Hand { name, .. } => {
-            Ok(DeclarationType { name: name.clone(), ty: Type::ONE })
-        }
+        | Decl::Hand { name, .. } => Ok(DeclarationType { name: name.clone(), ty: Type::ONE }),
         Decl::Use { .. } | Decl::Impl { .. } => {
             Ok(DeclarationType { name: String::new(), ty: Type::ONE })
         }

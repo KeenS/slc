@@ -240,10 +240,19 @@ fn check_pins(
     }
 }
 
-/// Would these two types meet, without recording the meeting?
+/// Whether these two types are the same solved type.
+///
+/// Unification on a copy answers a different question: two flexible
+/// variables meet by binding one to the other, and the copy records
+/// nothing. A pin, or any other comparison, needs both sides solved.
 fn same_type(env: &Env, expected: &Type, actual: &Type) -> bool {
+    let expected = normalize(expected, env);
+    let actual = normalize(actual, env);
+    if has_open_var(&expected, env) || has_open_var(&actual, env) {
+        return false;
+    }
     let mut probe = env.uni.clone();
-    probe.unify(expected, actual).is_ok()
+    probe.unify(&expected, &actual).is_ok()
 }
 
 fn types_agree(left: &[Type], right: &[Type]) -> bool {
@@ -1582,6 +1591,25 @@ fn resolve_pending_pars(env: &mut Env, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// A `mu` scrutinee that was a variable while checking. Once the declaration
+/// is solved it must be positive data: a rigid `+T`, a variable that met
+/// `<+T>`, or a ground positive type. A variable nothing signed is not a type
+/// `mu` can consume.
+fn resolve_pending_scrutinees(env: &mut Env, diags: &mut Vec<Diagnostic>) {
+    for (span, ty) in std::mem::take(&mut env.pending_scrutinees) {
+        let ty = normalize(&env.uni.apply(&ty), env);
+        if type_polarity(&ty, env) == Some(ParamPolarity::Positive) {
+            continue;
+        }
+        diags.push(Diagnostic {
+            message: format!(
+                "`mu` consumes data of positive type, and {ty} is not known to be one"
+            ),
+            span,
+        });
+    }
+}
+
 fn resolve_pending_dicts(env: &mut Env, enums: &Declarations, diags: &mut Vec<Diagnostic>) {
     resolve_pending_injections(env, diags);
     for (span, ty, chosen) in std::mem::take(&mut env.pending_computations) {
@@ -1606,16 +1634,18 @@ fn resolve_pending_dicts(env: &mut Env, enums: &Declarations, diags: &mut Vec<Di
         }
     }
     resolve_pending_pars(env, diags);
+    resolve_pending_scrutinees(env, diags);
     for (span, consumer) in std::mem::take(&mut env.pending_consumers) {
         let consumer = type_shape(env.uni.apply(&consumer));
+        let unsolved = matches!(&consumer, Type::Var(_))
+            && type_polarity(&consumer, env) != Some(ParamPolarity::Negative);
         if matches!(&consumer, Type::Pos(_))
             || matches!(&consumer, Type::Named(name, _) if !enums.is_negative_decl(name))
-            || (matches!(&consumer, Type::Var(_))
-                && type_polarity(&consumer, env) == Some(ParamPolarity::Positive))
+            || unsolved
         {
             diags.push(Diagnostic {
                 message: format!(
-                    "the right of a cut must be a consumer; this expression has positive type {consumer}"
+                    "the right of a cut must be a consumer; this expression has type {consumer}"
                 ),
                 span,
             });
@@ -2018,29 +2048,6 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 }
             }
             let body_type = check_expr(body, enums, env, diags);
-            // A `command` consumes: every terminating path must reach a
-            // continuation, so the body is `(;)`. A body that produces a value
-            // (a bare value, or an `if` that falls through with no `else`)
-            // does not, and is rejected. Which continuation, or how many, is
-            // not constrained — the core is classical. A body whose type the
-            // checker cannot pin down is left alone.
-            if let Some(actual) = body_type {
-                // A `(;)` name standing as the body runs, and performs its row.
-                let actual = if type_shape(env.uni.apply(&actual)) == Type::BOTTOM {
-                    activation_type(actual, env)
-                } else {
-                    actual
-                };
-                if actual != Type::BOTTOM && !matches!(actual, Type::Var(_)) {
-                    diags.push(Diagnostic {
-                        message: format!(
-                            "a `command` body must reach a continuation on every path (type `(;)`); \
-                             this one has type {actual}"
-                        ),
-                        span: body.span,
-                    });
-                }
-            }
             let declared = enums
                 .resolve_row(
                     effects,
@@ -2054,6 +2061,25 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             );
             env.uni.infer_row_arguments(rows_from);
             resolve_pending_dicts(env, enums, diags);
+            // A `command` consumes: every terminating path reaches a
+            // continuation, so the body is `(;)`. Checked after unification,
+            // so a flexible variable that nothing solved is not `(;)`.
+            if let Some(actual) = body_type {
+                let actual = if type_shape(env.uni.apply(&actual)) == Type::BOTTOM {
+                    activation_type(actual, env)
+                } else {
+                    env.uni.apply(&actual)
+                };
+                if actual != Type::BOTTOM {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "a `command` body must reach a continuation on every path (type `(;)`); \
+                             this one has type {actual}"
+                        ),
+                        span: body.span,
+                    });
+                }
+            }
             env.current_row = outer_row;
             // `main` is the root, and the runtime handles one effect: `IO`
             // is what may reach it, and everything else is handled before.
@@ -2113,9 +2139,11 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             let Some(effects) = effects else { return };
             let Some(found) = found else { return };
             let declared = enums
-                .resolve_row(effects, |_| None, |ty| {
-                    enums.resolve_in(ty, &std::collections::HashMap::new())
-                })
+                .resolve_row(
+                    effects,
+                    |_| None,
+                    |ty| enums.resolve_in(ty, &std::collections::HashMap::new()),
+                )
                 .unwrap_or_default();
             let Type::Named(_, arguments) = env.uni.apply(&found) else { return };
             if arguments.len() != 4 {
@@ -4404,9 +4432,11 @@ fn check_expr_unapplied(
                 env.current_row = outer_row;
                 return Some(resolved);
             }
-            // An unsolved variable is not yet anything — a generic `<- T`
-            // body selects over the rigid `T` its caller chose.
-            if resolved.is_negative() && !matches!(resolved, Type::Var(_)) {
+            // A variable is settled at the end of the declaration: a rigid
+            // `+T` is positive data, and a variable nothing has signed is not.
+            if has_open_var(&resolved, env) || matches!(resolved, Type::Var(_)) {
+                env.pending_scrutinees.push((e.span, resolved.clone()));
+            } else if resolved.is_negative() && !resolved.is_positive() {
                 diags.push(Diagnostic {
                     message: format!(
                         "`mu` consumes data, and {resolved} is a consumer; `mu` \
