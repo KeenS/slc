@@ -88,11 +88,17 @@ func chr(wanted: char) -> Regex {
 
 // `r|s`. ∅ is its identity, so a side that is plainly ∅ is dropped.
 func alt(r: Regex, s: Regex) -> Regex {
-    of r.void {
-        True => s,
-        False => of s.void {
-            True => r,
-            False => mu Regex {
+    mu Regex {
+        ret <= {
+            of r.void {
+                True => <s | ret>,
+                False => (,),
+            };
+            of s.void {
+                True => <r | ret>,
+                False => (,),
+            };
+            <mu Regex {
                 nullable <= <(r.nullable, s.nullable) | or | nullable>,
                 derive <= <fn(c: char) { <(<c | r.derive, <c | s.derive) | alt } | derive>,
                 show <= <("(", r.show)
@@ -104,34 +110,41 @@ func alt(r: Regex, s: Regex) -> Regex {
                 atom <= <True | atom>,
                 void <= <False | void>,
                 unit <= <False | unit>,
-            },
+            } | ret>
         },
     }
 }
 
 // `rs`. ∅ annihilates it and ε is its identity.
 func seq(r: Regex, s: Regex) -> Regex {
-    of (<(r.void, s.void) | or) {
-        True => empty(),
-        False => of r.unit {
-            True => s,
-            False => of s.unit {
-                True => r,
-                False => mu Regex {
-                    nullable <= <(r.nullable, s.nullable) | and | nullable>,
-                    derive <= <fn(c: char) {
-                        let first = <(<c | r.derive, s) | seq;
-                        of r.nullable {
-                            True => <(first, <c | s.derive) | alt,
-                            False => first,
-                        }
-                    } | derive>,
-                    show <= <(r.show, s.show) | add | show>,
-                    atom <= <False | atom>,
-                    void <= <False | void>,
-                    unit <= <False | unit>,
-                },
-            },
+    mu Regex {
+        ret <= {
+            of (<(r.void, s.void) | or) {
+                True => <empty() | ret>,
+                False => (,),
+            };
+            of r.unit {
+                True => <s | ret>,
+                False => (,),
+            };
+            of s.unit {
+                True => <r | ret>,
+                False => (,),
+            };
+            <mu Regex {
+                nullable <= <(r.nullable, s.nullable) | and | nullable>,
+                derive <= <fn(c: char) {
+                    let first = <(<c | r.derive, s) | seq;
+                    of r.nullable {
+                        True => <(first, <c | s.derive) | alt,
+                        False => first,
+                    }
+                } | derive>,
+                show <= <(r.show, s.show) | add | show>,
+                atom <= <False | atom>,
+                void <= <False | void>,
+                unit <= <False | unit>,
+            } | ret>
         },
     }
 }
@@ -169,8 +182,12 @@ func matches(r: Regex, word: String) -> Bool {
 // The derivation itself, a line per character: what was read, and what is
 // left to match.
 func derivation(r: Regex, word: String, at: i64) -> (,) / {IO} {
-    of (<(at, <word | str_len) | lt) {
-        True => {
+    mu (,) {
+        ret <= {
+            of (<(at, <word | str_len) | ge) {
+                True => <(<("  nullable: ", <r.nullable | to_string) | add) | println | ret>,
+                False => (,),
+            };
             let c = <(word, at) | index;
             let rest = <c | r.derive;
             <("  ", <c | to_string)
@@ -178,9 +195,8 @@ func derivation(r: Regex, word: String, at: i64) -> (,) / {IO} {
                 | x => (x, "  ") | add
                 | x => (x, rest.show) | add
                 | println;
-            <(rest, word, <(at, 1) | add) | derivation
+            <(rest, word, <(at, 1) | add) | derivation | ret>
         },
-        False => <("  nullable: ", <r.nullable | to_string) | add | println,
     }
 }
 

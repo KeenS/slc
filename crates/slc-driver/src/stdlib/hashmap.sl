@@ -49,15 +49,11 @@ func word(n: u64) -> u64 {
 }
 
 func mask(slot: u64) -> u64 {
-    of (<(slot, 0) | eq) {
-        True => <1 | word,
-        _ => of (<(slot, 1) | eq) {
-            True => <2 | word,
-            _ => of (<(slot, 2) | eq) {
-                True => <4 | word,
-                _ => <8 | word,
-            },
-        },
+    of slot {
+        0 => <1 | word,
+        1 => <2 | word,
+        2 => <4 | word,
+        _ => <8 | word,
     }
 }
 
@@ -78,23 +74,19 @@ func one_if(bitmap: u64, slot: u64) -> u64 {
 // How many occupied slots sit strictly before `slot`. That is the index in
 // the packed `Array4`.
 func below(bitmap: u64, slot: u64) -> u64 {
-    of (<(slot, 0) | eq) {
-        True => <0 | word,
-        _ => of (<(slot, 1) | eq) {
-            True => <(bitmap, 0) | one_if,
-            _ => of (<(slot, 2) | eq) {
-                True => {
-                    let a = <(bitmap, 0) | one_if;
-                    let b = <(bitmap, 1) | one_if;
-                    <(a, b) | add
-                },
-                _ => {
-                    let a = <(bitmap, 0) | one_if;
-                    let b = <(bitmap, 1) | one_if;
-                    let c = <(bitmap, 2) | one_if;
-                    <(<(a, b) | add, c) | add
-                },
-            },
+    of slot {
+        0 => <0 | word,
+        1 => <(bitmap, 0) | one_if,
+        2 => {
+            let a = <(bitmap, 0) | one_if;
+            let b = <(bitmap, 1) | one_if;
+            <(a, b) | add
+        },
+        _ => {
+            let a = <(bitmap, 0) | one_if;
+            let b = <(bitmap, 1) | one_if;
+            let c = <(bitmap, 2) | one_if;
+            <(<(a, b) | add, c) | add
         },
     }
 }
@@ -102,26 +94,20 @@ func below(bitmap: u64, slot: u64) -> u64 {
 func child<+T>(kids: array::Array4<T>, i: u64) -> T {
     of kids {
         array::Array4::One(a0) => a0,
-        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
-            True => a0,
+        array::Array4::Two(a0, a1) => of i {
+            0 => a0,
             _ => a1,
         },
-        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
-            True => a0,
-            _ => of (<(i, 1) | eq) {
-                True => a1,
-                _ => a2,
-            },
+        array::Array4::Three(a0, a1, a2) => of i {
+            0 => a0,
+            1 => a1,
+            _ => a2,
         },
-        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
-            True => a0,
-            _ => of (<(i, 1) | eq) {
-                True => a1,
-                _ => of (<(i, 2) | eq) {
-                    True => a2,
-                    _ => a3,
-                },
-            },
+        array::Array4::Four(a0, a1, a2, a3) => of i {
+            0 => a0,
+            1 => a1,
+            2 => a2,
+            _ => a3,
         },
     }
 }
@@ -129,52 +115,40 @@ func child<+T>(kids: array::Array4<T>, i: u64) -> T {
 func swap_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
     of kids {
         array::Array4::One(_) => array::Array4::One(value),
-        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
-            True => array::Array4::Two(value, a1),
+        array::Array4::Two(a0, a1) => of i {
+            0 => array::Array4::Two(value, a1),
             _ => array::Array4::Two(a0, value),
         },
-        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
-            True => array::Array4::Three(value, a1, a2),
-            _ => of (<(i, 1) | eq) {
-                True => array::Array4::Three(a0, value, a2),
-                _ => array::Array4::Three(a0, a1, value),
-            },
+        array::Array4::Three(a0, a1, a2) => of i {
+            0 => array::Array4::Three(value, a1, a2),
+            1 => array::Array4::Three(a0, value, a2),
+            _ => array::Array4::Three(a0, a1, value),
         },
-        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
-            True => array::Array4::Four(value, a1, a2, a3),
-            _ => of (<(i, 1) | eq) {
-                True => array::Array4::Four(a0, value, a2, a3),
-                _ => of (<(i, 2) | eq) {
-                    True => array::Array4::Four(a0, a1, value, a3),
-                    _ => array::Array4::Four(a0, a1, a2, value),
-                },
-            },
+        array::Array4::Four(a0, a1, a2, a3) => of i {
+            0 => array::Array4::Four(value, a1, a2, a3),
+            1 => array::Array4::Four(a0, value, a2, a3),
+            2 => array::Array4::Four(a0, a1, value, a3),
+            _ => array::Array4::Four(a0, a1, a2, value),
         },
     }
 }
 
 func insert_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4<T> {
     of kids {
-        array::Array4::One(a0) => of (<(i, 0) | eq) {
-            True => array::Array4::Two(value, a0),
+        array::Array4::One(a0) => of i {
+            0 => array::Array4::Two(value, a0),
             _ => array::Array4::Two(a0, value),
         },
-        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
-            True => array::Array4::Three(value, a0, a1),
-            _ => of (<(i, 1) | eq) {
-                True => array::Array4::Three(a0, value, a1),
-                _ => array::Array4::Three(a0, a1, value),
-            },
+        array::Array4::Two(a0, a1) => of i {
+            0 => array::Array4::Three(value, a0, a1),
+            1 => array::Array4::Three(a0, value, a1),
+            _ => array::Array4::Three(a0, a1, value),
         },
-        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
-            True => array::Array4::Four(value, a0, a1, a2),
-            _ => of (<(i, 1) | eq) {
-                True => array::Array4::Four(a0, value, a1, a2),
-                _ => of (<(i, 2) | eq) {
-                    True => array::Array4::Four(a0, a1, value, a2),
-                    _ => array::Array4::Four(a0, a1, a2, value),
-                },
-            },
+        array::Array4::Three(a0, a1, a2) => of i {
+            0 => array::Array4::Four(value, a0, a1, a2),
+            1 => array::Array4::Four(a0, value, a1, a2),
+            2 => array::Array4::Four(a0, a1, value, a2),
+            _ => array::Array4::Four(a0, a1, a2, value),
         },
         array::Array4::Four(a0, a1, a2, a3) => array::Array4::Four(a0, a1, a2, a3),
     }
@@ -183,26 +157,20 @@ func insert_child<+T>(kids: array::Array4<T>, i: u64, value: T) -> array::Array4
 func remove_child<+T>(kids: array::Array4<T>, i: u64) -> Packed<T> {
     of kids {
         array::Array4::One(_) => Packed::None,
-        array::Array4::Two(a0, a1) => of (<(i, 0) | eq) {
-            True => Packed::Some(array::Array4::One(a1)),
+        array::Array4::Two(a0, a1) => of i {
+            0 => Packed::Some(array::Array4::One(a1)),
             _ => Packed::Some(array::Array4::One(a0)),
         },
-        array::Array4::Three(a0, a1, a2) => of (<(i, 0) | eq) {
-            True => Packed::Some(array::Array4::Two(a1, a2)),
-            _ => of (<(i, 1) | eq) {
-                True => Packed::Some(array::Array4::Two(a0, a2)),
-                _ => Packed::Some(array::Array4::Two(a0, a1)),
-            },
+        array::Array4::Three(a0, a1, a2) => of i {
+            0 => Packed::Some(array::Array4::Two(a1, a2)),
+            1 => Packed::Some(array::Array4::Two(a0, a2)),
+            _ => Packed::Some(array::Array4::Two(a0, a1)),
         },
-        array::Array4::Four(a0, a1, a2, a3) => of (<(i, 0) | eq) {
-            True => Packed::Some(array::Array4::Three(a1, a2, a3)),
-            _ => of (<(i, 1) | eq) {
-                True => Packed::Some(array::Array4::Three(a0, a2, a3)),
-                _ => of (<(i, 2) | eq) {
-                    True => Packed::Some(array::Array4::Three(a0, a1, a3)),
-                    _ => Packed::Some(array::Array4::Three(a0, a1, a2)),
-                },
-            },
+        array::Array4::Four(a0, a1, a2, a3) => of i {
+            0 => Packed::Some(array::Array4::Three(a1, a2, a3)),
+            1 => Packed::Some(array::Array4::Three(a0, a2, a3)),
+            2 => Packed::Some(array::Array4::Three(a0, a1, a3)),
+            _ => Packed::Some(array::Array4::Three(a0, a1, a2)),
         },
     }
 }
@@ -216,11 +184,9 @@ func slot_of(hash: u64, shift: u64) -> u64 {
 func unite<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> Node<K, V> {
     let r1 = <(h1, shift) | div;
     let r2 = <(h2, shift) | div;
-    of (<(r1, 0) | eq) {
-        True => of (<(r2, 0) | eq) {
-            True => Node::Knot(Cons((k1, v1), Cons((k2, v2), Nil))),
-            _ => <(k1, v1, h1, k2, v2, h2, shift) | split,
-        },
+    let resting = of (<(r1, 0) | eq) { True => <(r2, 0) | eq, _ => False };
+    of resting {
+        True => Node::Knot(Cons((k1, v1), Cons((k2, v2), Nil))),
         _ => <(k1, v1, h1, k2, v2, h2, shift) | split,
     }
 }
@@ -233,19 +199,12 @@ func split<+K, +V>(k1: K, v1: V, h1: u64, k2: K, v2: V, h2: u64, shift: u64) -> 
             let deeper = <(k1, v1, h1, k2, v2, h2, <(shift, 4) | mul) | unite;
             Node::Branch(<s1 | mask, array::Array4::One(deeper))
         },
-        _ => of (<(s1, s2) | lt) {
-            True => {
-                Node::Branch(
-                    <(<s1 | mask, <s2 | mask) | add,
-                    array::Array4::Two(Node::Leaf(k1, v1), Node::Leaf(k2, v2)),
-                )
-            },
-            _ => {
-                Node::Branch(
-                    <(<s1 | mask, <s2 | mask) | add,
-                    array::Array4::Two(Node::Leaf(k2, v2), Node::Leaf(k1, v1)),
-                )
-            },
+        _ => {
+            let leaves = of (<(s1, s2) | lt) {
+                True => array::Array4::Two(Node::Leaf(k1, v1), Node::Leaf(k2, v2)),
+                _ => array::Array4::Two(Node::Leaf(k2, v2), Node::Leaf(k1, v1)),
+            };
+            Node::Branch(<(<s1 | mask, <s2 | mask) | add, leaves)
         },
     }
 }
@@ -341,15 +300,14 @@ func place<+K: Hash + Eq, +V>(
         Node::Branch(bitmap, children) => {
             let slot = <(full, shift) | slot_of;
             let next = <(shift, 4) | mul;
+            let index = <(bitmap, slot) | below;
             of (<(bitmap, slot) | bit_set) {
                 False => {
-                    let index = <(bitmap, slot) | below;
                     let kids = <(children, index, Node::Leaf(key, value)) | insert_child;
                     let bits = <(bitmap, <slot | mask) | add;
                     (Node::Branch(bits, kids), 1)
                 },
                 _ => {
-                    let index = <(bitmap, slot) | below;
                     let found = <(children, index) | child;
                     let placed = <(found, key, value, full, next) | place;
                     let kids = <(children, index, placed.0) | swap_child;

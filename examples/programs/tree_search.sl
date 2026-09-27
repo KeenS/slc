@@ -23,18 +23,15 @@ proc walk<E>(t: Tree, target: i64) | (
         Leaf => <(,) | done>,
         Node(left, value, right) => {
             <("visiting ", <value | int_to_str) | add | println;
+            // The non-local jump: past this walk's own frames, past
+            // every enclosing walk, straight to the captured `k`.
             of (<(value, target) | eq) {
-                True => {
-                    // The non-local jump: past this walk's own frames, past
-                    // every enclosing walk, straight to the captured `k`.
-                    <value | jump>
-                },
-                False => {
-                    <(left, target) | walk | (jump & mu unit {
-                        finished_left => <(right, target) | walk | (jump & done)>,
-                    })>
-                },
-            }
+                True => <value | jump>,
+                False => (,),
+            };
+            <(left, target) | walk | (jump & mu unit {
+                finished_left => <(right, target) | walk | (jump & done)>,
+            })>
         },
     }
 }

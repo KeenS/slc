@@ -73,13 +73,14 @@ func unlocked() -> Turnstile {
 func gate(credit: i64, fare: i64) -> Turnstile {
     let paid = <(credit, fare) | ge;
     mu Turnstile {
-        coin <= of paid {
-            True => <Step { output: Refund, next: <(credit, fare) | gate } | coin>,
-            False => {
-                let credit = <(credit, 1) | add;
-                let output = of (<(credit, fare) | ge) { True => Open, False => Wait };
-                <Step { output: output, next: <(credit, fare) | gate } | coin>
-            },
+        coin <= {
+            of paid {
+                True => <Step { output: Refund, next: <(credit, fare) | gate } | coin>,
+                False => (,),
+            };
+            let credit = <(credit, 1) | add;
+            let output = of (<(credit, fare) | ge) { True => Open, False => Wait };
+            <Step { output: output, next: <(credit, fare) | gate } | coin>
         },
         push <= of paid {
             True => <Step { output: Turn, next: <(0, fare) | gate } | push>,
