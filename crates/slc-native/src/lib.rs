@@ -8,7 +8,10 @@ mod lower;
 #[cfg(test)]
 mod link_tests;
 
+use std::collections::HashMap;
+
 use slc_core::term::Term;
+use slc_core::types::Type;
 use slc_syntax::lower::Specialization;
 
 pub use encode::encode;
@@ -168,8 +171,14 @@ pub struct Compiled {
 }
 
 /// Lower `defs` and write a relocatable object. `specs` supply binder types for stack maps.
-pub fn compile(defs: &[(String, Term)], specs: &[Specialization]) -> Result<Compiled, String> {
-    let module = lower::lower(defs, specs)?;
+/// `payloads` are variant and record field types, so a wildcard occurrence is traced from
+/// the word it holds.
+pub fn compile(
+    defs: &[(String, Term)],
+    specs: &[Specialization],
+    payloads: &HashMap<String, Vec<Type>>,
+) -> Result<Compiled, String> {
+    let module = lower::lower(defs, specs, payloads)?;
     let object = encode(&module);
     Ok(Compiled { module, object })
 }

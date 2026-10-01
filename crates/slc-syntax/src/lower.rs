@@ -147,6 +147,9 @@ pub struct DispatchInfo {
     pub inst_uses: HashMap<Span, String>,
     /// Solved copies. A generic declaration is this list, not one shared body.
     pub specializations: Vec<Specialization>,
+    /// Variant or record label → payload field types, in order. An enum
+    /// parameter is still `Type::Param`; a scrutinee's arguments instantiate it.
+    pub payloads: HashMap<String, Vec<Type>>,
 }
 
 /// One monomorphic copy of a declaration. `term` stays untyped; `binders`

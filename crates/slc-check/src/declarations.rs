@@ -423,6 +423,21 @@ impl Declarations {
         let label = self.unqualified.get(name)?.as_ref()?;
         self.signatures.get(label)
     }
+
+    /// Payload field types keyed by qualified variant label, plus each record's
+    /// fields under its declaration name. The native match compiler reads these
+    /// when a wildcard binds nothing.
+    pub(crate) fn payload_types(&self) -> HashMap<String, Vec<Type>> {
+        let mut out = HashMap::new();
+        for (label, (_, types)) in &self.signatures {
+            out.insert(label.clone(), types.clone());
+        }
+        for (name, fields) in &self.records {
+            out.entry(name.clone())
+                .or_insert_with(|| fields.iter().map(|(_, ty)| ty.clone()).collect());
+        }
+        out
+    }
 }
 
 pub(crate) fn enum_types(p: &Program) -> Declarations {

@@ -117,6 +117,7 @@ pub fn check_program_with_rows(
     }
     if diags.is_empty() {
         record_specializations(&mut env);
+        env.dispatch.payloads = enums.payload_types();
         Ok((std::mem::take(&mut env.dispatch), std::mem::take(&mut env.row_diagnostics)))
     } else {
         Err(diags)

@@ -19,7 +19,8 @@ fn pipeline(src: &str) -> crate::Compiled {
         .unwrap_or_else(|diags| panic!("{diags:?}"));
     let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
         .unwrap_or_else(|err| panic!("{err}"));
-    crate::compile(&defs, &dispatch.specializations).unwrap_or_else(|err| panic!("{err}"))
+    crate::compile(&defs, &dispatch.specializations, &dispatch.payloads)
+        .unwrap_or_else(|err| panic!("{err}"))
 }
 
 fn flat(func: &Function) -> Vec<&Inst> {
@@ -528,6 +529,130 @@ fn pointer_tail_does_not_keep_the_scratch() {
     }
     assert_eq!(tails, 5);
     assert_eq!(link_run(&compiled.object).0, 5);
+}
+
+/// Frame slots filled by a load of a tagged payload. Those are match occurrence temps.
+fn occurrence_slots(func: &Function) -> Vec<u16> {
+    let mut slots = Vec::new();
+    for block in &func.blocks {
+        for pair in block.insts.windows(2) {
+            if let (
+                Inst::Load { offset: src, .. },
+                Inst::Store { base: Dest::Frame, offset: dst, .. },
+            ) = (&pair[0], &pair[1])
+                && *src == TAGGED_PAYLOAD as i32
+            {
+                slots.push(((*dst - FRAME_SLOT0 as i32) / 8) as u16);
+            }
+        }
+    }
+    slots
+}
+
+/// Frame slots loaded back into a heap object at `into` (tag payload or tuple component 0).
+fn slots_feeding(func: &Function, into: i32) -> Vec<u16> {
+    let mut slots = Vec::new();
+    for block in &func.blocks {
+        for pair in block.insts.windows(2) {
+            if let (
+                Inst::Load { base: Dest::Frame, offset: src, .. },
+                Inst::Store { offset: dst, .. },
+            ) = (&pair[0], &pair[1])
+                && *dst == into
+            {
+                slots.push(((*src - FRAME_SLOT0 as i32) / 8) as u16);
+            }
+        }
+    }
+    slots
+}
+
+#[test]
+fn i64_match_occurrence_is_not_a_pointer() {
+    let compiled = pipeline(
+        "enum E { A(i64), B }
+         enum Flag { Yes, No }
+         enum Wrap { Hold(Flag) }
+         func id(n: i64) -> i64 { n }
+         func binder(e: E) -> i64 { of e { A(n) => <n | id, _ => 0 } }
+         func literal(e: E) -> i64 { of e { A(0) => 0, A(n) => <n | id, _ => 0 } }
+         func wild(e: E) -> i64 { of e { A(_) => 1, _ => 0 } }
+         func held(w: Wrap) -> i64 { of w { Hold(_) => 1, _ => 0 } }
+         func main() -> i64 {
+             let e = E::A(1);
+             <e | binder
+         }",
+    );
+    for name in ["binder", "literal", "wild"] {
+        let func = compiled.module.function(name);
+        let slots = occurrence_slots(func);
+        assert!(!slots.is_empty(), "{name} did not materialize a payload");
+        assert!(slots.iter().all(|slot| *slot >= 4), "{name} occurrence {slots:?} is a named slot");
+        assert!(
+            slots.iter().all(|slot| !func.pointer_slots.contains(slot)),
+            "{name} i64 occurrence {slots:?} in {:?}",
+            func.pointer_slots
+        );
+    }
+    let held = compiled.module.function("held");
+    let slots = occurrence_slots(held);
+    assert!(!slots.is_empty(), "Hold(_) did not materialize a payload");
+    assert!(slots.iter().all(|slot| *slot >= 4), "held occurrence {slots:?}");
+    assert!(
+        slots.iter().all(|slot| held.pointer_slots.contains(slot)),
+        "Flag wildcard {slots:?} missing from {:?}",
+        held.pointer_slots
+    );
+    assert_eq!(link_run(&compiled.object).0, 1);
+}
+
+#[test]
+fn match_result_in_a_tag_or_tuple_is_a_root() {
+    let compiled = pipeline(
+        "enum E { A, B }
+         enum Flag { Yes, No }
+         enum Wrap { Hold(Flag) }
+         func tagged(e: E) -> i64 {
+             let w = Wrap::Hold(of e { A => Flag::Yes, _ => Flag::No });
+             of w { Hold(Yes) => 1, _ => 2 }
+         }
+         func paired(e: E) -> i64 {
+             let t = (of e { A => Flag::Yes, _ => Flag::No }, 1);
+             of t { (Yes, _) => 1, _ => 2 }
+         }
+         func main() -> i64 {
+             let e = E::A;
+             <e | tagged
+         }",
+    );
+    let tagged = compiled.module.function("tagged");
+    let fed = slots_feeding(tagged, TAGGED_PAYLOAD as i32);
+    assert!(!fed.is_empty(), "Hold payload was not saved across allocation: {:?}", flat(tagged));
+    assert!(
+        fed.iter().all(|slot| tagged.pointer_slots.contains(slot)),
+        "tag payload {fed:?} missing from {:?}",
+        tagged.pointer_slots
+    );
+    let map_id = flat(tagged).iter().find_map(|inst| match inst {
+        Inst::CallAlloc { tag, map_id, .. }
+            if *tag == slc_abi::TAG_TAGGED && *map_id != slc_abi::MAP_EMPTY =>
+        {
+            Some(*map_id)
+        }
+        _ => None,
+    });
+    let map_id = map_id.expect("Hold payload was not entered in a heap map");
+    let map = compiled.module.maps.iter().find(|map| map.map_id == map_id).unwrap();
+    assert!(map.slots.contains(&1), "{map:?}");
+    let paired = compiled.module.function("paired");
+    let fed = slots_feeding(paired, 24);
+    assert!(!fed.is_empty(), "tuple component was not saved: {:?}", flat(paired));
+    assert!(
+        fed.iter().all(|slot| paired.pointer_slots.contains(slot)),
+        "tuple component {fed:?} missing from {:?}",
+        paired.pointer_slots
+    );
+    assert_eq!(link_run(&compiled.object).0, 1);
 }
 
 #[test]
