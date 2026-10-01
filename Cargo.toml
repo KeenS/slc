@@ -6,6 +6,7 @@ members = [
     "crates/slc-fmt",
     "crates/slc-check",
     "crates/slc-runtime",
+    "crates/slc-abi",
     "crates/slc-driver",
 ]
 

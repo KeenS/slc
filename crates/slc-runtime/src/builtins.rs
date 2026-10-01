@@ -87,7 +87,11 @@ pub fn apply_builtin(
             Ok(Value::Int(*n))
         }
         "__neg" => match args.first() {
-            Some(Value::Int(n)) => Ok(Value::Int(-n)),
+            // `-n` panics in debug when `n` is `i64::MIN`.
+            Some(Value::Int(n)) => n
+                .checked_neg()
+                .map(Value::Int)
+                .ok_or_else(|| BuiltinError::ArithmeticOverflow(format!("neg({n})"))),
             Some(Value::Float(n)) => Ok(Value::Float(-n)),
             _ => Err(BuiltinError::TypeMismatch("neg expects an integer or float argument".into())),
         },
@@ -418,6 +422,16 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let r = apply_builtin("__mul", &[Value::Int(i64::MAX), Value::Int(2)], &mut buf);
         assert!(matches!(r, Err(BuiltinError::ArithmeticOverflow(_))));
+    }
+
+    #[test]
+    fn neg_of_i64_min_overflows() {
+        let mut buf: Vec<u8> = Vec::new();
+        let r = apply_builtin("__neg", &[Value::Int(i64::MIN)], &mut buf);
+        assert!(matches!(
+            r,
+            Err(BuiltinError::ArithmeticOverflow(m)) if m == format!("neg({})", i64::MIN)
+        ));
     }
 
     #[test]
