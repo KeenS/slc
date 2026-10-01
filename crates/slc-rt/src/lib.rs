@@ -902,7 +902,8 @@ pub static slc_bytes_since_gc: AtomicU64 = AtomicU64::new(0);
 #[unsafe(no_mangle)]
 pub static slc_watermark: AtomicU64 = AtomicU64::new(u64::MAX);
 
-/// `%rsp` of the frame that calls `slc_program_entry`.
+/// `%rsp` after `call slc_program_entry` has pushed its return address.
+/// `ret` from that value returns to `slc_rt_start`, not to the slot above the call.
 #[unsafe(no_mangle)]
 pub static slc_c_sp: AtomicU64 = AtomicU64::new(0);
 
@@ -978,7 +979,8 @@ pub unsafe extern "C" fn slc_rt_start(
     unsafe {
         // A `clobber_abi` asm is a call site, so `%rsp` is 0 (mod 16) before `call`.
         std::arch::asm!(
-            "mov qword ptr [rip + {csp}], rsp",
+            "lea rax, [rsp - 8]",
+            "mov qword ptr [rip + {csp}], rax",
             "call {entry}",
             csp = sym slc_c_sp,
             entry = sym slc_program_entry,
@@ -988,6 +990,22 @@ pub unsafe extern "C" fn slc_rt_start(
         );
     }
     status
+}
+
+/// Fuel hit zero at a safepoint. Same diagnostic as fuel 0 before entry, then
+/// back to `slc_rt_start` with status 1. This does not return to the safepoint.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_fail() {
+    eprintln!("evaluation diverged (fuel exhausted)");
+    unsafe {
+        std::arch::asm!(
+            "mov rsp, qword ptr [rip + {csp}]",
+            "mov eax, 1",
+            "ret",
+            csp = sym slc_c_sp,
+            options(noreturn),
+        );
+    }
 }
 
 fn load_map_section(start: *const u8, stop: *const u8) {
@@ -1082,6 +1100,38 @@ pub unsafe extern "C" fn slc_rt_gc_stats(sp: u64, out: *mut GcStats) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    std::arch::global_asm!(
+        ".globl slc_c_sp_probe",
+        ".type slc_c_sp_probe, @function",
+        "slc_c_sp_probe:",
+        "mov rsp, qword ptr [rip + {csp}]",
+        "mov eax, 7",
+        "ret",
+        csp = sym super::slc_c_sp,
+    );
+
+    unsafe extern "C" {
+        fn slc_c_sp_probe();
+    }
+
+    #[test]
+    fn c_sp_points_at_the_return_address() {
+        let status: u64;
+        unsafe {
+            std::arch::asm!(
+                "lea rax, [rsp - 8]",
+                "mov qword ptr [rip + {csp}], rax",
+                "call {probe}",
+                csp = sym slc_c_sp,
+                probe = sym slc_c_sp_probe,
+                lateout("rax") status,
+                clobber_abi("sysv64"),
+            );
+        }
+        assert_eq!(status, 7);
+    }
+
     use slc_abi::{
         DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_PROMPT,
         FRAME_FRAME_WORDS, FRAME_HANDLER_PREV, FRAME_MAP_FLAGS, FRAME_PROMPT_ID,

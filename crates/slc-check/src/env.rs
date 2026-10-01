@@ -216,6 +216,15 @@ pub(crate) struct Env<'a> {
         Vec<(slc_syntax::token::Span, Type, Option<slc_syntax::ast::ParamPolarity>)>,
     /// Generic uses whose type arguments are solved when the declaration is.
     pub(crate) pending_insts: Vec<PendingInst>,
+    /// The function whose body is being checked. A use inside it is solved again per copy.
+    pub(crate) enclosing: Option<String>,
+    /// `(function, name, type)` as bound. The type may still mention that function's parameters.
+    pub(crate) bound_words: Vec<(String, String, Type)>,
+    /// Function → the rigid variable of each type parameter, so a copy can substitute its bindings.
+    pub(crate) fn_context: HashMap<String, Vec<(String, usize)>>,
+    /// Nonzero inside a lambda expression. Its binders are not slots of the enclosing frame,
+    /// and recording them would hide the outer word that does occupy the slot.
+    pub(crate) word_depth: u32,
 }
 
 /// A use of a generic declaration, recorded before unification finishes.
@@ -227,6 +236,9 @@ pub(crate) struct PendingInst {
     pub(crate) param_types: Vec<Type>,
     /// Type-parameter name and the fresh variable standing for it.
     pub(crate) args: Vec<(String, Type)>,
+    pub(crate) result: Option<Type>,
+    /// The generic function whose body contains the use. Absent at the top level.
+    pub(crate) owner: Option<String>,
 }
 
 impl<'a> Env<'a> {
@@ -267,6 +279,10 @@ impl<'a> Env<'a> {
             polarity_hints: HashMap::new(),
             pending_computations: Vec::new(),
             pending_insts: Vec::new(),
+            enclosing: None,
+            bound_words: Vec::new(),
+            fn_context: HashMap::new(),
+            word_depth: 0,
         }
     }
 
@@ -309,6 +325,7 @@ impl<'a> Env<'a> {
     }
 
     pub(crate) fn define(&mut self, name: &str, ty: Type) {
+        self.note_word(name, &ty);
         if let Some(frame) = self.locals.last_mut() {
             frame.insert(
                 name.to_string(),
@@ -317,9 +334,23 @@ impl<'a> Env<'a> {
         }
     }
 
+    /// The first binding of `name` in the enclosing function. A later shadow
+    /// does not replace it: the native slot is the first one too.
+    fn note_word(&mut self, name: &str, ty: &Type) {
+        if self.word_depth != 0 {
+            return;
+        }
+        let Some(owner) = self.enclosing.clone() else { return };
+        if self.bound_words.iter().any(|(fn_name, word, _)| fn_name == &owner && word == name) {
+            return;
+        }
+        self.bound_words.push((owner, name.to_string(), ty.clone()));
+    }
+
     /// A `let` of a value form: the listed variables are the binding's own,
     /// and every use gets fresh copies of them.
     pub(crate) fn define_scheme(&mut self, name: &str, ty: Type, generalized: Vec<usize>) {
+        self.note_word(name, &ty);
         if let Some(frame) = self.locals.last_mut() {
             frame.insert(
                 name.to_string(),
@@ -366,7 +397,7 @@ impl<'a> Env<'a> {
 
 /// Substitute exactly the listed variables — a scheme's own — leaving every
 /// other variable shared.
-fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
+pub(crate) fn replace_vars(ty: &Type, map: &HashMap<usize, Type>) -> Type {
     match ty {
         Type::Var(v) => map.get(v).cloned().unwrap_or_else(|| ty.clone()),
         Type::Tensor(items) => Type::Tensor(items.iter().map(|x| replace_vars(x, map)).collect()),

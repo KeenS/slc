@@ -59,7 +59,13 @@ struct Builder {
     pool: HashMap<String, u32>,
     pool_len: u32,
     roots: Vec<(u32, u32)>,
-    func_ptr: HashMap<String, bool>,
+    /// Callee parameter word, and the word the callee returns.
+    func_param: HashMap<String, bool>,
+    func_result: HashMap<String, bool>,
+    /// Symbol → slot name → whether the word stored there is a pointer.
+    fn_words: HashMap<String, HashMap<String, bool>>,
+    /// `r13` at this function's safepoints is the parameter, which may be a pointer.
+    val_ptr: bool,
     maps: Vec<MapRecord>,
     next_map: u32,
     edges: Vec<(String, String)>,
@@ -142,10 +148,10 @@ fn patch(funcs: &mut [Function]) {
             for inst in &mut block.insts {
                 match inst {
                     Inst::Safepoint { map_id } if *map_id == 0 => *map_id = func.map_id,
-                    Inst::CallSlc { symbol, callee_frame_words } => {
+                    Inst::CallSlc { symbol, callee_frame_words, .. } => {
                         *callee_frame_words = sizes[symbol];
                     }
-                    Inst::Tail { symbol, frame_words, map_id } => {
+                    Inst::Tail { symbol, frame_words, map_id, .. } => {
                         *frame_words = sizes[symbol];
                         *map_id = maps[symbol];
                     }
@@ -156,11 +162,23 @@ fn patch(funcs: &mut [Function]) {
     }
 }
 
+/// Several parameters arrive as one tuple in `__args`, even when each component is a scalar.
+fn param_is_pointer(param: &str, spec: &Specialization) -> bool {
+    if param == "__args" && spec.binders.len() >= 2 {
+        return true;
+    }
+    spec.binders
+        .iter()
+        .chain(spec.locals.iter())
+        .find(|(binder, _)| binder == param)
+        .is_some_and(|(_, ty)| type_is_pointer(ty))
+}
+
 fn type_is_pointer(ty: &Type) -> bool {
     match ty {
-        Type::Rowed(inner, _) | Type::Delayed(inner, _) | Type::Dual(inner) => {
-            type_is_pointer(inner)
-        }
+        // The word is the thunk, whatever it produces when forced.
+        Type::Delayed(_, _) => true,
+        Type::Rowed(inner, _) | Type::Dual(inner) => type_is_pointer(inner),
         Type::Pos(Base::Str)
         | Type::Neg(_)
         | Type::Named(_, _)
@@ -170,18 +188,6 @@ fn type_is_pointer(ty: &Type) -> bool {
         Type::Pos(_) | Type::Var(_) | Type::Param(_) => false,
         Type::Tensor(items) => !items.is_empty(),
     }
-}
-
-fn skip_slot(name: &str) -> bool {
-    name.starts_with("__discarded")
-        || name == "__unused"
-        || name == "__match_arg"
-        || name == DELAY_BINDER
-        || name == "$unit"
-        || name.starts_with("$int_")
-        || name.starts_with("$str_")
-        || name.starts_with("$float_")
-        || name.starts_with("$char_")
 }
 
 fn slot_off(slot: u16) -> i32 {
@@ -216,7 +222,10 @@ impl Builder {
             pool: HashMap::new(),
             pool_len: 0,
             roots: Vec::new(),
-            func_ptr: HashMap::new(),
+            func_param: HashMap::new(),
+            func_result: HashMap::new(),
+            fn_words: HashMap::new(),
+            val_ptr: false,
             maps: Vec::new(),
             next_map: 2,
             edges: Vec::new(),
@@ -245,12 +254,18 @@ impl Builder {
             if let Term::Lam(param, _) = term
                 && param != DELAY_BINDER
             {
-                let pointer = specs
-                    .iter()
-                    .find(|spec| spec.symbol == *name)
-                    .and_then(|spec| spec.binders.iter().find(|(binder, _)| binder == param))
-                    .is_some_and(|(_, ty)| type_is_pointer(ty));
-                builder.func_ptr.insert(name.clone(), pointer);
+                let spec = specs.iter().find(|spec| spec.symbol == *name);
+                let param_ptr = spec.is_some_and(|spec| param_is_pointer(param, spec));
+                let result_ptr = spec.is_some_and(|spec| type_is_pointer(&spec.result));
+                builder.func_param.insert(name.clone(), param_ptr);
+                builder.func_result.insert(name.clone(), result_ptr);
+                if let Some(spec) = spec {
+                    let mut words = HashMap::new();
+                    for (binder, ty) in spec.binders.iter().chain(spec.locals.iter()) {
+                        words.insert(binder.clone(), type_is_pointer(ty));
+                    }
+                    builder.fn_words.insert(name.clone(), words);
+                }
             }
         }
         builder
@@ -340,11 +355,31 @@ impl Builder {
     }
 
     fn add_slot(&mut self, name: &str) {
-        if skip_slot(name) || self.slots.contains_key(name) {
+        if name.starts_with("__discarded")
+            || name == "__unused"
+            || name == "__match_arg"
+            || name == DELAY_BINDER
+            || name == "$unit"
+            || name.starts_with("$int_")
+            || name.starts_with("$str_")
+            || name.starts_with("$float_")
+            || name.starts_with("$char_")
+            || self.slots.contains_key(name)
+        {
             return;
         }
         let index = self.slots.len() as u16;
         self.slots.insert(name.to_string(), index);
+    }
+
+    fn word_ptr(&self, name: &str) -> bool {
+        self.fn_words.get(&self.current).and_then(|words| words.get(name)).copied().unwrap_or(false)
+    }
+
+    fn mark_word(&mut self, name: &str, slot: u16, computed: bool) {
+        if computed || self.word_ptr(name) {
+            self.pointer_slots.push(slot);
+        }
     }
 
     fn store_slot(&mut self, src: Dest, slot: u16) {
@@ -420,11 +455,13 @@ impl Builder {
         for index in 0..SCRATCHES {
             self.pointer_slots.push(self.scratch_base + index);
         }
-        let param_ptr = self.func_ptr.get(symbol).copied().unwrap_or(false);
+        let param_ptr = self.func_param.get(symbol).copied().unwrap_or(false);
+        self.val_ptr = param_ptr;
         if param_ptr && let Some(&slot) = self.slots.get(param.as_str()) {
             self.pointer_slots.push(slot);
         }
-        let frame_words = 9 + u32::from(slot_count);
+        // `spill_base` is the untraced slot a scalar argument uses when `r13` would be traced.
+        let frame_words = 9 + u32::from(slot_count) + 1;
         self.blocks.push(Block { insts: Vec::new() });
         self.cur = 0;
         // The encoder installs the map id before this block. Frame size has to be
@@ -458,7 +495,6 @@ impl Builder {
             frame_words,
             val_is_pointer: param_ptr,
             pointer_slots: std::mem::take(&mut self.pointer_slots),
-            slot_count,
             spill_base: slot_count,
             blocks: std::mem::take(&mut self.blocks),
             entry: false,
@@ -580,8 +616,11 @@ impl Builder {
         let pointer = self.compile_term(value, Mode::Value)?;
         if let Some(&slot) = self.slots.get(binder) {
             self.store_slot(Dest::Val, slot);
-            if pointer {
-                self.pointer_slots.push(slot);
+            let kept = pointer || self.word_ptr(binder);
+            self.mark_word(binder, slot, pointer);
+            // A scalar left in `r13` would be traced at the next safepoint.
+            if !kept && self.val_ptr {
+                self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
             }
         }
         self.compile_command(body, mode)
@@ -673,16 +712,24 @@ impl Builder {
     }
 
     fn compile_tuple(&mut self, items: &[Term], mode: Mode) -> Result<bool, String> {
-        let mut scratches = Vec::new();
-        for item in items {
+        let mut saved = Vec::new();
+        let mut heap_slots = Vec::new();
+        for (index, item) in items.iter().enumerate() {
             let pointer = self.compile_term(item, Mode::Value)?;
-            if !pointer {
-                return Err("a tuple of scalars is not a test of this compiler".into());
+            let slot = if pointer {
+                self.push_scratch(Dest::Val)?
+            } else {
+                // A scalar component is live across the allocation but must not be traced.
+                let slot = self.alloc_temp(false)?;
+                self.store_slot(Dest::Val, slot);
+                slot
+            };
+            if pointer {
+                heap_slots.push(index as u16 + 1);
             }
-            scratches.push(self.push_scratch(Dest::Val)?);
+            saved.push((slot, pointer));
         }
-        let slots: Vec<u16> = (1..=items.len() as u16).collect();
-        let map = self.heap_map(&slots);
+        let map = self.heap_map(&heap_slots);
         self.emit(Inst::CallAlloc {
             words: 1 + items.len() as u32,
             tag: TAG_TUPLE,
@@ -691,7 +738,7 @@ impl Builder {
         });
         self.emit(Inst::Imm { dst: Dest::V(1), value: items.len() as i64 });
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
-        for (index, slot) in scratches.iter().enumerate() {
+        for (index, (slot, _)) in saved.iter().enumerate() {
             self.load_slot(Dest::V(1), *slot);
             self.emit(Inst::Store {
                 src: Dest::V(1),
@@ -700,8 +747,10 @@ impl Builder {
                 width: 8,
             });
         }
-        for _ in &scratches {
-            self.pop_scratch();
+        for (_, pointer) in saved.iter().rev() {
+            if *pointer {
+                self.pop_scratch();
+            }
         }
         self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
         if mode == Mode::Tail {
@@ -714,28 +763,39 @@ impl Builder {
         let Term::Var(symbol) = callee else {
             return Err("indirect call is not a test of this compiler".into());
         };
-        if !self.func_ptr.contains_key(symbol) {
+        if !self.func_param.contains_key(symbol) {
             return Err(format!("unknown function {symbol}"));
         }
         self.compile_term(arg, Mode::Value)?;
-        let param_ptr = self.func_ptr[symbol];
+        let param_ptr = self.func_param[symbol];
+        let result_ptr = self.func_result.get(symbol).copied().unwrap_or(false);
         if param_ptr {
             // The call's safepoint runs inside the encoder, after this store.
+            // The scratch stays in the map; only the counter is released below.
             self.push_scratch(Dest::Val)?;
         }
         match mode {
             Mode::Tail => {
                 self.edges.push((self.current.clone(), symbol.clone()));
-                self.emit(Inst::Tail { symbol: symbol.clone(), frame_words: 0, map_id: 0 });
+                self.emit(Inst::Tail {
+                    symbol: symbol.clone(),
+                    frame_words: 0,
+                    map_id: 0,
+                    arg_is_pointer: param_ptr,
+                });
             }
             Mode::Value => {
-                self.emit(Inst::CallSlc { symbol: symbol.clone(), callee_frame_words: 0 });
-                if param_ptr {
-                    self.pop_scratch();
-                }
+                self.emit(Inst::CallSlc {
+                    symbol: symbol.clone(),
+                    callee_frame_words: 0,
+                    arg_is_pointer: param_ptr,
+                });
             }
         }
-        Ok(param_ptr)
+        if param_ptr {
+            self.pop_scratch();
+        }
+        Ok(result_ptr)
     }
 
     fn compile_cocase(
@@ -773,17 +833,20 @@ impl Builder {
         self.emit(Inst::Jmp { target: miss });
         self.cur = miss;
         self.emit(Inst::Ud2);
+        let mut result_ptr = false;
         for (branch, block) in branches.iter().zip(arm_blocks) {
             self.cur = block;
+            let scratch = self.scratch_top;
             self.bind_payload(&branch.binders);
-            self.compile_command(&branch.body, mode)?;
+            result_ptr |= self.compile_command(&branch.body, mode)?;
             self.finish(mode);
+            self.scratch_top = scratch;
         }
         if let Some(join) = join {
             self.cur = join;
         }
         self.join = saved;
-        Ok(false)
+        Ok(result_ptr)
     }
 
     fn bind_payload(&mut self, binders: &[String]) {
@@ -800,6 +863,7 @@ impl Builder {
                     width: 8,
                 });
                 self.store_slot(Dest::V(0), slot);
+                self.mark_word(&binders[0], slot, false);
             }
             return;
         }
@@ -818,6 +882,7 @@ impl Builder {
                     width: 8,
                 });
                 self.store_slot(Dest::V(0), slot);
+                self.mark_word(name, slot, false);
             }
         }
     }
@@ -839,6 +904,7 @@ impl Builder {
                     width: 8,
                 });
                 self.store_slot(Dest::V(0), slot);
+                self.mark_word(name, slot, false);
             }
         }
         self.compile_command(body, mode)
@@ -914,6 +980,7 @@ impl Builder {
     }
 
     fn emit_row(&mut self, row: &Row, mode: Mode) -> Result<(), String> {
+        let scratch = self.scratch_top;
         for (name, place) in &row.binds {
             if let Some(&slot) = self.slots.get(name.as_str()) {
                 match place {
@@ -923,22 +990,24 @@ impl Builder {
                         self.store_slot(Dest::V(0), slot);
                     }
                 }
+                self.mark_word(name, slot, false);
             }
         }
         let body = self.arm_bodies[row.arm].clone();
         self.compile_term(&body, mode)?;
         self.finish(mode);
+        self.scratch_top = scratch;
         Ok(())
     }
 
     fn compile_test(&mut self, rows: Vec<Row>, col: usize, mode: Mode) -> Result<(), String> {
         let place = rows[0].places[col].clone();
-        match &rows[0].pats[col] {
+        let outcome = rows[0].pats[col].clone();
+        let (success, failure) = split_outcome(&rows, col, &outcome);
+        match &outcome {
             Pat::Int(value) => {
-                let value = *value;
                 let fail = self.new_block();
-                self.cmp_place(&place, value, Cond::Ne, fail);
-                let (success, failure) = split_int(&rows, col, value);
+                self.cmp_place(&place, *value, Cond::Ne, fail);
                 self.compile_matrix(success, mode)?;
                 self.finish(mode);
                 self.cur = fail;
@@ -952,31 +1021,23 @@ impl Builder {
                 };
                 let fail = self.new_block();
                 self.emit_range(&place, *lo, *hi, fail);
-                let mut row = rows[0].clone();
-                row.pats[col] = Pat::Wildcard;
-                self.compile_matrix(vec![row], mode)?;
+                self.compile_matrix(success, mode)?;
                 self.finish(mode);
                 self.cur = fail;
-                self.compile_matrix(rows.into_iter().skip(1).collect(), mode)?;
+                self.compile_matrix(failure, mode)?;
                 self.finish(mode);
                 Ok(())
             }
-            Pat::Or(_) => {
-                let alts = match &rows[0].pats[col] {
-                    Pat::Or(alts) => alts.clone(),
-                    _ => unreachable!(),
-                };
+            Pat::Or(alts) => {
                 let body = self.new_block();
                 let fail = self.new_block();
-                self.emit_alternatives(&alts, &place, body)?;
+                self.emit_alternatives(alts, &place, body)?;
                 self.emit(Inst::Jmp { target: fail });
                 self.cur = body;
-                let mut row = rows[0].clone();
-                row.pats[col] = Pat::Wildcard;
-                self.compile_matrix(vec![row], mode)?;
+                self.compile_matrix(success, mode)?;
                 self.finish(mode);
                 self.cur = fail;
-                self.compile_matrix(rows.into_iter().skip(1).collect(), mode)?;
+                self.compile_matrix(failure, mode)?;
                 self.finish(mode);
                 Ok(())
             }
@@ -991,22 +1052,58 @@ impl Builder {
         body: usize,
     ) -> Result<(), String> {
         for alt in alts {
-            match alt {
-                Pat::Int(value) => self.cmp_place(place, *value, Cond::E, body),
+            // Bindings are stored only after the alternative matches, so a miss
+            // does not have to roll a slot back.
+            let (bare, binds) = peel_binds(alt);
+            let hit = if binds.is_empty() { body } else { self.new_block() };
+            match &bare {
+                Pat::Int(value) => self.cmp_place(place, *value, Cond::E, hit),
                 Pat::Range(lo, hi) => {
                     let (Pat::Int(lo), Pat::Int(hi)) = (lo.as_ref(), hi.as_ref()) else {
                         return Err("only integer ranges".into());
                     };
                     let next = self.new_block();
                     self.emit_range(place, *lo, *hi, next);
-                    self.emit(Inst::Jmp { target: body });
+                    self.emit(Inst::Jmp { target: hit });
                     self.cur = next;
                 }
-                Pat::Or(inner) => self.emit_alternatives(inner, place, body)?,
+                Pat::Or(inner) => self.emit_alternatives(inner, place, hit)?,
+                Pat::Tagged(label, fields) if fields.is_empty() => {
+                    self.load_label(place);
+                    let id = self.intern(label);
+                    self.emit(Inst::CmpJcc {
+                        left: Dest::V(0),
+                        right: i64::from(id),
+                        cond: Cond::E,
+                        target: hit,
+                    });
+                }
+                Pat::Wildcard => self.emit(Inst::Jmp { target: hit }),
                 other => return Err(format!("or alternative {other:?}")),
+            }
+            if hit != body {
+                let saved = self.cur;
+                self.cur = hit;
+                self.store_bound_names(&binds, place);
+                self.emit(Inst::Jmp { target: body });
+                self.cur = saved;
             }
         }
         Ok(())
+    }
+
+    fn store_bound_names(&mut self, names: &[String], place: &Place) {
+        for name in names {
+            let Some(&slot) = self.slots.get(name.as_str()) else { continue };
+            match place {
+                Place::Val => self.store_slot(Dest::Val, slot),
+                Place::Slot(src) => {
+                    self.load_slot(Dest::V(0), *src);
+                    self.store_slot(Dest::V(0), slot);
+                }
+            }
+            self.mark_word(name, slot, false);
+        }
     }
 
     fn compile_switch(&mut self, rows: Vec<Row>, col: usize, mode: Mode) -> Result<(), String> {
@@ -1049,7 +1146,9 @@ impl Builder {
                     Pat::Tagged(name, found) if name == label => {
                         child_rows.push(project(row, col, found));
                     }
-                    Pat::Wildcard => child_rows.push(project(row, col, &wildcard_fields(&fields))),
+                    Pat::Wildcard => {
+                        child_rows.push(project(row, col, &vec![Pat::Wildcard; fields.len()]))
+                    }
                     _ => {}
                 }
             }
@@ -1237,14 +1336,17 @@ impl Builder {
             self.emit(Inst::StorePool { src: Dest::V(0), index });
         }
         self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
-        self.emit(Inst::CallSlc { symbol: "main".into(), callee_frame_words: main_words });
+        self.emit(Inst::CallSlc {
+            symbol: "main".into(),
+            callee_frame_words: main_words,
+            arg_is_pointer: false,
+        });
         Function {
             symbol: SLC_PROGRAM_ENTRY.to_string(),
             map_id: MAP_EMPTY,
             frame_words: 9,
             val_is_pointer: false,
             pointer_slots: Vec::new(),
-            slot_count: 0,
             spill_base: 0,
             blocks: std::mem::take(&mut self.blocks),
             entry: true,
@@ -1329,36 +1431,109 @@ fn column_kind(rows: &[Row], col: usize) -> Result<Kind, String> {
     }
 }
 
-fn split_int(rows: &[Row], col: usize, value: i64) -> (Vec<Row>, Vec<Row>) {
+/// Success keeps every still-active row that accepts `outcome`, in source order.
+/// The column becomes a wildcard when the row accepts every such value, so the
+/// tested row is not tested again. Failure keeps rows that can still match
+/// something `outcome` rejects.
+fn split_outcome(rows: &[Row], col: usize, outcome: &Pat) -> (Vec<Row>, Vec<Row>) {
     let mut success = Vec::new();
     let mut failure = Vec::new();
     for row in rows {
-        match &row.pats[col] {
-            Pat::Int(found) if *found == value => {
-                let mut taken = row.clone();
+        let pat = &row.pats[col];
+        if intersects(pat, outcome) {
+            let mut taken = row.clone();
+            if subsumes(pat, outcome) || pat == outcome {
                 taken.pats[col] = Pat::Wildcard;
-                success.push(taken);
             }
-            Pat::Int(_) => failure.push(row.clone()),
-            Pat::Wildcard => {
-                success.push(row.clone());
-                failure.push(row.clone());
-            }
-            Pat::Range(lo, hi) => {
-                if let (Pat::Int(lo), Pat::Int(hi)) = (lo.as_ref(), hi.as_ref())
-                    && *lo <= value
-                    && value <= *hi
-                {
-                    let mut taken = row.clone();
-                    taken.pats[col] = Pat::Wildcard;
-                    success.push(taken);
-                }
-                failure.push(row.clone());
-            }
-            _ => failure.push(row.clone()),
+            success.push(taken);
+        }
+        if !subsumes(outcome, pat) {
+            failure.push(row.clone());
         }
     }
     (success, failure)
+}
+
+fn peel_binds(pat: &Pat) -> (Pat, Vec<String>) {
+    let mut names = Vec::new();
+    let mut pat = pat.clone();
+    while let Pat::Binding(name, inner) = pat {
+        names.push(name);
+        pat = *inner;
+    }
+    (pat, names)
+}
+
+fn int_bounds(pat: &Pat) -> Option<(i64, i64)> {
+    match pat {
+        Pat::Int(value) => Some((*value, *value)),
+        Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref()) {
+            (Pat::Int(lo), Pat::Int(hi)) => Some((*lo.min(hi), *lo.max(hi))),
+            _ => None,
+        },
+        Pat::Binding(_, inner) => int_bounds(inner),
+        _ => None,
+    }
+}
+
+/// Every value that matches `inner` matches `outer`.
+fn subsumes(outer: &Pat, inner: &Pat) -> bool {
+    match inner {
+        Pat::Binding(_, pattern) => return subsumes(outer, pattern),
+        Pat::Or(alts) => return alts.iter().all(|alt| subsumes(outer, alt)),
+        _ => {}
+    }
+    match outer {
+        Pat::Wildcard => true,
+        Pat::Binding(_, pattern) => subsumes(pattern, inner),
+        Pat::Or(alts) => alts.iter().any(|alt| subsumes(alt, inner)),
+        Pat::Int(value) => int_bounds(inner) == Some((*value, *value)),
+        Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref(), int_bounds(inner)) {
+            (Pat::Int(lo), Pat::Int(hi), Some((start, end))) => {
+                *lo.min(hi) <= start && end <= *lo.max(hi)
+            }
+            _ => false,
+        },
+        Pat::Tagged(label, fields) => match inner {
+            Pat::Tagged(other, inner_fields) => {
+                label == other
+                    && fields.len() == inner_fields.len()
+                    && fields.iter().zip(inner_fields).all(|(outer, inner)| subsumes(outer, inner))
+            }
+            _ => false,
+        },
+        Pat::Tuple(fields) => match inner {
+            Pat::Tuple(inner_fields) => {
+                fields.len() == inner_fields.len()
+                    && fields.iter().zip(inner_fields).all(|(outer, inner)| subsumes(outer, inner))
+            }
+            _ => false,
+        },
+        Pat::Float(_) | Pat::Str(_) | Pat::Char(_) => outer == inner,
+    }
+}
+
+fn intersects(left: &Pat, right: &Pat) -> bool {
+    match (left, right) {
+        (Pat::Wildcard, _) | (_, Pat::Wildcard) => true,
+        (Pat::Binding(_, pattern), right) => intersects(pattern, right),
+        (left, Pat::Binding(_, pattern)) => intersects(left, pattern),
+        (Pat::Or(alts), right) => alts.iter().any(|alt| intersects(alt, right)),
+        (left, Pat::Or(alts)) => alts.iter().any(|alt| intersects(left, alt)),
+        (Pat::Tagged(label, fields), Pat::Tagged(other, inner_fields)) => {
+            label == other
+                && fields.len() == inner_fields.len()
+                && fields.iter().zip(inner_fields).all(|(left, right)| intersects(left, right))
+        }
+        (Pat::Tuple(fields), Pat::Tuple(inner_fields)) => {
+            fields.len() == inner_fields.len()
+                && fields.iter().zip(inner_fields).all(|(left, right)| intersects(left, right))
+        }
+        _ => match (int_bounds(left), int_bounds(right)) {
+            (Some((lo, hi)), Some((start, end))) => lo <= end && start <= hi,
+            _ => false,
+        },
+    }
 }
 
 fn project(row: &Row, col: usize, fields: &[Pat]) -> Row {
@@ -1372,10 +1547,6 @@ fn project(row: &Row, col: usize, fields: &[Pat]) -> Row {
     row.pats.splice(col..=col, fields.to_vec());
     row.places.splice(col..=col, places);
     row
-}
-
-fn wildcard_fields(fields: &[Pat]) -> Vec<Pat> {
-    vec![Pat::Wildcard; fields.len()]
 }
 
 fn drop_col(row: &Row, col: usize) -> Row {

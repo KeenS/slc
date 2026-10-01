@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use slc_abi::{TAGGED_LABEL, TAGGED_PAYLOAD};
+use slc_abi::{FRAME_SLOT0, TAGGED_LABEL, TAGGED_PAYLOAD};
 
 use crate::{Cond, Dest, Function, Inst, Module};
 
@@ -116,6 +116,11 @@ int main(void) {
 "#;
 
 fn link_run(object: &[u8]) -> (i32, PathBuf) {
+    let (code, _, dir) = link_run_fuel(object, "~(uint64_t)0");
+    (code, dir)
+}
+
+fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
         "slc-native-{}-{}",
         std::process::id(),
@@ -124,7 +129,7 @@ fn link_run(object: &[u8]) -> (i32, PathBuf) {
     std::fs::create_dir_all(&dir).unwrap();
     let object_path = dir.join("p.o");
     std::fs::write(&object_path, object).unwrap();
-    std::fs::write(dir.join("main.c"), DRIVER).unwrap();
+    std::fs::write(dir.join("main.c"), DRIVER.replace("~(uint64_t)0", fuel)).unwrap();
     let exe = dir.join("p");
     let mut cmd = Command::new("cc");
     cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
@@ -140,8 +145,8 @@ fn link_run(object: &[u8]) -> (i32, PathBuf) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let ran = Command::new(&exe).status().unwrap();
-    (ran.code().unwrap_or(127), dir)
+    let ran = Command::new(&exe).output().unwrap();
+    (ran.status.code().unwrap_or(127), String::from_utf8_lossy(&ran.stderr).into_owned(), dir)
 }
 
 fn nm_text(path: &Path) -> String {
@@ -371,7 +376,6 @@ fn spill_slots_use_the_frame_not_a_protocol_register() {
             frame_words: 20,
             val_is_pointer: false,
             pointer_slots: vec![],
-            slot_count: 12,
             spill_base: 7,
             blocks: vec![crate::Block {
                 insts: vec![Inst::Mov { dst: Dest::V(10), src: Dest::V(9) }, Inst::Ret],
@@ -395,4 +399,141 @@ fn spill_slots_use_the_frame_not_a_protocol_register() {
         0x00,
     ];
     assert!(object.windows(needle.len()).any(|window| window == needle));
+}
+
+#[test]
+fn later_row_that_accepts_the_range_still_runs() {
+    let compiled = pipeline(
+        "enum E { A(i64) }
+         func main() -> i64 {
+             of (E::A(1), E::A(2)) {
+                 (E::A(0..=1), E::A(0)) => 1,
+                 (E::A(0..=1), _) => 2,
+                 _ => 3,
+             }
+         }",
+    );
+    assert_eq!(link_run(&compiled.object).0, 2);
+}
+
+#[test]
+fn constructor_or_is_one_row() {
+    let compiled = pipeline(
+        "enum C { Red, Blue, Green }
+         func main() -> i64 {
+             of C::Blue { Red | Blue => 7, Green => 8 }
+         }",
+    );
+    let main = compiled.module.function("main");
+    let jumps: Vec<_> = flat(main)
+        .into_iter()
+        .filter_map(|inst| match inst {
+            Inst::CmpJcc { cond: Cond::E, target, .. } => Some(*target),
+            _ => None,
+        })
+        .collect();
+    assert!(jumps.len() >= 2);
+    assert_eq!(jumps[0], jumps[1]);
+    assert!(
+        main.blocks[jumps[0]].insts.iter().any(|inst| matches!(inst, Inst::Imm { value: 7, .. }))
+    );
+    assert_eq!(link_run(&compiled.object).0, 7);
+}
+
+#[test]
+fn pointer_bits_follow_the_stored_word() {
+    let compiled = pipeline(
+        "enum Flag { Yes, No }
+         enum Wrap { Hold((i64 -> i64)) }
+         func box(n: i64) -> Flag { Flag::Yes }
+         func both(a: i64, b: Flag) -> i64 { of b { Yes => a, No => 0 } }
+         func main() -> i64 {
+             let f = <0 | box;
+             let w = Wrap::Hold({ fn(x: i64) -> i64 { x } });
+             of w { Hold(x) => <(4, f) | both }
+         }",
+    );
+    let box_fn = compiled.module.function("box");
+    assert!(!box_fn.val_is_pointer);
+    assert!(!box_fn.pointer_slots.contains(&0), "{:?}", box_fn.pointer_slots);
+    let both = compiled.module.function("both");
+    assert!(both.val_is_pointer);
+    assert!(both.pointer_slots.contains(&0), "__args {:?}", both.pointer_slots);
+    assert!(!both.pointer_slots.contains(&1), "i64 component {:?}", both.pointer_slots);
+    assert!(both.pointer_slots.contains(&2), "flag component {:?}", both.pointer_slots);
+    let main = compiled.module.function("main");
+    assert!(!main.pointer_slots.contains(&0), "unit {:?}", main.pointer_slots);
+    assert!(main.pointer_slots.contains(&1), "tagged result {:?}", main.pointer_slots);
+    assert!(main.pointer_slots.contains(&3), "delay binding {:?}", main.pointer_slots);
+    assert_eq!(link_run(&compiled.object).0, 4);
+}
+
+#[test]
+fn generic_body_calls_the_monotype() {
+    let compiled = pipeline(
+        "enum Flag { Yes, No }
+         func id<+T>(x: T) -> T { x }
+         func apply<+T>(x: T) -> T { <x | id }
+         func main() -> i64 {
+             let n = <41 | apply;
+             let f = <Flag::Yes | apply;
+             of f { Yes => n, No => 0 }
+         }",
+    );
+    let apply_i64 = flat(compiled.module.function("apply$i64"));
+    assert!(apply_i64.iter().any(|inst| {
+        matches!(inst, Inst::CallSlc { symbol, .. } | Inst::Tail { symbol, .. } if symbol == "id$i64")
+    }));
+    let apply_flag = flat(compiled.module.function("apply$Flag"));
+    assert!(apply_flag.iter().any(|inst| {
+        matches!(inst, Inst::CallSlc { symbol, .. } | Inst::Tail { symbol, .. } if symbol == "id$Flag")
+    }));
+    assert!(!compiled.module.functions.iter().any(|func| func.symbol == "id"));
+    assert!(!compiled.module.functions.iter().any(|func| func.symbol == "apply"));
+    let (status, dir) = link_run(&compiled.object);
+    assert_eq!(status, 41);
+    let names = symbol_names(&nm_text(&dir.join("p.o")));
+    assert!(names.iter().any(|name| name == "id$i64"), "{names:?}");
+    assert!(!names.iter().any(|name| name == "id"), "{names:?}");
+}
+
+#[test]
+fn pointer_tail_does_not_keep_the_scratch() {
+    let compiled = pipeline(
+        "enum E { A, B, C, D, F }
+         func take(p: E) -> i64 { of p { A => 1, B => 2, C => 3, D => 4, F => 5 } }
+         func go(n: i64) -> i64 {
+             of n {
+                 1 => <E::A | take,
+                 2 => <E::B | take,
+                 3 => <E::C | take,
+                 4 => <E::D | take,
+                 _ => <E::F | take,
+             }
+         }
+         func main() -> i64 { <5 | go }",
+    );
+    let go = compiled.module.function("go");
+    let mut tails = 0;
+    for block in &go.blocks {
+        for (index, inst) in block.insts.iter().enumerate() {
+            let Inst::Tail { arg_is_pointer: true, .. } = inst else { continue };
+            tails += 1;
+            let Inst::Store { offset, .. } = block.insts[index - 1] else {
+                panic!("tail safepoint has no stored argument: {:?}", block.insts);
+            };
+            let slot = (offset - FRAME_SLOT0 as i32) / 8;
+            assert!(go.pointer_slots.contains(&(slot as u16)), "{slot} {:?}", go.pointer_slots);
+        }
+    }
+    assert_eq!(tails, 5);
+    assert_eq!(link_run(&compiled.object).0, 5);
+}
+
+#[test]
+fn fuel_exhaustion_returns_the_diverged_diagnostic() {
+    let compiled = pipeline("func main() -> i64 { 1 }");
+    let (status, stderr, _) = link_run_fuel(&compiled.object, "1");
+    assert_eq!(status, 1);
+    assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "{stderr}");
 }

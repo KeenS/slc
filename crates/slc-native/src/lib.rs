@@ -71,11 +71,15 @@ pub enum Inst {
     CallSlc {
         symbol: String,
         callee_frame_words: u32,
+        /// The callee's parameter, not the caller's. A scalar must not be traced as the live `r13`.
+        arg_is_pointer: bool,
     },
     Tail {
         symbol: String,
         frame_words: u32,
         map_id: u32,
+        /// The callee's parameter, not the caller's. A scalar must not be traced as the live `r13`.
+        arg_is_pointer: bool,
     },
     Ret,
     Safepoint {
@@ -122,8 +126,8 @@ pub struct Function {
     pub frame_words: u32,
     pub val_is_pointer: bool,
     pub pointer_slots: Vec<u16>,
-    /// Named slots plus the pointer scratches. Spill temps start at `spill_base`.
-    pub slot_count: u16,
+    /// First frame slot past the named slots, scratches, and match temps.
+    /// A scalar argument is parked here when `val_is_pointer` would trace it.
     pub spill_base: u16,
     pub blocks: Vec<Block>,
     /// C-callable transfer from `slc_rt_start`. No SLC prologue.

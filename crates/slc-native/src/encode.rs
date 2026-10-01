@@ -5,7 +5,7 @@ use crate::{Cond, Dest, Function, Inst, Module};
 use slc_abi::{
     FRAME_CONT_PREV, FRAME_HANDLER_PREV, FRAME_MAP_FLAGS, FRAME_SLOT0, FRAME_SPILL_ENV,
     FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, MAP_EMPTY, SLC_FUEL, SLC_POOL_PTRS, SLC_PROGRAM_ENTRY,
-    SLC_RT_ALLOC, SLC_RT_POLL, SLC_TEXT, Safepoint,
+    SLC_RT_ALLOC, SLC_RT_FAIL, SLC_RT_POLL, SLC_TEXT, Safepoint,
 };
 
 const SLC_BYTES_SINCE_GC: &str = "slc_bytes_since_gc";
@@ -127,11 +127,14 @@ impl Encoder {
                 self.jcc(fi, *cond, *target);
             }
             Inst::Jmp { target } => self.jmp_block(fi, *target),
-            Inst::CallSlc { symbol, callee_frame_words } => {
-                self.call_slc(func, symbol, *callee_frame_words)
+            Inst::CallSlc { symbol, callee_frame_words, arg_is_pointer } => {
+                self.call_slc(func, symbol, *callee_frame_words, *arg_is_pointer)
             }
-            Inst::Tail { symbol, .. } => {
+            Inst::Tail { symbol, arg_is_pointer, .. } => {
+                // The safepoint sees the outgoing word. A scalar must not sit in a traced `r13`.
+                self.park_scalar(func, *arg_is_pointer);
                 self.safepoint(func.map_id);
+                self.unpark_scalar(func, *arg_is_pointer);
                 self.zero(R14);
                 self.jmp_sym(symbol);
             }
@@ -181,9 +184,12 @@ impl Encoder {
         }
     }
 
-    fn call_slc(&mut self, func: &Function, symbol: &str, callee_words: u32) {
+    fn call_slc(&mut self, func: &Function, symbol: &str, callee_words: u32, arg_is_pointer: bool) {
+        self.park_scalar(func, arg_is_pointer);
         self.safepoint(func.map_id);
+        // Spill while `r13` is zero so the caller's traced slot does not keep the scalar.
         self.spill(func.map_id);
+        self.unpark_scalar(func, arg_is_pointer);
         let bytes = func.frame_words as i32 * 8;
         self.mem(true, 0x8D, RAX, R12, bytes);
         let lea = self.rip(true, 0x8D, RCX);
@@ -245,7 +251,9 @@ impl Encoder {
         self.buf.push(0);
         self.rel_fuel(fuel0);
         let poll = self.jcc_hole(Cond::Ne);
-        self.buf.extend_from_slice(&[0x0F, 0x0B]);
+        // Fuel is zero. `slc_rt_fail` prints the diverged diagnostic and returns
+        // to `slc_rt_start`; it does not come back to this safepoint.
+        self.call_plt(SLC_RT_FAIL);
         let call = self.buf.len();
         self.patch_at(poll, call);
         self.spill(map_id);
@@ -258,6 +266,26 @@ impl Encoder {
         self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.patch_at(jmp, self.buf.len());
+    }
+
+    fn hide_off(func: &Function) -> i32 {
+        FRAME_SLOT0 as i32 + i32::from(func.spill_base) * 8
+    }
+
+    /// `r13` holds a scalar while the map traces it. Park the word in the untraced slot.
+    fn park_scalar(&mut self, func: &Function, arg_is_pointer: bool) {
+        if arg_is_pointer || !func.val_is_pointer {
+            return;
+        }
+        self.mem(true, 0x89, R13, R12, Self::hide_off(func));
+        self.zero(R13);
+    }
+
+    fn unpark_scalar(&mut self, func: &Function, arg_is_pointer: bool) {
+        if arg_is_pointer || !func.val_is_pointer {
+            return;
+        }
+        self.mem(true, 0x8B, R13, R12, Self::hide_off(func));
     }
 
     fn spill(&mut self, map_id: u32) {
@@ -286,7 +314,9 @@ impl Encoder {
     }
 
     fn rel_fuel(&mut self, at: usize) {
-        self.rels.push(Rel { at, symbol: SLC_FUEL.into(), kind: PC32, addend: -4 });
+        // `sub`/`cmp` imm8 follows the disp32. RIP-relative is from the next
+        // instruction, one byte past the usual end of a disp32 operand.
+        self.rels.push(Rel { at, symbol: SLC_FUEL.into(), kind: PC32, addend: -5 });
     }
 
     fn call_plt(&mut self, symbol: &str) {

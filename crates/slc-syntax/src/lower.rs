@@ -156,6 +156,12 @@ pub struct Specialization {
     pub symbol: String,
     pub decl: String,
     pub binders: Vec<(String, Type)>,
+    /// What this copy returns. The stack map traces that word, not the parameter.
+    pub result: Type,
+    /// Bindings the body stores, at this copy's types. A `T` slot is not one map for every `T`.
+    pub locals: Vec<(String, Type)>,
+    /// Uses solved under this copy. The same span in another copy can name another symbol.
+    pub uses: HashMap<Span, String>,
 }
 
 /// `id` at `i64` is `id$i64`. The base name is the spelling, without `+`.
@@ -1354,29 +1360,38 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 // continuation parameter becomes a μ binder, not a λ binder.
                 let continuations: Vec<String> =
                     params.iter().filter(|p| p.is_continuation).map(continuation_name).collect();
-                let mut term = lower_expr(body, &continuations)?;
-                term = enter_poly(
-                    type_params,
-                    type_param_signs,
-                    effects,
-                    params.iter().filter_map(|param| param.ty.as_ref()),
-                    &operations,
-                    term,
-                );
-                // A function's parameters are one group — a product of values
-                // for `->`, a menu of exits for `<-` — so it binds one
-                // argument and the body destructures it.
-                term = bind_group(params, "args", term)?;
-                // A positive function with no parameters is still called, so
-                // it binds the unit its callers pass. A negative one produces
-                // a continuation and is used by name.
-                if params.is_empty() && *polarity == FunctionPolarity::Positive {
-                    term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
-                }
-
-                // A bounded function takes its dictionaries outermost, before
-                // the value arguments.
-                term = bind_dict_params(bounds, term);
+                // A use inside the body names a different symbol on each copy, so
+                // the body is lowered once per copy against that copy's use map.
+                let saved_uses = INST_USES.with(|cell| cell.borrow().clone());
+                let lower_body = |extra: HashMap<Span, String>| -> Result<Term, LowerError> {
+                    INST_USES.with(|cell| {
+                        let mut map = saved_uses.clone();
+                        map.extend(extra);
+                        *cell.borrow_mut() = map;
+                    });
+                    let mut term = lower_expr(body, &continuations)?;
+                    term = enter_poly(
+                        type_params,
+                        type_param_signs,
+                        effects,
+                        params.iter().filter_map(|param| param.ty.as_ref()),
+                        &operations,
+                        term,
+                    );
+                    // A function's parameters are one group — a product of values
+                    // for `->`, a menu of exits for `<-` — so it binds one
+                    // argument and the body destructures it.
+                    term = bind_group(params, "args", term)?;
+                    // A positive function with no parameters is still called, so
+                    // it binds the unit its callers pass. A negative one produces
+                    // a continuation and is used by name.
+                    if params.is_empty() && *polarity == FunctionPolarity::Positive {
+                        term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
+                    }
+                    // A bounded function takes its dictionaries outermost, before
+                    // the value arguments.
+                    Ok(bind_dict_params(bounds, term))
+                };
                 let copies: Vec<String> = SPECS.with(|cell| {
                     cell.borrow()
                         .iter()
@@ -1385,12 +1400,20 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                         .collect()
                 });
                 if copies.is_empty() {
-                    out.push((name.clone(), term));
+                    out.push((name.clone(), lower_body(HashMap::new())?));
                 } else {
                     for symbol in copies {
-                        out.push((symbol, term.clone()));
+                        let extra = SPECS.with(|cell| {
+                            cell.borrow()
+                                .iter()
+                                .find(|spec| spec.symbol == symbol)
+                                .map(|spec| spec.uses.clone())
+                                .unwrap_or_default()
+                        });
+                        out.push((symbol, lower_body(extra)?));
                     }
                 }
+                INST_USES.with(|cell| *cell.borrow_mut() = saved_uses);
             }
             Decl::Command {
                 name,

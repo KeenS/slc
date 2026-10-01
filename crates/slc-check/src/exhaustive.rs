@@ -529,43 +529,48 @@ fn check_match(
     }
 
     for arm in arms {
-        // A binding around a pattern does not change which constructors are
-        // covered: `x @ Red` covers exactly what `Red` covers.
-        let pattern = match &arm.pattern {
-            Pattern::Binding { pattern, .. } => pattern.as_ref(),
-            pattern => pattern,
-        };
-        // Three spellings reach here, and a bare variant name — with or
-        // without a payload — names its enum only indirectly:
-        //   Color::Red  → name=Color, variant=Red
-        //   Red         → name=Red, variant=""
-        //   Red         → Pattern::Ident, when it binds no payload
-        let (written, payload) = match pattern {
-            Pattern::Ident(x) => (x, None),
-            Pattern::Enum { name, variant, .. } if variant.is_empty() => (name, None),
-            Pattern::Enum { name, variant, .. } => (variant, Some(name)),
-            // A request shape covers its item, resolved like an unqualified
-            // variant against the menu table.
-            Pattern::Dtor { dtor, .. } => (dtor, None),
-            _ => continue,
-        };
-        match payload {
-            Some(enum_name) => {
-                if scrutinee_type.is_none() {
-                    scrutinee_type = Some(enum_name);
-                }
-                covered.insert(written.clone());
-            }
-            // Unqualified: if this name is a variant of exactly one known
-            // enum, that enum is what the match is over.
-            None => {
-                let declaring: Option<&String> =
-                    enums.enums().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
-                if let Some(enum_name) = declaring {
-                    if scrutinee_type.is_none() {
-                        scrutinee_type = Some(enum_name);
+        // `x @ Red` covers what `Red` covers. `Red | Blue` is one arm and
+        // covers each alternative, left to right.
+        let mut pending: Vec<&Pattern> = vec![&arm.pattern];
+        while let Some(pattern) = pending.pop() {
+            match pattern {
+                Pattern::Binding { pattern, .. } => pending.push(pattern),
+                Pattern::Or(alternatives) => pending.extend(alternatives.iter()),
+                pattern => {
+                    // Three spellings reach here, and a bare variant name — with or
+                    // without a payload — names its enum only indirectly:
+                    //   Color::Red  → name=Color, variant=Red
+                    //   Red         → name=Red, variant=""
+                    //   Red         → Pattern::Ident, when it binds no payload
+                    let (written, payload) = match pattern {
+                        Pattern::Ident(x) => (x, None),
+                        Pattern::Enum { name, variant, .. } if variant.is_empty() => (name, None),
+                        Pattern::Enum { name, variant, .. } => (variant, Some(name)),
+                        // A request shape covers its item, resolved like an unqualified
+                        // variant against the menu table.
+                        Pattern::Dtor { dtor, .. } => (dtor, None),
+                        _ => continue,
+                    };
+                    match payload {
+                        Some(enum_name) => {
+                            if scrutinee_type.is_none() {
+                                scrutinee_type = Some(enum_name);
+                            }
+                            covered.insert(written.clone());
+                        }
+                        // Unqualified: if this name is a variant of exactly one known
+                        // enum, that enum is what the match is over.
+                        None => {
+                            let declaring: Option<&String> =
+                                enums.enums().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
+                            if let Some(enum_name) = declaring {
+                                if scrutinee_type.is_none() {
+                                    scrutinee_type = Some(enum_name);
+                                }
+                                covered.insert(written.clone());
+                            }
+                        }
                     }
-                    covered.insert(written.clone());
                 }
             }
         }

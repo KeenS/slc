@@ -123,8 +123,26 @@ pub fn check_program_with_rows(
     }
 }
 
-/// Solved instantiations become one symbol each. An unsolved use is left
-/// unnamed so a program the checker already accepts does not grow a diagnostic.
+/// A use whose arguments still mention the enclosing function's parameters.
+/// It is solved again under each copy of that function.
+struct OpenUse {
+    span: Span,
+    owner: String,
+    decl: String,
+    param_names: Vec<String>,
+    param_types: Vec<Type>,
+    args: Vec<(String, Type)>,
+    result: Option<Type>,
+}
+
+struct BuiltSpec {
+    spec: slc_syntax::lower::Specialization,
+    subst: HashMap<usize, Type>,
+}
+
+/// Solved instantiations become one symbol each. Uses inside a generic body
+/// stay open until that body's copies supply the substitution; an unsolved
+/// use with no owner is left unnamed so an accepted program grows no diagnostic.
 fn record_specializations(env: &mut Env) {
     let pending = std::mem::take(&mut env.pending_insts);
     let mut by_span = HashMap::new();
@@ -133,60 +151,181 @@ fn record_specializations(env: &mut Env) {
     }
     let mut items: Vec<_> = by_span.into_values().collect();
     items.sort_by_key(|item| item.span.start);
+    let mut open = Vec::new();
+    let mut built: Vec<BuiltSpec> = Vec::new();
     for item in items {
-        let solved: Vec<Type> = item.args.iter().map(|(_, ty)| env.uni.apply(ty)).collect();
-        if solved.iter().any(contains_var) {
-            continue;
-        }
+        let args: Vec<(String, Type)> =
+            item.args.iter().map(|(name, ty)| (name.clone(), env.uni.apply(ty))).collect();
         let binders: Vec<(String, Type)> = item
             .param_names
             .iter()
             .zip(&item.param_types)
             .map(|(name, ty)| (name.clone(), env.uni.apply(ty)))
             .collect();
-        if binders.iter().any(|(_, ty)| contains_var(ty)) {
+        let result = item.result.as_ref().map(|ty| env.uni.apply(ty));
+        let unsolved = args.iter().any(|(_, ty)| contains_var(ty))
+            || binders.iter().any(|(_, ty)| contains_var(ty))
+            || result.as_ref().is_some_and(contains_var);
+        if unsolved {
+            if let Some(owner) = item.owner {
+                open.push(OpenUse {
+                    span: item.span,
+                    owner,
+                    decl: item.decl,
+                    param_names: item.param_names,
+                    param_types: binders.into_iter().map(|(_, ty)| ty).collect(),
+                    args,
+                    result,
+                });
+            }
             continue;
         }
+        let solved: Vec<Type> = args.iter().map(|(_, ty)| ty.clone()).collect();
         let symbol = slc_syntax::lower::specialization_symbol(&item.decl, &solved);
         env.dispatch.inst_uses.insert(item.span, symbol.clone());
-        if env.dispatch.specializations.iter().any(|spec| spec.symbol == symbol) {
+        if built.iter().any(|item| item.spec.symbol == symbol) {
             continue;
         }
-        env.dispatch.specializations.push(slc_syntax::lower::Specialization {
-            symbol,
-            decl: item.decl,
-            binders,
-        });
+        built.push(finish_spec(env, symbol, item.decl, binders, result, &args));
     }
-    let monos: Vec<(String, Vec<(String, Type)>)> = env
+    for (name, signature) in env
         .functions
         .iter()
         .filter(|(_, signature)| !signature.builtin && signature.signs.is_empty())
-        .map(|(name, signature)| {
-            (
-                name.clone(),
-                signature
-                    .param_names
-                    .iter()
-                    .cloned()
-                    .zip(signature.params.iter().map(|ty| env.uni.apply(ty)))
-                    .collect(),
-            )
-        })
-        .collect();
-    for (name, binders) in monos {
-        if binders.iter().any(|(_, ty)| contains_var(ty)) {
+    {
+        let binders: Vec<(String, Type)> = signature
+            .param_names
+            .iter()
+            .cloned()
+            .zip(signature.params.iter().map(|ty| env.uni.apply(ty)))
+            .collect();
+        let result = signature.result.as_ref().map(|ty| env.uni.apply(ty));
+        if binders.iter().any(|(_, ty)| contains_var(ty))
+            || result.as_ref().is_some_and(contains_var)
+        {
             continue;
         }
-        if env.dispatch.specializations.iter().any(|spec| spec.symbol == name) {
+        if built.iter().any(|item| item.spec.symbol == *name) {
             continue;
         }
-        env.dispatch.specializations.push(slc_syntax::lower::Specialization {
-            symbol: name.clone(),
-            decl: name,
-            binders,
-        });
+        built.push(finish_spec(env, name.clone(), name.clone(), binders, result, &[]));
     }
+    let mut queue: Vec<usize> = built
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.spec.symbol != item.spec.decl)
+        .map(|(index, _)| index)
+        .collect();
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let index = queue[cursor];
+        cursor += 1;
+        let owner = built[index].spec.decl.clone();
+        let subst = built[index].subst.clone();
+        for use_ in &open {
+            if use_.owner != owner {
+                continue;
+            }
+            let args: Vec<(String, Type)> = use_
+                .args
+                .iter()
+                .map(|(name, ty)| (name.clone(), crate::env::replace_vars(ty, &subst)))
+                .collect();
+            let param_types: Vec<Type> =
+                use_.param_types.iter().map(|ty| crate::env::replace_vars(ty, &subst)).collect();
+            let result = use_.result.as_ref().map(|ty| crate::env::replace_vars(ty, &subst));
+            if args.iter().any(|(_, ty)| contains_var(ty))
+                || param_types.iter().any(contains_var)
+                || result.as_ref().is_some_and(contains_var)
+            {
+                continue;
+            }
+            let solved: Vec<Type> = args.iter().map(|(_, ty)| ty.clone()).collect();
+            let symbol = slc_syntax::lower::specialization_symbol(&use_.decl, &solved);
+            built[index].spec.uses.insert(use_.span, symbol.clone());
+            if built.iter().any(|item| item.spec.symbol == symbol) {
+                continue;
+            }
+            let binders = use_.param_names.iter().cloned().zip(param_types).collect::<Vec<_>>();
+            let added = built.len();
+            built.push(finish_spec(env, symbol.clone(), use_.decl.clone(), binders, result, &args));
+            if symbol != use_.decl {
+                queue.push(added);
+            }
+        }
+    }
+    env.dispatch.specializations = built.into_iter().map(|item| item.spec).collect();
+}
+
+fn finish_spec(
+    env: &Env,
+    symbol: String,
+    decl: String,
+    binders: Vec<(String, Type)>,
+    result: Option<Type>,
+    args: &[(String, Type)],
+) -> BuiltSpec {
+    let mut subst = HashMap::new();
+    if let Some(context) = env.fn_context.get(&decl) {
+        for (name, ty) in args {
+            let Some((_, index)) = context.iter().find(|(param, _)| param == name) else {
+                continue;
+            };
+            subst.insert(*index, ty.clone());
+            // The representative may be the fresh variable the use unified with, not the rigid one.
+            if let Type::Var(rep) = env.uni.apply(&Type::Var(*index)) {
+                subst.insert(rep, ty.clone());
+            }
+        }
+    }
+    let locals = env
+        .bound_words
+        .iter()
+        .filter(|(owner, _, _)| owner == &decl)
+        .map(|(_, name, ty)| {
+            let ty = crate::env::replace_vars(&env.uni.apply(ty), &subst);
+            (name.clone(), ty)
+        })
+        .filter(|(_, ty)| !contains_var(ty))
+        .collect();
+    BuiltSpec {
+        spec: slc_syntax::lower::Specialization {
+            symbol,
+            decl,
+            binders,
+            result: result.unwrap_or(Type::ONE),
+            locals,
+            uses: HashMap::new(),
+        },
+        subst,
+    }
+}
+
+/// The two places a use is named: the identifier, and the flow stage that
+/// instantiates it again. `record_signs` has other callers that must not.
+fn push_pending_inst(
+    env: &mut Env,
+    span: Span,
+    name: &str,
+    signature: &FunctionSignature,
+    seen: &HashMap<usize, Type>,
+) {
+    if signature.builtin || signature.signs.is_empty() {
+        return;
+    }
+    env.pending_insts.push(crate::env::PendingInst {
+        span,
+        decl: name.to_string(),
+        param_names: signature.param_names.clone(),
+        param_types: signature.params.clone(),
+        args: signature
+            .signs
+            .iter()
+            .filter_map(|(index, param, _)| seen.get(index).map(|ty| (param.clone(), ty.clone())))
+            .collect(),
+        result: signature.result.clone(),
+        owner: env.enclosing.clone(),
+    });
 }
 
 /// Check that `target` satisfies `trait_name` applied to `args`: a ground
@@ -1999,6 +2138,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             ..
         } => {
             env.push();
+            let outer_enclosing = env.enclosing.replace(name.clone());
             // A type parameter is rigid inside the body: `T` is some type the
             // caller chose, not a licence to treat the value as any type. A
             // row variable, the parameter with no sign, is rigid there too.
@@ -2097,8 +2237,18 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             resolve_pending_dicts(env, enums, diags);
             env.current_row = outer_row;
             close_declaration_rows(env, body_row, declared_row, rows_from, name, d.span);
+            let context = env
+                .rigid_vars
+                .iter()
+                .filter_map(|(param, ty)| match ty {
+                    Type::Var(index) => Some((param.clone(), *index)),
+                    _ => None,
+                })
+                .collect();
+            env.fn_context.insert(name.clone(), context);
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
+            env.enclosing = outer_enclosing;
             env.pop();
         }
         Decl::Command {
@@ -4083,21 +4233,7 @@ fn check_expr_unapplied(
                 let (signature, seen) = instantiate(signature, &mut env.uni);
                 record_signs(&signature, &seen, name, e.span, env);
                 // Probes use a separate unification and never reach here.
-                if !signature.builtin && !signature.signs.is_empty() {
-                    env.pending_insts.push(crate::env::PendingInst {
-                        span: e.span,
-                        decl: name.clone(),
-                        param_names: signature.param_names.clone(),
-                        param_types: signature.params.clone(),
-                        args: signature
-                            .signs
-                            .iter()
-                            .filter_map(|(index, param, _)| {
-                                seen.get(index).map(|ty| (param.clone(), ty.clone()))
-                            })
-                            .collect(),
-                    });
-                }
+                push_pending_inst(env, e.span, name, &signature, &seen);
                 if let Some(result) = signature.result {
                     // Naming a returning function never invokes it. A
                     // parameterless consumer transformer instead denotes
@@ -4159,6 +4295,7 @@ fn check_expr_unapplied(
             {
                 unresolved_return_type("this lambda", written, e.span, enums, diags);
             }
+            env.word_depth += 1;
             env.push();
             let param_ty = param_type
                 .as_ref()
@@ -4176,6 +4313,7 @@ fn check_expr_unapplied(
             let result = check_expr(body, enums, env, diags);
             env.current_row = outer_row;
             env.pop();
+            env.word_depth -= 1;
             // A lambda is a function value, and its result is what the body
             // produces. A body that ends in a cut produces nothing, and
             // `(A -> (;))` is `-A`, so such a lambda simply *is* a consumer.
@@ -5504,22 +5642,9 @@ fn check_expr_unapplied(
                     }
                     record_signs(&signature, &seen, name, stages[index].span, env);
                     // The stage was named before this instantiation. That
-                    // naming's variables are not the ones `fits` just solved.
-                    if !signature.builtin && !signature.signs.is_empty() {
-                        env.pending_insts.push(crate::env::PendingInst {
-                            span: stages[index].span,
-                            decl: name.clone(),
-                            param_names: signature.param_names.clone(),
-                            param_types: signature.params.clone(),
-                            args: signature
-                                .signs
-                                .iter()
-                                .filter_map(|(index, param, _)| {
-                                    seen.get(index).map(|ty| (param.clone(), ty.clone()))
-                                })
-                                .collect(),
-                        });
-                    }
+                    // naming's variables are not the ones `fits` just solved,
+                    // so this push replaces it: `record_specializations` keeps the last.
+                    push_pending_inst(env, stages[index].span, name, &signature, &seen);
                     if !signature.bounds.is_empty() {
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,
