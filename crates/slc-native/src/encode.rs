@@ -260,7 +260,7 @@ impl Encoder {
             Inst::Perform { op, tail, arg_is_pointer, after, apply_map, cont_map } => {
                 self.perform(fi, func, *op, *tail, *arg_is_pointer, *after, *apply_map, *cont_map);
             }
-            Inst::Force { tail, slot } => self.force(func, *tail, *slot),
+            Inst::Force { slot } => self.force(func, *slot),
             Inst::Adapt { slot, map_id } => self.adapt(func, *slot, *map_id),
             Inst::CallClosure { closure, tail, arg_is_pointer } => {
                 self.call_closure(func, *closure, *tail, *arg_is_pointer);
@@ -558,7 +558,7 @@ impl Encoder {
         self.jmp_reg(11);
     }
 
-    fn force(&mut self, func: &Function, _tail: bool, slot: u16) {
+    fn force(&mut self, func: &Function, slot: u16) {
         let off = FRAME_SLOT0 as i32 + i32::from(slot) * 8;
         // Later iterations see the adapter's or the delay body's result, not the slot.
         self.mem(true, 0x8B, R13, R12, off);

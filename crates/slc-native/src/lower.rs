@@ -2258,7 +2258,7 @@ impl Builder {
             return Ok(false);
         }
         let slot = self.push_scratch(Dest::Val)?;
-        self.emit(Inst::Force { tail: mode == Mode::Tail, slot });
+        self.emit(Inst::Force { slot });
         if mode != Mode::Tail {
             self.pop_scratch();
         }

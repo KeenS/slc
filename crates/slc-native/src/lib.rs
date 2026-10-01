@@ -174,8 +174,8 @@ pub enum Inst {
         cont_map: u32,
     },
     /// `slot` holds the delay or adapted object across the call. It is a traced slot.
+    /// Tail and value position both return into the peel loop; `finish` emits `Ret`.
     Force {
-        tail: bool,
         slot: u16,
     },
     /// Tuple of adapter and value sits in `slot` (and in `VAL` on entry).
