@@ -37,6 +37,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slc-rt"
+version = "0.1.0"
+dependencies = [
+ "slc-abi",
+]
+
+[[package]]
 name = "slc-runtime"
 version = "0.1.0"
 dependencies = [

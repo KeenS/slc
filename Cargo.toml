@@ -7,6 +7,7 @@ members = [
     "crates/slc-check",
     "crates/slc-runtime",
     "crates/slc-abi",
+    "crates/slc-rt",
     "crates/slc-driver",
 ]
 
@@ -18,3 +19,8 @@ license = "MIT OR Apache-2.0"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Package overrides cannot set panic; it has to match the whole crate graph.
+[profile.release-abort]
+inherits = "release"
+panic = "abort"
