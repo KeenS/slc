@@ -47,6 +47,31 @@ thread_local! {
     /// runs what it holds.
     static RUNS: RefCell<std::collections::HashSet<Span>> =
         RefCell::new(std::collections::HashSet::new());
+    /// Ident span → the specialized symbol the checker solved for that use.
+    static INST_USES: RefCell<HashMap<Span, String>> = RefCell::new(HashMap::new());
+    /// One copy per solved instantiation. The template name is not a body.
+    static SPECS: RefCell<Vec<Specialization>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Clears the dispatch thread-locals, including when a panic unwinds past them.
+struct ClearDispatch;
+
+impl Drop for ClearDispatch {
+    fn drop(&mut self) {
+        METHODS.with(|cell| cell.borrow_mut().clear());
+        CALLS.with(|cell| cell.borrow_mut().clear());
+        PROJECTIONS.with(|cell| cell.borrow_mut().clear());
+        DEMANDS.with(|cell| cell.borrow_mut().clear());
+        CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
+        FLOWS.with(|cell| cell.borrow_mut().clear());
+        ELABORATED.with(|cell| cell.borrow_mut().clear());
+        SWAPS.with(|cell| cell.borrow_mut().clear());
+        PARS.with(|cell| cell.borrow_mut().clear());
+        DELAYS.with(|cell| cell.borrow_mut().clear());
+        RUNS.with(|cell| cell.borrow_mut().clear());
+        INST_USES.with(|cell| cell.borrow_mut().clear());
+        SPECS.with(|cell| cell.borrow_mut().clear());
+    }
 }
 
 /// How a trait-method call dispatches, as the checker resolved it.
@@ -118,6 +143,47 @@ pub struct DispatchInfo {
     /// The spans of the names whose type is `(;)`: where one stands as a
     /// command it is run, since a delayed exit does nothing held.
     pub runs: std::collections::HashSet<Span>,
+    /// Use span → specialized symbol (`id$i64`). Absent for monomorphic names.
+    pub inst_uses: HashMap<Span, String>,
+    /// Solved copies. A generic declaration is this list, not one shared body.
+    pub specializations: Vec<Specialization>,
+}
+
+/// One monomorphic copy of a declaration. `term` stays untyped; `binders`
+/// carry the substituted parameter types in the order lowering binds them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Specialization {
+    pub symbol: String,
+    pub decl: String,
+    pub binders: Vec<(String, Type)>,
+}
+
+/// `id` at `i64` is `id$i64`. The base name is the spelling, without `+`.
+pub fn specialization_symbol(decl: &str, args: &[Type]) -> String {
+    let mut out = decl.to_string();
+    for arg in args {
+        out.push('$');
+        out.push_str(&mangle_type(arg));
+    }
+    out
+}
+
+fn mangle_type(ty: &Type) -> String {
+    match ty {
+        Type::Rowed(inner, _) | Type::Delayed(inner, _) | Type::Dual(inner) => mangle_type(inner),
+        Type::Pos(base) | Type::Neg(base) => base.to_string(),
+        Type::Named(name, args) if args.is_empty() => name.clone(),
+        Type::Named(name, args) => {
+            let rest: Vec<_> = args.iter().map(mangle_type).collect();
+            format!("{name}_{}", rest.join("_"))
+        }
+        Type::Tensor(items) if items.is_empty() => "unit".into(),
+        other => other
+            .to_string()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect(),
+    }
 }
 
 /// What a flow chain does, read off the types at its ends.
@@ -487,7 +553,10 @@ pub fn lower_program_resolving(
     PARS.with(|cell| *cell.borrow_mut() = dispatch.pars.clone());
     DELAYS.with(|cell| *cell.borrow_mut() = dispatch.delays.clone());
     RUNS.with(|cell| *cell.borrow_mut() = dispatch.runs.clone());
-    let result = lower_program(p).map(|mut definitions| {
+    INST_USES.with(|cell| *cell.borrow_mut() = dispatch.inst_uses.clone());
+    SPECS.with(|cell| *cell.borrow_mut() = dispatch.specializations.clone());
+    let _clear = ClearDispatch;
+    lower_program(p).map(|mut definitions| {
         definitions.extend(
             dispatch
                 .adapters
@@ -496,19 +565,7 @@ pub fn lower_program_resolving(
                 .map(|(index, adapter)| (adapter_name(index), adapter_definition(adapter))),
         );
         definitions
-    });
-    METHODS.with(|cell| cell.borrow_mut().clear());
-    CALLS.with(|cell| cell.borrow_mut().clear());
-    PROJECTIONS.with(|cell| cell.borrow_mut().clear());
-    DEMANDS.with(|cell| cell.borrow_mut().clear());
-    CALL_GROUPS.with(|cell| cell.borrow_mut().clear());
-    FLOWS.with(|cell| cell.borrow_mut().clear());
-    ELABORATED.with(|cell| cell.borrow_mut().clear());
-    SWAPS.with(|cell| cell.borrow_mut().clear());
-    PARS.with(|cell| cell.borrow_mut().clear());
-    DELAYS.with(|cell| cell.borrow_mut().clear());
-    RUNS.with(|cell| cell.borrow_mut().clear());
-    result
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -597,6 +654,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
         Expr::Str(s) => Ok(Term::Var(format!("$str_{s:?}"))),
         Expr::Char(c) => Ok(Term::Var(format!("$char_{c}"))),
         Expr::Ident(s) => {
+            // A solved generic use names its copy. The template is not a value.
+            if let Some(symbol) = INST_USES.with(|cell| cell.borrow().get(&e.span).cloned()) {
+                return Ok(Term::Var(symbol));
+            }
             // An unambiguous bare variant resolves to its label, the way
             // the checker resolves it — `None` is `Option::None`. A variant
             // path resolves to the global the enum declaration installs;
@@ -1316,7 +1377,20 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 // A bounded function takes its dictionaries outermost, before
                 // the value arguments.
                 term = bind_dict_params(bounds, term);
-                out.push((name.clone(), term));
+                let copies: Vec<String> = SPECS.with(|cell| {
+                    cell.borrow()
+                        .iter()
+                        .filter(|spec| spec.decl == *name && spec.symbol != *name)
+                        .map(|spec| spec.symbol.clone())
+                        .collect()
+                });
+                if copies.is_empty() {
+                    out.push((name.clone(), term));
+                } else {
+                    for symbol in copies {
+                        out.push((symbol, term.clone()));
+                    }
+                }
             }
             Decl::Command {
                 name,

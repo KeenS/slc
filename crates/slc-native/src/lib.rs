@@ -1,0 +1,171 @@
+//! Straight-line x86-64 for non-escaping code and both match forms.
+//!
+//! The ELF is machine code. The control-flow graph stays in this process.
+
+mod encode;
+mod lower;
+
+#[cfg(test)]
+mod link_tests;
+
+use slc_core::term::Term;
+use slc_syntax::lower::Specialization;
+
+pub use encode::encode;
+
+/// Where a word sits. Virtual temps are `V`; the encoder never puts one in a protocol register.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dest {
+    V(u16),
+    /// `r13`.
+    Val,
+    /// `r14`.
+    Env,
+    /// `r12`.
+    Frame,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cond {
+    E,
+    Ne,
+    L,
+    Ge,
+    Le,
+    G,
+    B,
+    Ae,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inst {
+    Imm {
+        dst: Dest,
+        value: i64,
+    },
+    Mov {
+        dst: Dest,
+        src: Dest,
+    },
+    Load {
+        dst: Dest,
+        base: Dest,
+        offset: i32,
+        width: u8,
+    },
+    Store {
+        src: Dest,
+        base: Dest,
+        offset: i32,
+        width: u8,
+    },
+    CmpJcc {
+        left: Dest,
+        right: i64,
+        cond: Cond,
+        target: usize,
+    },
+    Jmp {
+        target: usize,
+    },
+    CallSlc {
+        symbol: String,
+        callee_frame_words: u32,
+    },
+    Tail {
+        symbol: String,
+        frame_words: u32,
+        map_id: u32,
+    },
+    Ret,
+    Safepoint {
+        map_id: u32,
+    },
+    CallAlloc {
+        words: u32,
+        tag: u16,
+        map_id: u32,
+        dst: Dest,
+    },
+    Ud2,
+    /// Inclusive. Fall through on success; `fail` is the miss.
+    InRange {
+        src: Dest,
+        lo: i64,
+        hi: i64,
+        fail: usize,
+    },
+    LeaBlock {
+        dst: Dest,
+        block: usize,
+    },
+    /// Address of `slc_pool_ptrs[index]`, not the word stored there.
+    LeaPool {
+        dst: Dest,
+        index: u32,
+    },
+    StorePool {
+        src: Dest,
+        index: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    pub insts: Vec<Inst>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Function {
+    pub symbol: String,
+    pub map_id: u32,
+    pub frame_words: u32,
+    pub val_is_pointer: bool,
+    pub pointer_slots: Vec<u16>,
+    /// Named slots plus the pointer scratches. Spill temps start at `spill_base`.
+    pub slot_count: u16,
+    pub spill_base: u16,
+    pub blocks: Vec<Block>,
+    /// C-callable transfer from `slc_rt_start`. No SLC prologue.
+    pub entry: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapRecord {
+    pub map_id: u32,
+    pub frame_words: u32,
+    pub val_is_pointer: bool,
+    pub slots: Vec<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Module {
+    pub functions: Vec<Function>,
+    /// Interned in first-appearance order. A tagged object's label is this index.
+    pub labels: Vec<String>,
+    pub pool_len: u32,
+    pub maps: Vec<MapRecord>,
+}
+
+impl Module {
+    pub fn function(&self, symbol: &str) -> &Function {
+        self.functions.iter().find(|f| f.symbol == symbol).unwrap_or_else(|| {
+            panic!(
+                "no {symbol} in {}",
+                self.functions.iter().map(|f| f.symbol.as_str()).collect::<Vec<_>>().join(", ")
+            )
+        })
+    }
+}
+
+pub struct Compiled {
+    pub module: Module,
+    pub object: Vec<u8>,
+}
+
+/// Lower `defs` and write a relocatable object. `specs` supply binder types for stack maps.
+pub fn compile(defs: &[(String, Term)], specs: &[Specialization]) -> Result<Compiled, String> {
+    let module = lower::lower(defs, specs)?;
+    let object = encode(&module);
+    Ok(Compiled { module, object })
+}

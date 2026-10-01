@@ -42,215 +42,30 @@ pub(crate) enum Descriptor {
 }
 
 pub(crate) fn parse_runtime_pattern(s: &str) -> Descriptor {
-    if s == ".." {
-        return Descriptor::Rest;
-    }
-    let mut chars = s.chars().peekable();
-    Descriptor::Pattern(parse_runtime_pattern_inner(&mut chars))
-}
-
-fn parse_runtime_pattern_inner(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> RuntimePattern {
-    match chars.next() {
-        Some('*') => RuntimePattern::Wildcard,
-        Some('.') if chars.peek() == Some(&'.') => {
-            chars.next();
-            RuntimePattern::Wildcard
-        }
-        Some('#') => {
-            let text = take_pattern_number(chars);
-            let rest = parse_runtime_pattern_tail(chars);
-            match (text.parse::<i64>().ok(), text.parse::<f64>().ok(), rest) {
-                (Some(start), _, Some(RuntimePattern::Literal(Value::Int(end)))) => {
-                    RuntimePattern::Range(
-                        Box::new(RuntimePattern::Literal(Value::Int(start))),
-                        Box::new(RuntimePattern::Literal(Value::Int(end))),
-                    )
-                }
-                (Some(n), _, _) => RuntimePattern::Literal(Value::Int(n)),
-                (None, Some(n), _) => RuntimePattern::Literal(Value::Float(n)),
-                _ => RuntimePattern::Wildcard,
-            }
-        }
-        Some('%') => {
-            let text = take_pattern_number(chars);
-            let rest = parse_runtime_pattern_tail(chars);
-            match (text.parse::<f64>().ok(), rest) {
-                (Some(start), Some(RuntimePattern::Literal(Value::Float(end)))) => {
-                    RuntimePattern::Range(
-                        Box::new(RuntimePattern::Literal(Value::Float(start))),
-                        Box::new(RuntimePattern::Literal(Value::Float(end))),
-                    )
-                }
-                (Some(n), _) => RuntimePattern::Literal(Value::Float(n)),
-                _ => RuntimePattern::Wildcard,
-            }
-        }
-        Some('"') => {
-            let text = take_quoted(chars, '"');
-            // A quoted name followed by `(` is a variant pattern; the
-            // parenthesized patterns match the variant payload.
-            if chars.peek() == Some(&'(') {
-                chars.next();
-                let mut fields = Vec::new();
-                loop {
-                    match chars.peek() {
-                        Some(')') | None => {
-                            chars.next();
-                            break;
-                        }
-                        _ => {}
-                    }
-                    fields.push(parse_runtime_pattern_inner(chars));
-                    if chars.next() != Some(',') {
-                        break;
-                    }
-                }
-                return RuntimePattern::Tagged(text, fields);
-            }
-            RuntimePattern::Literal(Value::Str(text))
-        }
-        Some('\'') => {
-            let c = match chars.next() {
-                Some('\\') => chars.next().unwrap_or('\\'),
-                Some(c) => c,
-                None => '\0',
-            };
-            let _ = chars.next();
-            let rest = parse_runtime_pattern_tail(chars);
-            match rest {
-                Some(RuntimePattern::Literal(Value::Char(end_c))) => RuntimePattern::Range(
-                    Box::new(RuntimePattern::Literal(Value::Char(c))),
-                    Box::new(RuntimePattern::Literal(Value::Char(end_c))),
-                ),
-                _ => RuntimePattern::Literal(Value::Char(c)),
-            }
-        }
-        Some('(') => {
-            let mut items = Vec::new();
-            loop {
-                match chars.peek() {
-                    Some(')') | None => {
-                        chars.next();
-                        break;
-                    }
-                    _ => {}
-                }
-                items.push(parse_runtime_pattern_inner(chars));
-                match chars.next() {
-                    Some('|') => {
-                        loop {
-                            match chars.peek() {
-                                Some(')') | None => {
-                                    chars.next();
-                                    break;
-                                }
-                                _ => {}
-                            }
-                            items.push(parse_runtime_pattern_inner(chars));
-                            if chars.next() != Some('|') {
-                                break;
-                            }
-                        }
-                        return RuntimePattern::Or(items);
-                    }
-                    Some(',') => {}
-                    _ => break,
-                }
-            }
-            RuntimePattern::Tuple(items)
-        }
-        Some('$') => RuntimePattern::Binding(
-            take_while(chars, |c| c.is_alphanumeric() || *c == '_'),
-            Box::new(RuntimePattern::Wildcard),
-        ),
-        Some(c) => {
-            let mut name = String::new();
-            name.push(c);
-            name.push_str(&take_while(chars, |c| {
-                c.is_alphanumeric() || *c == '_' || *c == ':' || *c == '@'
-            }));
-            if let Some(stripped) = name.strip_suffix('@') {
-                name = stripped.to_string();
-                if chars.peek() == Some(&'*') {
-                    chars.next();
-                    return RuntimePattern::Binding(name, Box::new(RuntimePattern::Wildcard));
-                }
-                return RuntimePattern::Binding(name, Box::new(parse_runtime_pattern_inner(chars)));
-            }
-            RuntimePattern::Binding(name, Box::new(RuntimePattern::Wildcard))
-        }
-        None => RuntimePattern::Wildcard,
+    match slc_syntax::pattern::parse_pattern(s) {
+        slc_syntax::pattern::Descriptor::Rest => Descriptor::Rest,
+        slc_syntax::pattern::Descriptor::Pattern(pat) => Descriptor::Pattern(from_pat(pat)),
     }
 }
 
-fn parse_runtime_pattern_tail(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> Option<RuntimePattern> {
-    if chars.peek() == Some(&'.') {
-        chars.next();
-        if chars.next() != Some('.') {
-            return None;
+fn from_pat(pat: slc_syntax::pattern::Pat) -> RuntimePattern {
+    use slc_syntax::pattern::Pat;
+    match pat {
+        Pat::Wildcard => RuntimePattern::Wildcard,
+        Pat::Binding(name, inner) => RuntimePattern::Binding(name, Box::new(from_pat(*inner))),
+        Pat::Int(n) => RuntimePattern::Literal(Value::Int(n)),
+        Pat::Float(n) => RuntimePattern::Literal(Value::Float(n)),
+        Pat::Str(text) => RuntimePattern::Literal(Value::Str(text)),
+        Pat::Char(c) => RuntimePattern::Literal(Value::Char(c)),
+        Pat::Tagged(label, fields) => {
+            RuntimePattern::Tagged(label, fields.into_iter().map(from_pat).collect())
         }
-        if chars.next() != Some('=') {
-            return None;
+        Pat::Range(start, end) => {
+            RuntimePattern::Range(Box::new(from_pat(*start)), Box::new(from_pat(*end)))
         }
-        return Some(parse_runtime_pattern_inner(chars));
+        Pat::Or(items) => RuntimePattern::Or(items.into_iter().map(from_pat).collect()),
+        Pat::Tuple(items) => RuntimePattern::Tuple(items.into_iter().map(from_pat).collect()),
     }
-    None
-}
-
-fn take_quoted(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, quote: char) -> String {
-    let mut out = String::new();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.next() {
-                Some('n') => out.push('\n'),
-                Some('t') => out.push('\t'),
-                Some('r') => out.push('\r'),
-                Some(other) => out.push(other),
-                None => break,
-            }
-        } else if c == quote {
-            break;
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-fn take_while<F: Fn(&char) -> bool>(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-    pred: F,
-) -> String {
-    let mut out = String::new();
-    while let Some(&c) = chars.peek() {
-        if !pred(&c) {
-            break;
-        }
-        out.push(c);
-        chars.next();
-    }
-    out
-}
-
-/// Read one numeric pattern endpoint, leaving `..` for the range parser.
-fn take_pattern_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
-    let mut out = String::new();
-    while let Some(&c) = chars.peek() {
-        if c == '.' && chars.clone().nth(1) == Some('.') {
-            break;
-        }
-        if c.is_ascii_digit() || c == '-' || c == '.' {
-            out.push(c);
-            chars.next();
-        } else {
-            break;
-        }
-    }
-    out
 }
 
 pub(crate) fn pattern_matches(

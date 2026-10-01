@@ -2,6 +2,7 @@
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use slc_abi::{
     DISPLAY_CLOSURE, DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_PROMPT,
@@ -77,6 +78,9 @@ pub struct Runtime {
     stats: GcStats,
     unit: u64,
     entered_code: u64,
+    /// Live `slc_pool_ptrs` words. Scanned in place; a startup copy would miss later stores.
+    pool_section: *const u64,
+    pool_section_len: usize,
 }
 
 // Owned addresses. The process entry shares one runtime under a mutex.
@@ -118,6 +122,8 @@ impl Runtime {
             stats: GcStats::default(),
             unit: 0,
             entered_code: 0,
+            pool_section: std::ptr::null(),
+            pool_section_len: 0,
         };
         let unit = rt.alloc(2, TAG_TAGGED, MAP_EMPTY);
         rt.unit = unit as u64;
@@ -387,10 +393,17 @@ impl Runtime {
     }
 
     pub fn poll(&mut self) {
+        // The Rust fields stay the source of truth. Publish so generated code sees a test's write.
+        self.publish_counters();
         if !self.collection_due() {
             return;
         }
         self.collect();
+    }
+
+    fn publish_counters(&self) {
+        slc_bytes_since_gc.store(self.bytes_since_gc as u64, Ordering::Relaxed);
+        slc_watermark.store(self.watermark as u64, Ordering::Relaxed);
     }
 
     fn collection_due(&self) -> bool {
@@ -421,6 +434,7 @@ impl Runtime {
         }
         self.objects.push(Object { ptr, size, layout });
         self.bytes_since_gc = self.bytes_since_gc.saturating_add(size);
+        self.publish_counters();
         ptr
     }
 
@@ -619,6 +633,11 @@ impl Runtime {
         work.extend(self.immortal.iter().copied());
         work.extend(self.global_table.iter().copied());
         work.extend(self.pointer_pool.iter().copied());
+        if !self.pool_section.is_null() && self.pool_section_len > 0 {
+            let words =
+                unsafe { std::slice::from_raw_parts(self.pool_section, self.pool_section_len) };
+            work.extend_from_slice(words);
+        }
         for frame in self.live_frames() {
             work.extend(self.frame_roots(frame));
         }
@@ -642,6 +661,7 @@ impl Runtime {
         self.stats.bytes_swept += bytes;
         self.stats.objects_swept += count;
         self.bytes_since_gc = 0;
+        self.publish_counters();
     }
 
     fn mark(&mut self, ptr: u64, work: &mut Vec<u64>) {
@@ -868,6 +888,129 @@ fn set_mark(ptr: *mut u8, mark: u32) {
 
 fn anchor_addr() -> u64 {
     std::ptr::from_ref(&slc_rt_prompt_anchor) as u64
+}
+
+/// Fuel left, in safepoints. `slc_rt_start` writes it; generated code decrements it.
+#[unsafe(no_mangle)]
+pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
+
+/// Bytes allocated since the last collection. Generated safepoints compare this to the watermark.
+#[unsafe(no_mangle)]
+pub static slc_bytes_since_gc: AtomicU64 = AtomicU64::new(0);
+
+/// Collection is due when [`slc_bytes_since_gc`] reaches this. Starts at the sentinel "never".
+#[unsafe(no_mangle)]
+pub static slc_watermark: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// `%rsp` of the frame that calls `slc_program_entry`.
+#[unsafe(no_mangle)]
+pub static slc_c_sp: AtomicU64 = AtomicU64::new(0);
+
+// Weak so a linked object can replace it. Rust tests never call `slc_rt_start`.
+std::arch::global_asm!(
+    // `.globl` would promote the weak binding to STB_GLOBAL, which the assembler rejects.
+    ".weak slc_program_entry",
+    ".type slc_program_entry, @function",
+    "slc_program_entry:",
+    "xor eax, eax",
+    "ret",
+);
+
+unsafe extern "C" {
+    fn slc_program_entry(sp: u64) -> u64;
+}
+
+/// The initial prompt has no slots. Generated entry code places the next frame 9 words up.
+const ENTRY_FRAME_WORDS: u32 = 9;
+
+/// Load map records, install one prompt frame, and call `slc_program_entry`.
+///
+/// # Safety
+/// The pointer pairs are either null or the live bounds of the named sections.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slc_rt_start(
+    fuel: u64,
+    safepoints_start: *const u8,
+    safepoints_stop: *const u8,
+    maps_start: *const u8,
+    maps_stop: *const u8,
+    text_start: *const u8,
+    text_stop: *const u8,
+    scalars_start: *const u8,
+    scalars_stop: *const u8,
+    ptrs_start: *const u8,
+    ptrs_stop: *const u8,
+    labels_start: *const u8,
+    labels_stop: *const u8,
+) -> u64 {
+    if fuel == 0 {
+        eprintln!("evaluation diverged (fuel exhausted)");
+        std::process::exit(1);
+    }
+    // The section symbols are arguments so `--gc-sections` keeps the sections.
+    std::hint::black_box((
+        safepoints_start,
+        safepoints_stop,
+        text_start,
+        text_stop,
+        scalars_start,
+        scalars_stop,
+        labels_start,
+        labels_stop,
+    ));
+    slc_fuel.store(fuel, Ordering::Relaxed);
+    load_map_section(maps_start, maps_stop);
+    let frame = with_runtime(|rt| {
+        if ptrs_start.is_null() || ptrs_stop <= ptrs_start {
+            rt.pool_section = std::ptr::null();
+            rt.pool_section_len = 0;
+        } else {
+            let bytes = ptrs_stop as usize - ptrs_start as usize;
+            rt.pool_section = ptrs_start.cast();
+            rt.pool_section_len = bytes / 8;
+        }
+        let id = rt.fresh_prompt_id();
+        rt.push_prompt(id, ENTRY_FRAME_WORDS).expect("initial frame");
+        rt.publish_counters();
+        rt.sp() as u64
+    });
+    let status: u64;
+    unsafe {
+        // A `clobber_abi` asm is a call site, so `%rsp` is 0 (mod 16) before `call`.
+        std::arch::asm!(
+            "mov qword ptr [rip + {csp}], rsp",
+            "call {entry}",
+            csp = sym slc_c_sp,
+            entry = sym slc_program_entry,
+            in("rdi") frame,
+            lateout("rax") status,
+            clobber_abi("sysv64"),
+        );
+    }
+    status
+}
+
+fn load_map_section(start: *const u8, stop: *const u8) {
+    if start.is_null() || stop.is_null() || stop <= start {
+        return;
+    }
+    let mut cursor = start as usize;
+    let end = stop as usize;
+    while end.saturating_sub(cursor) >= std::mem::size_of::<slc_abi::MapRecordHeader>() {
+        let header = unsafe { std::ptr::read_unaligned(cursor as *const slc_abi::MapRecordHeader) };
+        let slots_at = cursor + std::mem::size_of::<slc_abi::MapRecordHeader>();
+        let slots_end = slots_at + header.slot_count as usize * 2;
+        if slots_end > end {
+            break;
+        }
+        let mut slots = Vec::with_capacity(header.slot_count as usize);
+        for index in 0..header.slot_count as usize {
+            let slot = unsafe { std::ptr::read_unaligned((slots_at + index * 2) as *const u16) };
+            slots.push(slot);
+        }
+        with_runtime(|rt| rt.register_map(header.map_id, header.val_is_pointer != 0, &slots));
+        cursor = (slots_end + 3) & !3;
+    }
 }
 
 /// Immortal frame with no slots. Capture parks the outermost prompt here.

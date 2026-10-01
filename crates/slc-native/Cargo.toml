@@ -1,9 +1,13 @@
 [package]
-name = "slc-runtime"
+name = "slc-native"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+slc-abi = { path = "../slc-abi" }
 slc-core = { path = "../slc-core" }
 slc-syntax = { path = "../slc-syntax" }
+
+[dev-dependencies]
+slc-check = { path = "../slc-check" }

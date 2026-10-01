@@ -116,9 +116,76 @@ pub fn check_program_with_rows(
         }
     }
     if diags.is_empty() {
+        record_specializations(&mut env);
         Ok((std::mem::take(&mut env.dispatch), std::mem::take(&mut env.row_diagnostics)))
     } else {
         Err(diags)
+    }
+}
+
+/// Solved instantiations become one symbol each. An unsolved use is left
+/// unnamed so a program the checker already accepts does not grow a diagnostic.
+fn record_specializations(env: &mut Env) {
+    let pending = std::mem::take(&mut env.pending_insts);
+    let mut by_span = HashMap::new();
+    for item in pending {
+        by_span.insert(item.span, item);
+    }
+    let mut items: Vec<_> = by_span.into_values().collect();
+    items.sort_by_key(|item| item.span.start);
+    for item in items {
+        let solved: Vec<Type> = item.args.iter().map(|(_, ty)| env.uni.apply(ty)).collect();
+        if solved.iter().any(contains_var) {
+            continue;
+        }
+        let binders: Vec<(String, Type)> = item
+            .param_names
+            .iter()
+            .zip(&item.param_types)
+            .map(|(name, ty)| (name.clone(), env.uni.apply(ty)))
+            .collect();
+        if binders.iter().any(|(_, ty)| contains_var(ty)) {
+            continue;
+        }
+        let symbol = slc_syntax::lower::specialization_symbol(&item.decl, &solved);
+        env.dispatch.inst_uses.insert(item.span, symbol.clone());
+        if env.dispatch.specializations.iter().any(|spec| spec.symbol == symbol) {
+            continue;
+        }
+        env.dispatch.specializations.push(slc_syntax::lower::Specialization {
+            symbol,
+            decl: item.decl,
+            binders,
+        });
+    }
+    let monos: Vec<(String, Vec<(String, Type)>)> = env
+        .functions
+        .iter()
+        .filter(|(_, signature)| !signature.builtin && signature.signs.is_empty())
+        .map(|(name, signature)| {
+            (
+                name.clone(),
+                signature
+                    .param_names
+                    .iter()
+                    .cloned()
+                    .zip(signature.params.iter().map(|ty| env.uni.apply(ty)))
+                    .collect(),
+            )
+        })
+        .collect();
+    for (name, binders) in monos {
+        if binders.iter().any(|(_, ty)| contains_var(ty)) {
+            continue;
+        }
+        if env.dispatch.specializations.iter().any(|spec| spec.symbol == name) {
+            continue;
+        }
+        env.dispatch.specializations.push(slc_syntax::lower::Specialization {
+            symbol: name.clone(),
+            decl: name,
+            binders,
+        });
     }
 }
 
@@ -4015,6 +4082,22 @@ fn check_expr_unapplied(
             {
                 let (signature, seen) = instantiate(signature, &mut env.uni);
                 record_signs(&signature, &seen, name, e.span, env);
+                // Probes use a separate unification and never reach here.
+                if !signature.builtin && !signature.signs.is_empty() {
+                    env.pending_insts.push(crate::env::PendingInst {
+                        span: e.span,
+                        decl: name.clone(),
+                        param_names: signature.param_names.clone(),
+                        param_types: signature.params.clone(),
+                        args: signature
+                            .signs
+                            .iter()
+                            .filter_map(|(index, param, _)| {
+                                seen.get(index).map(|ty| (param.clone(), ty.clone()))
+                            })
+                            .collect(),
+                    });
+                }
                 if let Some(result) = signature.result {
                     // Naming a returning function never invokes it. A
                     // parameterless consumer transformer instead denotes
@@ -5420,6 +5503,23 @@ fn check_expr_unapplied(
                         });
                     }
                     record_signs(&signature, &seen, name, stages[index].span, env);
+                    // The stage was named before this instantiation. That
+                    // naming's variables are not the ones `fits` just solved.
+                    if !signature.builtin && !signature.signs.is_empty() {
+                        env.pending_insts.push(crate::env::PendingInst {
+                            span: stages[index].span,
+                            decl: name.clone(),
+                            param_names: signature.param_names.clone(),
+                            param_types: signature.params.clone(),
+                            args: signature
+                                .signs
+                                .iter()
+                                .filter_map(|(index, param, _)| {
+                                    seen.get(index).map(|ty| (param.clone(), ty.clone()))
+                                })
+                                .collect(),
+                        });
+                    }
                     if !signature.bounds.is_empty() {
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,

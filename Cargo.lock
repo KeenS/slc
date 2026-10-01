@@ -37,6 +37,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "slc-native"
+version = "0.1.0"
+dependencies = [
+ "slc-abi",
+ "slc-check",
+ "slc-core",
+ "slc-syntax",
+]
+
+[[package]]
 name = "slc-rt"
 version = "0.1.0"
 dependencies = [
@@ -48,6 +58,7 @@ name = "slc-runtime"
 version = "0.1.0"
 dependencies = [
  "slc-core",
+ "slc-syntax",
 ]
 
 [[package]]

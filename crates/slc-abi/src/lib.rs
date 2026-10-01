@@ -157,6 +157,20 @@ pub struct MapInfo {
     pub pointer_slots: &'static [u16],
 }
 
+/// Flat `slc_maps` record. [`MapInfo`] holds a slice, which cannot live in an ELF.
+/// `map_id`, `frame_words`, `val_is_pointer`, pad, `slot_count`, then `slot_count` `u16`s.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapRecordHeader {
+    pub map_id: u32,
+    pub frame_words: u32,
+    pub val_is_pointer: u8,
+    pub _pad: u8,
+    pub slot_count: u16,
+}
+
+const _: () = assert!(std::mem::size_of::<MapRecordHeader>() == 12);
+
 pub const SLC_RT_FAIL: &str = "slc_rt_fail";
 pub const SLC_RT_FAIL_OVERFLOW: &str = "slc_rt_fail_overflow";
 pub const SLC_RT_PROMPT_ANCHOR: &str = "slc_rt_prompt_anchor";

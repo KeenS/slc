@@ -214,6 +214,19 @@ pub(crate) struct Env<'a> {
     pub(crate) polarity_hints: HashMap<slc_syntax::token::Span, slc_syntax::ast::ParamPolarity>,
     pub(crate) pending_computations:
         Vec<(slc_syntax::token::Span, Type, Option<slc_syntax::ast::ParamPolarity>)>,
+    /// Generic uses whose type arguments are solved when the declaration is.
+    pub(crate) pending_insts: Vec<PendingInst>,
+}
+
+/// A use of a generic declaration, recorded before unification finishes.
+#[derive(Debug, Clone)]
+pub(crate) struct PendingInst {
+    pub(crate) span: slc_syntax::token::Span,
+    pub(crate) decl: String,
+    pub(crate) param_names: Vec<String>,
+    pub(crate) param_types: Vec<Type>,
+    /// Type-parameter name and the fresh variable standing for it.
+    pub(crate) args: Vec<(String, Type)>,
 }
 
 impl<'a> Env<'a> {
@@ -253,6 +266,7 @@ impl<'a> Env<'a> {
             elaboration_origins: HashMap::new(),
             polarity_hints: HashMap::new(),
             pending_computations: Vec::new(),
+            pending_insts: Vec::new(),
         }
     }
 

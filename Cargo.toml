@@ -8,6 +8,7 @@ members = [
     "crates/slc-runtime",
     "crates/slc-abi",
     "crates/slc-rt",
+    "crates/slc-native",
     "crates/slc-driver",
 ]
 
