@@ -8,9 +8,9 @@ use slc_abi::{
     DISPLAY_CLOSURE, DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_PROMPT,
     FRAME_FRAME_WORDS, FRAME_HANDLER_PREV, FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID,
     FRAME_SLOT0, FRAME_SPILL_ENV, FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header,
-    MAP_EMPTY, MAP_UNWRITTEN, MARK_BLACK, MARK_WHITE, TAG_ADAPTED, TAG_CLOSURE, TAG_DELAY,
-    TAG_KONT, TAG_OPERATION, TAG_RESUME, TAG_TAGGED, pack_frame_flags, pack_meta,
-    unpack_frame_flags, unpack_meta,
+    MAP_EMPTY, MAP_UNWRITTEN, MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES,
+    STRING_CHAR_LEN, TAG_ADAPTED, TAG_CLOSURE, TAG_DELAY, TAG_KONT, TAG_OPERATION, TAG_RESUME,
+    TAG_STRING, TAG_TAGGED, pack_frame_flags, pack_meta, unpack_frame_flags, unpack_meta,
 };
 
 const INITIAL_SEGMENT_BYTES: usize = 1 << 20;
@@ -1075,6 +1075,12 @@ pub static slc_watermark: AtomicU64 = AtomicU64::new(u64::MAX);
 #[unsafe(no_mangle)]
 pub static slc_c_sp: AtomicU64 = AtomicU64::new(0);
 
+/// Pool singletons. Entry stores them; `slc_rt_str_cmp` returns one of them.
+#[unsafe(no_mangle)]
+pub static slc_rt_bool_true: AtomicU64 = AtomicU64::new(0);
+#[unsafe(no_mangle)]
+pub static slc_rt_bool_false: AtomicU64 = AtomicU64::new(0);
+
 // Weak so a linked object can replace it. Rust tests never call `slc_rt_start`.
 std::arch::global_asm!(
     // `.globl` would promote the weak binding to STB_GLOBAL, which the assembler rejects.
@@ -1409,6 +1415,178 @@ pub extern "C" fn slc_rt_write_line(sp: u64, text: u64) {
     let _ = out.write_all(bytes);
     let _ = out.write_all(b"\n");
     let _ = out.flush();
+}
+
+/// The interpreter's `EvalError` line, including the driver's `error:` prefix.
+fn type_mismatch(message: &str) -> ! {
+    eprintln!("error: type mismatch: {message}");
+    bail(1);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_fail_overflow(sp: u64, op: u64, a: u64, b: u64) -> ! {
+    let _ = sp;
+    let a = a as i64;
+    let b = b as i64;
+    let text = match op {
+        0 => format!("add({a}, {b})"),
+        1 => format!("sub({a}, {b})"),
+        2 => format!("mul({a}, {b})"),
+        _ => format!("neg({a})"),
+    };
+    type_mismatch(&format!("arithmetic overflow: {text}"));
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_wrapping_div(sp: u64, a: u64, b: u64) -> u64 {
+    let _ = sp;
+    let (a, b) = (a as i64, b as i64);
+    if b == 0 {
+        type_mismatch("division by zero");
+    }
+    a.wrapping_div(b) as u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_wrapping_rem(sp: u64, a: u64, b: u64) -> u64 {
+    let _ = sp;
+    let (a, b) = (a as i64, b as i64);
+    if b == 0 {
+        type_mismatch("division by zero");
+    }
+    a.wrapping_rem(b) as u64
+}
+
+fn fits(n: i64, lo: i64, hi: i64, width: &str) -> u64 {
+    if n < lo || n > hi {
+        type_mismatch(&format!("arithmetic overflow: {n} does not fit in {width}"));
+    }
+    n as u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_i8(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    fits(n as i64, i64::from(i8::MIN), i64::from(i8::MAX), "i8")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_i32(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    fits(n as i64, i64::from(i32::MIN), i64::from(i32::MAX), "i32")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_i64(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    n
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_u8(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    fits(n as i64, 0, i64::from(u8::MAX), "u8")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_u32(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    fits(n as i64, 0, i64::from(u32::MAX), "u32")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_to_u64(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    fits(n as i64, 0, i64::MAX, "u64")
+}
+
+/// Copy the bytes first. Allocation may collect, and a register is not a root.
+fn string_bytes(ptr: u64) -> Vec<u8> {
+    let ptr = ptr as *const u8;
+    let len = read_u64(ptr, STRING_BYTE_LEN) as usize;
+    unsafe { std::slice::from_raw_parts(ptr.add(STRING_BYTES), len).to_vec() }
+}
+
+fn make_string(rt: &mut Runtime, text: &str) -> *mut u8 {
+    let bytes = text.as_bytes();
+    let chunks = bytes.len().div_ceil(8);
+    let obj = rt.alloc(2 + chunks as u32, TAG_STRING, MAP_EMPTY);
+    rt.write(obj, STRING_BYTE_LEN, bytes.len() as u64);
+    rt.write(obj, STRING_CHAR_LEN, text.chars().count() as u64);
+    for (index, chunk) in bytes.chunks(8).enumerate() {
+        let mut word = 0u64;
+        for (place, byte) in chunk.iter().enumerate() {
+            word |= u64::from(*byte) << (8 * place);
+        }
+        rt.write(obj, STRING_BYTES + 8 * index, word);
+    }
+    obj
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_int_to_str(sp: u64, n: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        make_string(rt, &format!("{}", n as i64)) as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_display(sp: u64, value: u64, shape: u64) -> u64 {
+    // A string's display is the string. Nothing is allocated.
+    if shape == 2 {
+        return value;
+    }
+    let text = match shape {
+        0 => format!("{}", value as i64),
+        1 => format!("{}", f64::from_bits(value)),
+        3 => char::from_u32(value as u32).unwrap_or('\u{FFFD}').to_string(),
+        _ => format!("<file@{value}>"),
+    };
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        make_string(rt, &text) as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_str_concat(sp: u64, a: u64, b: u64) -> u64 {
+    let mut bytes = string_bytes(a);
+    bytes.extend(string_bytes(b));
+    let text = String::from_utf8(bytes)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        make_string(rt, &text) as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_str_cmp(sp: u64, a: u64, b: u64, op: u64) -> u64 {
+    let _ = sp;
+    let ord = string_bytes(a).cmp(&string_bytes(b));
+    let yes = match op {
+        0 => ord.is_eq(),
+        1 => ord.is_ne(),
+        2 => ord.is_lt(),
+        3 => ord.is_gt(),
+        4 => ord.is_le(),
+        _ => ord.is_ge(),
+    };
+    let slot = if yes { &slc_rt_bool_true } else { &slc_rt_bool_false };
+    slot.load(Ordering::Relaxed)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_index(sp: u64, s: u64, i: u64) -> u64 {
+    let _ = sp;
+    let n = i as i64;
+    let bytes = string_bytes(s);
+    let text = String::from_utf8_lossy(&bytes);
+    if let Some(ch) = text.chars().nth(n as usize) {
+        return ch as u64;
+    }
+    type_mismatch(&format!("index {n} out of range"));
 }
 
 #[unsafe(no_mangle)]

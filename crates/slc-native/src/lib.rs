@@ -44,6 +44,28 @@ pub enum Cond {
     Ae,
 }
 
+/// Checked `i64`. The encoder emits the `jno` sequence; there is no `slc_rt_add`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum I64Op {
+    Add,
+    Sub,
+    Mul,
+    Neg,
+}
+
+/// Inline bitwise or IEEE arithmetic. Float negation flips the sign bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinOp {
+    Xor,
+    WrappingMul,
+    FAdd,
+    FSub,
+    FMul,
+    FDiv,
+    FRem,
+    FNeg,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inst {
     Imm {
@@ -134,12 +156,43 @@ pub enum Inst {
         dst: Dest,
         symbol: String,
     },
-    /// Compare two words. Used by the one inlined `__gt`.
+    /// Compare two words. Used by inlined integer and `Bool` compares.
     CmpRR {
         left: Dest,
         right: Dest,
         cond: Cond,
         target: usize,
+    },
+    /// `op` then `jno`. On overflow, `slc_rt_fail_overflow` and no return. Result in `r13`.
+    CheckedI64 {
+        op: I64Op,
+        left: Dest,
+        right: Dest,
+    },
+    /// Inline result in `r13`. `right` is unused for `FNeg`.
+    Bin {
+        op: BinOp,
+        left: Dest,
+        right: Dest,
+    },
+    /// IEEE compare. Unordered is not less, greater, or equal.
+    FCmp {
+        left: Dest,
+        right: Dest,
+        cond: Cond,
+        target: usize,
+    },
+    /// Inclusive float range. `fail` is the miss, including NaN.
+    FInRange {
+        src: Dest,
+        lo: i64,
+        hi: i64,
+        fail: usize,
+    },
+    /// Store a word at the address of `symbol`. Publishes pool bools for `slc_rt_str_cmp`.
+    StoreAbs {
+        src: Dest,
+        symbol: String,
     },
     /// Escaping `μ`. The stack is not mutated. `dst` receives the `Kont`.
     Capture {
@@ -195,19 +248,25 @@ pub enum Inst {
         tail: bool,
         arg_is_pointer: bool,
     },
-    /// `rdi` is the frame. `arg` selects `VAL` or `ENV` for `rsi`.
+    /// `rdi` is the frame. A returning call leaves the value in `rax` and does not move the segment.
     CallRt {
         symbol: String,
         arg: RtArg,
         noreturn: bool,
+        /// `rax` is the result, moved into `VAL` after the spills reload.
+        returns: bool,
     },
 }
 
-/// Which protocol register is the second argument of a runtime call.
+/// Arguments after the frame pointer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtArg {
     Val,
     Env,
+    /// `VAL` in `rsi`, this immediate in `rdx`.
+    ValImm(i64),
+    /// Tuple fields at offsets 24 and 32, then this immediate in `rcx`.
+    PairImm(i64),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

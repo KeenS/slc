@@ -1,11 +1,11 @@
 //! x86-64 System V encoder. Virtual temps stay in caller-saved registers or frame slots.
 //! Protocol registers are never assigned a temp.
 
-use crate::{Cond, Dest, Function, Inst, Module};
+use crate::{BinOp, Cond, Dest, Function, I64Op, Inst, Module};
 use slc_abi::{
     FRAME_CONT_PREV, FRAME_HANDLER_PREV, FRAME_MAP_FLAGS, FRAME_SLOT0, FRAME_SPILL_ENV,
     FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, MAP_EMPTY, SLC_FUEL, SLC_POOL_PTRS, SLC_PROGRAM_ENTRY,
-    SLC_RT_ALLOC, SLC_RT_FAIL, SLC_RT_POLL, SLC_TEXT, Safepoint,
+    SLC_RT_ALLOC, SLC_RT_FAIL, SLC_RT_FAIL_OVERFLOW, SLC_RT_POLL, SLC_TEXT, Safepoint,
 };
 
 const SLC_BYTES_SINCE_GC: &str = "slc_bytes_since_gc";
@@ -216,6 +216,16 @@ impl Encoder {
                 self.rr(true, 0x39, rreg, lreg);
                 self.jcc(fi, *cond, *target);
             }
+            Inst::CheckedI64 { op, left, right } => self.checked_i64(func, *op, *left, *right),
+            Inst::Bin { op, left, right } => self.bin(func, *op, *left, *right),
+            Inst::FCmp { left, right, cond, target } => {
+                self.fcmp(fi, func, *left, *right, *cond, *target)
+            }
+            Inst::FInRange { src, lo, hi, fail } => self.fin_range(fi, func, *src, *lo, *hi, *fail),
+            Inst::StoreAbs { src, symbol } => {
+                let reg = self.reg(loc(*src, func));
+                self.rip_store(reg, symbol);
+            }
             Inst::Capture { dst } => {
                 self.safepoint(func.map_id);
                 self.spill(func.map_id);
@@ -268,27 +278,197 @@ impl Encoder {
             Inst::Activate { consumer, tail, arg_is_pointer } => {
                 self.activate(func, *consumer, *tail, *arg_is_pointer);
             }
-            Inst::CallRt { symbol, arg, noreturn } => {
+            Inst::CallRt { symbol, arg, noreturn, returns } => {
                 self.safepoint(func.map_id);
                 self.spill(func.map_id);
                 self.rr(true, 0x89, R12, RDI);
                 match arg {
                     crate::RtArg::Val => self.rr(true, 0x89, R13, RSI),
                     crate::RtArg::Env => self.rr(true, 0x89, R14, RSI),
+                    crate::RtArg::ValImm(imm) => {
+                        self.rr(true, 0x89, R13, RSI);
+                        self.imm(RDX, *imm);
+                    }
+                    crate::RtArg::PairImm(imm) => {
+                        self.mem(true, 0x8B, RSI, R13, 24);
+                        self.mem(true, 0x8B, RDX, R13, 32);
+                        self.imm(RCX, *imm);
+                    }
                 }
                 self.call_plt(symbol);
                 if !noreturn {
+                    // `rax` is the value. These calls do not move the segment.
                     self.reload_frame();
+                    if *returns {
+                        self.rr(true, 0x89, RAX, R13);
+                    }
                 }
             }
         }
     }
 
     fn reload_frame(&mut self) {
-        self.mem(true, 0x8B, R13, R12, FRAME_SPILL_VAL as i32);
+        // `r13` is the callee's result. Reloading the spill would replace it.
         self.mem(true, 0x8B, R14, R12, FRAME_SPILL_ENV as i32);
         self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+    }
+
+    /// Operands in `r10`/`r11`, result in `rax`, then `jno` past `slc_rt_fail_overflow`.
+    fn checked_i64(&mut self, func: &Function, op: I64Op, left: Dest, right: Dest) {
+        self.load_dest(left, func, 10);
+        if matches!(op, I64Op::Neg) {
+            self.rr(true, 0x89, 10, 11);
+        } else {
+            self.load_dest(right, func, 11);
+        }
+        self.rr(true, 0x89, 10, RAX);
+        match op {
+            I64Op::Add => self.rr(true, 0x01, 11, RAX),
+            I64Op::Sub => self.rr(true, 0x29, 11, RAX),
+            I64Op::Mul => {
+                self.rex(true, RAX, 11);
+                self.buf.extend_from_slice(&[0x0F, 0xAF, 0xC3]);
+            }
+            I64Op::Neg => {
+                self.rex(true, 0, RAX);
+                self.buf.extend_from_slice(&[0xF7, 0xD8]);
+            }
+        }
+        let ok = self.jcc_hole_cc(0x81);
+        let code = match op {
+            I64Op::Add => 0,
+            I64Op::Sub => 1,
+            I64Op::Mul => 2,
+            I64Op::Neg => 3,
+        };
+        self.rr(true, 0x89, R12, RDI);
+        self.imm(RSI, code);
+        self.rr(true, 0x89, 10, RDX);
+        self.rr(true, 0x89, 11, RCX);
+        self.call_plt(SLC_RT_FAIL_OVERFLOW);
+        self.patch_at(ok, self.buf.len());
+        self.rr(true, 0x89, RAX, R13);
+    }
+
+    fn bin(&mut self, func: &Function, op: BinOp, left: Dest, right: Dest) {
+        if matches!(op, BinOp::FNeg) {
+            self.load_dest(left, func, RAX);
+            self.imm(RCX, 1i64 << 63);
+            self.rr(true, 0x31, RCX, RAX);
+            self.rr(true, 0x89, RAX, R13);
+            return;
+        }
+        self.load_dest(left, func, 10);
+        self.load_dest(right, func, 11);
+        match op {
+            BinOp::Xor => {
+                self.rr(true, 0x89, 10, RAX);
+                self.rr(true, 0x31, 11, RAX);
+                self.rr(true, 0x89, RAX, R13);
+            }
+            BinOp::WrappingMul => {
+                self.rr(true, 0x89, 10, RAX);
+                self.rex(true, RAX, 11);
+                self.buf.extend_from_slice(&[0x0F, 0xAF, 0xC3]);
+                self.rr(true, 0x89, RAX, R13);
+            }
+            BinOp::FAdd | BinOp::FSub | BinOp::FMul | BinOp::FDiv | BinOp::FRem => {
+                self.movq_xmm_gpr(0, 10);
+                self.movq_xmm_gpr(1, 11);
+                match op {
+                    BinOp::FAdd => self.sd(0x58, 0, 1),
+                    BinOp::FSub => self.sd(0x5C, 0, 1),
+                    BinOp::FMul => self.sd(0x59, 0, 1),
+                    BinOp::FDiv => self.sd(0x5E, 0, 1),
+                    BinOp::FRem => {
+                        // Truncating remainder, the same `%` the interpreter uses on `f64`.
+                        self.buf.extend_from_slice(&[0x66, 0x0F, 0x28, 0xD0]);
+                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x5E, 0xD1]);
+                        self.buf.extend_from_slice(&[0x66, 0x0F, 0x3A, 0x0B, 0xD2, 0x03]);
+                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x59, 0xD1]);
+                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x5C, 0xC2]);
+                    }
+                    BinOp::FNeg | BinOp::Xor | BinOp::WrappingMul => {}
+                }
+                self.movq_gpr_xmm(R13, 0);
+            }
+            BinOp::FNeg => {}
+        }
+    }
+
+    fn fcmp(
+        &mut self,
+        fi: usize,
+        func: &Function,
+        left: Dest,
+        right: Dest,
+        cond: Cond,
+        target: usize,
+    ) {
+        self.load_dest(left, func, 10);
+        self.load_dest(right, func, 11);
+        self.movq_xmm_gpr(0, 10);
+        self.movq_xmm_gpr(1, 11);
+        self.buf.extend_from_slice(&[0x66, 0x0F, 0x2E, 0xC1]);
+        match cond {
+            Cond::E => {
+                let skip = self.jcc_hole_cc(0x8A);
+                self.jcc(fi, Cond::E, target);
+                self.patch_at(skip, self.buf.len());
+            }
+            Cond::Ne => {
+                self.jcc_block_cc(fi, 0x8A, target);
+                self.jcc(fi, Cond::Ne, target);
+            }
+            Cond::L => {
+                let skip = self.jcc_hole_cc(0x8A);
+                self.jcc(fi, Cond::B, target);
+                self.patch_at(skip, self.buf.len());
+            }
+            Cond::Le => {
+                let skip = self.jcc_hole_cc(0x8A);
+                self.jcc_block_cc(fi, 0x86, target);
+                self.patch_at(skip, self.buf.len());
+            }
+            Cond::G => self.jcc_block_cc(fi, 0x87, target),
+            Cond::Ge | Cond::Ae => self.jcc(fi, Cond::Ae, target),
+            Cond::B => self.jcc(fi, Cond::B, target),
+        }
+    }
+
+    fn fin_range(&mut self, fi: usize, func: &Function, src: Dest, lo: i64, hi: i64, fail: usize) {
+        self.load_dest(src, func, 10);
+        self.imm(11, lo);
+        self.movq_xmm_gpr(0, 10);
+        self.movq_xmm_gpr(1, 11);
+        self.buf.extend_from_slice(&[0x66, 0x0F, 0x2E, 0xC1]);
+        self.jcc(fi, Cond::B, fail);
+        self.imm(11, hi);
+        self.movq_xmm_gpr(1, 11);
+        self.buf.extend_from_slice(&[0x66, 0x0F, 0x2E, 0xC1]);
+        self.jcc_block_cc(fi, 0x87, fail);
+    }
+
+    fn movq_xmm_gpr(&mut self, xmm: u8, gpr: u8) {
+        self.buf.push(0x66);
+        self.rex(true, xmm, gpr);
+        self.buf.extend_from_slice(&[0x0F, 0x6E]);
+        self.buf.push(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
+    }
+
+    fn movq_gpr_xmm(&mut self, gpr: u8, xmm: u8) {
+        self.buf.push(0x66);
+        self.rex(true, xmm, gpr);
+        self.buf.extend_from_slice(&[0x0F, 0x7E]);
+        self.buf.push(0xC0 | ((xmm & 7) << 3) | (gpr & 7));
+    }
+
+    fn sd(&mut self, opcode: u8, dst: u8, src: u8) {
+        self.buf.push(0xF2);
+        self.buf.push(0x0F);
+        self.buf.push(opcode);
+        self.buf.push(0xC0 | ((dst & 7) << 3) | (src & 7));
     }
 
     fn shl3(&mut self, reg: u8) {
@@ -893,11 +1073,20 @@ impl Encoder {
             Cond::Le => 0x8E,
             Cond::G => 0x8F,
         };
+        self.jcc_hole_cc(cc)
+    }
+
+    fn jcc_hole_cc(&mut self, cc: u8) -> usize {
         self.buf.push(0x0F);
         self.buf.push(cc);
         let at = self.buf.len();
         self.buf.extend_from_slice(&0i32.to_le_bytes());
         at
+    }
+
+    fn jcc_block_cc(&mut self, fi: usize, cc: u8, block: usize) {
+        let at = self.jcc_hole_cc(cc);
+        self.blocks.push(FixBlock { at, func: fi, block });
     }
 
     fn jmp_hole(&mut self) -> usize {

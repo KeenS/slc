@@ -16,7 +16,7 @@ use slc_core::types::{Base, Type};
 use slc_syntax::lower::Specialization;
 use slc_syntax::pattern::{self, Descriptor, Pat};
 
-use crate::{Block, Cond, Dest, Function, Inst, MapRecord, Module, RtArg};
+use crate::{BinOp, Block, Cond, Dest, Function, I64Op, Inst, MapRecord, Module, RtArg};
 
 const SCRATCHES: u16 = 4;
 const MATCH_TEMPS: u16 = 8;
@@ -25,6 +25,22 @@ const MATCH_TEMPS: u16 = 8;
 enum Mode {
     Value,
     Tail,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Class {
+    Int,
+    Float,
+    Str,
+    Bool,
+    Char,
+    File,
+}
+
+enum CmpKind {
+    Words(Cond),
+    Float(Cond),
+    Labels(Cond),
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +78,8 @@ struct Builder {
     pool: HashMap<String, u32>,
     pool_len: u32,
     roots: Vec<(u32, u32)>,
+    /// Declaration order, so a dictionary tuple matches the trait's method order.
+    fn_order: Vec<String>,
     /// Callee parameter word, and the word the callee returns.
     func_param: HashMap<String, bool>,
     func_result: HashMap<String, bool>,
@@ -552,6 +570,7 @@ impl Builder {
             pool: HashMap::new(),
             pool_len: 0,
             roots: Vec::new(),
+            fn_order: defs.iter().map(|(name, _)| name.clone()).collect(),
             func_param: HashMap::new(),
             func_result: HashMap::new(),
             fn_types: HashMap::new(),
@@ -811,7 +830,7 @@ impl Builder {
 
     fn push_scratch(&mut self, src: Dest) -> Result<u16, String> {
         if self.scratch_top >= self.scratch_base + SCRATCHES {
-            return Err("too many live pointers".into());
+            return Err(format!("too many live pointers in {}", self.current));
         }
         let slot = self.scratch_top;
         self.scratch_top += 1;
@@ -825,7 +844,7 @@ impl Builder {
 
     fn alloc_temp(&mut self, pointer: bool) -> Result<u16, String> {
         if self.temp_used >= MATCH_TEMPS {
-            return Err("too many match temps".into());
+            return Err(format!("too many match temps in {}", self.current));
         }
         let slot = self.temp_base + self.temp_used;
         self.temp_used += 1;
@@ -1005,9 +1024,8 @@ impl Builder {
             CoTerm::CoCase { branches, .. } => self.compile_cocase(term, branches, mode),
             CoTerm::MuTildeTensor(binders, body) => self.compile_tensor(term, binders, body, mode),
             CoTerm::MuTilde(binder, body) => self.compile_bind(term, binder, body, mode),
-            CoTerm::App(_, _) | CoTerm::Prj(_) | CoTerm::Dtor(_, _) => {
-                Err("not a straight-line command".into())
-            }
+            CoTerm::Prj(index) => self.compile_prj(term, *index, mode),
+            CoTerm::App(_, _) | CoTerm::Dtor(_, _) => Err("not a straight-line command".into()),
         }
     }
 
@@ -1058,7 +1076,8 @@ impl Builder {
                 Err(format!("not a direct call in {mu}"))
             }
             CoTerm::Covar(name) => self.deliver(value, name, mode),
-            CoTerm::Prj(_) | CoTerm::Dtor(_, _) => Err("not straight-line".into()),
+            CoTerm::Prj(index) => self.compile_prj(value, *index, mode),
+            CoTerm::Dtor(_, _) => Err("not straight-line".into()),
         }
     }
 
@@ -1093,6 +1112,14 @@ impl Builder {
         } else if name == "$unit" {
             self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
             false
+        } else if let Some(text) = name.strip_prefix("$float_") {
+            let value: f64 = text.parse().map_err(|_| format!("bad float {name}"))?;
+            self.emit(Inst::Imm { dst: Dest::Val, value: value.to_bits() as i64 });
+            false
+        } else if let Some(text) = name.strip_prefix("$char_") {
+            let value = text.chars().next().ok_or_else(|| format!("bad char {name}"))?;
+            self.emit(Inst::Imm { dst: Dest::Val, value: value as i64 });
+            false
         } else if let Some(text) = name.strip_prefix("$str_") {
             self.emit_string(&decode_lit(text))?;
             true
@@ -1107,6 +1134,50 @@ impl Builder {
         } else if let Some(&slot) = self.slots.get(name) {
             self.load_slot(Dest::Val, slot);
             self.pointer_slots.contains(&slot)
+        } else if let Some(rest) = name.strip_prefix("__dict_") {
+            // The interpreter installs these after lowering. One method is the closure;
+            // several are a tuple in declaration order.
+            let (trait_name, key) =
+                rest.split_once('_').ok_or_else(|| format!("unbound {name}"))?;
+            let prefix = format!("{trait_name}#{key}#");
+            let methods: Vec<String> =
+                self.fn_order.iter().filter(|sym| sym.starts_with(&prefix)).cloned().collect();
+            if methods.is_empty() {
+                return Err(format!("unbound {name}"));
+            }
+            if methods.len() == 1 {
+                self.emit_code_object(&methods[0], &[], 4, true)?;
+            } else {
+                let mut saved = Vec::new();
+                for sym in &methods {
+                    self.emit_code_object(sym, &[], 4, true)?;
+                    saved.push(self.push_scratch(Dest::Val)?);
+                }
+                let heap: Vec<u16> = (0..methods.len()).map(|index| index as u16 + 1).collect();
+                let map = self.heap_map(&heap);
+                self.emit(Inst::CallAlloc {
+                    words: 1 + methods.len() as u32,
+                    tag: TAG_TUPLE,
+                    map_id: map,
+                    dst: Dest::V(0),
+                });
+                self.emit(Inst::Imm { dst: Dest::V(1), value: methods.len() as i64 });
+                self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
+                for (index, slot) in saved.iter().enumerate() {
+                    self.load_slot(Dest::V(1), *slot);
+                    self.emit(Inst::Store {
+                        src: Dest::V(1),
+                        base: Dest::V(0),
+                        offset: 24 + 8 * index as i32,
+                        width: 8,
+                    });
+                }
+                for _ in &saved {
+                    self.pop_scratch();
+                }
+                self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+            }
+            true
         } else {
             return Err(format!("unbound {name}"));
         };
@@ -1159,6 +1230,8 @@ impl Builder {
     }
 
     fn compile_tuple(&mut self, items: &[Term], mode: Mode) -> Result<bool, String> {
+        // Scalar components only need a temp until they are copied into the tuple.
+        let mark = self.temp_used;
         let mut saved = Vec::new();
         let mut heap_slots = Vec::new();
         for (index, item) in items.iter().enumerate() {
@@ -1169,6 +1242,9 @@ impl Builder {
                 // A scalar component is live across the allocation but must not be traced.
                 let slot = self.alloc_temp(false)?;
                 self.store_slot(Dest::Val, slot);
+                if self.val_ptr {
+                    self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+                }
                 slot
             };
             if pointer {
@@ -1199,6 +1275,11 @@ impl Builder {
                 self.pop_scratch();
             }
         }
+        let scalars = saved.iter().filter(|(_, pointer)| !pointer).count() as u16;
+        // A nested match may have kept a pointer temp. Those slots stay reserved.
+        if self.temp_used == mark + scalars {
+            self.temp_used = mark;
+        }
         self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
         if mode == Mode::Tail {
             self.finish(Mode::Tail);
@@ -1208,16 +1289,82 @@ impl Builder {
 
     fn compile_call(&mut self, callee: &Term, arg: &Term, mode: Mode) -> Result<bool, String> {
         let Term::Var(symbol) = callee else {
-            return Err("indirect call is not a test of this compiler".into());
+            // Evaluate the argument before the closure. A left-folded chain
+            // would otherwise keep every outer closure live through the inner chain.
+            let arg_ptr = self.compile_term(arg, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Ok(arg_ptr);
+            }
+            let arg_mark = self.temp_used;
+            let arg_slot = if arg_ptr {
+                self.push_scratch(Dest::Val)?
+            } else {
+                let slot = self.alloc_temp(false)?;
+                self.store_slot(Dest::Val, slot);
+                if self.val_ptr {
+                    self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+                }
+                slot
+            };
+            let closure_ptr = self.compile_term(callee, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                if arg_ptr {
+                    self.pop_scratch();
+                } else if self.temp_used == arg_mark + 1 {
+                    self.temp_used = arg_mark;
+                }
+                return Ok(closure_ptr);
+            }
+            let closure_slot = self.push_scratch(Dest::Val)?;
+            self.load_slot(Dest::Val, arg_slot);
+            self.emit(Inst::CallClosure {
+                closure: Dest::Slot(closure_slot),
+                tail: mode == Mode::Tail,
+                arg_is_pointer: arg_ptr,
+            });
+            self.pop_scratch();
+            if arg_ptr {
+                self.pop_scratch();
+            } else if self.temp_used == arg_mark + 1 {
+                self.temp_used = arg_mark;
+            }
+            return Ok(true);
         };
-        if symbol == "__gt" {
-            return self.compile_gt(arg, mode);
-        }
         if symbol == "$force" {
             return self.compile_force(arg, mode);
         }
         if symbol == "$adapt" {
             return self.compile_adapt(arg);
+        }
+        if matches!(
+            symbol.as_str(),
+            "__add"
+                | "__sub"
+                | "__mul"
+                | "__div"
+                | "__rem"
+                | "__neg"
+                | "__eq"
+                | "__ne"
+                | "__lt"
+                | "__gt"
+                | "__le"
+                | "__ge"
+                | "__xor"
+                | "__wrapping_mul"
+                | "__display"
+                | "int_to_str"
+                | "__to_i8"
+                | "__to_i32"
+                | "__to_i64"
+                | "__to_u8"
+                | "__to_u32"
+                | "__to_u64"
+                | "str_len"
+                | "__index"
+                | "char_to_code"
+        ) {
+            return self.compile_builtin(symbol, arg, mode);
         }
         if !self.func_param.contains_key(symbol) {
             if self.slots.contains_key(symbol) {
@@ -1485,12 +1632,38 @@ impl Builder {
                 self.finish(mode);
                 Ok(result)
             }
-            Pat::Range(lo, hi) => {
-                let (Pat::Int(lo), Pat::Int(hi)) = (lo.as_ref(), hi.as_ref()) else {
-                    return Err("only integer ranges".into());
-                };
+            Pat::Float(value) => {
                 let fail = self.new_block();
-                self.emit_range(&place, *lo, *hi, fail);
+                self.emit(Inst::Imm { dst: Dest::V(1), value: value.to_bits() as i64 });
+                let src = self.place_dest(&place);
+                self.emit(Inst::FCmp {
+                    left: src,
+                    right: Dest::V(1),
+                    cond: Cond::Ne,
+                    target: fail,
+                });
+                let mut result = self.compile_matrix(success, mode)?;
+                self.finish(mode);
+                self.cur = fail;
+                result |= self.compile_matrix(failure, mode)?;
+                self.finish(mode);
+                Ok(result)
+            }
+            Pat::Range(lo, hi) => {
+                let fail = self.new_block();
+                match (lo.as_ref(), hi.as_ref()) {
+                    (Pat::Int(lo), Pat::Int(hi)) => self.emit_range(&place, *lo, *hi, fail),
+                    (Pat::Float(lo), Pat::Float(hi)) => {
+                        let src = self.place_dest(&place);
+                        self.emit(Inst::FInRange {
+                            src,
+                            lo: lo.to_bits() as i64,
+                            hi: hi.to_bits() as i64,
+                            fail,
+                        });
+                    }
+                    _ => return Err("only integer or float ranges".into()),
+                }
                 let mut result = self.compile_matrix(success, mode)?;
                 self.finish(mode);
                 self.cur = fail;
@@ -1528,12 +1701,31 @@ impl Builder {
             let hit = if binds.is_empty() { body } else { self.new_block() };
             match &bare {
                 Pat::Int(value) => self.cmp_place(place, *value, Cond::E, hit),
+                Pat::Float(value) => {
+                    self.emit(Inst::Imm { dst: Dest::V(1), value: value.to_bits() as i64 });
+                    let src = self.place_dest(place);
+                    self.emit(Inst::FCmp {
+                        left: src,
+                        right: Dest::V(1),
+                        cond: Cond::E,
+                        target: hit,
+                    });
+                }
                 Pat::Range(lo, hi) => {
-                    let (Pat::Int(lo), Pat::Int(hi)) = (lo.as_ref(), hi.as_ref()) else {
-                        return Err("only integer ranges".into());
-                    };
                     let next = self.new_block();
-                    self.emit_range(place, *lo, *hi, next);
+                    match (lo.as_ref(), hi.as_ref()) {
+                        (Pat::Int(lo), Pat::Int(hi)) => self.emit_range(place, *lo, *hi, next),
+                        (Pat::Float(lo), Pat::Float(hi)) => {
+                            let src = self.place_dest(place);
+                            self.emit(Inst::FInRange {
+                                src,
+                                lo: lo.to_bits() as i64,
+                                hi: hi.to_bits() as i64,
+                                fail: next,
+                            });
+                        }
+                        _ => return Err("only integer or float ranges".into()),
+                    }
                     self.emit(Inst::Jmp { target: hit });
                     self.cur = next;
                 }
@@ -1792,6 +1984,16 @@ impl Builder {
                     offset: TAGGED_LABEL as i32,
                     width: 4,
                 });
+            }
+        }
+    }
+
+    fn place_dest(&mut self, place: &Place) -> Dest {
+        match place {
+            Place::Val => Dest::Val,
+            Place::Slot(slot) => {
+                self.load_slot(Dest::V(0), *slot);
+                Dest::V(0)
             }
         }
     }
@@ -2061,6 +2263,8 @@ impl Builder {
             self.load_slot(Dest::Val, slot);
             return Ok(Some(self.push_scratch(Dest::Val)?));
         }
+        // Scalar captures only need a temp until they are copied into the env.
+        let mark = self.temp_used;
         let mut ptrs = Vec::new();
         let mut saved = Vec::new();
         for (index, (name, ptr)) in captures.iter().enumerate() {
@@ -2096,6 +2300,10 @@ impl Builder {
             if *ptr {
                 self.pop_scratch();
             }
+        }
+        let scalars = saved.iter().filter(|(_, ptr)| !ptr).count() as u16;
+        if self.temp_used == mark + scalars {
+            self.temp_used = mark;
         }
         self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
         Ok(Some(self.push_scratch(Dest::Val)?))
@@ -2185,16 +2393,299 @@ impl Builder {
         Ok(false)
     }
 
-    fn compile_gt(&mut self, arg: &Term, mode: Mode) -> Result<bool, String> {
+    fn compile_prj(&mut self, base: &Term, index: usize, mode: Mode) -> Result<bool, String> {
+        let pointer = self.compile_term(base, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
+        self.emit(Inst::Load {
+            dst: Dest::Val,
+            base: Dest::Val,
+            offset: 24 + 8 * index as i32,
+            width: 8,
+        });
+        if mode == Mode::Tail {
+            self.finish(Mode::Tail);
+        }
+        Ok(true)
+    }
+
+    fn operand_class(&self, term: &Term) -> Option<Class> {
+        fn from_type(ty: &Type) -> Option<Class> {
+            match ty {
+                Type::Rowed(inner, _) | Type::Dual(inner) | Type::Delayed(inner, _) => {
+                    from_type(inner)
+                }
+                Type::Pos(base) | Type::Neg(base) => match base {
+                    Base::F32 | Base::F64 => Some(Class::Float),
+                    Base::Str => Some(Class::Str),
+                    Base::Char => Some(Class::Char),
+                    Base::File => Some(Class::File),
+                    Base::I64 | Base::I32 | Base::I8 | Base::U8 | Base::U32 | Base::U64 => {
+                        Some(Class::Int)
+                    }
+                },
+                Type::Named(name, _) if name == "Bool" => Some(Class::Bool),
+                Type::Tensor(items) => items.first().and_then(from_type),
+                _ => None,
+            }
+        }
+        fn from_term(builder: &Builder, term: &Term) -> Option<Class> {
+            match term {
+                Term::Tuple(items) => items.first().and_then(|item| from_term(builder, item)),
+                Term::Var(name) if name.starts_with("$int_") => Some(Class::Int),
+                Term::Var(name) if name.starts_with("$float_") => Some(Class::Float),
+                Term::Var(name) if name.starts_with("$str_") => Some(Class::Str),
+                Term::Var(name) if name.starts_with("$char_") => Some(Class::Char),
+                Term::Var(name) => builder.word_ty(name).and_then(from_type),
+                _ => None,
+            }
+        }
+        from_term(self, term).or_else(|| {
+            let symbol = self.current.as_str();
+            if symbol.contains("#f32#") || symbol.contains("#f64#") {
+                Some(Class::Float)
+            } else if symbol.contains("#String#") {
+                Some(Class::Str)
+            } else if symbol.contains("#Bool#") {
+                Some(Class::Bool)
+            } else if symbol.contains("#char#") {
+                Some(Class::Char)
+            } else if symbol.contains("#File#") {
+                Some(Class::File)
+            } else if ["#i64#", "#i8#", "#i32#", "#u8#", "#u32#", "#u64#"]
+                .iter()
+                .any(|key| symbol.contains(key))
+            {
+                Some(Class::Int)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn compile_builtin(&mut self, name: &str, arg: &Term, mode: Mode) -> Result<bool, String> {
+        if matches!(name, "__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge") {
+            let class = self.operand_class(arg).unwrap_or(Class::Int);
+            let cond = match name {
+                "__eq" => Cond::E,
+                "__ne" => Cond::Ne,
+                "__lt" => Cond::L,
+                "__gt" => Cond::G,
+                "__le" => Cond::Le,
+                _ => Cond::Ge,
+            };
+            return match class {
+                Class::Str => {
+                    let op = match name {
+                        "__eq" => 0,
+                        "__ne" => 1,
+                        "__lt" => 2,
+                        "__gt" => 3,
+                        "__le" => 4,
+                        _ => 5,
+                    };
+                    self.compile_term(arg, Mode::Value)?;
+                    if !terminated(&self.blocks[self.cur].insts) {
+                        self.emit(Inst::CallRt {
+                            symbol: "slc_rt_str_cmp".into(),
+                            arg: RtArg::PairImm(op),
+                            noreturn: false,
+                            returns: true,
+                        });
+                    }
+                    Ok(true)
+                }
+                Class::Float => self.compile_cmp(arg, CmpKind::Float(cond), mode),
+                Class::Bool if matches!(name, "__lt" | "__gt" | "__le" | "__ge") => {
+                    self.compile_cmp(arg, CmpKind::Labels(cond), mode)
+                }
+                _ => self.compile_cmp(arg, CmpKind::Words(cond), mode),
+            };
+        }
+        let class = self.operand_class(arg);
         self.compile_term(arg, Mode::Value)?;
         if terminated(&self.blocks[self.cur].insts) {
             return Ok(false);
+        }
+        match name {
+            "str_len" => {
+                self.emit(Inst::Load {
+                    dst: Dest::Val,
+                    base: Dest::Val,
+                    offset: STRING_CHAR_LEN as i32,
+                    width: 8,
+                });
+                Ok(false)
+            }
+            "char_to_code" => Ok(false),
+            "int_to_str" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_int_to_str".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "__display" => {
+                let shape = match class {
+                    Some(Class::Float) => 1,
+                    Some(Class::Str) => 2,
+                    Some(Class::Char) => 3,
+                    Some(Class::File) => 4,
+                    Some(Class::Int) => 0,
+                    other => {
+                        return Err(format!("__display of {other:?} in {}", self.current));
+                    }
+                };
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_display".into(),
+                    arg: RtArg::ValImm(shape),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64" => {
+                let symbol = match name {
+                    "__to_i8" => "slc_rt_to_i8",
+                    "__to_i32" => "slc_rt_to_i32",
+                    "__to_i64" => "slc_rt_to_i64",
+                    "__to_u8" => "slc_rt_to_u8",
+                    "__to_u32" => "slc_rt_to_u32",
+                    _ => "slc_rt_to_u64",
+                };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__index" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_index".into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__neg" | "__xor"
+            | "__wrapping_mul" => self.compile_arith(name, class),
+            other => Err(format!("builtin {other}")),
+        }
+    }
+
+    fn compile_arith(&mut self, name: &str, class: Option<Class>) -> Result<bool, String> {
+        let class =
+            class.ok_or_else(|| format!("{name} in {} has no operand kind", self.current))?;
+        let binary = name != "__neg";
+        if binary
+            && !matches!((name, class), ("__add", Class::Str) | ("__div" | "__rem", Class::Int))
+        {
+            self.emit(Inst::Load { dst: Dest::V(0), base: Dest::Val, offset: 24, width: 8 });
+            self.emit(Inst::Load { dst: Dest::V(1), base: Dest::Val, offset: 32, width: 8 });
+        }
+        match (name, class) {
+            ("__add", Class::Str) => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_str_concat".into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            ("__div" | "__rem", Class::Int) => {
+                let symbol =
+                    if name == "__div" { "slc_rt_wrapping_div" } else { "slc_rt_wrapping_rem" };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            ("__add" | "__sub" | "__mul", Class::Int) | ("__neg", Class::Int) => {
+                let op = match name {
+                    "__sub" => I64Op::Sub,
+                    "__mul" => I64Op::Mul,
+                    "__neg" => I64Op::Neg,
+                    _ => I64Op::Add,
+                };
+                let (left, right) =
+                    if binary { (Dest::V(0), Dest::V(1)) } else { (Dest::Val, Dest::Val) };
+                self.emit(Inst::CheckedI64 { op, left, right });
+                Ok(false)
+            }
+            ("__add" | "__sub" | "__mul" | "__div" | "__rem", Class::Float)
+            | ("__neg", Class::Float) => {
+                let op = match name {
+                    "__sub" => BinOp::FSub,
+                    "__mul" => BinOp::FMul,
+                    "__div" => BinOp::FDiv,
+                    "__rem" => BinOp::FRem,
+                    "__neg" => BinOp::FNeg,
+                    _ => BinOp::FAdd,
+                };
+                let (left, right) =
+                    if binary { (Dest::V(0), Dest::V(1)) } else { (Dest::Val, Dest::Val) };
+                self.emit(Inst::Bin { op, left, right });
+                Ok(false)
+            }
+            ("__xor", _) => {
+                self.emit(Inst::Bin { op: BinOp::Xor, left: Dest::V(0), right: Dest::V(1) });
+                Ok(false)
+            }
+            ("__wrapping_mul", _) => {
+                self.emit(Inst::Bin {
+                    op: BinOp::WrappingMul,
+                    left: Dest::V(0),
+                    right: Dest::V(1),
+                });
+                Ok(false)
+            }
+            _ => Err(format!("{name} on {class:?} in {}", self.current)),
+        }
+    }
+
+    fn compile_cmp(&mut self, arg: &Term, kind: CmpKind, mode: Mode) -> Result<bool, String> {
+        self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(true);
         }
         self.emit(Inst::Load { dst: Dest::V(0), base: Dest::Val, offset: 24, width: 8 });
         self.emit(Inst::Load { dst: Dest::V(1), base: Dest::Val, offset: 32, width: 8 });
         let yes = self.new_block();
         let no = self.new_block();
-        self.emit(Inst::CmpRR { left: Dest::V(0), right: Dest::V(1), cond: Cond::G, target: yes });
+        match kind {
+            CmpKind::Words(cond) => {
+                self.emit(Inst::CmpRR { left: Dest::V(0), right: Dest::V(1), cond, target: yes })
+            }
+            CmpKind::Float(cond) => {
+                self.emit(Inst::FCmp { left: Dest::V(0), right: Dest::V(1), cond, target: yes })
+            }
+            CmpKind::Labels(cond) => {
+                // `false` is interned before `true`, so the label id is the boolean order.
+                self.emit(Inst::Load {
+                    dst: Dest::V(2),
+                    base: Dest::V(0),
+                    offset: TAGGED_LABEL as i32,
+                    width: 8,
+                });
+                self.emit(Inst::Load {
+                    dst: Dest::V(3),
+                    base: Dest::V(1),
+                    offset: TAGGED_LABEL as i32,
+                    width: 8,
+                });
+                self.emit(Inst::CmpRR { left: Dest::V(2), right: Dest::V(3), cond, target: yes });
+            }
+        }
         self.emit(Inst::Jmp { target: no });
         let join = match mode {
             Mode::Value => Some(self.new_block()),
@@ -2507,6 +2998,7 @@ impl Builder {
                     symbol: "slc_rt_write_line".into(),
                     arg: RtArg::Env,
                     noreturn: false,
+                    returns: false,
                 },
                 Inst::Imm { dst: Dest::Val, value: 0 },
                 Inst::Resume { image: Dest::Slot(0), tail: true },
@@ -2580,7 +3072,12 @@ impl Builder {
                     width: 8,
                 },
                 Inst::Safepoint { map_id: 0 },
-                Inst::CallRt { symbol: "slc_rt_exit".into(), arg: RtArg::Val, noreturn: true },
+                Inst::CallRt {
+                    symbol: "slc_rt_exit".into(),
+                    arg: RtArg::Val,
+                    noreturn: true,
+                    returns: false,
+                },
             ],
         )
     }
@@ -2628,6 +3125,15 @@ impl Builder {
                 width: 8,
             });
             self.emit(Inst::StorePool { src: Dest::V(0), index });
+        }
+        for (name, symbol) in
+            [("Bool::True", "slc_rt_bool_true"), ("Bool::False", "slc_rt_bool_false")]
+        {
+            if let Some(&index) = self.pool.get(name) {
+                self.emit(Inst::LeaPool { dst: Dest::V(0), index });
+                self.emit(Inst::Load { dst: Dest::V(1), base: Dest::V(0), offset: 0, width: 8 });
+                self.emit(Inst::StoreAbs { src: Dest::V(1), symbol: symbol.into() });
+            }
         }
         let (ret_words, ret_map) = func_layout(funcs, "slc_io_return");
         let (outer_words, outer_map) = func_layout(funcs, "slc_io_line_outer");
@@ -2828,6 +3334,19 @@ fn peel_binds(pat: &Pat) -> (Pat, Vec<String>) {
     (pat, names)
 }
 
+fn float_bounds(pat: &Pat) -> Option<(f64, f64)> {
+    match pat {
+        Pat::Float(value) => Some((*value, *value)),
+        Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref()) {
+            (Pat::Float(lo), Pat::Float(hi)) if lo <= hi => Some((*lo, *hi)),
+            (Pat::Float(lo), Pat::Float(hi)) => Some((*hi, *lo)),
+            _ => None,
+        },
+        Pat::Binding(_, inner) => float_bounds(inner),
+        _ => None,
+    }
+}
+
 fn int_bounds(pat: &Pat) -> Option<(i64, i64)> {
     match pat {
         Pat::Int(value) => Some((*value, *value)),
@@ -2852,12 +3371,19 @@ fn subsumes(outer: &Pat, inner: &Pat) -> bool {
         Pat::Binding(_, pattern) => subsumes(pattern, inner),
         Pat::Or(alts) => alts.iter().any(|alt| subsumes(alt, inner)),
         Pat::Int(value) => int_bounds(inner) == Some((*value, *value)),
-        Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref(), int_bounds(inner)) {
-            (Pat::Int(lo), Pat::Int(hi), Some((start, end))) => {
+        Pat::Range(lo, hi) => {
+            if let (Pat::Int(lo), Pat::Int(hi), Some((start, end))) =
+                (lo.as_ref(), hi.as_ref(), int_bounds(inner))
+            {
                 *lo.min(hi) <= start && end <= *lo.max(hi)
+            } else if let (Pat::Float(lo), Pat::Float(hi), Some((start, end))) =
+                (lo.as_ref(), hi.as_ref(), float_bounds(inner))
+            {
+                *lo <= start && end <= *hi
+            } else {
+                false
             }
-            _ => false,
-        },
+        }
         Pat::Tagged(label, fields) => match inner {
             Pat::Tagged(other, inner_fields) => {
                 label == other
@@ -2895,7 +3421,10 @@ fn intersects(left: &Pat, right: &Pat) -> bool {
         }
         _ => match (int_bounds(left), int_bounds(right)) {
             (Some((lo, hi)), Some((start, end))) => lo <= end && start <= hi,
-            _ => false,
+            _ => match (float_bounds(left), float_bounds(right)) {
+                (Some((lo, hi)), Some((start, end))) => lo <= end && start <= hi,
+                _ => false,
+            },
         },
     }
 }

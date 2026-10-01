@@ -25,6 +25,7 @@ dependencies = [
  "slc-check",
  "slc-core",
  "slc-fmt",
+ "slc-native",
  "slc-runtime",
  "slc-syntax",
 ]
