@@ -20,16 +20,21 @@ const MAX_SEGMENT_BYTES: usize = 1 << 30;
 pub enum RtError {
     StackOverflow,
     ForeignPrompt,
+    /// No installed prompt named this operation id.
+    Unhandled(u64),
 }
 
 impl std::fmt::Display for RtError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            RtError::StackOverflow => "SLC stack overflow",
-            RtError::ForeignPrompt => {
-                "a continuation left the handler it was captured under: it was jumped to under another"
+        match self {
+            RtError::StackOverflow => f.write_str("SLC stack overflow"),
+            RtError::ForeignPrompt => f.write_str(
+                "a continuation left the handler it was captured under: it was jumped to under another",
+            ),
+            RtError::Unhandled(id) => {
+                write!(f, "error: type mismatch: no handler for operation `{}`", label_named(*id))
             }
-        })
+        }
     }
 }
 
@@ -60,6 +65,8 @@ enum CaptureStop {
     Outermost,
     /// Through the nearest prompt. This is the slice a `Resume` reinstates.
     Nearest,
+    /// Through this live frame, inclusive. Perform copies nearer prompts too.
+    Through(*const u8),
 }
 
 pub struct Runtime {
@@ -128,6 +135,7 @@ impl Runtime {
         let unit = rt.alloc(2, TAG_TAGGED, MAP_EMPTY);
         rt.unit = unit as u64;
         rt.immortal.push(rt.unit);
+        slc_rt_unit.store(rt.unit, Ordering::Relaxed);
         rt
     }
 
@@ -328,6 +336,11 @@ impl Runtime {
         self.capture_image(CaptureStop::Nearest, TAG_RESUME, DISPLAY_RESUME)
     }
 
+    /// Copy through `frame`, which is the prompt whose clauses answered.
+    pub fn capture_through(&mut self, frame: *const u8) -> *mut u8 {
+        self.capture_image(CaptureStop::Through(frame), TAG_RESUME, DISPLAY_RESUME)
+    }
+
     pub fn invoke(&mut self, image: *const u8) -> Result<(), RtError> {
         let prompt = self.live_frames().into_iter().find(|frame| self.is_prompt(*frame));
         let Some(prompt) = prompt else {
@@ -365,10 +378,94 @@ impl Runtime {
         if !frames.is_empty() {
             let bottom = self.ptr_at(start);
             if self.is_prompt(bottom) {
+                // The outer handler lives on the frame under the slice. The heap image keeps the anchor.
                 write_u64(bottom, FRAME_HANDLER_PREV, handlers);
             }
         }
+        if slc_resume_trace.load(Ordering::Relaxed) != 0 {
+            let index = slc_resume_log_len.fetch_add(1, Ordering::Relaxed) as usize;
+            if index < slc_resume_log.len() {
+                slc_resume_log[index].store(self.stack_words(), Ordering::Relaxed);
+            }
+        }
         Ok(())
+    }
+
+    /// Raise the current frame to `words` when the callee is larger. A segment move
+    /// rebases interior pointers; heap pointers stay.
+    pub fn grow_frame(&mut self, words: u32) -> Result<(), RtError> {
+        let sp = self.sp_off.expect("grow needs a frame");
+        let bytes = words as usize * 8;
+        self.ensure(sp + bytes)?;
+        let frame = self.sp();
+        if u64::from(words) > read_u64(frame, FRAME_FRAME_WORDS) {
+            write_u64(frame, FRAME_FRAME_WORDS, u64::from(words));
+        }
+        Ok(())
+    }
+
+    /// Perform steps 1–2. The copy stops at the prompt whose clauses name `op_id`,
+    /// including nearer prompts. The live stack drops that slice. The heap resume
+    /// is left in [`slc_split_resume`]; nothing here writes the preserved frame.
+    pub fn split_for_perform(&mut self, op_id: u64) -> Result<(), RtError> {
+        let mut frame = self.read(self.sp(), FRAME_SPILL_HANDLERS) as *const u8;
+        let anchor = anchor_addr();
+        let mut handler = None;
+        let mut clause = 0u64;
+        for _ in 0..1_000_000 {
+            if frame.is_null() || frame as u64 == anchor {
+                break;
+            }
+            if self.is_prompt(frame) {
+                let clauses = self.read(frame, FRAME_SLOT0);
+                if let Some(found) = self.clause_for(clauses, op_id) {
+                    handler = Some(frame);
+                    clause = found;
+                    break;
+                }
+                frame = self.read(frame, FRAME_HANDLER_PREV) as *const u8;
+            } else {
+                break;
+            }
+        }
+        let Some(handler) = handler else {
+            return Err(RtError::Unhandled(op_id));
+        };
+        // Record the handler before the slice is dropped. ApplyTo reuses those bytes.
+        slc_answered_handler.store(handler as u64, Ordering::Relaxed);
+        let resume = self.capture_through(handler);
+        let preserved = self.read(handler, FRAME_CONT_PREV) as *mut u8;
+        let outer = self.read(handler, FRAME_HANDLER_PREV);
+        if preserved.is_null() || preserved as u64 == anchor || !self.in_segment(preserved as u64) {
+            return Err(RtError::Unhandled(op_id));
+        }
+        self.set_sp(preserved);
+        slc_split_resume.store(resume as u64, Ordering::Relaxed);
+        slc_split_clause.store(clause, Ordering::Relaxed);
+        slc_split_handlers.store(outer, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn clause_for(&self, clauses: u64, op_id: u64) -> Option<u64> {
+        if clauses == 0 || !self.object_base(clauses).is_some() {
+            return None;
+        }
+        let ptr = clauses as *const u8;
+        let count = self.read(ptr, 16);
+        for index in 0..count {
+            let at = 24 + index as usize * 16;
+            if self.read(ptr, at) == op_id {
+                return Some(self.read(ptr, at + 8));
+            }
+        }
+        None
+    }
+
+    /// Offset 0 of the prompt frame inside a heap `Resume`: the continuation of `do`.
+    pub fn resume_cont(&self, image: *const u8) -> u64 {
+        let frames = self.image_frames(image);
+        let prompt = frames.iter().rev().find(|frame| self.is_prompt(**frame)).copied();
+        prompt.map(|frame| self.read(frame, 0)).unwrap_or(0)
     }
 
     pub fn image_frames(&self, obj: *const u8) -> Vec<*const u8> {
@@ -449,6 +546,10 @@ impl Runtime {
             CaptureStop::Outermost => frames
                 .iter()
                 .rposition(|frame| self.is_prompt(*frame))
+                .map_or(frames.len(), |i| i + 1),
+            CaptureStop::Through(stop) => frames
+                .iter()
+                .position(|frame| std::ptr::eq(*frame, stop))
                 .map_or(frames.len(), |i| i + 1),
         };
         let copied = &frames[..end];
@@ -890,6 +991,48 @@ fn anchor_addr() -> u64 {
     std::ptr::from_ref(&slc_rt_prompt_anchor) as u64
 }
 
+/// The unit singleton. `Runtime::new` publishes it; `Force` passes it as the delay's argument.
+#[unsafe(no_mangle)]
+pub static slc_rt_unit: AtomicU64 = AtomicU64::new(0);
+
+/// Non-zero while a linked test records `stack_words` after each `resume`.
+#[unsafe(no_mangle)]
+pub static slc_resume_trace: AtomicU64 = AtomicU64::new(0);
+
+/// Depth after each traced resume, in call order. Eight entries cover the flat-loop check.
+#[unsafe(no_mangle)]
+pub static slc_resume_log: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
+
+#[unsafe(no_mangle)]
+pub static slc_resume_log_len: AtomicU64 = AtomicU64::new(0);
+
+/// Prompt whose clauses answered the latest `split`. `write_line` accepts only the startup IO frame.
+#[unsafe(no_mangle)]
+pub static slc_answered_handler: AtomicU64 = AtomicU64::new(0);
+
+/// Resume object from the latest split. Generated code reads it after `slc_rt_split`.
+#[unsafe(no_mangle)]
+pub static slc_split_resume: AtomicU64 = AtomicU64::new(0);
+#[unsafe(no_mangle)]
+pub static slc_split_clause: AtomicU64 = AtomicU64::new(0);
+#[unsafe(no_mangle)]
+pub static slc_split_handlers: AtomicU64 = AtomicU64::new(0);
+
+/// The IO prompt `slc_rt_start` installed. A copied IO has a different address.
+#[unsafe(no_mangle)]
+pub static slc_io_frame: AtomicU64 = AtomicU64::new(0);
+
+/// When non-zero, entry collects from the IO frame after a returning `main`.
+#[unsafe(no_mangle)]
+pub static slc_sweep_on_exit: AtomicU64 = AtomicU64::new(0);
+
+/// Non-zero when a `Kont` is still live after that sweep.
+#[unsafe(no_mangle)]
+pub static slc_kont_live: AtomicU64 = AtomicU64::new(0);
+
+static LABELS_START: AtomicU64 = AtomicU64::new(0);
+static LABELS_STOP: AtomicU64 = AtomicU64::new(0);
+
 /// Fuel left, in safepoints. `slc_rt_start` writes it; generated code decrements it.
 #[unsafe(no_mangle)]
 pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
@@ -921,8 +1064,10 @@ unsafe extern "C" {
     fn slc_program_entry(sp: u64) -> u64;
 }
 
-/// The initial prompt has no slots. Generated entry code places the next frame 9 words up.
-const ENTRY_FRAME_WORDS: u32 = 9;
+/// Base frame under the IO prompt. No slots.
+const ENTRY_BASE_WORDS: u32 = 9;
+/// IO prompt: header, clauses, return closure, one traced scratch, one untraced park.
+const ENTRY_IO_WORDS: u32 = 13;
 
 /// Load map records, install one prompt frame, and call `slc_program_entry`.
 ///
@@ -960,6 +1105,9 @@ pub unsafe extern "C" fn slc_rt_start(
         labels_stop,
     ));
     slc_fuel.store(fuel, Ordering::Relaxed);
+    slc_resume_log_len.store(0, Ordering::Relaxed);
+    LABELS_START.store(labels_start as u64, Ordering::Relaxed);
+    LABELS_STOP.store(labels_stop as u64, Ordering::Relaxed);
     load_map_section(maps_start, maps_stop);
     let frame = with_runtime(|rt| {
         if ptrs_start.is_null() || ptrs_stop <= ptrs_start {
@@ -970,8 +1118,10 @@ pub unsafe extern "C" fn slc_rt_start(
             rt.pool_section = ptrs_start.cast();
             rt.pool_section_len = bytes / 8;
         }
+        rt.push_frame(ENTRY_BASE_WORDS).expect("base frame");
         let id = rt.fresh_prompt_id();
-        rt.push_prompt(id, ENTRY_FRAME_WORDS).expect("initial frame");
+        rt.push_prompt(id, ENTRY_IO_WORDS).expect("initial frame");
+        slc_io_frame.store(rt.sp() as u64, Ordering::Relaxed);
         rt.publish_counters();
         rt.sp() as u64
     });
@@ -1083,6 +1233,174 @@ pub extern "C" fn slc_rt_stack_words(sp: u64) -> u64 {
         rt.set_sp(sp as *mut u8);
         rt.stack_words()
     })
+}
+
+fn label_named(id: u64) -> String {
+    let start = LABELS_START.load(Ordering::Relaxed) as *const u8;
+    let stop = LABELS_STOP.load(Ordering::Relaxed) as *const u8;
+    if start.is_null() || stop.is_null() || stop <= start {
+        return format!("#{id}");
+    }
+    let mut cursor = start;
+    let mut index = 0u64;
+    while cursor < stop {
+        let mut end = cursor;
+        while end < stop && unsafe { *end } != 0 {
+            end = unsafe { end.add(1) };
+        }
+        if index == id {
+            let bytes =
+                unsafe { std::slice::from_raw_parts(cursor, end as usize - cursor as usize) };
+            return String::from_utf8_lossy(bytes).into_owned();
+        }
+        if end >= stop {
+            break;
+        }
+        index += 1;
+        cursor = unsafe { end.add(1) };
+    }
+    format!("#{id}")
+}
+
+fn bail(status: i32) -> ! {
+    unsafe {
+        std::arch::asm!(
+            "mov rsp, qword ptr [rip + {csp}]",
+            "mov eax, edi",
+            "ret",
+            csp = sym slc_c_sp,
+            in("edi") status,
+            options(noreturn),
+        );
+    }
+}
+
+fn fail_rt(err: RtError) -> ! {
+    eprintln!("{err}");
+    bail(1);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_capture(sp: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        rt.capture() as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_invoke(sp: u64, image: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        match rt.invoke(image as *const u8) {
+            Ok(()) => rt.sp() as u64,
+            Err(err) => fail_rt(err),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_resume(sp: u64, image: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        match rt.resume(image as *const u8) {
+            Ok(()) => rt.sp() as u64,
+            Err(err) => fail_rt(err),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_split(sp: u64, op_id: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        match rt.split_for_perform(op_id) {
+            Ok(()) => rt.sp() as u64,
+            Err(err) => fail_rt(err),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_resume_cont(sp: u64, image: u64) -> u64 {
+    // `rdi` is the live frame, the same as every other `slc_rt_*` entry. The
+    // continuation word is `rsi`.
+    let _ = sp;
+    with_runtime(|rt| rt.resume_cont(image as *const u8))
+}
+
+/// Tag of a heap object, or `0xffff` when `word` is not that object's address.
+/// A scalar must not be loaded as a header.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_word_tag(word: u64) -> u64 {
+    with_runtime(|rt| {
+        let Some(base) = rt.object_base(word) else {
+            return 0xffff;
+        };
+        if base as u64 != word {
+            return 0xffff;
+        }
+        let (tag, _, _) = unpack_meta(rt.object_header(base).meta);
+        u64::from(tag)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_grow_frame(sp: u64, words: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        match rt.grow_frame(words as u32) {
+            Ok(()) => rt.sp() as u64,
+            Err(err) => fail_rt(err),
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_exit(sp: u64, status: u64) -> ! {
+    let _ = sp;
+    let signed = status as i64;
+    if signed < i64::from(i32::MIN) || signed > i64::from(i32::MAX) {
+        eprintln!("error: type mismatch: EXIT status must fit in i32");
+        bail(1);
+    }
+    bail(signed as i32);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_write_line(sp: u64, text: u64) {
+    let _ = sp;
+    let handler = slc_answered_handler.load(Ordering::Relaxed);
+    let io = slc_io_frame.load(Ordering::Relaxed);
+    if handler == 0 || handler != io {
+        eprintln!("error: type mismatch: no handler for operation `write_line`");
+        bail(1);
+    }
+    let ptr = text as *const u8;
+    let len = read_u64(ptr, 16) as usize;
+    let bytes = unsafe { std::slice::from_raw_parts(ptr.add(32), len) };
+    let mut out = std::io::stdout().lock();
+    use std::io::Write;
+    let _ = out.write_all(bytes);
+    let _ = out.write_all(b"\n");
+    let _ = out.flush();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_sweep(sp: u64) {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        rt.watermark = 0;
+        rt.bytes_since_gc = 1;
+        rt.collect();
+        let live = rt.objects.iter().any(|obj| {
+            let (tag, _, _) = unpack_meta(rt.object_header(obj.ptr).meta);
+            tag == TAG_KONT
+        });
+        slc_kont_live.store(u64::from(live), Ordering::Relaxed);
+        rt.watermark = usize::MAX;
+        rt.publish_counters();
+    });
 }
 
 /// # Safety

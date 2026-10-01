@@ -3,6 +3,9 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use slc_abi::{FRAME_SLOT0, TAGGED_LABEL, TAGGED_PAYLOAD};
+use slc_core::command::Command as Cut;
+use slc_core::coterm::CoTerm;
+use slc_core::term::{DELAY_BINDER, Term};
 
 use crate::{Cond, Dest, Function, Inst, Module};
 
@@ -117,11 +120,15 @@ int main(void) {
 "#;
 
 fn link_run(object: &[u8]) -> (i32, PathBuf) {
-    let (code, _, dir) = link_run_fuel(object, "~(uint64_t)0");
+    let (code, _, _, dir) = link_run_fuel(object, "~(uint64_t)0");
     (code, dir)
 }
 
-fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, PathBuf) {
+fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, String, PathBuf) {
+    link_driver(object, &DRIVER.replace("~(uint64_t)0", fuel))
+}
+
+fn link_driver(object: &[u8], driver: &str) -> (i32, String, String, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
         "slc-native-{}-{}",
         std::process::id(),
@@ -130,7 +137,7 @@ fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, PathBuf) {
     std::fs::create_dir_all(&dir).unwrap();
     let object_path = dir.join("p.o");
     std::fs::write(&object_path, object).unwrap();
-    std::fs::write(dir.join("main.c"), DRIVER.replace("~(uint64_t)0", fuel)).unwrap();
+    std::fs::write(dir.join("main.c"), driver).unwrap();
     let exe = dir.join("p");
     let mut cmd = Command::new("cc");
     cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
@@ -147,7 +154,23 @@ fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, PathBuf) {
         String::from_utf8_lossy(&output.stderr)
     );
     let ran = Command::new(&exe).output().unwrap();
-    (ran.status.code().unwrap_or(127), String::from_utf8_lossy(&ran.stderr).into_owned(), dir)
+    let code = ran.status.code().unwrap_or_else(|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            128 + ran.status.signal().unwrap_or(0)
+        }
+        #[cfg(not(unix))]
+        {
+            127
+        }
+    });
+    (
+        code,
+        String::from_utf8_lossy(&ran.stdout).into_owned(),
+        String::from_utf8_lossy(&ran.stderr).into_owned(),
+        dir,
+    )
 }
 
 fn nm_text(path: &Path) -> String {
@@ -658,7 +681,336 @@ fn match_result_in_a_tag_or_tuple_is_a_root() {
 #[test]
 fn fuel_exhaustion_returns_the_diverged_diagnostic() {
     let compiled = pipeline("func main() -> i64 { 1 }");
-    let (status, stderr, _) = link_run_fuel(&compiled.object, "1");
+    let (status, _stdout, stderr, _) = link_run_fuel(&compiled.object, "1");
     assert_eq!(status, 1);
     assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "{stderr}");
+}
+
+const ENTRY_EXTERN: &str = r#"
+extern uint64_t slc_rt_start(
+    uint64_t fuel,
+    const void *safepoints_start, const void *safepoints_stop,
+    const void *maps_start, const void *maps_stop,
+    const void *text_start, const void *text_stop,
+    const void *scalars_start, const void *scalars_stop,
+    const void *ptrs_start, const void *ptrs_stop,
+    const void *labels_start, const void *labels_stop);
+extern char __start_slc_safepoints, __stop_slc_safepoints;
+extern char __start_slc_maps, __stop_slc_maps;
+extern char __start_slc_text, __stop_slc_text;
+extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
+extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
+extern char __start_slc_labels, __stop_slc_labels;
+"#;
+
+fn entry_call(fuel: &str) -> String {
+    format!(
+        "slc_rt_start(\n        {fuel},\n        \
+         &__start_slc_safepoints, &__stop_slc_safepoints,\n        \
+         &__start_slc_maps, &__stop_slc_maps,\n        \
+         &__start_slc_text, &__stop_slc_text,\n        \
+         &__start_slc_pool_scalars, &__stop_slc_pool_scalars,\n        \
+         &__start_slc_pool_ptrs, &__stop_slc_pool_ptrs,\n        \
+         &__start_slc_labels, &__stop_slc_labels)"
+    )
+}
+
+#[test]
+fn verdict_prints_big_through_the_live_io_prompt() {
+    let compiled = pipeline(
+        r#"
+        enum Bool { False, True }
+        hook IO { func write_line(text: String) -> (,); }
+        hook Judge { func judge(n: i64, ok: -String, bad: -String) -> (;); }
+        func gt(a: i64, b: i64) -> Bool { <(a, b) | __gt }
+        func println(x: String) -> (,) / {IO} { <x | write_line }
+        proc main | (exit: i32) / {IO} {
+            let verdict = do (mu String { k <= <(5, k, k) | judge> }) hn {
+                judge(n, ok, bad) => of (<(n, 3) | gt) {
+                    True => <"big" | ok>,
+                    False => <"small" | bad>,
+                },
+            };
+            <verdict | println;
+            <0 | exit>
+        }
+        "#,
+    );
+    assert!(compiled.module.functions.iter().any(|func| {
+        flat(func).iter().any(|inst| matches!(inst, Inst::CmpRR { cond: Cond::G, .. }))
+    }));
+    assert!(
+        compiled
+            .module
+            .functions
+            .iter()
+            .any(|func| { flat(func).iter().any(|inst| matches!(inst, Inst::Capture { .. })) })
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&compiled.object, "~(uint64_t)0");
+    assert_eq!(status, 0, "stderr: {stderr} stdout: {stdout}");
+    assert_eq!(stdout, "big\n", "stderr: {stderr}");
+}
+
+#[test]
+fn inner_prompt_splices_and_a_missing_prompt_is_foreign() {
+    let inner = pipeline(
+        r#"
+        hook In { func take() -> i64; }
+        hook Out { func skip() -> i64; }
+        func apply(k: -i64) -> i64 { <4 | k> }
+        func main() -> i64 {
+            do {
+                do {
+                    let+ k = mu { k <= k };
+                    <k | apply
+                } hn { take(): resume => 0 }
+            } hn { skip(): resume => 1 }
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&inner.object, "~(uint64_t)0");
+    assert_eq!(status, 4, "stdout: {stdout} stderr: {stderr}");
+
+    let foreign = pipeline(
+        r#"
+        hook Reader { func config() -> i64; }
+        func jump(k: -i64) -> i64 / {Reader} { <config() | k> }
+        func main() -> i64 {
+            let+ k = mu { k <= k };
+            do (<k | jump) hn { config(): resume => <7 | resume }
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&foreign.object, "~(uint64_t)0");
+    assert_eq!(status, 1, "stdout: {stdout} stderr: {stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("left the handler it was captured under"), "{stderr}");
+}
+
+#[test]
+fn tail_resume_keeps_a_constant_stack_depth() {
+    let compiled = pipeline(
+        r#"
+        hook Go { func go() -> i64; }
+        func spin() -> i64 / {Go} { let n = go(); spin() }
+        func main() -> i64 {
+            do (spin()) hn { go(): resume => <0 | resume }
+        }
+        "#,
+    );
+    let driver = format!(
+        r#"
+        #include <stdint.h>
+        #include <stdio.h>
+        {ENTRY_EXTERN}
+        extern uint64_t slc_resume_trace;
+        extern uint64_t slc_resume_log[8];
+        extern uint64_t slc_resume_log_len;
+        int main(void) {{
+            slc_resume_trace = 1;
+            uint64_t status = {call};
+            uint64_t n = slc_resume_log_len;
+            if (n < 2) {{
+                fprintf(stderr, "resumes %llu status %llu\n",
+                    (unsigned long long)n, (unsigned long long)status);
+                return 2;
+            }}
+            uint64_t last = n < 8 ? n - 1 : 7;
+            if (slc_resume_log[0] != slc_resume_log[last]) {{
+                fprintf(stderr, "depth %llu vs %llu n %llu status %llu\n",
+                    (unsigned long long)slc_resume_log[0],
+                    (unsigned long long)slc_resume_log[last],
+                    (unsigned long long)n,
+                    (unsigned long long)status);
+                return 3;
+            }}
+            return 0;
+        }}
+        "#,
+        call = entry_call("10000")
+    );
+    let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
+    assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");
+}
+
+#[test]
+fn lem_cycle_is_swept_after_the_roots_drop() {
+    let compiled = pipeline(
+        r#"
+        enum Choice { Holds(i64), Refutes(-i64) }
+        func lem() -> Choice {
+            mu { k <= <Choice::Refutes(mu i64 { a => <Choice::Holds(a) | k> }) | k> }
+        }
+        func main() -> i64 { let c = lem(); 0 }
+        "#,
+    );
+    let lem = compiled.module.function("lem");
+    assert!(flat(lem).iter().any(|inst| matches!(inst, Inst::Capture { .. })));
+    assert!(flat(lem).iter().any(|inst| matches!(inst, Inst::Invoke { .. })));
+    let driver = format!(
+        r#"
+        #include <stdint.h>
+        #include <stdio.h>
+        {ENTRY_EXTERN}
+        extern uint64_t slc_sweep_on_exit;
+        extern uint64_t slc_kont_live;
+        typedef struct {{
+            uint64_t collections;
+            uint64_t bytes_swept;
+            uint64_t objects_swept;
+        }} GcStats;
+        extern void slc_rt_gc_stats(uint64_t sp, GcStats *out);
+        int main(void) {{
+            slc_sweep_on_exit = 1;
+            uint64_t status = {call};
+            GcStats stats;
+            stats.collections = 0;
+            stats.bytes_swept = 0;
+            stats.objects_swept = 0;
+            slc_rt_gc_stats(0, &stats);
+            if (status != 0 || slc_kont_live != 0 || stats.bytes_swept == 0) {{
+                fprintf(stderr, "status %llu kont %llu swept %llu objs %llu\n",
+                    (unsigned long long)status,
+                    (unsigned long long)slc_kont_live,
+                    (unsigned long long)stats.bytes_swept,
+                    (unsigned long long)stats.objects_swept);
+                return 1;
+            }}
+            return 0;
+        }}
+        "#,
+        call = entry_call("~(uint64_t)0")
+    );
+    let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
+    assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");
+}
+
+#[test]
+fn fuel_zero_skips_slc_and_a_tail_loop_diverges_without_sigill() {
+    let trivial = pipeline("func main() -> i64 { 7 }");
+    let (status, stdout, stderr, _) = link_run_fuel(&trivial.object, "0");
+    assert_eq!(status, 1, "stdout: {stdout} stderr: {stderr}");
+    assert_ne!(status, 7);
+    assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "{stderr}");
+
+    let looped = pipeline(
+        r#"
+        hook Go { func go() -> i64; }
+        func spin() -> i64 / {Go} { let n = go(); spin() }
+        func main() -> i64 {
+            do (spin()) hn { go(): resume => <0 | resume }
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&looped.object, "200");
+    assert_ne!(status, 127, "stdout: {stdout} stderr: {stderr}");
+    assert_eq!(status, 1, "stdout: {stdout} stderr: {stderr}");
+    assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "{stderr}");
+}
+
+#[test]
+fn a_bound_delay_is_not_entered_and_force_uses_the_caller_handlers() {
+    let held = pipeline(
+        r#"
+        hook Ask { func ask() -> i64; }
+        func hold(x: (-> (i64 -> i64) / {Ask})) -> i64 { 7 }
+        func main() -> i64 {
+            <{ let n = ask(); fn(_: i64) -> i64 { n } } | hold
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&held.object, "~(uint64_t)0");
+    assert_eq!(status, 7, "stdout: {stdout} stderr: {stderr}");
+
+    let forced = pipeline(
+        r#"
+        hook Ask { func ask() -> i64; }
+        func hold(x: (-> (i64 -> i64) / {Ask})) -> i64 / {Ask} {
+            let+ y = x;
+            <0 | y
+        }
+        func main() -> i64 {
+            do (<{ let n = ask(); fn(_: i64) -> i64 { n } } | hold) hn {
+                ask(): resume => <4 | resume
+            }
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&forced.object, "~(uint64_t)0");
+    assert_eq!(status, 4, "stdout: {stdout} stderr: {stderr}");
+}
+
+#[test]
+fn adapt_calls_a_value_and_boxes_a_delay() {
+    let value = core_compile(vec![
+        ("adapter".into(), lam("x", var("$int_9"))),
+        (
+            "wrap".into(),
+            lam(
+                "__no_args",
+                mu_call(var("$adapt"), app(tuple(vec![var("adapter"), var("$int_0")]), "__call")),
+            ),
+        ),
+        ("main".into(), lam("__no_args", mu_call(var("wrap"), app(var("$unit"), "__call")))),
+    ]);
+    let (status, stdout, stderr, _) = link_run_fuel(&value.object, "~(uint64_t)0");
+    assert_eq!(status, 9, "stdout: {stdout} stderr: {stderr}");
+
+    let ask = mu_call(var("ask"), app(var("$unit"), "__call"));
+    let delayed = core_compile(vec![
+        ("adapter".into(), lam("x", ask.clone())),
+        (
+            "wrap".into(),
+            lam(
+                "__no_args",
+                mu_call(
+                    var("$adapt"),
+                    app(tuple(vec![var("adapter"), lam(DELAY_BINDER, ask)]), "__call"),
+                ),
+            ),
+        ),
+        (
+            "main".into(),
+            lam(
+                "__no_args",
+                Term::Mu(
+                    "let".into(),
+                    Box::new(Cut::Cut(
+                        mu_call(var("wrap"), app(var("$unit"), "__call")),
+                        CoTerm::MuTilde(
+                            "y".into(),
+                            Box::new(Cut::Cut(var("$int_3"), CoTerm::Covar("__tail".into()))),
+                        ),
+                    )),
+                ),
+            ),
+        ),
+    ]);
+    let (status, stdout, stderr, _) = link_run_fuel(&delayed.object, "~(uint64_t)0");
+    assert_eq!(status, 3, "stdout: {stdout} stderr: {stderr}");
+}
+
+fn core_compile(defs: Vec<(String, Term)>) -> crate::Compiled {
+    crate::compile(&defs, &[], &std::collections::HashMap::new())
+        .unwrap_or_else(|err| panic!("{err}"))
+}
+
+fn var(name: &str) -> Term {
+    Term::Var(name.to_string())
+}
+
+fn lam(param: &str, body: Term) -> Term {
+    Term::Lam(param.to_string(), Box::new(body))
+}
+
+fn tuple(items: Vec<Term>) -> Term {
+    Term::Tuple(items)
+}
+
+fn app(arg: Term, cont: &str) -> CoTerm {
+    CoTerm::App(arg, Box::new(CoTerm::Covar(cont.to_string())))
+}
+
+fn mu_call(callee: Term, coterm: CoTerm) -> Term {
+    Term::Mu("__call".into(), Box::new(Cut::Cut(callee, coterm)))
 }

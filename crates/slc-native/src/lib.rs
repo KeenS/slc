@@ -1,6 +1,8 @@
-//! Straight-line x86-64 for non-escaping code and both match forms.
+//! x86-64 for straight-line code, both match forms, and escaping captures.
 //!
 //! The ELF is machine code. The control-flow graph stays in this process.
+//! Capture, invoke, and resume call the runtime copier. The encoder does not
+//! copy frames itself.
 
 mod encode;
 mod lower;
@@ -26,6 +28,8 @@ pub enum Dest {
     Env,
     /// `r12`.
     Frame,
+    /// Named or scratch slot. Survives a runtime call; a virtual temp does not.
+    Slot(u16),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +119,98 @@ pub enum Inst {
         src: Dest,
         index: u32,
     },
+    /// Address of a compiled function. Not a pool slot.
+    LeaSym {
+        dst: Dest,
+        symbol: String,
+    },
+    /// Filled with that function's `frame_words` once inflation finishes.
+    SymWords {
+        dst: Dest,
+        symbol: String,
+    },
+    /// Filled with that function's stack-map id once maps are assigned.
+    SymMap {
+        dst: Dest,
+        symbol: String,
+    },
+    /// Compare two words. Used by the one inlined `__gt`.
+    CmpRR {
+        left: Dest,
+        right: Dest,
+        cond: Cond,
+        target: usize,
+    },
+    /// Escaping `μ`. The stack is not mutated. `dst` receives the `Kont`.
+    Capture {
+        dst: Dest,
+    },
+    /// `Kont::jump`, then deliver `VAL`. The image is the heap object.
+    Invoke {
+        image: Dest,
+    },
+    /// Append the slice. A tail resume pops only the body frame first.
+    Resume {
+        image: Dest,
+        tail: bool,
+    },
+    /// Push a prompt and call the handled thunk. `done` is offset 0 of the prompt.
+    InstallPrompt {
+        clauses: Dest,
+        ret_closure: Dest,
+        thunk: Dest,
+        done: usize,
+        prompt_map: u32,
+    },
+    /// The six perform steps. `after` receives a resumed value when this is not tail.
+    Perform {
+        op: u32,
+        op_name: String,
+        tail: bool,
+        arg_is_pointer: bool,
+        after: usize,
+        /// ApplyTo frame: slots 0 and 1, eleven words.
+        apply_map: u32,
+        /// Nine-word continuation under a non-tail perform. Traces `VAL` when the payload is a pointer.
+        cont_map: u32,
+    },
+    /// `slot` holds the delay or adapted object across the call. It is a traced slot.
+    Force {
+        tail: bool,
+        slot: u16,
+    },
+    /// Tuple of adapter and value sits in `slot` (and in `VAL` on entry).
+    Adapt {
+        slot: u16,
+        map_id: u32,
+    },
+    /// Indirect call. The closure object is `closure`; the argument is `VAL`.
+    CallClosure {
+        closure: Dest,
+        tail: bool,
+        arg_is_pointer: bool,
+    },
+    /// Tag dispatch for a consumer whose kind is not known statically.
+    Activate {
+        consumer: Dest,
+        tail: bool,
+        arg_is_pointer: bool,
+        apply_map: u32,
+    },
+    /// `rdi` is the frame. `arg` selects `VAL` or `ENV` for `rsi`.
+    CallRt {
+        symbol: String,
+        arg: RtArg,
+        noreturn: bool,
+    },
+}
+
+/// Which protocol register is the second argument of a runtime call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtArg {
+    Val,
+    Env,
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

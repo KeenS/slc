@@ -1,20 +1,22 @@
-//! Non-escaping straight-line code, and both match forms as a decision tree.
-//! A λ, a delay, or a constructor that closes over a μ is not this compiler.
+//! Straight-line code, both match forms, and escaping captures.
+//! Non-escaping `μ` stays `CallSlc`, `Tail`, or `Ret`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use slc_abi::{
-    CLOSURE_CODE, CLOSURE_ENV, FRAME_FRAME_WORDS, FRAME_SLOT0, MAP_EMPTY, SLC_PROGRAM_ENTRY,
-    TAG_DELAY, TAG_TAGGED, TAG_TUPLE, TAGGED_LABEL, TAGGED_PAYLOAD,
+    CLOSURE_CODE, CLOSURE_ENV, CLOSURE_FRAME_WORDS, FRAME_FRAME_WORDS, FRAME_SLOT0, MAP_EMPTY,
+    SLC_PROGRAM_ENTRY, STRING_BYTE_LEN, STRING_BYTES, STRING_CHAR_LEN, TAG_CLAUSES, TAG_CLOSURE,
+    TAG_DELAY, TAG_ENV, TAG_STRING, TAG_TAGGED, TAG_TUPLE, TAGGED_LABEL, TAGGED_PAYLOAD,
 };
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
+use slc_core::substitution::free_vars_term;
 use slc_core::term::{DELAY_BINDER, Term};
 use slc_core::types::{Base, Type};
 use slc_syntax::lower::Specialization;
 use slc_syntax::pattern::{self, Descriptor, Pat};
 
-use crate::{Block, Cond, Dest, Function, Inst, MapRecord, Module};
+use crate::{Block, Cond, Dest, Function, Inst, MapRecord, Module, RtArg};
 
 const SCRATCHES: u16 = 4;
 const MATCH_TEMPS: u16 = 8;
@@ -85,6 +87,20 @@ struct Builder {
     temp_used: u16,
     arm_bodies: Vec<Term>,
     current: String,
+    /// Co-variables whose cut is a return. `__tail` starts here.
+    forwards: HashSet<String>,
+    /// Names used as co-terms in the function being compiled. Those slots are pointers.
+    consumers: HashSet<String>,
+    lifted: Vec<Function>,
+    lift_index: u32,
+    type_stack: Vec<HashMap<String, Type>>,
+    apply_scalar: u32,
+    apply_ptr: u32,
+    prompt_map: u32,
+    cont_map: u32,
+    adapted_map: u32,
+    /// `main`'s body is `λexit`. Entry calls that closure with the exit stub.
+    proc_main: bool,
 }
 
 pub fn lower(
@@ -99,6 +115,8 @@ pub fn lower(
             funcs.push(builder.lower_fn(name, term)?);
         }
     }
+    funcs.append(&mut builder.lifted);
+    builder.push_io(&mut funcs);
     inflate(&mut funcs, &builder.edges);
     builder.assign_maps(&mut funcs);
     patch(&mut funcs);
@@ -107,7 +125,7 @@ pub fn lower(
         .find(|func| func.symbol == "main")
         .map(|func| func.frame_words)
         .ok_or_else(|| "no main".to_string())?;
-    funcs.push(builder.build_entry(main_words));
+    funcs.push(builder.build_entry(main_words, &funcs));
     Ok(Module {
         functions: funcs,
         labels: builder.labels,
@@ -164,6 +182,14 @@ fn patch(funcs: &mut [Function]) {
                         *frame_words = sizes[symbol];
                         *map_id = maps[symbol];
                     }
+                    Inst::SymWords { dst, symbol } => {
+                        let value = i64::from(sizes[symbol]);
+                        *inst = Inst::Imm { dst: *dst, value };
+                    }
+                    Inst::SymMap { dst, symbol } => {
+                        let value = i64::from(maps[symbol]);
+                        *inst = Inst::Imm { dst: *dst, value };
+                    }
                     _ => {}
                 }
             }
@@ -200,7 +226,320 @@ fn irrefutable(pat: &Pat) -> bool {
 }
 
 fn terminated(insts: &[Inst]) -> bool {
-    matches!(insts.last(), Some(Inst::Ret | Inst::Jmp { .. } | Inst::Tail { .. } | Inst::Ud2))
+    matches!(
+        insts.last(),
+        Some(
+            Inst::Ret
+                | Inst::Jmp { .. }
+                | Inst::Tail { .. }
+                | Inst::Ud2
+                | Inst::Invoke { .. }
+                | Inst::Resume { .. }
+                | Inst::Adapt { .. }
+                | Inst::InstallPrompt { .. }
+                | Inst::Perform { tail: true, .. }
+                | Inst::CallClosure { tail: true, .. }
+                | Inst::Activate { tail: true, .. }
+                | Inst::CallRt { noreturn: true, .. }
+        )
+    )
+}
+
+struct Suspended {
+    slots: HashMap<String, u16>,
+    pointer_slots: Vec<u16>,
+    blocks: Vec<Block>,
+    cur: usize,
+    join: Option<usize>,
+    scratch_base: u16,
+    scratch_top: u16,
+    temp_base: u16,
+    temp_used: u16,
+    arm_bodies: Vec<Term>,
+    current: String,
+    val_ptr: bool,
+    val_ty: Option<Type>,
+    forwards: HashSet<String>,
+    consumers: HashSet<String>,
+}
+
+/// `lem`: a tagged consumer whose body names the continuation being captured.
+struct Lem<'a> {
+    label: &'a str,
+    param: &'a str,
+    body: &'a Command,
+}
+
+fn hand_fn(
+    symbol: &str,
+    frame_words: u32,
+    val_is_pointer: bool,
+    pointer_slots: &[u16],
+    spill_base: u16,
+    insts: Vec<Inst>,
+) -> Function {
+    Function {
+        symbol: symbol.to_string(),
+        map_id: 0,
+        frame_words,
+        val_is_pointer,
+        pointer_slots: pointer_slots.to_vec(),
+        spill_base,
+        blocks: vec![Block { insts }],
+        entry: false,
+    }
+}
+
+fn func_layout(funcs: &[Function], symbol: &str) -> (u32, u32) {
+    let func = funcs.iter().find(|func| func.symbol == symbol).unwrap_or_else(|| {
+        panic!("missing {symbol}");
+    });
+    (func.frame_words, func.map_id)
+}
+
+/// `$str_` payload, quotes included. Same unescape order as the interpreter.
+fn decode_lit(text: &str) -> String {
+    let text = text.strip_prefix('"').and_then(|text| text.strip_suffix('"')).unwrap_or(text);
+    text.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
+fn escapes(name: &str, command: &Command) -> bool {
+    escape_command(name, command, false)
+}
+
+/// `inside` is a `λ`, a delay, or a constructor. A co-variable use there is closed over.
+fn escape_command(name: &str, command: &Command, inside: bool) -> bool {
+    let Command::Cut(term, coterm) = command;
+    escape_term(name, term, inside) || escape_coterm(name, coterm, inside)
+}
+
+fn escape_term(name: &str, term: &Term, inside: bool) -> bool {
+    match term {
+        Term::Var(var) => var == name,
+        Term::Lam(binder, body) => binder != name && escape_term(name, body, true),
+        // A nested `μ` is still this frame. It does not by itself close over `name`.
+        Term::Mu(binder, command) => binder != name && escape_command(name, command, inside),
+        Term::Tag(_, payload) => escape_term(name, payload, true),
+        Term::Tuple(items) => items.iter().any(|item| escape_term(name, item, true)),
+        Term::Co(coterm) => escape_coterm(name, coterm, true),
+        Term::CoMatch { branches, .. } => branches
+            .iter()
+            .any(|branch| branch.binder != name && escape_command(name, &branch.body, true)),
+    }
+}
+
+fn escape_coterm(name: &str, coterm: &CoTerm, inside: bool) -> bool {
+    match coterm {
+        CoTerm::Covar(var) => inside && var == name,
+        CoTerm::App(term, next) => {
+            escape_term(name, term, inside) || escape_coterm(name, next, inside)
+        }
+        CoTerm::MuTilde(binder, command) => binder != name && escape_command(name, command, inside),
+        CoTerm::MuTildeTensor(binders, command) => {
+            !binders.iter().any(|binder| binder == name) && escape_command(name, command, inside)
+        }
+        CoTerm::Prj(_) => false,
+        CoTerm::Dtor(_, next) => escape_coterm(name, next, inside),
+        CoTerm::CoCase { branches, .. } => branches.iter().any(|branch| {
+            !branch.binders.iter().any(|binder| binder == name)
+                && escape_command(name, &branch.body, inside)
+        }),
+    }
+}
+
+/// Co-variable uses, with binders of this term removed so a nested parameter
+/// does not mark a slot of the enclosing frame.
+fn covar_names(term: &Term) -> HashSet<String> {
+    let mut out = HashSet::new();
+    covar_term(term, &mut out);
+    out
+}
+
+fn covar_term(term: &Term, out: &mut HashSet<String>) {
+    match term {
+        Term::Var(_) => {}
+        Term::Lam(binder, body) => {
+            let mut inner = HashSet::new();
+            covar_term(body, &mut inner);
+            inner.remove(binder);
+            out.extend(inner);
+        }
+        Term::Mu(binder, command) => {
+            let mut inner = HashSet::new();
+            covar_command(command, &mut inner);
+            inner.remove(binder);
+            out.extend(inner);
+        }
+        Term::Tuple(items) => {
+            for item in items {
+                covar_term(item, out);
+            }
+        }
+        Term::Tag(_, payload) => covar_term(payload, out),
+        Term::Co(coterm) => covar_coterm(coterm, out),
+        Term::CoMatch { branches, .. } => {
+            for branch in branches {
+                let mut inner = HashSet::new();
+                covar_command(&branch.body, &mut inner);
+                inner.remove(&branch.binder);
+                out.extend(inner);
+            }
+        }
+    }
+}
+
+fn covar_coterm(coterm: &CoTerm, out: &mut HashSet<String>) {
+    match coterm {
+        CoTerm::Covar(name) => {
+            out.insert(name.clone());
+        }
+        CoTerm::App(term, next) => {
+            covar_term(term, out);
+            covar_coterm(next, out);
+        }
+        CoTerm::MuTilde(binder, command) => {
+            let mut inner = HashSet::new();
+            covar_command(command, &mut inner);
+            inner.remove(binder);
+            out.extend(inner);
+        }
+        CoTerm::MuTildeTensor(binders, command) => {
+            let mut inner = HashSet::new();
+            covar_command(command, &mut inner);
+            for binder in binders {
+                inner.remove(binder);
+            }
+            out.extend(inner);
+        }
+        CoTerm::Prj(_) => {}
+        CoTerm::Dtor(_, next) => covar_coterm(next, out),
+        CoTerm::CoCase { branches, .. } => {
+            for branch in branches {
+                let mut inner = HashSet::new();
+                covar_command(&branch.body, &mut inner);
+                for binder in &branch.binders {
+                    inner.remove(binder);
+                }
+                out.extend(inner);
+            }
+        }
+    }
+}
+
+fn covar_command(command: &Command, out: &mut HashSet<String>) {
+    let Command::Cut(term, coterm) = command;
+    covar_term(term, out);
+    covar_coterm(coterm, out);
+}
+
+fn param_is_pointer(param: &str, body: &Term) -> bool {
+    if param == DELAY_BINDER
+        || param == "__handle_thunk"
+        || param == "__op_arg"
+        || param == "__no_args"
+        || param == "__unused"
+    {
+        return false;
+    }
+    if covar_names(body).contains(param) || matches!(body, Term::Var(name) if name == param) {
+        return true;
+    }
+    cuts_tensor(param, body)
+}
+
+fn cuts_tensor(param: &str, term: &Term) -> bool {
+    match term {
+        Term::Var(_) => false,
+        Term::Lam(binder, body) => binder != param && cuts_tensor(param, body),
+        Term::Mu(binder, command) => binder != param && cuts_command_tensor(param, command),
+        Term::Tuple(items) => items.iter().any(|item| cuts_tensor(param, item)),
+        Term::Tag(_, payload) => cuts_tensor(param, payload),
+        Term::Co(coterm) => cuts_coterm_tensor(param, coterm),
+        Term::CoMatch { branches, .. } => branches
+            .iter()
+            .any(|branch| branch.binder != param && cuts_command_tensor(param, &branch.body)),
+    }
+}
+
+fn cuts_command_tensor(param: &str, command: &Command) -> bool {
+    let Command::Cut(term, coterm) = command;
+    if let (Term::Var(var), CoTerm::MuTildeTensor(_, _)) = (term, coterm)
+        && var == param
+    {
+        return true;
+    }
+    cuts_tensor(param, term) || cuts_coterm_tensor(param, coterm)
+}
+
+fn cuts_coterm_tensor(param: &str, coterm: &CoTerm) -> bool {
+    match coterm {
+        CoTerm::Covar(_) | CoTerm::Prj(_) => false,
+        CoTerm::App(term, next) => cuts_tensor(param, term) || cuts_coterm_tensor(param, next),
+        CoTerm::MuTilde(binder, command) => binder != param && cuts_command_tensor(param, command),
+        CoTerm::MuTildeTensor(binders, command) => {
+            !binders.iter().any(|binder| binder == param) && cuts_command_tensor(param, command)
+        }
+        CoTerm::Dtor(_, next) => cuts_coterm_tensor(param, next),
+        CoTerm::CoCase { branches, .. } => branches.iter().any(|branch| {
+            !branch.binders.iter().any(|binder| binder == param)
+                && cuts_command_tensor(param, &branch.body)
+        }),
+    }
+}
+
+/// `__handle` after `call_curried`: clauses first, then the thunk.
+fn handle_parts(term: &Term) -> Option<(&Term, &Term)> {
+    let Term::Mu(outer, outer_cmd) = term else { return None };
+    if outer != "__call" {
+        return None;
+    }
+    let Command::Cut(Term::Mu(inner, inner_cmd), CoTerm::App(thunk, outer_cont)) =
+        outer_cmd.as_ref()
+    else {
+        return None;
+    };
+    if inner != "__call" {
+        return None;
+    }
+    let CoTerm::Covar(outer_name) = outer_cont.as_ref() else { return None };
+    if outer_name != "__call" {
+        return None;
+    }
+    let Command::Cut(Term::Var(handle), CoTerm::App(clauses, inner_cont)) = inner_cmd.as_ref()
+    else {
+        return None;
+    };
+    if handle != "__handle" {
+        return None;
+    }
+    let CoTerm::Covar(inner_name) = inner_cont.as_ref() else { return None };
+    if inner_name != "__call" {
+        return None;
+    }
+    Some((clauses, thunk))
+}
+
+fn lem_shape<'a>(name: &str, command: &'a Command) -> Option<Lem<'a>> {
+    let mut command = command;
+    loop {
+        match command {
+            Command::Cut(Term::Mu(_, inner), CoTerm::Covar(cov)) if cov == name => {
+                command = inner;
+            }
+            Command::Cut(Term::Tag(label, payload), CoTerm::Covar(cov)) if cov == name => {
+                let Term::Co(coterm) = payload.as_ref() else { return None };
+                let CoTerm::MuTilde(param, body) = coterm.as_ref() else { return None };
+                let body = body.as_ref();
+                let mentioned =
+                    free_vars_term(&Term::Mu(String::new(), Box::new(body.clone()))).contains(name);
+                if !mentioned {
+                    return None;
+                }
+                return Some(Lem { label, param, body });
+            }
+            _ => return None,
+        }
+    }
 }
 
 impl Builder {
@@ -234,7 +573,19 @@ impl Builder {
             temp_used: 0,
             arm_bodies: Vec::new(),
             current: String::new(),
+            forwards: HashSet::new(),
+            consumers: HashSet::new(),
+            lifted: Vec::new(),
+            lift_index: 0,
+            type_stack: Vec::new(),
+            apply_scalar: 0,
+            apply_ptr: 0,
+            prompt_map: 0,
+            cont_map: 0,
+            adapted_map: 0,
+            proc_main: false,
         };
+        builder.prepare_maps();
         for (name, term) in defs {
             if let Term::Tag(label, payload) = term
                 && matches!(payload.as_ref(), Term::Var(unit) if unit == "$unit")
@@ -376,7 +727,34 @@ impl Builder {
     }
 
     fn word_ty(&self, name: &str) -> Option<&Type> {
+        for frame in self.type_stack.iter().rev() {
+            if let Some(ty) = frame.get(name) {
+                return Some(ty);
+            }
+        }
         self.fn_types.get(&self.current)?.get(name)
+    }
+
+    /// Prompt, continuation, and apply frames are fixed before any function map is numbered.
+    fn prepare_maps(&mut self) {
+        self.apply_scalar = self.push_frame_map(11, false, &[0, 1]);
+        self.apply_ptr = self.push_frame_map(11, true, &[0, 1]);
+        self.prompt_map = self.push_frame_map(13, true, &[0, 1, 2]);
+        self.cont_map = self.push_frame_map(9, true, &[]);
+        // Adapted stores the value at payload slot 1. The tag rule traces the adapter.
+        self.adapted_map = self.heap_map(&[1]);
+    }
+
+    fn push_frame_map(&mut self, words: u32, val_is_pointer: bool, slots: &[u16]) -> u32 {
+        let id = self.next_map;
+        self.next_map += 1;
+        self.maps.push(MapRecord {
+            map_id: id,
+            frame_words: words,
+            val_is_pointer,
+            slots: slots.to_vec(),
+        });
+        id
     }
 
     fn word_ptr(&self, name: &str) -> bool {
@@ -422,7 +800,7 @@ impl Builder {
     }
 
     fn mark_word(&mut self, name: &str, slot: u16, computed: bool) {
-        if computed || self.word_ptr(name) {
+        if computed || self.word_ptr(name) || self.consumers.contains(name) {
             self.pointer_slots.push(slot);
         }
     }
@@ -483,77 +861,26 @@ impl Builder {
         let Term::Lam(param, body) = term else {
             return Err(format!("{symbol} is not a function"));
         };
-        self.current = symbol.to_string();
-        self.slots.clear();
-        self.pointer_slots.clear();
-        self.blocks.clear();
-        self.join = None;
-        self.temp_used = 0;
-        self.arm_bodies.clear();
-        self.add_slot(param);
-        self.collect_term(body);
-        let named = self.slots.len() as u16;
-        self.scratch_base = named;
-        self.scratch_top = named;
-        self.temp_base = named + SCRATCHES;
-        let slot_count = named + SCRATCHES + MATCH_TEMPS;
-        for index in 0..SCRATCHES {
-            self.pointer_slots.push(self.scratch_base + index);
-        }
-        let param_ptr = self.func_param.get(symbol).copied().unwrap_or(false);
-        self.val_ptr = param_ptr;
-        if param_ptr && let Some(&slot) = self.slots.get(param.as_str()) {
-            self.pointer_slots.push(slot);
-        }
-        // `spill_base` is the untraced slot a scalar argument uses when `r13` would be traced.
-        let frame_words = 9 + u32::from(slot_count) + 1;
-        self.blocks.push(Block { insts: Vec::new() });
-        self.cur = 0;
-        // The encoder installs the map id before this block. Frame size has to be
-        // visible to the safepoint that follows the slot clears.
-        self.emit(Inst::Imm { dst: Dest::V(0), value: i64::from(frame_words) });
-        self.emit(Inst::Store {
-            src: Dest::V(0),
-            base: Dest::Frame,
-            offset: FRAME_FRAME_WORDS as i32,
-            width: 8,
-        });
-        for slot in 0..slot_count {
-            self.emit(Inst::Imm { dst: Dest::V(0), value: 0 });
-            self.store_slot(Dest::V(0), slot);
-        }
-        if let Some(&slot) = self.slots.get(param.as_str()) {
-            self.store_slot(Dest::Val, slot);
-        }
-        // Real id is filled in once frame maps exist. Zero aborts a collecting poll.
-        self.emit(Inst::Safepoint { map_id: 0 });
-        if let Term::Lam(inner, _) = body.as_ref()
-            && inner != DELAY_BINDER
+        // A proc is two lambdas. The outer one returns the closure entry calls with `exit`.
+        if symbol == "main" && matches!(body.as_ref(), Term::Lam(inner, _) if inner != DELAY_BINDER)
         {
-            return Err(format!("{symbol}: escaping closure"));
+            self.proc_main = true;
         }
-        self.compile_term(body, Mode::Tail)?;
-        self.finish(Mode::Tail);
-        Ok(Function {
-            symbol: symbol.to_string(),
-            map_id: 0,
-            frame_words,
-            val_is_pointer: param_ptr,
-            pointer_slots: std::mem::take(&mut self.pointer_slots),
-            spill_base: slot_count,
-            blocks: std::mem::take(&mut self.blocks),
-            entry: false,
-        })
+        let param_ptr =
+            self.func_param.get(symbol).copied().unwrap_or_else(|| param_is_pointer(param, body));
+        self.compile_function(symbol, param, param_ptr, body, &[])
     }
 
     fn collect_term(&mut self, term: &Term) {
         match term {
-            Term::Lam(name, body) if name != DELAY_BINDER => {
-                self.add_slot(name);
-                self.collect_term(body);
-            }
+            // A nested λ is its own frame. Its binders are not slots of this one.
             Term::Lam(_, _) => {}
-            Term::Mu(_, command) => self.collect_command(command),
+            Term::Mu(name, command) => {
+                if escapes(name, command) {
+                    self.add_slot(name);
+                }
+                self.collect_command(command);
+            }
             Term::Tag(_, payload) => self.collect_term(payload),
             Term::Tuple(items) => {
                 for item in items {
@@ -585,7 +912,16 @@ impl Builder {
         let Term::Tuple(items) = payload else { return false };
         for item in items {
             self.note_pattern_slots(item);
-            self.collect_term(item);
+            // Arm bodies are compiled inline, so their binders belong to this frame.
+            if let Term::Tag(label, inner) = item
+                && label == "__match_arm"
+                && let Term::Tuple(pair) = inner.as_ref()
+                && let Some(Term::Lam(_, body)) = pair.get(1)
+            {
+                self.collect_term(body);
+            } else {
+                self.collect_term(item);
+            }
         }
         true
     }
@@ -650,10 +986,13 @@ impl Builder {
     }
 
     fn compile_term(&mut self, term: &Term, mode: Mode) -> Result<bool, String> {
+        if let Some((clauses, thunk)) = handle_parts(term) {
+            return self.compile_handle(clauses, thunk, mode);
+        }
         match term {
             Term::Var(name) => self.compile_var(name, mode),
             Term::Lam(name, body) if name == DELAY_BINDER => self.compile_delay(body),
-            Term::Lam(_, _) => Err("escaping closure".into()),
+            Term::Lam(param, body) => self.compile_lambda(param, body, mode),
             Term::Tag(label, payload) => self.compile_tag(label, payload, mode),
             Term::Tuple(items) => self.compile_tuple(items, mode),
             Term::Mu(name, command) => self.compile_mu(name, command, mode),
@@ -666,7 +1005,7 @@ impl Builder {
     fn compile_command(&mut self, command: &Command, mode: Mode) -> Result<bool, String> {
         let Command::Cut(term, coterm) = command;
         match coterm {
-            CoTerm::Covar(_) => self.compile_term(term, mode),
+            CoTerm::Covar(name) => self.deliver(term, name, mode),
             CoTerm::CoCase { branches, .. } => self.compile_cocase(term, branches, mode),
             CoTerm::MuTildeTensor(binders, body) => self.compile_tensor(term, binders, body, mode),
             CoTerm::MuTilde(binder, body) => self.compile_bind(term, binder, body, mode),
@@ -677,6 +1016,33 @@ impl Builder {
     }
 
     fn compile_mu(&mut self, mu: &str, command: &Command, mode: Mode) -> Result<bool, String> {
+        if let Some(lem) = lem_shape(mu, command) {
+            return self.compile_lem(mu, lem);
+        }
+        if escapes(mu, command) {
+            let Some(&slot) = self.slots.get(mu) else {
+                return Err(format!("escaping {mu} has no slot"));
+            };
+            // The copy is taken before the slot is stored, so the image does not alias it.
+            self.emit(Inst::Capture { dst: Dest::Val });
+            self.store_slot(Dest::Val, slot);
+            self.mark_word(mu, slot, true);
+        }
+        // A cut against this binder is still the μ's own return. The heap copy is for later uses.
+        let fresh = self.forwards.insert(mu.to_string());
+        let result = self.compile_mu_command(mu, command, mode);
+        if fresh {
+            self.forwards.remove(mu);
+        }
+        result
+    }
+
+    fn compile_mu_command(
+        &mut self,
+        mu: &str,
+        command: &Command,
+        mode: Mode,
+    ) -> Result<bool, String> {
         let Command::Cut(value, coterm) = command;
         match coterm {
             CoTerm::MuTilde(binder, body) => self.compile_bind(value, binder, body, mode),
@@ -695,7 +1061,7 @@ impl Builder {
                 }
                 Err(format!("not a direct call in {mu}"))
             }
-            CoTerm::Covar(_) => self.compile_term(value, mode),
+            CoTerm::Covar(name) => self.deliver(value, name, mode),
             CoTerm::Prj(_) | CoTerm::Dtor(_, _) => Err("not straight-line".into()),
         }
     }
@@ -708,6 +1074,9 @@ impl Builder {
         mode: Mode,
     ) -> Result<bool, String> {
         let pointer = self.compile_term(value, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
         if let Some(&slot) = self.slots.get(binder) {
             self.store_slot(Dest::Val, slot);
             let kept = pointer || self.word_ptr(binder);
@@ -728,9 +1097,16 @@ impl Builder {
         } else if name == "$unit" {
             self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
             false
+        } else if let Some(text) = name.strip_prefix("$str_") {
+            self.emit_string(&decode_lit(text))?;
+            true
         } else if let Some(&index) = self.pool.get(name) {
             self.emit(Inst::LeaPool { dst: Dest::V(0), index });
             self.emit(Inst::Load { dst: Dest::Val, base: Dest::V(0), offset: 0, width: 8 });
+            true
+        } else if self.func_param.contains_key(name) {
+            // A known function used as a value is a closure, not a call.
+            self.emit_code_object(name, &[], 4, true)?;
             true
         } else if let Some(&slot) = self.slots.get(name) {
             self.load_slot(Dest::Val, slot);
@@ -744,32 +1120,13 @@ impl Builder {
         Ok(pointer)
     }
 
-    fn compile_delay(&mut self, _body: &Term) -> Result<bool, String> {
-        // Forcing is a later compiler. Entering the thunk is a bug in the test.
-        let code = self.new_block();
-        let saved = self.cur;
-        self.cur = code;
-        self.emit(Inst::Ud2);
-        self.cur = saved;
-        self.emit(Inst::LeaBlock { dst: Dest::V(0), block: code });
-        let scratch = self.push_scratch(Dest::V(0))?;
-        self.emit(Inst::CallAlloc { words: 2, tag: TAG_DELAY, map_id: MAP_EMPTY, dst: Dest::V(0) });
-        self.load_slot(Dest::V(1), scratch);
-        self.emit(Inst::Store {
-            src: Dest::V(1),
-            base: Dest::V(0),
-            offset: CLOSURE_CODE as i32,
-            width: 8,
-        });
-        self.emit(Inst::Imm { dst: Dest::V(1), value: 0 });
-        self.emit(Inst::Store {
-            src: Dest::V(1),
-            base: Dest::V(0),
-            offset: CLOSURE_ENV as i32,
-            width: 8,
-        });
-        self.pop_scratch();
-        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+    fn compile_delay(&mut self, body: &Term) -> Result<bool, String> {
+        let symbol = format!("{}__delay_{}", self.current, self.lift_index);
+        self.lift_index += 1;
+        let captures = self.capture_list(body);
+        // The body is not entered here. Force jumps to it with the caller's handlers.
+        self.lift_function(&symbol, DELAY_BINDER, false, body, &captures)?;
+        self.emit_code_object(&symbol, &captures, 3, false)?;
         Ok(true)
     }
 
@@ -857,8 +1214,25 @@ impl Builder {
         let Term::Var(symbol) = callee else {
             return Err("indirect call is not a test of this compiler".into());
         };
+        if symbol == "__gt" {
+            return self.compile_gt(arg, mode);
+        }
+        if symbol == "$force" {
+            return self.compile_force(arg, mode);
+        }
+        if symbol == "$adapt" {
+            return self.compile_adapt(arg);
+        }
         if !self.func_param.contains_key(symbol) {
-            return Err(format!("unknown function {symbol}"));
+            if self.slots.contains_key(symbol) {
+                return self.compile_indirect(symbol, arg, mode);
+            }
+            let pointer = self.compile_term(arg, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Ok(pointer);
+            }
+            let op = self.intern(symbol);
+            return self.emit_perform(op, symbol, mode == Mode::Tail, pointer);
         }
         self.compile_term(arg, Mode::Value)?;
         let param_ptr = self.func_param[symbol];
@@ -1448,6 +1822,746 @@ impl Builder {
         self.emit(Inst::InRange { src, lo, hi, fail });
     }
 
+    fn compile_function(
+        &mut self,
+        symbol: &str,
+        param: &str,
+        param_ptr: bool,
+        body: &Term,
+        captures: &[(String, bool)],
+    ) -> Result<Function, String> {
+        self.current = symbol.to_string();
+        self.slots.clear();
+        self.pointer_slots.clear();
+        self.blocks.clear();
+        self.join = None;
+        self.temp_used = 0;
+        self.arm_bodies.clear();
+        self.val_ty = None;
+        self.forwards.clear();
+        self.forwards.insert("__tail".to_string());
+        self.consumers = covar_names(body);
+        for (name, ptr) in captures {
+            self.add_slot(name);
+            if *ptr && let Some(&slot) = self.slots.get(name) {
+                self.pointer_slots.push(slot);
+            }
+        }
+        self.add_slot(param);
+        self.collect_term(body);
+        let named = self.slots.len() as u16;
+        self.scratch_base = named;
+        self.scratch_top = named;
+        self.temp_base = named + SCRATCHES;
+        let slot_count = named + SCRATCHES + MATCH_TEMPS;
+        for index in 0..SCRATCHES {
+            self.pointer_slots.push(self.scratch_base + index);
+        }
+        self.val_ptr = param_ptr;
+        if param_ptr && let Some(&slot) = self.slots.get(param) {
+            self.pointer_slots.push(slot);
+        }
+        let frame_words = 9 + u32::from(slot_count) + 1;
+        self.blocks.push(Block { insts: Vec::new() });
+        self.cur = 0;
+        self.emit(Inst::Imm { dst: Dest::V(0), value: i64::from(frame_words) });
+        self.emit(Inst::Store {
+            src: Dest::V(0),
+            base: Dest::Frame,
+            offset: FRAME_FRAME_WORDS as i32,
+            width: 8,
+        });
+        for slot in 0..slot_count {
+            self.emit(Inst::Imm { dst: Dest::V(0), value: 0 });
+            self.store_slot(Dest::V(0), slot);
+        }
+        if let Some(&slot) = self.slots.get(param) {
+            self.store_slot(Dest::Val, slot);
+        }
+        // Captures come from `r14` and must land before the first poll.
+        self.load_captures(captures);
+        self.emit(Inst::Safepoint { map_id: 0 });
+        let types = self.fn_types.get(symbol).cloned().unwrap_or_default();
+        self.type_stack.push(types);
+        let compiled = self.compile_term(body, Mode::Tail);
+        self.type_stack.pop();
+        compiled?;
+        self.finish(Mode::Tail);
+        let mut val_is_pointer = param_ptr;
+        let tail_ptr = self.blocks.iter().any(|block| {
+            block
+                .insts
+                .iter()
+                .any(|inst| matches!(inst, Inst::Perform { tail: true, arg_is_pointer: true, .. }))
+        });
+        if tail_ptr {
+            val_is_pointer = true;
+        }
+        Ok(Function {
+            symbol: symbol.to_string(),
+            map_id: 0,
+            frame_words,
+            val_is_pointer,
+            pointer_slots: std::mem::take(&mut self.pointer_slots),
+            spill_base: slot_count,
+            blocks: std::mem::take(&mut self.blocks),
+            entry: false,
+        })
+    }
+
+    fn load_captures(&mut self, captures: &[(String, bool)]) {
+        if captures.is_empty() {
+            return;
+        }
+        if captures.len() == 1 && captures[0].1 {
+            if let Some(&slot) = self.slots.get(&captures[0].0) {
+                self.store_slot(Dest::Env, slot);
+            }
+            return;
+        }
+        for (index, (name, _)) in captures.iter().enumerate() {
+            if let Some(&slot) = self.slots.get(name) {
+                self.emit(Inst::Load {
+                    dst: Dest::V(0),
+                    base: Dest::Env,
+                    offset: 16 + 8 * index as i32,
+                    width: 8,
+                });
+                self.store_slot(Dest::V(0), slot);
+            }
+        }
+    }
+
+    fn lift_function(
+        &mut self,
+        symbol: &str,
+        param: &str,
+        param_ptr: bool,
+        body: &Term,
+        captures: &[(String, bool)],
+    ) -> Result<(), String> {
+        let saved = self.suspend();
+        let result = self.compile_function(symbol, param, param_ptr, body, captures);
+        self.restore(saved);
+        self.lifted.push(result?);
+        Ok(())
+    }
+
+    fn suspend(&mut self) -> Suspended {
+        Suspended {
+            slots: std::mem::take(&mut self.slots),
+            pointer_slots: std::mem::take(&mut self.pointer_slots),
+            blocks: std::mem::take(&mut self.blocks),
+            cur: self.cur,
+            join: self.join.take(),
+            scratch_base: self.scratch_base,
+            scratch_top: self.scratch_top,
+            temp_base: self.temp_base,
+            temp_used: self.temp_used,
+            arm_bodies: std::mem::take(&mut self.arm_bodies),
+            current: std::mem::take(&mut self.current),
+            val_ptr: self.val_ptr,
+            val_ty: self.val_ty.take(),
+            forwards: std::mem::take(&mut self.forwards),
+            consumers: std::mem::take(&mut self.consumers),
+        }
+    }
+
+    fn restore(&mut self, saved: Suspended) {
+        self.slots = saved.slots;
+        self.pointer_slots = saved.pointer_slots;
+        self.blocks = saved.blocks;
+        self.cur = saved.cur;
+        self.join = saved.join;
+        self.scratch_base = saved.scratch_base;
+        self.scratch_top = saved.scratch_top;
+        self.temp_base = saved.temp_base;
+        self.temp_used = saved.temp_used;
+        self.arm_bodies = saved.arm_bodies;
+        self.current = saved.current;
+        self.val_ptr = saved.val_ptr;
+        self.val_ty = saved.val_ty;
+        self.forwards = saved.forwards;
+        self.consumers = saved.consumers;
+    }
+
+    fn capture_list(&self, term: &Term) -> Vec<(String, bool)> {
+        let mut names: Vec<String> =
+            free_vars_term(term).into_iter().filter(|name| self.slots.contains_key(name)).collect();
+        names.sort();
+        let covars = covar_names(term);
+        names
+            .into_iter()
+            .map(|name| {
+                let slot = self.slots[&name];
+                let ptr = self.pointer_slots.contains(&slot)
+                    || self.word_ptr(&name)
+                    || covars.contains(&name);
+                (name, ptr)
+            })
+            .collect()
+    }
+
+    fn compile_lambda(&mut self, param: &str, body: &Term, mode: Mode) -> Result<bool, String> {
+        let symbol = format!("{}__lam_{}", self.current, self.lift_index);
+        self.lift_index += 1;
+        let whole = Term::Lam(param.to_string(), Box::new(body.clone()));
+        let captures = self.capture_list(&whole);
+        let param_ptr = param_is_pointer(param, body);
+        self.lift_function(&symbol, param, param_ptr, body, &captures)?;
+        self.emit_code_object(&symbol, &captures, 4, true)?;
+        if mode == Mode::Tail {
+            self.finish(Mode::Tail);
+        }
+        Ok(true)
+    }
+
+    /// `words` is 4 for a closure (code, env, frame size, map) and 3 for a delay.
+    fn emit_code_object(
+        &mut self,
+        symbol: &str,
+        captures: &[(String, bool)],
+        words: u32,
+        closure: bool,
+    ) -> Result<(), String> {
+        let env_slot = self.materialize_env(captures)?;
+        let tag = if closure { TAG_CLOSURE } else { TAG_DELAY };
+        self.emit(Inst::CallAlloc { words, tag, map_id: MAP_EMPTY, dst: Dest::V(0) });
+        self.emit(Inst::LeaSym { dst: Dest::V(1), symbol: symbol.to_string() });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_CODE as i32,
+            width: 8,
+        });
+        if let Some(slot) = env_slot {
+            self.load_slot(Dest::V(1), slot);
+        } else {
+            self.emit(Inst::Imm { dst: Dest::V(1), value: 0 });
+        }
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_ENV as i32,
+            width: 8,
+        });
+        self.emit(Inst::SymWords { dst: Dest::V(1), symbol: symbol.to_string() });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_FRAME_WORDS as i32,
+            width: 8,
+        });
+        if closure {
+            // The collector reads this id when the closure's frame is entered.
+            self.emit(Inst::SymMap { dst: Dest::V(1), symbol: symbol.to_string() });
+            self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 });
+        }
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        if env_slot.is_some() {
+            self.pop_scratch();
+        }
+        Ok(())
+    }
+
+    fn materialize_env(&mut self, captures: &[(String, bool)]) -> Result<Option<u16>, String> {
+        if captures.is_empty() {
+            return Ok(None);
+        }
+        if captures.len() == 1 && captures[0].1 {
+            let slot = self.slots[&captures[0].0];
+            self.load_slot(Dest::Val, slot);
+            return Ok(Some(self.push_scratch(Dest::Val)?));
+        }
+        let mut ptrs = Vec::new();
+        let mut saved = Vec::new();
+        for (index, (name, ptr)) in captures.iter().enumerate() {
+            let slot = self.slots[name];
+            self.load_slot(Dest::Val, slot);
+            let hold = if *ptr {
+                ptrs.push(index as u16);
+                self.push_scratch(Dest::Val)?
+            } else {
+                let temp = self.alloc_temp(false)?;
+                self.store_slot(Dest::Val, temp);
+                temp
+            };
+            saved.push((hold, *ptr));
+        }
+        let map = self.heap_map(&ptrs);
+        self.emit(Inst::CallAlloc {
+            words: captures.len() as u32,
+            tag: TAG_ENV,
+            map_id: map,
+            dst: Dest::V(0),
+        });
+        for (index, (hold, _)) in saved.iter().enumerate() {
+            self.load_slot(Dest::V(1), *hold);
+            self.emit(Inst::Store {
+                src: Dest::V(1),
+                base: Dest::V(0),
+                offset: 16 + 8 * index as i32,
+                width: 8,
+            });
+        }
+        for (_, ptr) in saved.iter().rev() {
+            if *ptr {
+                self.pop_scratch();
+            }
+        }
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        Ok(Some(self.push_scratch(Dest::Val)?))
+    }
+
+    fn emit_string(&mut self, text: &str) -> Result<(), String> {
+        let bytes = text.as_bytes();
+        let chunks = bytes.len().div_ceil(8);
+        self.emit(Inst::CallAlloc {
+            words: 2 + chunks as u32,
+            tag: TAG_STRING,
+            map_id: MAP_EMPTY,
+            dst: Dest::V(0),
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: bytes.len() as i64 });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: STRING_BYTE_LEN as i32,
+            width: 8,
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: text.chars().count() as i64 });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: STRING_CHAR_LEN as i32,
+            width: 8,
+        });
+        for (index, chunk) in bytes.chunks(8).enumerate() {
+            let mut word = 0u64;
+            for (place, byte) in chunk.iter().enumerate() {
+                word |= u64::from(*byte) << (8 * place);
+            }
+            self.emit(Inst::Imm { dst: Dest::V(1), value: word as i64 });
+            self.emit(Inst::Store {
+                src: Dest::V(1),
+                base: Dest::V(0),
+                offset: STRING_BYTES as i32 + 8 * index as i32,
+                width: 8,
+            });
+        }
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        Ok(())
+    }
+
+    fn deliver(&mut self, value: &Term, covar: &str, mode: Mode) -> Result<bool, String> {
+        if self.forwards.contains(covar) {
+            return self.compile_term(value, mode);
+        }
+        let pointer = self.compile_term(value, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
+        if let Some(&slot) = self.slots.get(covar) {
+            let apply_map = if pointer { self.apply_ptr } else { self.apply_scalar };
+            self.emit(Inst::Activate {
+                consumer: Dest::Slot(slot),
+                tail: mode == Mode::Tail,
+                arg_is_pointer: pointer,
+                apply_map,
+            });
+            return Ok(false);
+        }
+        let op = self.intern(covar);
+        self.emit_perform(op, covar, mode == Mode::Tail, pointer)
+    }
+
+    fn emit_perform(
+        &mut self,
+        op: u32,
+        name: &str,
+        tail: bool,
+        arg_ptr: bool,
+    ) -> Result<bool, String> {
+        // The payload has to be a root while `split` polls. A scalar stays in `r13`.
+        if arg_ptr {
+            self.push_scratch(Dest::Val)?;
+        }
+        let after = if tail { 0 } else { self.new_block() };
+        self.emit(Inst::Perform {
+            op,
+            op_name: name.to_string(),
+            tail,
+            arg_is_pointer: arg_ptr,
+            after,
+            apply_map: if arg_ptr { self.apply_ptr } else { self.apply_scalar },
+            cont_map: self.cont_map,
+        });
+        if !tail {
+            self.cur = after;
+            if arg_ptr {
+                self.pop_scratch();
+            }
+        }
+        Ok(false)
+    }
+
+    fn compile_gt(&mut self, arg: &Term, mode: Mode) -> Result<bool, String> {
+        self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(false);
+        }
+        self.emit(Inst::Load { dst: Dest::V(0), base: Dest::Val, offset: 24, width: 8 });
+        self.emit(Inst::Load { dst: Dest::V(1), base: Dest::Val, offset: 32, width: 8 });
+        let yes = self.new_block();
+        let no = self.new_block();
+        self.emit(Inst::CmpRR { left: Dest::V(0), right: Dest::V(1), cond: Cond::G, target: yes });
+        self.emit(Inst::Jmp { target: no });
+        let join = match mode {
+            Mode::Value => Some(self.new_block()),
+            Mode::Tail => None,
+        };
+        self.cur = yes;
+        self.load_pool("Bool::True")?;
+        self.finish_branch(mode, join);
+        self.cur = no;
+        self.load_pool("Bool::False")?;
+        self.finish_branch(mode, join);
+        if let Some(join) = join {
+            self.cur = join;
+        }
+        Ok(true)
+    }
+
+    fn finish_branch(&mut self, mode: Mode, join: Option<usize>) {
+        if terminated(&self.blocks[self.cur].insts) {
+            return;
+        }
+        match mode {
+            Mode::Tail => self.emit(Inst::Ret),
+            Mode::Value => {
+                if let Some(join) = join {
+                    self.emit(Inst::Jmp { target: join });
+                }
+            }
+        }
+    }
+
+    fn load_pool(&mut self, name: &str) -> Result<(), String> {
+        let index = *self.pool.get(name).ok_or_else(|| format!("missing {name}"))?;
+        self.emit(Inst::LeaPool { dst: Dest::V(0), index });
+        self.emit(Inst::Load { dst: Dest::Val, base: Dest::V(0), offset: 0, width: 8 });
+        Ok(())
+    }
+
+    fn compile_force(&mut self, arg: &Term, mode: Mode) -> Result<bool, String> {
+        self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(false);
+        }
+        let slot = self.push_scratch(Dest::Val)?;
+        self.emit(Inst::Force { tail: mode == Mode::Tail, slot });
+        if mode != Mode::Tail {
+            self.pop_scratch();
+        }
+        // The result may be the closure a delay returns. A scalar is not an object.
+        Ok(true)
+    }
+
+    fn compile_adapt(&mut self, arg: &Term) -> Result<bool, String> {
+        self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(true);
+        }
+        let slot = self.push_scratch(Dest::Val)?;
+        self.emit(Inst::Adapt { slot, map_id: self.adapted_map });
+        Ok(true)
+    }
+
+    fn compile_indirect(&mut self, symbol: &str, arg: &Term, mode: Mode) -> Result<bool, String> {
+        let slot = self.slots[symbol];
+        let pointer = self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
+        if pointer {
+            self.push_scratch(Dest::Val)?;
+        }
+        // A slot may be a closure, a `Resume`, or a `Kont`. The tag decides.
+        let apply_map = if pointer { self.apply_ptr } else { self.apply_scalar };
+        self.emit(Inst::Activate {
+            consumer: Dest::Slot(slot),
+            tail: mode == Mode::Tail,
+            arg_is_pointer: pointer,
+            apply_map,
+        });
+        if pointer && mode != Mode::Tail {
+            self.pop_scratch();
+        }
+        Ok(false)
+    }
+
+    fn compile_handle(
+        &mut self,
+        clauses: &Term,
+        thunk: &Term,
+        _mode: Mode,
+    ) -> Result<bool, String> {
+        let Term::Tag(tag, inner) = clauses else {
+            return Err("handler clauses".into());
+        };
+        if tag != "__clauses" {
+            return Err("handler clauses".into());
+        }
+        let Term::Tuple(entries) = inner.as_ref() else {
+            return Err("handler clauses".into());
+        };
+        let saved = self.scratch_top;
+        let mut pairs = Vec::new();
+        for entry in entries {
+            let Term::Tuple(pair) = entry else {
+                return Err("clause pair".into());
+            };
+            let (Term::Var(label), closure) = (&pair[0], &pair[1]) else {
+                return Err("clause pair".into());
+            };
+            let op = decode_lit(label.strip_prefix("$str_").unwrap_or(label));
+            self.compile_term(closure, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Err("clause did not produce a closure".into());
+            }
+            let slot = self.push_scratch(Dest::Val)?;
+            pairs.push((op, slot));
+        }
+        let ptr_slots: Vec<u16> = (0..pairs.len()).map(|index| 2 + index as u16 * 2).collect();
+        let map = if ptr_slots.is_empty() { MAP_EMPTY } else { self.heap_map(&ptr_slots) };
+        self.emit(Inst::CallAlloc {
+            words: 1 + pairs.len() as u32 * 2,
+            tag: TAG_CLAUSES,
+            map_id: map,
+            dst: Dest::V(0),
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: pairs.len() as i64 });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
+        let mut ret_slot = None;
+        for (index, (op, slot)) in pairs.iter().enumerate() {
+            let id = i64::from(self.intern(op));
+            self.emit(Inst::Imm { dst: Dest::V(1), value: id });
+            self.emit(Inst::Store {
+                src: Dest::V(1),
+                base: Dest::V(0),
+                offset: 24 + 16 * index as i32,
+                width: 8,
+            });
+            self.load_slot(Dest::V(1), *slot);
+            self.emit(Inst::Store {
+                src: Dest::V(1),
+                base: Dest::V(0),
+                offset: 32 + 16 * index as i32,
+                width: 8,
+            });
+            if op == "return" {
+                ret_slot = Some(*slot);
+            }
+        }
+        let Some(ret_slot) = ret_slot else {
+            return Err("handler has no return clause".into());
+        };
+        let clauses_slot = self.push_scratch(Dest::V(0))?;
+        self.compile_term(thunk, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Err("handler thunk".into());
+        }
+        let thunk_slot = self.push_scratch(Dest::Val)?;
+        let done = self.new_block();
+        self.emit(Inst::InstallPrompt {
+            clauses: Dest::Slot(clauses_slot),
+            ret_closure: Dest::Slot(ret_slot),
+            thunk: Dest::Slot(thunk_slot),
+            done,
+            prompt_map: self.prompt_map,
+        });
+        self.cur = done;
+        self.scratch_top = saved;
+        Ok(false)
+    }
+
+    fn compile_lem(&mut self, name: &str, lem: Lem<'_>) -> Result<bool, String> {
+        let symbol = format!("{}__lam_{}", self.current, self.lift_index);
+        self.lift_index += 1;
+        let body = Term::Mu("__tail".into(), Box::new(lem.body.clone()));
+        // One pointer capture: the continuation, filled in after the copy exists.
+        let captures = vec![(name.to_string(), true)];
+        self.lift_function(&symbol, lem.param, false, &body, &captures)?;
+        self.emit_code_object(&symbol, &[], 4, true)?;
+        let closure_slot = self.push_scratch(Dest::Val)?;
+        let id = self.intern(lem.label);
+        let map = self.heap_map(&[1]);
+        self.emit(Inst::CallAlloc { words: 2, tag: TAG_TAGGED, map_id: map, dst: Dest::V(0) });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(id) });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_LABEL as i32,
+            width: 8,
+        });
+        self.load_slot(Dest::V(1), closure_slot);
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_PAYLOAD as i32,
+            width: 8,
+        });
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        let tagged_slot = self.push_scratch(Dest::Val)?;
+        let Some(&kslot) = self.slots.get(name) else {
+            return Err(format!("escaping {name} has no slot"));
+        };
+        // The tagged word is already in a traced slot, so the copy holds the cycle.
+        self.emit(Inst::Capture { dst: Dest::Val });
+        self.store_slot(Dest::Val, kslot);
+        self.mark_word(name, kslot, true);
+        self.load_slot(Dest::V(0), closure_slot);
+        self.emit(Inst::Store {
+            src: Dest::Val,
+            base: Dest::V(0),
+            offset: CLOSURE_ENV as i32,
+            width: 8,
+        });
+        self.load_slot(Dest::Val, tagged_slot);
+        self.emit(Inst::Invoke { image: Dest::Slot(kslot) });
+        Ok(true)
+    }
+
+    fn push_io(&mut self, funcs: &mut Vec<Function>) {
+        funcs.push(self.io_return());
+        funcs.push(self.io_line_inner());
+        funcs.push(self.io_line_outer());
+        funcs.push(self.exit_stub());
+    }
+
+    fn io_return(&self) -> Function {
+        // The string result stays in `r13`. Tracing `VAL` keeps it across the prologue poll.
+        hand_fn(
+            "slc_io_return",
+            10,
+            true,
+            &[],
+            0,
+            vec![
+                Inst::Imm { dst: Dest::V(0), value: 10 },
+                Inst::Store {
+                    src: Dest::V(0),
+                    base: Dest::Frame,
+                    offset: FRAME_FRAME_WORDS as i32,
+                    width: 8,
+                },
+                Inst::Safepoint { map_id: 0 },
+                Inst::Ret,
+            ],
+        )
+    }
+
+    fn io_line_inner(&self) -> Function {
+        hand_fn(
+            "slc_io_line_inner",
+            11,
+            true,
+            &[0],
+            1,
+            vec![
+                Inst::Imm { dst: Dest::V(0), value: 11 },
+                Inst::Store {
+                    src: Dest::V(0),
+                    base: Dest::Frame,
+                    offset: FRAME_FRAME_WORDS as i32,
+                    width: 8,
+                },
+                Inst::Imm { dst: Dest::V(0), value: 0 },
+                Inst::Store { src: Dest::V(0), base: Dest::Frame, offset: slot_off(0), width: 8 },
+                Inst::Store { src: Dest::Val, base: Dest::Frame, offset: slot_off(0), width: 8 },
+                Inst::Safepoint { map_id: 0 },
+                Inst::CallRt {
+                    symbol: "slc_rt_write_line".into(),
+                    arg: RtArg::Env,
+                    noreturn: false,
+                },
+                Inst::Imm { dst: Dest::Val, value: 0 },
+                Inst::Resume { image: Dest::Slot(0), tail: true },
+            ],
+        )
+    }
+
+    fn io_line_outer(&self) -> Function {
+        let symbol = "slc_io_line_inner";
+        hand_fn(
+            "slc_io_line_outer",
+            11,
+            true,
+            &[0],
+            1,
+            vec![
+                Inst::Imm { dst: Dest::V(0), value: 11 },
+                Inst::Store {
+                    src: Dest::V(0),
+                    base: Dest::Frame,
+                    offset: FRAME_FRAME_WORDS as i32,
+                    width: 8,
+                },
+                Inst::Imm { dst: Dest::V(0), value: 0 },
+                Inst::Store { src: Dest::V(0), base: Dest::Frame, offset: slot_off(0), width: 8 },
+                Inst::Store { src: Dest::Val, base: Dest::Frame, offset: slot_off(0), width: 8 },
+                Inst::Safepoint { map_id: 0 },
+                Inst::CallAlloc { words: 4, tag: TAG_CLOSURE, map_id: MAP_EMPTY, dst: Dest::V(0) },
+                Inst::LeaSym { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: CLOSURE_CODE as i32,
+                    width: 8,
+                },
+                Inst::Load { dst: Dest::V(1), base: Dest::Frame, offset: slot_off(0), width: 8 },
+                Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: CLOSURE_ENV as i32,
+                    width: 8,
+                },
+                Inst::SymWords { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: CLOSURE_FRAME_WORDS as i32,
+                    width: 8,
+                },
+                Inst::SymMap { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 },
+                Inst::Mov { dst: Dest::Val, src: Dest::V(0) },
+                Inst::Ret,
+            ],
+        )
+    }
+
+    fn exit_stub(&self) -> Function {
+        hand_fn(
+            "slc_exit_stub",
+            9,
+            false,
+            &[],
+            0,
+            vec![
+                Inst::Imm { dst: Dest::V(0), value: 9 },
+                Inst::Store {
+                    src: Dest::V(0),
+                    base: Dest::Frame,
+                    offset: FRAME_FRAME_WORDS as i32,
+                    width: 8,
+                },
+                Inst::Safepoint { map_id: 0 },
+                Inst::CallRt { symbol: "slc_rt_exit".into(), arg: RtArg::Val, noreturn: true },
+            ],
+        )
+    }
+
     fn assign_maps(&mut self, funcs: &mut [Function]) {
         for func in funcs {
             func.pointer_slots.sort_unstable();
@@ -1463,7 +2577,8 @@ impl Builder {
         }
     }
 
-    fn build_entry(&mut self, main_words: u32) -> Function {
+    /// IO prompt: clauses, return closure, traced scratch, untraced park.
+    fn build_entry(&mut self, main_words: u32, funcs: &[Function]) -> Function {
         self.blocks.clear();
         self.blocks.push(Block { insts: Vec::new() });
         self.cur = 0;
@@ -1491,22 +2606,92 @@ impl Builder {
             });
             self.emit(Inst::StorePool { src: Dest::V(0), index });
         }
+        let (ret_words, ret_map) = func_layout(funcs, "slc_io_return");
+        let (outer_words, outer_map) = func_layout(funcs, "slc_io_line_outer");
+        self.emit_raw_closure("slc_io_return", ret_words, ret_map);
+        self.store_slot(Dest::Val, 1);
+        self.emit_raw_closure("slc_io_line_outer", outer_words, outer_map);
+        self.store_slot(Dest::Val, 2);
+        let write_line = self.intern("write_line");
+        let ret_op = self.intern("return");
+        let clauses_map = self.heap_map(&[2, 4]);
+        self.emit(Inst::CallAlloc {
+            words: 5,
+            tag: TAG_CLAUSES,
+            map_id: clauses_map,
+            dst: Dest::V(0),
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: 2 });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(write_line) });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 24, width: 8 });
+        self.load_slot(Dest::V(1), 2);
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 32, width: 8 });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(ret_op) });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 });
+        self.load_slot(Dest::V(1), 1);
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 48, width: 8 });
+        self.store_slot(Dest::V(0), 0);
         self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
         self.emit(Inst::CallSlc {
             symbol: "main".into(),
             callee_frame_words: main_words,
             arg_is_pointer: false,
         });
+        if self.proc_main {
+            // `main` returned `λexit`. A tail jump would reuse the IO prompt as that frame.
+            self.store_slot(Dest::Val, 2);
+            let (exit_words, exit_map) = func_layout(funcs, "slc_exit_stub");
+            self.emit_raw_closure("slc_exit_stub", exit_words, exit_map);
+            self.emit(Inst::CallClosure {
+                closure: Dest::Slot(2),
+                tail: false,
+                arg_is_pointer: true,
+            });
+        }
         Function {
             symbol: SLC_PROGRAM_ENTRY.to_string(),
-            map_id: MAP_EMPTY,
-            frame_words: 9,
-            val_is_pointer: false,
-            pointer_slots: Vec::new(),
-            spill_base: 0,
+            map_id: self.prompt_map,
+            frame_words: 13,
+            val_is_pointer: true,
+            pointer_slots: vec![0, 1, 2],
+            spill_base: 3,
             blocks: std::mem::take(&mut self.blocks),
             entry: true,
         }
+    }
+
+    fn emit_raw_closure(&mut self, symbol: &str, words: u32, map_id: u32) {
+        self.emit(Inst::CallAlloc {
+            words: 4,
+            tag: TAG_CLOSURE,
+            map_id: MAP_EMPTY,
+            dst: Dest::V(0),
+        });
+        self.emit(Inst::LeaSym { dst: Dest::V(1), symbol: symbol.to_string() });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_CODE as i32,
+            width: 8,
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: 0 });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_ENV as i32,
+            width: 8,
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(words) });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: CLOSURE_FRAME_WORDS as i32,
+            width: 8,
+        });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(map_id) });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 });
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
     }
 }
 

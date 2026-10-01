@@ -88,7 +88,9 @@ impl Encoder {
             self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
             self.zero(R13);
             self.zero(R14);
-            self.zero(RBX);
+            // The IO prompt is the handler chain. Zeroing rbx would hide `write_line`.
+            self.rr(true, 0x89, R12, RBX);
+            self.set_map(func.map_id);
         } else {
             assert!(func.map_id != 0, "{}", func.symbol);
             self.set_map(func.map_id);
@@ -100,6 +102,19 @@ impl Encoder {
             }
         }
         if func.entry {
+            // A returning main drops its frame first, so r12 is the IO prompt.
+            let flag = self.rip_ext(0x83, 7);
+            self.buf.push(0);
+            self.rels.push(Rel {
+                at: flag,
+                symbol: "slc_sweep_on_exit".into(),
+                kind: PC32,
+                addend: -5,
+            });
+            let skip = self.jcc_hole(Cond::E);
+            self.rr(true, 0x89, R12, RDI);
+            self.call_plt("slc_rt_sweep");
+            self.patch_at(skip, self.buf.len());
             self.rr(true, 0x89, R13, RAX);
             self.pop(R15);
             self.pop(R14);
@@ -181,7 +196,524 @@ impl Encoder {
                     addend: i64::from(*index) * 8 - 4,
                 });
             }
+            Inst::LeaSym { dst, symbol } => {
+                let reg = self.reg_keep(loc(*dst, func));
+                let at = self.rip(true, 0x8D, reg);
+                self.syms.push(FixSym { at, symbol: symbol.clone() });
+                self.store_reg(loc(*dst, func), reg);
+            }
+            Inst::SymWords { .. } | Inst::SymMap { .. } => {
+                panic!("symbol immediate was not patched");
+            }
+            Inst::CmpRR { left, right, cond, target } => {
+                let lreg = self.reg(loc(*left, func));
+                let rreg = if lreg == RAX { RCX } else { RAX };
+                match loc(*right, func) {
+                    Loc::Reg(reg) if reg != rreg => self.rr(true, 0x89, reg, rreg),
+                    Loc::Reg(_) => {}
+                    Loc::Mem(base, off) => self.mem(true, 0x8B, rreg, base, off),
+                }
+                self.rr(true, 0x39, rreg, lreg);
+                self.jcc(fi, *cond, *target);
+            }
+            Inst::Capture { dst } => {
+                self.safepoint(func.map_id);
+                self.spill(func.map_id);
+                self.rr(true, 0x89, R12, RDI);
+                self.call_plt("slc_rt_capture");
+                self.reload_frame();
+                self.store_reg(loc(*dst, func), RAX);
+            }
+            Inst::Invoke { image } => {
+                self.safepoint(func.map_id);
+                self.spill(func.map_id);
+                // Reload after the poll. A park slot is not a root, so it would keep a moved address.
+                self.load_dest(*image, func, 8);
+                self.rr(true, 0x89, R12, RDI);
+                self.rr(true, 0x89, 8, RSI);
+                self.call_plt("slc_rt_invoke");
+                self.rr(true, 0x89, RAX, R12);
+                self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+                self.ret();
+            }
+            Inst::Resume { image, tail } => {
+                if *tail {
+                    // Pop only the body. The image is loaded first; the parent park is a different slot.
+                    self.load_dest(*image, func, 8);
+                    self.mem(true, 0x8B, R12, R12, FRAME_CONT_PREV as i32);
+                    self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+                } else {
+                    self.safepoint(func.map_id);
+                    self.spill(func.map_id);
+                    self.load_dest(*image, func, 8);
+                }
+                self.rr(true, 0x89, R12, RDI);
+                self.rr(true, 0x89, 8, RSI);
+                self.call_plt("slc_rt_resume");
+                self.rr(true, 0x89, RAX, R12);
+                self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+                self.ret();
+            }
+            Inst::InstallPrompt { clauses, ret_closure, thunk, done, prompt_map } => {
+                self.install_prompt(fi, func, *clauses, *ret_closure, *thunk, *done, *prompt_map);
+            }
+            Inst::Perform { op, tail, arg_is_pointer, after, apply_map, cont_map, .. } => {
+                self.perform(fi, func, *op, *tail, *arg_is_pointer, *after, *apply_map, *cont_map);
+            }
+            Inst::Force { tail, slot } => self.force(func, *tail, *slot),
+            Inst::Adapt { slot, map_id } => self.adapt(func, *slot, *map_id),
+            Inst::CallClosure { closure, tail, arg_is_pointer } => {
+                self.call_closure(func, *closure, *tail, *arg_is_pointer);
+            }
+            Inst::Activate { consumer, tail, arg_is_pointer, .. } => {
+                self.activate(func, *consumer, *tail, *arg_is_pointer);
+            }
+            Inst::CallRt { symbol, arg, noreturn } => {
+                self.safepoint(func.map_id);
+                self.spill(func.map_id);
+                self.rr(true, 0x89, R12, RDI);
+                match arg {
+                    crate::RtArg::Val => self.rr(true, 0x89, R13, RSI),
+                    crate::RtArg::Env => self.rr(true, 0x89, R14, RSI),
+                    crate::RtArg::None => {}
+                }
+                self.call_plt(symbol);
+                if !noreturn {
+                    self.reload_frame();
+                }
+            }
         }
+    }
+
+    fn reload_frame(&mut self) {
+        self.mem(true, 0x8B, R13, R12, FRAME_SPILL_VAL as i32);
+        self.mem(true, 0x8B, R14, R12, FRAME_SPILL_ENV as i32);
+        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+    }
+
+    fn shl3(&mut self, reg: u8) {
+        self.rex(true, 0, reg);
+        self.buf.push(0xC1);
+        self.buf.push(0xE0 | (reg & 7));
+        self.buf.push(3);
+    }
+
+    /// Tag in `rax`. `0xffff` when `reg` is not a heap object, so a scalar is not a header.
+    fn word_tag(&mut self, reg: u8) {
+        if reg != RDI {
+            self.rr(true, 0x89, reg, RDI);
+        }
+        self.call_plt("slc_rt_word_tag");
+    }
+
+    fn and_imm(&mut self, reg: u8, imm: u32) {
+        self.rex(true, 0, reg);
+        self.buf.push(0x81);
+        self.buf.push(0xE0 | (reg & 7));
+        self.buf.extend_from_slice(&imm.to_le_bytes());
+    }
+
+    fn jmp_reg(&mut self, reg: u8) {
+        self.rex(false, 0, reg);
+        self.buf.push(0xFF);
+        self.buf.push(0xE0 | (reg & 7));
+    }
+
+    /// `rax` = `r12 + [r12+48] * 8`, the frame above the current one.
+    fn lea_above(&mut self) {
+        self.mem(true, 0x8B, RAX, R12, slc_abi::FRAME_FRAME_WORDS as i32);
+        self.shl3(RAX);
+        self.rr(true, 0x01, R12, RAX);
+    }
+
+    fn store_imm(&mut self, base: u8, offset: i32, value: i64) {
+        self.imm(RCX, value);
+        self.mem(true, 0x89, RCX, base, offset);
+    }
+
+    // One operand per `InstallPrompt` field. A struct would have a single caller.
+    #[allow(clippy::too_many_arguments)]
+    fn install_prompt(
+        &mut self,
+        fi: usize,
+        func: &Function,
+        clauses: Dest,
+        ret_closure: Dest,
+        thunk: Dest,
+        done: usize,
+        prompt_map: u32,
+    ) {
+        // Operands are slots. A collecting `fresh_prompt_id` updates those slots;
+        // a copy in the untraced park would keep the old address.
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.rr(true, 0x89, R12, RDI);
+        self.call_plt("slc_rt_fresh_prompt_id");
+        self.rr(true, 0x89, RAX, 8); // r8 = id
+        self.load_dest(clauses, func, 9);
+        self.load_dest(ret_closure, func, 10);
+        self.load_dest(thunk, func, 11);
+        self.lea_above();
+        let ret_at = self.rip(true, 0x8D, RCX);
+        self.blocks.push(FixBlock { at: ret_at, func: fi, block: done });
+        // The trampoline is not `done`. `done` is offset 0, the continuation of `do`.
+        // CallSlc of the thunk writes the trampoline into the thunk frame.
+        self.mem(true, 0x89, RCX, RAX, 0);
+        self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+        self.store_imm(RAX, FRAME_SPILL_VAL as i32, 0);
+        self.imm(RCX, i64::from(prompt_map));
+        self.mem(true, 0x89, RCX, RAX, FRAME_MAP_FLAGS as i32);
+        // PROMPT flag in the high half. set_map on this frame preserves it once it is set.
+        self.mem(true, 0x8B, RCX, RAX, FRAME_MAP_FLAGS as i32);
+        self.imm(RDX, i64::from(slc_abi::FRAME_FLAG_PROMPT) << 32);
+        self.rr(true, 0x09, RDX, RCX); // or rcx, rdx
+        self.mem(true, 0x89, RCX, RAX, FRAME_MAP_FLAGS as i32);
+        self.store_imm(RAX, slc_abi::FRAME_FRAME_WORDS as i32, 13);
+        self.mem(true, 0x89, 8, RAX, slc_abi::FRAME_PROMPT_ID as i32); // r8 id
+        self.mem(true, 0x89, RBX, RAX, FRAME_HANDLER_PREV as i32);
+        self.mem(true, 0x89, 9, RAX, FRAME_SLOT0 as i32);
+        self.mem(true, 0x89, 10, RAX, FRAME_SLOT0 as i32 + 8);
+        self.store_imm(RAX, FRAME_SLOT0 as i32 + 16, 0);
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.rr(true, 0x89, R12, RBX);
+        // Thunk closure is in r11. Arg is unit.
+        self.zero(R13);
+        self.dyn_call_closure(11, true);
+        // Thunk `Ret` lands here: `r12` is the prompt, `r13` is the body result.
+        // The return closure runs, then the prompt's own `Ret` uses offset 0 (`done`).
+        self.mem(true, 0x8B, 11, R12, FRAME_SLOT0 as i32 + 8);
+        self.dyn_call_closure(11, true);
+        self.ret();
+    }
+
+    fn load_dest(&mut self, dest: Dest, func: &Function, reg: u8) {
+        match loc(dest, func) {
+            Loc::Reg(src) if src != reg => self.rr(true, 0x89, src, reg),
+            Loc::Reg(_) => {}
+            Loc::Mem(base, off) => self.mem(true, 0x8B, reg, base, off),
+        }
+    }
+
+    // One operand per `Perform` field. A struct would have a single caller.
+    #[allow(clippy::too_many_arguments)]
+    fn perform(
+        &mut self,
+        fi: usize,
+        func: &Function,
+        op: u32,
+        tail: bool,
+        arg_is_pointer: bool,
+        after: usize,
+        apply_map: u32,
+        cont_map: u32,
+    ) {
+        if !tail {
+            self.lea_above();
+            let at = self.rip(true, 0x8D, RCX);
+            self.blocks.push(FixBlock { at, func: fi, block: after });
+            self.mem(true, 0x89, RCX, RAX, 0);
+            self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+            self.mem(true, 0x89, R14, RAX, FRAME_SPILL_ENV as i32);
+            self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+            self.mem(true, 0x89, R13, RAX, FRAME_SPILL_VAL as i32);
+            // Nine words: header only. A pointer payload is the spilled VAL, not a slot.
+            let map = if arg_is_pointer { cont_map } else { MAP_EMPTY };
+            self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(map));
+            self.store_imm(RAX, slc_abi::FRAME_FRAME_WORDS as i32, 9);
+            self.store_imm(RAX, slc_abi::FRAME_PROMPT_ID as i32, 0);
+            self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+            self.rr(true, 0x89, RAX, R12);
+            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        }
+        let map_now = if tail {
+            func.map_id
+        } else if arg_is_pointer {
+            cont_map
+        } else {
+            MAP_EMPTY
+        };
+        self.park_scalar(func, arg_is_pointer || !tail);
+        self.safepoint(map_now);
+        self.spill(map_now);
+        if tail {
+            self.unpark_scalar(func, arg_is_pointer);
+        }
+        self.rr(true, 0x89, R12, RDI);
+        self.imm(RSI, i64::from(op));
+        self.call_plt("slc_rt_split");
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.rip_load(RBX, "slc_split_handlers");
+        self.rip_load(9, "slc_split_resume");
+        self.rip_load(10, "slc_split_clause");
+        self.lea_above();
+        self.store_imm(RAX, 0, 0);
+        self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+        self.mem(true, 0x89, R13, RAX, FRAME_SPILL_VAL as i32);
+        self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(apply_map));
+        self.store_imm(RAX, slc_abi::FRAME_FRAME_WORDS as i32, 11);
+        self.store_imm(RAX, slc_abi::FRAME_PROMPT_ID as i32, 0);
+        self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+        self.mem(true, 0x89, 9, RAX, FRAME_SLOT0 as i32);
+        self.mem(true, 0x89, 10, RAX, FRAME_SLOT0 as i32 + 8);
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.safepoint(apply_map);
+        self.spill(apply_map);
+        self.mem(true, 0x8B, 11, R12, FRAME_SLOT0 as i32 + 8);
+        self.dyn_call_closure(11, false);
+        // r13 = inner closure, r12 = ApplyTo.
+        self.rr(true, 0x89, R12, RDI);
+        self.mem(true, 0x8B, RSI, R12, FRAME_SLOT0 as i32);
+        self.call_plt("slc_rt_resume_cont");
+        self.rr(true, 0x89, RAX, 10); // r10 = continuation of do
+        self.mem(true, 0x8B, 9, R12, FRAME_SLOT0 as i32); // r9 = resume
+        self.mem(true, 0x8B, R12, R12, FRAME_CONT_PREV as i32);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.lea_above();
+        self.mem(true, 0x89, 10, RAX, 0);
+        self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+        self.mem(true, 0x89, 9, RAX, FRAME_SPILL_VAL as i32);
+        self.mem(true, 0x8B, 11, R13, slc_abi::CLOSURE_CODE as i32);
+        self.mem(true, 0x8B, R14, R13, slc_abi::CLOSURE_ENV as i32);
+        self.mem(true, 0x8B, 8, R13, slc_abi::CLOSURE_FRAME_WORDS as i32);
+        self.mem(true, 0x8B, RCX, R13, 40);
+        self.mem(true, 0x89, RCX, RAX, FRAME_MAP_FLAGS as i32);
+        self.mem(true, 0x89, 8, RAX, slc_abi::FRAME_FRAME_WORDS as i32);
+        self.store_imm(RAX, slc_abi::FRAME_PROMPT_ID as i32, 0);
+        self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+        self.rr(true, 0x89, 9, R13);
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.mem(true, 0x89, R14, R12, FRAME_SPILL_ENV as i32);
+        self.mem(true, 0x89, RBX, R12, FRAME_SPILL_HANDLERS as i32);
+        self.mem(true, 0x89, R13, R12, FRAME_SPILL_VAL as i32);
+        self.jmp_reg(11);
+    }
+
+    /// Call the closure in `reg`. Argument is `r13`. `keep_env` loads ENV from the closure.
+    fn dyn_call_closure(&mut self, reg: u8, keep_env: bool) {
+        self.mem(true, 0x8B, 10, reg, slc_abi::CLOSURE_ENV as i32);
+        self.mem(true, 0x8B, 9, reg, slc_abi::CLOSURE_FRAME_WORDS as i32);
+        self.mem(true, 0x8B, 11, reg, slc_abi::CLOSURE_CODE as i32);
+        if keep_env {
+            self.rr(true, 0x89, 10, R14);
+        }
+        self.lea_above();
+        let ret_at = self.rip(true, 0x8D, RCX);
+        self.mem(true, 0x89, RCX, RAX, 0);
+        self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.store_imm(RAX, FRAME_SPILL_HANDLERS as i32, 0);
+        self.store_imm(RAX, FRAME_SPILL_VAL as i32, 0);
+        self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(MAP_EMPTY));
+        self.mem(true, 0x89, 9, RAX, slc_abi::FRAME_FRAME_WORDS as i32);
+        self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.jmp_reg(11);
+        self.patch_at(ret_at, self.buf.len());
+    }
+
+    fn call_closure(&mut self, func: &Function, closure: Dest, tail: bool, arg_is_pointer: bool) {
+        self.park_scalar(func, arg_is_pointer);
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.unpark_scalar(func, arg_is_pointer);
+        self.load_dest(closure, func, 11);
+        if tail {
+            self.tail_jump_closure(11);
+        } else {
+            self.dyn_call_closure(11, true);
+            self.reload_frame();
+        }
+    }
+
+    /// `reg` is a closure. Code moves through `r15` so `grow` cannot drop it.
+    fn tail_jump_closure(&mut self, reg: u8) {
+        self.mem(true, 0x8B, R14, reg, slc_abi::CLOSURE_ENV as i32);
+        self.mem(true, 0x8B, RSI, reg, slc_abi::CLOSURE_FRAME_WORDS as i32);
+        self.mem(true, 0x8B, R15, reg, slc_abi::CLOSURE_CODE as i32);
+        self.rr(true, 0x89, R12, RDI);
+        self.call_plt("slc_rt_grow_frame");
+        self.rr(true, 0x89, RAX, R12);
+        self.rr(true, 0x89, R15, 11);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.jmp_reg(11);
+    }
+
+    fn force(&mut self, func: &Function, tail: bool, slot: u16) {
+        let off = FRAME_SLOT0 as i32 + i32::from(slot) * 8;
+        // Later iterations see the adapter's or the delay body's result, not the slot.
+        self.mem(true, 0x8B, R13, R12, off);
+        let again = self.buf.len();
+        self.word_tag(R13);
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_ADAPTED));
+        let not_adapted = self.jcc_hole(Cond::Ne);
+        // The slot keeps the object across the poll. Caller-saved temps do not.
+        self.mem(true, 0x89, R13, R12, off);
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.mem(true, 0x8B, RAX, R12, off);
+        self.mem(true, 0x8B, 11, RAX, slc_abi::CLOSURE_CODE as i32);
+        self.mem(true, 0x8B, R13, RAX, slc_abi::CLOSURE_ENV as i32);
+        self.dyn_call_closure(11, true);
+        // `Ret` left the adapter result in `r13`. The spill still holds the Adapted.
+        self.jmp_hole_to(again);
+        self.patch_at(not_adapted, self.buf.len());
+        self.word_tag(R13);
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_DELAY));
+        let done = self.jcc_hole(Cond::Ne);
+        self.mem(true, 0x89, R13, R12, off);
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.mem(true, 0x8B, RAX, R12, off);
+        self.mem(true, 0x8B, R14, RAX, slc_abi::CLOSURE_ENV as i32);
+        self.mem(true, 0x8B, R15, RAX, slc_abi::CLOSURE_CODE as i32);
+        self.mem(true, 0x8B, 9, RAX, 32);
+        self.rip_load(R13, "slc_rt_unit");
+        if tail {
+            self.rr(true, 0x89, 9, RSI);
+            self.rr(true, 0x89, R12, RDI);
+            self.call_plt("slc_rt_grow_frame");
+            self.rr(true, 0x89, RAX, R12);
+            self.rr(true, 0x89, R15, 11);
+            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+            self.jmp_reg(11);
+        } else {
+            // A call pushes a frame. Growing the caller would replace its return address.
+            self.lea_above();
+            let ret_at = self.rip(true, 0x8D, RCX);
+            self.mem(true, 0x89, RCX, RAX, 0);
+            self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+            self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+            self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+            self.store_imm(RAX, FRAME_SPILL_VAL as i32, 0);
+            self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(MAP_EMPTY));
+            self.mem(true, 0x89, 9, RAX, slc_abi::FRAME_FRAME_WORDS as i32);
+            self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+            self.rr(true, 0x89, RAX, R12);
+            self.rr(true, 0x89, R15, 11);
+            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+            self.mem(true, 0x89, R14, R12, FRAME_SPILL_ENV as i32);
+            self.jmp_reg(11);
+            self.patch_at(ret_at, self.buf.len());
+            // `Ret` restored this frame and left the body result in `r13`.
+            // Reloading the spill would put the delay back.
+            self.jmp_hole_to(again);
+        }
+        self.patch_at(done, self.buf.len());
+    }
+
+    fn jmp_hole_to(&mut self, target: usize) {
+        let at = self.jmp_hole();
+        self.patch_at(at, target);
+    }
+
+    fn adapt(&mut self, func: &Function, slot: u16, map_id: u32) {
+        let off = FRAME_SLOT0 as i32 + i32::from(slot) * 8;
+        self.mem(true, 0x8B, RDI, R12, off);
+        self.mem(true, 0x8B, RDI, RDI, 32);
+        self.call_plt("slc_rt_word_tag");
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_DELAY));
+        let not_delay = self.jcc_hole(Cond::Ne);
+        let make = self.buf.len();
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.rr(true, 0x89, R12, RDI);
+        self.imm(RSI, 2);
+        self.imm(RDX, i64::from(slc_abi::TAG_ADAPTED));
+        self.imm(RCX, i64::from(map_id));
+        self.call_plt("slc_rt_alloc");
+        self.reload_frame();
+        self.mem(true, 0x8B, RCX, R12, off);
+        self.mem(true, 0x8B, 10, RCX, 24);
+        self.mem(true, 0x8B, 11, RCX, 32);
+        self.mem(true, 0x89, 10, RAX, 16);
+        self.mem(true, 0x89, 11, RAX, 24);
+        self.rr(true, 0x89, RAX, R13);
+        self.ret();
+        self.patch_at(not_delay, self.buf.len());
+        self.mem(true, 0x8B, RDI, R12, off);
+        self.mem(true, 0x8B, RDI, RDI, 32);
+        self.call_plt("slc_rt_word_tag");
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_ADAPTED));
+        let not_adapted = self.jcc_hole(Cond::Ne);
+        self.jmp_hole_to(make);
+        self.patch_at(not_adapted, self.buf.len());
+        // Poll before the loads. `grow` preserves r13–r15; the code sits in r15 across it.
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.mem(true, 0x8B, RAX, R12, off);
+        self.mem(true, 0x8B, 11, RAX, 24);
+        self.mem(true, 0x8B, R13, RAX, 32);
+        self.mem(true, 0x8B, R14, 11, slc_abi::CLOSURE_ENV as i32);
+        self.mem(true, 0x8B, RSI, 11, slc_abi::CLOSURE_FRAME_WORDS as i32);
+        self.mem(true, 0x8B, R15, 11, slc_abi::CLOSURE_CODE as i32);
+        self.rr(true, 0x89, R12, RDI);
+        self.call_plt("slc_rt_grow_frame");
+        self.rr(true, 0x89, RAX, R12);
+        self.rr(true, 0x89, R15, 11);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.jmp_reg(11);
+    }
+
+    fn activate(&mut self, func: &Function, consumer: Dest, tail: bool, arg_is_pointer: bool) {
+        self.park_scalar(func, arg_is_pointer);
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.unpark_scalar(func, arg_is_pointer);
+        self.load_dest(consumer, func, 11);
+        self.mem(true, 0x8B, RAX, 11, 0);
+        self.and_imm(RAX, 0xffff);
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_KONT));
+        let not_kont = self.jcc_hole(Cond::Ne);
+        self.rr(true, 0x89, R12, RDI);
+        self.rr(true, 0x89, 11, RSI);
+        self.call_plt("slc_rt_invoke");
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.ret();
+        self.patch_at(not_kont, self.buf.len());
+        self.load_dest(consumer, func, 11);
+        self.mem(true, 0x8B, RAX, 11, 0);
+        self.and_imm(RAX, 0xffff);
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_RESUME));
+        let not_resume = self.jcc_hole(Cond::Ne);
+        if tail {
+            self.mem(true, 0x8B, R12, R12, FRAME_CONT_PREV as i32);
+            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        }
+        self.rr(true, 0x89, R12, RDI);
+        self.rr(true, 0x89, 11, RSI);
+        self.call_plt("slc_rt_resume");
+        self.rr(true, 0x89, RAX, R12);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.ret();
+        self.patch_at(not_resume, self.buf.len());
+        self.load_dest(consumer, func, 11);
+        self.mem(true, 0x8B, RAX, 11, 0);
+        self.and_imm(RAX, 0xffff);
+        self.cmp_imm(RAX, i64::from(slc_abi::TAG_CLOSURE));
+        let not_closure = self.jcc_hole(Cond::Ne);
+        if tail {
+            self.tail_jump_closure(11);
+        } else {
+            self.dyn_call_closure(11, true);
+            self.reload_frame();
+        }
+        let after_closure = self.jmp_hole();
+        self.patch_at(not_closure, self.buf.len());
+        self.buf.extend_from_slice(&[0x0F, 0x0B]);
+        self.patch_at(after_closure, self.buf.len());
     }
 
     fn call_slc(&mut self, func: &Function, symbol: &str, callee_words: u32, arg_is_pointer: bool) {
@@ -243,6 +775,9 @@ impl Encoder {
         self.rip_load(RCX, SLC_WATERMARK);
         self.rr(true, 0x39, RCX, RAX);
         let jae = self.jcc_hole(Cond::Ae);
+        // The fast path still spills. `Ret` reloads `rbx` from this word, and a
+        // capture copies it. A poll-only spill leaves the handler chain at 0.
+        self.spill(map_id);
         let jmp = self.jmp_hole();
         let slow = self.buf.len();
         self.patch_at(jz, slow);
@@ -596,6 +1131,7 @@ fn loc(dest: Dest, func: &Function) -> Loc {
         Dest::Val => Loc::Reg(R13),
         Dest::Env => Loc::Reg(R14),
         Dest::Frame => Loc::Reg(R12),
+        Dest::Slot(slot) => Loc::Mem(R12, FRAME_SLOT0 as i32 + i32::from(slot) * 8),
         Dest::V(index) => {
             if (index as usize) < CALLER_SAVED.len() {
                 Loc::Reg(CALLER_SAVED[index as usize])
