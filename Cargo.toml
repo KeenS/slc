@@ -21,6 +21,7 @@ lto = "thin"
 codegen-units = 1
 
 # Package overrides cannot set panic; it has to match the whole crate graph.
+# The staticlib test builds this profile. Workspace release stays unwind.
 [profile.release-abort]
 inherits = "release"
 panic = "abort"

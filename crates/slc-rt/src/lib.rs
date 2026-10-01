@@ -103,13 +103,9 @@ impl Runtime {
 
     pub fn with_segment_bytes(n: usize) -> Self {
         assert!(n > 0);
-        Self::with_cap(n, MAX_SEGMENT_BYTES)
-    }
-
-    fn with_cap(n: usize, cap: usize) -> Self {
         let mut rt = Self {
             mem: vec![0u8; n],
-            segment_cap: cap,
+            segment_cap: MAX_SEGMENT_BYTES,
             sp_off: None,
             maps: HashMap::new(),
             objects: Vec::new(),
@@ -355,8 +351,18 @@ impl Runtime {
         let start = under_off + self.frame_nbytes_off(under_off);
         let nbytes: usize = frames.iter().map(|frame| self.frame_nbytes(*frame)).sum();
         self.ensure(start + nbytes)?;
-        let under = self.ptr_at(under_off) as u64;
-        self.place(start, &frames, &mut Vec::new(), under)
+        let under_ptr = self.ptr_at(under_off);
+        // The heap image stores 0 so it does not alias the live segment.
+        let handlers = read_u64(under_ptr, FRAME_SPILL_HANDLERS);
+        let under = under_ptr as u64;
+        self.place(start, &frames, &mut Vec::new(), under)?;
+        if !frames.is_empty() {
+            let bottom = self.ptr_at(start);
+            if self.is_prompt(bottom) {
+                write_u64(bottom, FRAME_HANDLER_PREV, handlers);
+            }
+        }
+        Ok(())
     }
 
     pub fn image_frames(&self, obj: *const u8) -> Vec<*const u8> {
@@ -541,13 +547,7 @@ impl Runtime {
     }
 
     fn fixup(&mut self, frame: *mut u8, is_bottom: bool, map: &[(u64, u64)], under: u64) {
-        for off in [
-            FRAME_CONT_PREV,
-            FRAME_SPILL_ENV,
-            FRAME_SPILL_HANDLERS,
-            FRAME_SPILL_VAL,
-            FRAME_HANDLER_PREV,
-        ] {
+        for off in [FRAME_CONT_PREV, FRAME_SPILL_ENV, FRAME_SPILL_HANDLERS, FRAME_HANDLER_PREV] {
             let current = read_u64(frame, off);
             let next =
                 if off == FRAME_CONT_PREV && is_bottom && current == anchor_addr() && under != 0 {
@@ -559,13 +559,21 @@ impl Runtime {
                 write_u64(frame, off, next);
             }
         }
-        let nbytes = read_u64(frame, FRAME_FRAME_WORDS) as usize * 8;
-        if nbytes < FRAME_SLOT0 {
-            return;
+        let (map_id, _) = unpack_frame_flags(read_u64(frame, FRAME_MAP_FLAGS));
+        let record = self.lookup_map(map_id);
+        if record.val_is_pointer {
+            let current = read_u64(frame, FRAME_SPILL_VAL);
+            let next = relocate(current, map);
+            if next != current {
+                write_u64(frame, FRAME_SPILL_VAL, next);
+            }
         }
-        let slots = (nbytes - FRAME_SLOT0) / 8;
-        for i in 0..slots {
-            let off = FRAME_SLOT0 + i * 8;
+        let nbytes = read_u64(frame, FRAME_FRAME_WORDS) as usize * 8;
+        for &slot in &record.pointer_slots {
+            let off = FRAME_SLOT0 + slot as usize * 8;
+            if off + 8 > nbytes {
+                continue;
+            }
             let current = read_u64(frame, off);
             let next = relocate(current, map);
             if next != current {
@@ -580,13 +588,12 @@ impl Runtime {
         }
         let mut new_size = self.mem.len();
         while new_size < end {
-            new_size = next_segment(new_size, self.segment_cap)?;
+            let doubled = new_size.checked_mul(2).ok_or(RtError::StackOverflow)?;
+            if doubled <= new_size || doubled > self.segment_cap {
+                return Err(RtError::StackOverflow);
+            }
+            new_size = doubled;
         }
-        self.grow_to(new_size);
-        Ok(())
-    }
-
-    fn grow_to(&mut self, new_size: usize) {
         let mut new_mem = vec![0u8; new_size];
         new_mem[..self.mem.len()].copy_from_slice(&self.mem);
         let old_base = self.mem.as_ptr() as u64;
@@ -594,6 +601,7 @@ impl Runtime {
         let new_base = new_mem.as_mut_ptr() as u64;
         rebase_live(new_mem.as_mut_ptr(), self.sp_off, old_base, old_len, new_base);
         self.mem = new_mem;
+        Ok(())
     }
 
     fn collect(&mut self) {
@@ -686,7 +694,7 @@ impl Runtime {
         let map = self.lookup_map(header.map_id);
         let (_, _, payload_words) = unpack_meta(header.meta);
         let mut out = Vec::new();
-        for slot in map.pointer_slots {
+        for &slot in &map.pointer_slots {
             if u32::from(slot) >= payload_words {
                 continue;
             }
@@ -715,7 +723,7 @@ impl Runtime {
             }
         }
         let nbytes = self.frame_nbytes(frame);
-        for slot in map.pointer_slots {
+        for &slot in &map.pointer_slots {
             let off = FRAME_SLOT0 + slot as usize * 8;
             if off + 8 <= nbytes {
                 let word = self.read(frame, off);
@@ -727,14 +735,16 @@ impl Runtime {
         out
     }
 
-    fn lookup_map(&self, map_id: u32) -> MapRecord {
+    fn lookup_map(&self, map_id: u32) -> &MapRecord {
         if map_id == MAP_UNWRITTEN {
             panic!("missing stack map");
         }
         if map_id == MAP_EMPTY {
-            return MapRecord { val_is_pointer: false, pointer_slots: Vec::new() };
+            static EMPTY: MapRecord =
+                MapRecord { val_is_pointer: false, pointer_slots: Vec::new() };
+            return &EMPTY;
         }
-        self.maps.get(&map_id).cloned().unwrap_or_else(|| panic!("missing stack map"))
+        self.maps.get(&map_id).unwrap_or_else(|| panic!("missing stack map"))
     }
 
     /// Linear scan over the object list. An interval map is worth it once one heap holds
@@ -813,11 +823,6 @@ impl Runtime {
     }
 }
 
-fn next_segment(current: usize, cap: usize) -> Result<usize, RtError> {
-    let doubled = current.checked_mul(2).ok_or(RtError::StackOverflow)?;
-    if doubled <= current || doubled > cap { Err(RtError::StackOverflow) } else { Ok(doubled) }
-}
-
 fn relocate(value: u64, map: &[(u64, u64)]) -> u64 {
     map.iter().find(|(old, _)| *old == value).map(|(_, new)| *new).unwrap_or(value)
 }
@@ -889,14 +894,20 @@ fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_alloc(sp: u64, words: u64, tag: u64, map_id: u64) -> u64 {
-    let _ = sp;
-    with_runtime(|rt| rt.alloc(words as u32, tag as u16, map_id as u32) as u64)
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        rt.alloc(words as u32, tag as u16, map_id as u32) as u64
+    })
 }
 
+// `C-unwind` so a dev-test panic can cross this frame. The abort staticlib never unwinds.
 #[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_poll(sp: u64) -> u64 {
-    with_runtime(|rt| rt.poll());
-    sp
+pub extern "C-unwind" fn slc_rt_poll(sp: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        rt.poll();
+        rt.sp() as u64
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -907,8 +918,10 @@ pub extern "C" fn slc_rt_fresh_prompt_id(sp: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_stack_words(sp: u64) -> u64 {
-    let _ = sp;
-    with_runtime(|rt| rt.stack_words())
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        rt.stack_words()
+    })
 }
 
 /// # Safety
@@ -1187,6 +1200,40 @@ mod tests {
     }
 
     #[test]
+    fn install_retargets_only_pointer_words() {
+        let mut rt = Runtime::new();
+        const MAP_VAL: u32 = 2;
+        const MAP_SLOT: u32 = 3;
+        rt.register_map(MAP_VAL, true, &[]);
+        rt.register_map(MAP_SLOT, false, &[0]);
+        rt.push_frame(11).unwrap();
+        rt.safepoint_spill(0, 0, 0, MAP_VAL, 0);
+        rt.push_frame(11).unwrap();
+        rt.safepoint_spill(0, 0, 0, MAP_SLOT, 0);
+        let kont = rt.capture();
+        let image = rt.image_frames(kont);
+        let heap_top = image[0];
+        let heap_below = image[1];
+        let collide = heap_below as u64;
+        rt.write(heap_top as *mut u8, FRAME_SPILL_ENV, collide);
+        rt.write(heap_top as *mut u8, FRAME_SPILL_VAL, collide);
+        rt.write(heap_top as *mut u8, FRAME_SLOT0, collide);
+        rt.write(heap_top as *mut u8, FRAME_SLOT0 + 8, collide);
+        rt.write(heap_below as *mut u8, FRAME_SPILL_VAL, heap_top as u64);
+        let before = rt.object_bytes(kont).to_vec();
+        rt.invoke(kont).unwrap();
+        assert_eq!(rt.object_bytes(kont), before.as_slice());
+        let new_top = rt.sp();
+        let new_below = rt.read(new_top, FRAME_CONT_PREV) as *const u8;
+        assert_eq!(rt.read(new_top, FRAME_SPILL_ENV), new_below as u64);
+        assert_eq!(rt.read(new_top, FRAME_SPILL_VAL), collide);
+        assert_eq!(rt.read(new_top, FRAME_SLOT0), new_below as u64);
+        assert_eq!(rt.read(new_top, FRAME_SLOT0 + 8), collide);
+        assert_eq!(rt.read(new_below, FRAME_SPILL_VAL), new_top as u64);
+        assert_eq!(rt.read(new_below, FRAME_CONT_PREV), anchor());
+    }
+
+    #[test]
     fn resume_reinstalls_the_bottom_prompt_without_writing_the_heap() {
         let mut rt = Runtime::new();
         rt.push_frame(10).unwrap();
@@ -1213,6 +1260,8 @@ mod tests {
         let end = start + rt.object_size(image) as u64;
         let handlers = rt.read(frames[0], FRAME_SPILL_HANDLERS);
         assert!(handlers >= start && handlers < end);
+        // Perform already stored the outer handler in the caller's HANDLERS word.
+        rt.write(top, FRAME_SPILL_HANDLERS, base as u64);
         rt.resume(image).unwrap();
         assert_eq!(rt.object_bytes(image), before.as_slice());
         let new_top = rt.sp();
@@ -1221,6 +1270,8 @@ mod tests {
         let new_prompt = rt.read(new_top, FRAME_CONT_PREV) as *const u8;
         assert_eq!(rt.read(new_prompt, FRAME_PROMPT_ID), id);
         assert_eq!(rt.read(new_prompt, FRAME_CONT_PREV), top as u64);
+        assert_eq!(rt.read(new_prompt, FRAME_HANDLER_PREV), base as u64);
+        assert_eq!(rt.read(frames[1], FRAME_HANDLER_PREV), 0);
         assert_eq!(rt.read(new_top, FRAME_SPILL_HANDLERS), new_prompt as u64);
         assert_eq!(rt.read(top, FRAME_CONT_PREV), prompt as u64);
         assert_eq!(rt.read(prompt, FRAME_CONT_PREV), base as u64);
@@ -1331,24 +1382,154 @@ mod tests {
         rt.register_map(0, false, &[]);
     }
 
+    /// Serializes tests that share the process runtime, and clears `sp` on unwind.
+    struct GlobalGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl GlobalGuard {
+        fn arm() -> Self {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            Self { _lock: LOCK.lock().unwrap_or_else(|err| err.into_inner()) }
+        }
+    }
+
+    impl Drop for GlobalGuard {
+        fn drop(&mut self) {
+            let _held = &self._lock;
+            with_runtime(|rt| {
+                rt.sp_off = None;
+                rt.watermark = usize::MAX;
+            });
+        }
+    }
+
     #[test]
-    fn exports_the_runtime_entry_points_and_not_match_dispatch() {
-        let mut stats = GcStats::default();
-        assert_ne!(slc_rt_fresh_prompt_id(0), 0);
-        unsafe { slc_rt_gc_stats(0, &mut stats) };
-        let keep: [*const (); 5] = [
-            slc_rt_alloc as *const (),
-            slc_rt_poll as *const (),
-            slc_rt_stack_words as *const (),
-            std::ptr::from_ref(&slc_rt_prompt_anchor).cast(),
-            slc_rt_gc_stats as *const (),
-        ];
-        std::hint::black_box(keep);
-        let exe = std::env::current_exe().expect("test binary");
-        let output =
-            std::process::Command::new("nm").args(["-g", exe.to_str().unwrap()]).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let text = String::from_utf8_lossy(&output.stdout);
+    fn c_poll_keeps_a_slot_reachable_only_from_the_passed_sp() {
+        let _guard = GlobalGuard::arm();
+        let (root, kept, orphan) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.register_map(2, false, &[0]);
+            rt.push_frame(10).unwrap();
+            let root = rt.sp();
+            let kept = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+            rt.write(root, FRAME_SLOT0, kept as u64);
+            rt.write(root, FRAME_MAP_FLAGS, pack_frame_flags(2, 0));
+            rt.push_frame(9).unwrap();
+            rt.write(rt.sp(), FRAME_CONT_PREV, anchor());
+            rt.write(rt.sp(), FRAME_MAP_FLAGS, pack_frame_flags(0, 0));
+            let orphan = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+            rt.watermark = 0;
+            (root as u64, kept, orphan)
+        });
+        assert_eq!(slc_rt_poll(root), root);
+        with_runtime(|rt| {
+            assert!(rt.is_live(kept));
+            assert!(!rt.is_live(orphan));
+            assert_eq!(rt.sp() as u64, root);
+        });
+    }
+
+    #[test]
+    fn c_alloc_traces_the_passed_frame() {
+        let _guard = GlobalGuard::arm();
+        let (root, kept, orphan) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.register_map(2, false, &[0]);
+            rt.push_frame(10).unwrap();
+            let root = rt.sp();
+            let kept = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+            rt.write(root, FRAME_SLOT0, kept as u64);
+            rt.write(root, FRAME_MAP_FLAGS, pack_frame_flags(2, 0));
+            rt.push_frame(9).unwrap();
+            rt.safepoint_spill(0, 0, 0, MAP_EMPTY, 0);
+            rt.write(rt.sp(), FRAME_CONT_PREV, anchor());
+            let orphan = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+            rt.watermark = 0;
+            (root as u64, kept, orphan)
+        });
+        let _obj = slc_rt_alloc(root, 1, u64::from(TAG_STRING), u64::from(MAP_EMPTY));
+        with_runtime(|rt| {
+            assert!(rt.is_live(kept));
+            assert!(!rt.is_live(orphan));
+        });
+    }
+
+    #[test]
+    fn c_stack_words_walks_the_passed_frame() {
+        let _guard = GlobalGuard::arm();
+        let (short, tall) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.push_frame(10).unwrap();
+            let short = rt.sp() as u64;
+            rt.push_frame(12).unwrap();
+            let tall = rt.sp() as u64;
+            (short, tall)
+        });
+        assert_eq!(slc_rt_stack_words(short), 10);
+        assert_eq!(slc_rt_stack_words(tall), 22);
+    }
+
+    #[test]
+    fn c_poll_allows_an_unwritten_map_when_idle() {
+        let _guard = GlobalGuard::arm();
+        let (sp, before) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.push_frame(9).unwrap();
+            rt.write(rt.sp(), FRAME_MAP_FLAGS, pack_frame_flags(0, 0));
+            (rt.sp() as u64, rt.gc_stats().collections)
+        });
+        assert_eq!(slc_rt_poll(sp), sp);
+        with_runtime(|rt| assert_eq!(rt.gc_stats().collections, before));
+    }
+
+    #[test]
+    #[should_panic(expected = "missing stack map")]
+    fn c_poll_rejects_an_unwritten_map_when_collection_is_due() {
+        let _guard = GlobalGuard::arm();
+        let sp = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = 0;
+            rt.push_frame(9).unwrap();
+            rt.write(rt.sp(), FRAME_MAP_FLAGS, pack_frame_flags(0, 0));
+            rt.sp() as u64
+        });
+        let _ = slc_rt_poll(sp);
+    }
+
+    #[test]
+    fn release_abort_staticlib_exports_runtime_entries() {
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let workspace = manifest.parent().unwrap().parent().unwrap();
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map_or_else(|| workspace.join("target"), std::path::PathBuf::from);
+        let output = std::process::Command::new(env!("CARGO"))
+            .current_dir(workspace)
+            .args([
+                "build",
+                "-p",
+                "slc-rt",
+                "--profile",
+                "release-abort",
+                "--offline",
+                "--target-dir",
+            ])
+            .arg(&target)
+            .output()
+            .expect("cargo build");
+        assert!(
+            output.status.success(),
+            "release-abort build failed\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let archive = target.join("release-abort/libslc_rt.a");
+        let nm = std::process::Command::new("nm").args(["-g"]).arg(&archive).output().unwrap();
+        assert!(nm.status.success(), "{}", String::from_utf8_lossy(&nm.stderr));
+        let text = String::from_utf8_lossy(&nm.stdout);
         for name in [
             "slc_rt_alloc",
             "slc_rt_poll",
@@ -1357,16 +1538,60 @@ mod tests {
             "slc_rt_gc_stats",
             "slc_rt_prompt_anchor",
         ] {
-            assert!(defines(&text, name), "missing {name}\n{text}");
+            assert!(symbol_in(&text, Some("slc_rt-"), name, true, true), "missing {name}");
         }
-        for name in ["__match_dispatch", "__handle", "slc_rt_start", "slc_rt_unit", "slc_rt_add"] {
-            assert!(!defines(&text, name), "{name} is exported\n{text}");
+        for name in ["__match_dispatch", "__handle"] {
+            assert!(!symbol_in(&text, None, name, true, true), "{name} is defined");
         }
+        // Prebuilt std is unwind and rustc bundles that object. Nightly `build-std` is
+        // the only way to strip its personality. This crate must not reference it.
+        assert!(
+            !symbol_in(&text, Some("slc_rt-"), "rust_eh_personality", false, false),
+            "slc-rt references rust_eh_personality"
+        );
+        assert!(
+            symbol_in(&text, Some("panic_abort-"), "__rust_start_panic", true, false),
+            "panic_abort is not linked"
+        );
     }
 
-    fn defines(nm: &str, name: &str) -> bool {
-        nm.lines().any(|line| {
-            line.split_whitespace().any(|word| word == name || word == format!("_{name}"))
-        })
+    /// `defined_only` skips undefined (`U`) references. `exact` matches the whole symbol.
+    fn symbol_in(
+        nm: &str,
+        member: Option<&str>,
+        name: &str,
+        defined_only: bool,
+        exact: bool,
+    ) -> bool {
+        let mut current = "";
+        for line in nm.lines() {
+            if let Some(header) = line.strip_suffix(':')
+                && !header.is_empty()
+                && !header.contains(' ')
+            {
+                current = header;
+                continue;
+            }
+            if member.is_some_and(|prefix| !current.contains(prefix)) {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let Some(first) = parts.next() else { continue };
+            let (kind, sym) = if first.chars().all(|c| c.is_ascii_hexdigit()) {
+                (parts.next().unwrap_or(""), parts.next())
+            } else {
+                (first, parts.next())
+            };
+            if defined_only && kind == "U" {
+                continue;
+            }
+            let hit = sym.is_some_and(|word| {
+                if exact { word == name || word == format!("_{name}") } else { word.contains(name) }
+            });
+            if hit {
+                return true;
+            }
+        }
+        false
     }
 }
