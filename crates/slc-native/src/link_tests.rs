@@ -990,6 +990,210 @@ fn adapt_calls_a_value_and_boxes_a_delay() {
     assert_eq!(status, 3, "stdout: {stdout} stderr: {stderr}");
 }
 
+#[test]
+fn a_clause_reads_the_local_it_closes_over() {
+    let compiled = pipeline(
+        r#"
+        hook Ask { func ask() -> i64; }
+        func main() -> i64 {
+            let n = 4;
+            do (ask()) hn { ask(): resume => n }
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&compiled.object, "~(uint64_t)0");
+    assert_eq!(status, 4, "stdout: {stdout} stderr: {stderr}");
+}
+
+#[test]
+fn tail_force_peels_a_nested_delay_and_an_adapted() {
+    let nested = core_compile(vec![
+        ("hold".into(), lam("x", mu_call(var("$force"), app(var("x"), "__call")))),
+        (
+            "main".into(),
+            lam(
+                "__no_args",
+                mu_call(
+                    var("hold"),
+                    app(lam(DELAY_BINDER, lam(DELAY_BINDER, var("$int_4"))), "__call"),
+                ),
+            ),
+        ),
+    ]);
+    let (status, stdout, stderr, _) = link_run_fuel(&nested.object, "~(uint64_t)0");
+    assert_eq!(status, 4, "stdout: {stdout} stderr: {stderr}");
+
+    let adapted = core_compile(vec![
+        ("adapter".into(), lam("x", var("$int_9"))),
+        ("hold".into(), lam("x", mu_call(var("$force"), app(var("x"), "__call")))),
+        (
+            "main".into(),
+            lam(
+                "__no_args",
+                mu_call(
+                    var("hold"),
+                    app(
+                        lam(
+                            DELAY_BINDER,
+                            mu_call(
+                                var("$adapt"),
+                                app(tuple(vec![var("adapter"), var("$int_4")]), "__call"),
+                            ),
+                        ),
+                        "__call",
+                    ),
+                ),
+            ),
+        ),
+    ]);
+    let (status, stdout, stderr, _) = link_run_fuel(&adapted.object, "~(uint64_t)0");
+    assert_eq!(status, 9, "stdout: {stdout} stderr: {stderr}");
+}
+
+#[test]
+fn force_of_a_scalar_delay_is_not_a_root() {
+    let compiled = pipeline(
+        r#"
+        func peel(x: (-> i64)) -> i64 {
+            let+ y = x;
+            y
+        }
+        func main() -> i64 { <{ 4 } | peel }
+        "#,
+    );
+    // An empty forcing row is the result type, so `x` and the forced `y` are scalars.
+    // The old force bit rooted `y`. The delay scratch stays in the pointer map.
+    let peel = compiled.module.function("peel");
+    assert!(!peel.val_is_pointer);
+    assert!(!peel.pointer_slots.contains(&0), "parameter {:?}", peel.pointer_slots);
+    assert!(!peel.pointer_slots.contains(&1), "scalar result {:?}", peel.pointer_slots);
+    assert!(peel.pointer_slots.contains(&2), "scratch {:?}", peel.pointer_slots);
+    assert_eq!(link_run(&compiled.object).0, 4);
+}
+
+#[test]
+fn tail_perform_of_a_pointer_does_not_trace_a_scalar_parameter() {
+    let compiled = pipeline(
+        r#"
+        hook Log { func log(text: String) -> i64; }
+        func go(n: i64) -> i64 / {Log} { <"hi" | log }
+        func main() -> i64 { 0 }
+        "#,
+    );
+    let go = compiled.module.function("go");
+    assert!(!go.val_is_pointer, "parameter map traces r13");
+    assert!(!go.pointer_slots.contains(&0), "scalar parameter {:?}", go.pointer_slots);
+    assert!(go.pointer_slots.iter().any(|slot| *slot > 0), "{:?}", go.pointer_slots);
+}
+
+#[test]
+fn adapted_scalar_uses_an_empty_map_and_a_heap_word_uses_slot_one() {
+    let scalar = core_compile(vec![
+        ("adapter".into(), lam("x", var("$int_9"))),
+        (
+            "wrap".into(),
+            lam(
+                "__no_args",
+                mu_call(var("$adapt"), app(tuple(vec![var("adapter"), var("$int_5")]), "__call")),
+            ),
+        ),
+        ("main".into(), lam("__no_args", mu_call(var("wrap"), app(var("$unit"), "__call")))),
+    ]);
+    let wrap = flat(scalar.module.function("wrap"));
+    assert!(
+        wrap.iter().any(
+            |inst| matches!(inst, Inst::Adapt { map_id, .. } if *map_id == slc_abi::MAP_EMPTY)
+        )
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&scalar.object, "~(uint64_t)0");
+    assert_eq!(status, 9, "stdout: {stdout} stderr: {stderr}");
+
+    let heap = core_compile(vec![
+        ("adapter".into(), lam("x", var("$int_9"))),
+        ("payload".into(), lam("x", var("x"))),
+        (
+            "wrap".into(),
+            lam(
+                "__no_args",
+                mu_call(var("$adapt"), app(tuple(vec![var("adapter"), var("payload")]), "__call")),
+            ),
+        ),
+        ("main".into(), lam("__no_args", var("$int_0"))),
+    ]);
+    let wrap = flat(heap.module.function("wrap"));
+    let map_id = wrap
+        .iter()
+        .find_map(|inst| match inst {
+            Inst::Adapt { map_id, .. } => Some(*map_id),
+            _ => None,
+        })
+        .unwrap();
+    assert_ne!(map_id, slc_abi::MAP_EMPTY);
+    let map = heap.module.maps.iter().find(|map| map.map_id == map_id).unwrap();
+    assert_eq!(map.slots, vec![1]);
+}
+
+#[test]
+fn grow_reloads_the_handler_register() {
+    // `mov r12, rax; mov rbx, [r12+24]` after `slc_rt_grow_frame`.
+    let reload = [0x49, 0x89, 0xC4, 0x49, 0x8B, 0x5C, 0x24, 0x18];
+    let compiled = core_compile(vec![
+        ("adapter".into(), lam("x", var("$int_1"))),
+        (
+            "wrap".into(),
+            lam(
+                "__no_args",
+                mu_call(var("$adapt"), app(tuple(vec![var("adapter"), var("$int_5")]), "__call")),
+            ),
+        ),
+        ("call".into(), lam("f", mu_call(var("f"), app(var("$int_0"), "__call")))),
+        ("main".into(), lam("__no_args", var("$int_0"))),
+    ]);
+    let hits = compiled.object.windows(reload.len()).filter(|window| *window == reload).count();
+    assert!(hits >= 2, "adapt and tail closure reloads, found {hits}");
+}
+
+#[test]
+fn write_line_after_a_segment_move_still_prints() {
+    let lets = (0..600).map(|i| format!("let x{i} = {i};")).collect::<String>();
+    let src = format!(
+        r#"
+        hook IO {{ func write_line(text: String) -> (,); }}
+        func println(x: String) -> (,) / {{IO}} {{ <x | write_line }}
+        func fat(_: i64) -> i64 / {{IO}} {{ {lets} <"big" | println; 0 }}
+        func run(f: (i64 -> i64 / {{IO}})) -> i64 / {{IO}} {{ <0 | f }}
+        proc main | (exit: i32) / {{IO}} {{
+            let _ = <fat | run;
+            <0 | exit>
+        }}
+        "#
+    );
+    let compiled = pipeline(&src);
+    let fat = compiled
+        .module
+        .functions
+        .iter()
+        .find(|func| u64::from(func.frame_words) * 8 > 4096)
+        .expect("closure frame larger than the test segment");
+    assert!(fat.frame_words > 512, "{}", fat.symbol);
+    let driver = format!(
+        r#"
+        #include <stdint.h>
+        {ENTRY_EXTERN}
+        extern uint64_t slc_segment_bytes;
+        int main(void) {{
+            slc_segment_bytes = 4096;
+            uint64_t status = {call};
+            return (int)status;
+        }}
+        "#,
+        call = entry_call("~(uint64_t)0")
+    );
+    let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
+    assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");
+    assert_eq!(stdout, "big\n", "stderr: {stderr}");
+}
+
 fn core_compile(defs: Vec<(String, Term)>) -> crate::Compiled {
     crate::compile(&defs, &[], &std::collections::HashMap::new())
         .unwrap_or_else(|err| panic!("{err}"))

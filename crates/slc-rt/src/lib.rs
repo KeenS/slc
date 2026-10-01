@@ -109,7 +109,8 @@ impl Default for Runtime {
 
 impl Runtime {
     pub fn new() -> Self {
-        Self::with_segment_bytes(INITIAL_SEGMENT_BYTES)
+        let requested = slc_segment_bytes.load(Ordering::Relaxed) as usize;
+        Self::with_segment_bytes(if requested == 0 { INITIAL_SEGMENT_BYTES } else { requested })
     }
 
     pub fn with_segment_bytes(n: usize) -> Self {
@@ -734,6 +735,15 @@ impl Runtime {
         work.extend(self.immortal.iter().copied());
         work.extend(self.global_table.iter().copied());
         work.extend(self.pointer_pool.iter().copied());
+        // Split's resume and clause sit in statics until ApplyTo publishes its map.
+        let resume = slc_split_resume.load(Ordering::Relaxed);
+        if resume != 0 {
+            work.push(resume);
+        }
+        let clause = slc_split_clause.load(Ordering::Relaxed);
+        if clause != 0 {
+            work.push(clause);
+        }
         if !self.pool_section.is_null() && self.pool_section_len > 0 {
             let words =
                 unsafe { std::slice::from_raw_parts(self.pool_section, self.pool_section_len) };
@@ -949,6 +959,14 @@ fn relocate(value: u64, map: &[(u64, u64)]) -> u64 {
 }
 
 fn rebase_live(mem: *mut u8, sp_off: Option<usize>, old_base: u64, old_len: u64, new_base: u64) {
+    // Saved interior addresses are not inside a frame field. Compare generations
+    // by moving each one with the segment. Heap statics stay put.
+    for cell in [&slc_io_frame, &slc_answered_handler, &slc_split_handlers] {
+        let value = cell.load(Ordering::Relaxed);
+        if value >= old_base && value < old_base + old_len {
+            cell.store(new_base + (value - old_base), Ordering::Relaxed);
+        }
+    }
     let Some(mut off) = sp_off else { return };
     let anchor = anchor_addr();
     for _ in 0..1_000_000 {
@@ -1019,8 +1037,15 @@ pub static slc_split_clause: AtomicU64 = AtomicU64::new(0);
 pub static slc_split_handlers: AtomicU64 = AtomicU64::new(0);
 
 /// The IO prompt `slc_rt_start` installed. A copied IO has a different address.
+/// Rebased when the segment moves, so it stays the live prompt.
 #[unsafe(no_mangle)]
 pub static slc_io_frame: AtomicU64 = AtomicU64::new(0);
+
+/// When non-zero, [`Runtime::new`] uses this many bytes instead of 1 MiB.
+/// A linked test sets it before `slc_rt_start` so a handler chain can move
+/// without filling the default segment.
+#[unsafe(no_mangle)]
+pub static slc_segment_bytes: AtomicU64 = AtomicU64::new(0);
 
 /// When non-zero, entry collects from the IO frame after a returning `main`.
 #[unsafe(no_mangle)]
@@ -1489,6 +1514,57 @@ mod tests {
         assert_eq!(rt.read(base, FRAME_SLOT0 + 8), 0x2);
         assert_eq!(unpack_frame_flags(rt.read(base, FRAME_MAP_FLAGS)), (3, FRAME_FLAG_PROMPT));
         assert_eq!(rt.read(base, FRAME_FRAME_WORDS), 12);
+    }
+
+    #[test]
+    fn split_statics_keep_the_resume_until_they_are_cleared() {
+        let _guard = GlobalGuard::arm();
+        slc_split_resume.store(0, Ordering::Relaxed);
+        slc_split_clause.store(0, Ordering::Relaxed);
+        let mut rt = Runtime::with_segment_bytes(256);
+        rt.push_frame(9).unwrap();
+        let resume = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+        let clause = rt.alloc(1, TAG_STRING, MAP_EMPTY);
+        rt.set_alloc_watermark(0);
+        slc_split_resume.store(resume as u64, Ordering::Relaxed);
+        slc_split_clause.store(clause as u64, Ordering::Relaxed);
+        rt.poll();
+        assert!(rt.is_live(resume));
+        assert!(rt.is_live(clause));
+        slc_split_resume.store(0, Ordering::Relaxed);
+        slc_split_clause.store(0, Ordering::Relaxed);
+        rt.poll();
+        assert!(!rt.is_live(resume));
+        assert!(!rt.is_live(clause));
+    }
+
+    #[test]
+    fn io_prompt_is_rebased_when_the_segment_moves() {
+        let _guard = GlobalGuard::arm();
+        slc_io_frame.store(0, Ordering::Relaxed);
+        slc_answered_handler.store(0, Ordering::Relaxed);
+        let mut rt = Runtime::with_segment_bytes(160);
+        rt.push_frame(10).unwrap();
+        rt.push_prompt(1, 10).unwrap();
+        let io = rt.sp() as u64;
+        slc_io_frame.store(io, Ordering::Relaxed);
+        let old_base = rt.segment_base() as u64;
+        rt.push_frame(10).unwrap();
+        let new_base = rt.segment_base() as u64;
+        assert_ne!(new_base, old_base);
+        let moved = new_base + (io - old_base);
+        assert_eq!(slc_io_frame.load(Ordering::Relaxed), moved);
+        slc_answered_handler.store(moved, Ordering::Relaxed);
+        let text = rt.alloc(3, TAG_STRING, MAP_EMPTY);
+        rt.write(text, 16, 3);
+        let mut word = 0u64;
+        for (index, byte) in b"big".iter().enumerate() {
+            word |= u64::from(*byte) << (8 * index);
+        }
+        rt.write(text, 32, word);
+        slc_rt_write_line(0, text as u64);
+        slc_io_frame.store(0, Ordering::Relaxed);
+        slc_answered_handler.store(0, Ordering::Relaxed);
     }
 
     #[test]

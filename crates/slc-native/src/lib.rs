@@ -165,7 +165,6 @@ pub enum Inst {
     /// The six perform steps. `after` receives a resumed value when this is not tail.
     Perform {
         op: u32,
-        op_name: String,
         tail: bool,
         arg_is_pointer: bool,
         after: usize,
@@ -195,7 +194,6 @@ pub enum Inst {
         consumer: Dest,
         tail: bool,
         arg_is_pointer: bool,
-        apply_map: u32,
     },
     /// `rdi` is the frame. `arg` selects `VAL` or `ENV` for `rsi`.
     CallRt {
@@ -210,7 +208,6 @@ pub enum Inst {
 pub enum RtArg {
     Val,
     Env,
-    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -257,7 +257,7 @@ impl Encoder {
             Inst::InstallPrompt { clauses, ret_closure, thunk, done, prompt_map } => {
                 self.install_prompt(fi, func, *clauses, *ret_closure, *thunk, *done, *prompt_map);
             }
-            Inst::Perform { op, tail, arg_is_pointer, after, apply_map, cont_map, .. } => {
+            Inst::Perform { op, tail, arg_is_pointer, after, apply_map, cont_map } => {
                 self.perform(fi, func, *op, *tail, *arg_is_pointer, *after, *apply_map, *cont_map);
             }
             Inst::Force { tail, slot } => self.force(func, *tail, *slot),
@@ -265,7 +265,7 @@ impl Encoder {
             Inst::CallClosure { closure, tail, arg_is_pointer } => {
                 self.call_closure(func, *closure, *tail, *arg_is_pointer);
             }
-            Inst::Activate { consumer, tail, arg_is_pointer, .. } => {
+            Inst::Activate { consumer, tail, arg_is_pointer } => {
                 self.activate(func, *consumer, *tail, *arg_is_pointer);
             }
             Inst::CallRt { symbol, arg, noreturn } => {
@@ -275,7 +275,6 @@ impl Encoder {
                 match arg {
                     crate::RtArg::Val => self.rr(true, 0x89, R13, RSI),
                     crate::RtArg::Env => self.rr(true, 0x89, R14, RSI),
-                    crate::RtArg::None => {}
                 }
                 self.call_plt(symbol);
                 if !noreturn {
@@ -446,28 +445,35 @@ impl Encoder {
         self.imm(RSI, i64::from(op));
         self.call_plt("slc_rt_split");
         self.rr(true, 0x89, RAX, R12);
-        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        // Resume and clause are not in a frame yet. Hold them in callee-saved
+        // registers until ApplyTo's map is stored, and spill the resume as ENV
+        // (that word is always a root).
         self.rip_load(RBX, "slc_split_handlers");
-        self.rip_load(9, "slc_split_resume");
-        self.rip_load(10, "slc_split_clause");
+        self.rip_load(R14, "slc_split_resume");
+        self.rip_load(R15, "slc_split_clause");
         self.lea_above();
         self.store_imm(RAX, 0, 0);
         self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
-        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.mem(true, 0x89, R14, RAX, FRAME_SPILL_ENV as i32);
         self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
         self.mem(true, 0x89, R13, RAX, FRAME_SPILL_VAL as i32);
         self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(apply_map));
         self.store_imm(RAX, slc_abi::FRAME_FRAME_WORDS as i32, 11);
         self.store_imm(RAX, slc_abi::FRAME_PROMPT_ID as i32, 0);
         self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
-        self.mem(true, 0x89, 9, RAX, FRAME_SLOT0 as i32);
-        self.mem(true, 0x89, 10, RAX, FRAME_SLOT0 as i32 + 8);
+        self.mem(true, 0x89, R14, RAX, FRAME_SLOT0 as i32);
+        self.mem(true, 0x89, R15, RAX, FRAME_SLOT0 as i32 + 8);
         self.rr(true, 0x89, RAX, R12);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.safepoint(apply_map);
         self.spill(apply_map);
+        // The map names the slots. Drop the statics so the resume is not immortal.
+        self.zero(RAX);
+        self.rip_store(RAX, "slc_split_resume");
+        self.rip_store(RAX, "slc_split_clause");
+        self.rip_store(RAX, "slc_split_handlers");
         self.mem(true, 0x8B, 11, R12, FRAME_SLOT0 as i32 + 8);
-        self.dyn_call_closure(11, false);
+        self.dyn_call_closure(11, true);
         // r13 = inner closure, r12 = ApplyTo.
         self.rr(true, 0x89, R12, RDI);
         self.mem(true, 0x8B, RSI, R12, FRAME_SLOT0 as i32);
@@ -545,12 +551,14 @@ impl Encoder {
         self.rr(true, 0x89, R12, RDI);
         self.call_plt("slc_rt_grow_frame");
         self.rr(true, 0x89, RAX, R12);
+        // The segment may have moved. The spill was rebased; `r14` is a heap env.
+        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.rr(true, 0x89, R15, 11);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.jmp_reg(11);
     }
 
-    fn force(&mut self, func: &Function, tail: bool, slot: u16) {
+    fn force(&mut self, func: &Function, _tail: bool, slot: u16) {
         let off = FRAME_SLOT0 as i32 + i32::from(slot) * 8;
         // Later iterations see the adapter's or the delay body's result, not the slot.
         self.mem(true, 0x8B, R13, R12, off);
@@ -580,36 +588,28 @@ impl Encoder {
         self.mem(true, 0x8B, R15, RAX, slc_abi::CLOSURE_CODE as i32);
         self.mem(true, 0x8B, 9, RAX, 32);
         self.rip_load(R13, "slc_rt_unit");
-        if tail {
-            self.rr(true, 0x89, 9, RSI);
-            self.rr(true, 0x89, R12, RDI);
-            self.call_plt("slc_rt_grow_frame");
-            self.rr(true, 0x89, RAX, R12);
-            self.rr(true, 0x89, R15, 11);
-            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
-            self.jmp_reg(11);
-        } else {
-            // A call pushes a frame. Growing the caller would replace its return address.
-            self.lea_above();
-            let ret_at = self.rip(true, 0x8D, RCX);
-            self.mem(true, 0x89, RCX, RAX, 0);
-            self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
-            self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
-            self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
-            self.store_imm(RAX, FRAME_SPILL_VAL as i32, 0);
-            self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(MAP_EMPTY));
-            self.mem(true, 0x89, 9, RAX, slc_abi::FRAME_FRAME_WORDS as i32);
-            self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
-            self.rr(true, 0x89, RAX, R12);
-            self.rr(true, 0x89, R15, 11);
-            self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
-            self.mem(true, 0x89, R14, R12, FRAME_SPILL_ENV as i32);
-            self.jmp_reg(11);
-            self.patch_at(ret_at, self.buf.len());
-            // `Ret` restored this frame and left the body result in `r13`.
-            // Reloading the spill would put the delay back.
-            self.jmp_hole_to(again);
-        }
+        // Tail and value position both return here. A pure tail would skip a
+        // body that yields another delay or an `Adapted`. `rbx` is copied into
+        // the new frame; this path does not move the segment.
+        self.lea_above();
+        let ret_at = self.rip(true, 0x8D, RCX);
+        self.mem(true, 0x89, RCX, RAX, 0);
+        self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
+        self.store_imm(RAX, FRAME_SPILL_ENV as i32, 0);
+        self.mem(true, 0x89, RBX, RAX, FRAME_SPILL_HANDLERS as i32);
+        self.store_imm(RAX, FRAME_SPILL_VAL as i32, 0);
+        self.store_imm(RAX, FRAME_MAP_FLAGS as i32, i64::from(MAP_EMPTY));
+        self.mem(true, 0x89, 9, RAX, slc_abi::FRAME_FRAME_WORDS as i32);
+        self.store_imm(RAX, FRAME_HANDLER_PREV as i32, 0);
+        self.rr(true, 0x89, RAX, R12);
+        self.rr(true, 0x89, R15, 11);
+        self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
+        self.mem(true, 0x89, R14, R12, FRAME_SPILL_ENV as i32);
+        self.jmp_reg(11);
+        self.patch_at(ret_at, self.buf.len());
+        // `Ret` restored this frame and left the body result in `r13`.
+        // Reloading the spill would put the delay back.
+        self.jmp_hole_to(again);
         self.patch_at(done, self.buf.len());
     }
 
@@ -661,6 +661,8 @@ impl Encoder {
         self.rr(true, 0x89, R12, RDI);
         self.call_plt("slc_rt_grow_frame");
         self.rr(true, 0x89, RAX, R12);
+        // The segment may have moved. The spill was rebased; `r13` is the argument.
+        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.rr(true, 0x89, R15, 11);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.jmp_reg(11);
@@ -1109,6 +1111,11 @@ impl Encoder {
 
     fn rip_load(&mut self, reg: u8, symbol: &str) {
         let at = self.rip(true, 0x8B, reg);
+        self.rels.push(Rel { at, symbol: symbol.into(), kind: PC32, addend: -4 });
+    }
+
+    fn rip_store(&mut self, reg: u8, symbol: &str) {
+        let at = self.rip(true, 0x89, reg);
         self.rels.push(Rel { at, symbol: symbol.into(), kind: PC32, addend: -4 });
     }
 

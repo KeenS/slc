@@ -98,7 +98,6 @@ struct Builder {
     apply_ptr: u32,
     prompt_map: u32,
     cont_map: u32,
-    adapted_map: u32,
     /// `main`'s body is `λexit`. Entry calls that closure with the exit stub.
     proc_main: bool,
 }
@@ -582,7 +581,6 @@ impl Builder {
             apply_ptr: 0,
             prompt_map: 0,
             cont_map: 0,
-            adapted_map: 0,
             proc_main: false,
         };
         builder.prepare_maps();
@@ -741,8 +739,6 @@ impl Builder {
         self.apply_ptr = self.push_frame_map(11, true, &[0, 1]);
         self.prompt_map = self.push_frame_map(13, true, &[0, 1, 2]);
         self.cont_map = self.push_frame_map(9, true, &[]);
-        // Adapted stores the value at payload slot 1. The tag rule traces the adapter.
-        self.adapted_map = self.heap_map(&[1]);
     }
 
     fn push_frame_map(&mut self, words: u32, val_is_pointer: bool, slots: &[u16]) -> u32 {
@@ -1232,7 +1228,7 @@ impl Builder {
                 return Ok(pointer);
             }
             let op = self.intern(symbol);
-            return self.emit_perform(op, symbol, mode == Mode::Tail, pointer);
+            return self.emit_perform(op, mode == Mode::Tail, pointer);
         }
         self.compile_term(arg, Mode::Value)?;
         let param_ptr = self.func_param[symbol];
@@ -1887,21 +1883,13 @@ impl Builder {
         self.type_stack.pop();
         compiled?;
         self.finish(Mode::Tail);
-        let mut val_is_pointer = param_ptr;
-        let tail_ptr = self.blocks.iter().any(|block| {
-            block
-                .insts
-                .iter()
-                .any(|inst| matches!(inst, Inst::Perform { tail: true, arg_is_pointer: true, .. }))
-        });
-        if tail_ptr {
-            val_is_pointer = true;
-        }
+        // A tail perform of a pointer stores that word in a scratch. The scratch
+        // is already a root, so the prologue map stays the parameter's bit.
         Ok(Function {
             symbol: symbol.to_string(),
             map_id: 0,
             frame_words,
-            val_is_pointer,
+            val_is_pointer: param_ptr,
             pointer_slots: std::mem::take(&mut self.pointer_slots),
             spill_base: slot_count,
             blocks: std::mem::take(&mut self.blocks),
@@ -2162,34 +2150,26 @@ impl Builder {
             return Ok(pointer);
         }
         if let Some(&slot) = self.slots.get(covar) {
-            let apply_map = if pointer { self.apply_ptr } else { self.apply_scalar };
             self.emit(Inst::Activate {
                 consumer: Dest::Slot(slot),
                 tail: mode == Mode::Tail,
                 arg_is_pointer: pointer,
-                apply_map,
             });
             return Ok(false);
         }
         let op = self.intern(covar);
-        self.emit_perform(op, covar, mode == Mode::Tail, pointer)
+        self.emit_perform(op, mode == Mode::Tail, pointer)
     }
 
-    fn emit_perform(
-        &mut self,
-        op: u32,
-        name: &str,
-        tail: bool,
-        arg_ptr: bool,
-    ) -> Result<bool, String> {
-        // The payload has to be a root while `split` polls. A scalar stays in `r13`.
+    fn emit_perform(&mut self, op: u32, tail: bool, arg_ptr: bool) -> Result<bool, String> {
+        // A pointer payload stays in a scratch, which the frame map already traces.
+        // A scalar stays in `r13` and is parked when the parameter map would trace it.
         if arg_ptr {
             self.push_scratch(Dest::Val)?;
         }
         let after = if tail { 0 } else { self.new_block() };
         self.emit(Inst::Perform {
             op,
-            op_name: name.to_string(),
             tail,
             arg_is_pointer: arg_ptr,
             after,
@@ -2254,6 +2234,25 @@ impl Builder {
     }
 
     fn compile_force(&mut self, arg: &Term, mode: Mode) -> Result<bool, String> {
+        // The scratch that holds the delay is traced for the call. This bit is only
+        // the forced word. Peel every `Delayed` layer: the tag loop does the same.
+        let result_ptr = match arg {
+            Term::Var(name) => match self.word_ty(name) {
+                Some(ty) => {
+                    let mut current = ty;
+                    loop {
+                        match current {
+                            Type::Rowed(inner, _) | Type::Dual(inner) | Type::Delayed(inner, _) => {
+                                current = inner
+                            }
+                            other => break type_is_pointer(other),
+                        }
+                    }
+                }
+                None => true,
+            },
+            _ => true,
+        };
         self.compile_term(arg, Mode::Value)?;
         if terminated(&self.blocks[self.cur].insts) {
             return Ok(false);
@@ -2263,17 +2262,43 @@ impl Builder {
         if mode != Mode::Tail {
             self.pop_scratch();
         }
-        // The result may be the closure a delay returns. A scalar is not an object.
-        Ok(true)
+        Ok(result_ptr)
     }
 
     fn compile_adapt(&mut self, arg: &Term) -> Result<bool, String> {
+        // Payload slot 1 is the value. The tag rule traces the adapter at offset 16.
+        let value_ptr = match arg {
+            Term::Tuple(items) => items.get(1).is_none_or(|item| match item {
+                Term::Var(name)
+                    if name == "$unit"
+                        || name.starts_with("$int_")
+                        || name.starts_with("$float_")
+                        || name.starts_with("$char_") =>
+                {
+                    false
+                }
+                Term::Var(name)
+                    if name.starts_with("$str_")
+                        || self.pool.contains_key(name)
+                        || self.func_param.contains_key(name)
+                        || self.word_ptr(name) =>
+                {
+                    true
+                }
+                Term::Var(name) => {
+                    self.slots.get(name).is_some_and(|slot| self.pointer_slots.contains(slot))
+                }
+                _ => true,
+            }),
+            _ => true,
+        };
+        let map_id = if value_ptr { self.heap_map(&[1]) } else { MAP_EMPTY };
         self.compile_term(arg, Mode::Value)?;
         if terminated(&self.blocks[self.cur].insts) {
             return Ok(true);
         }
         let slot = self.push_scratch(Dest::Val)?;
-        self.emit(Inst::Adapt { slot, map_id: self.adapted_map });
+        self.emit(Inst::Adapt { slot, map_id });
         Ok(true)
     }
 
@@ -2287,12 +2312,10 @@ impl Builder {
             self.push_scratch(Dest::Val)?;
         }
         // A slot may be a closure, a `Resume`, or a `Kont`. The tag decides.
-        let apply_map = if pointer { self.apply_ptr } else { self.apply_scalar };
         self.emit(Inst::Activate {
             consumer: Dest::Slot(slot),
             tail: mode == Mode::Tail,
             arg_is_pointer: pointer,
-            apply_map,
         });
         if pointer && mode != Mode::Tail {
             self.pop_scratch();
