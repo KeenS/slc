@@ -1246,7 +1246,7 @@ completeness claim does not skip them.
 | `str_concat`, `str_eq` | `slc_rt_str_concat`, `slc_rt_str_eq`. |
 | `int_to_str`, `format` | `slc_rt_int_to_str`, `slc_rt_format`. `format` joins `display` text with spaces, as `apply_builtin` does. |
 | `__display` | `slc_rt_display(sp, value, shape)`. The shape is the specialization. A string or char is unquoted (`display_renders_unquoted`); other values use `Value::display`. |
-| `__index` | `slc_rt_index`. Out of range is `error: type mismatch: index {i} out of range`. |
+| `__index` | `slc_rt_index`. Out of range is `error: type mismatch: builtin type mismatch: index {i} out of range`. |
 | `substring` | `slc_rt_substring`. Out of range is `error: type mismatch: slice range {start}..{end} out of bounds for length {n}`. |
 | `is_digit`, `is_ws` | inline on the `char` word (`is_ascii_digit`, `is_whitespace`). |
 | `skip_digits`, `skip_ws` | `slc_rt_skip_digits`, `slc_rt_skip_ws`. |

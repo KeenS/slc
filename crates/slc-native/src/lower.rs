@@ -15,6 +15,7 @@ use slc_core::term::{DELAY_BINDER, Term};
 use slc_core::types::{Base, Type};
 use slc_syntax::lower::Specialization;
 use slc_syntax::pattern::{self, Descriptor, Pat};
+use slc_syntax::traits::TraitInfo;
 
 use crate::{BinOp, Block, Cond, Dest, Function, I64Op, Inst, MapRecord, Module, RtArg};
 
@@ -78,8 +79,8 @@ struct Builder {
     pool: HashMap<String, u32>,
     pool_len: u32,
     roots: Vec<(u32, u32)>,
-    /// Declaration order, so a dictionary tuple matches the trait's method order.
-    fn_order: Vec<String>,
+    /// Trait name → method names in declaration order. Dictionary slots use this index.
+    method_order: HashMap<String, Vec<String>>,
     /// Callee parameter word, and the word the callee returns.
     func_param: HashMap<String, bool>,
     func_result: HashMap<String, bool>,
@@ -124,8 +125,9 @@ pub fn lower(
     defs: &[(String, Term)],
     specs: &[Specialization],
     payloads: &HashMap<String, Vec<Type>>,
+    traits: &TraitInfo,
 ) -> Result<Module, String> {
-    let mut builder = Builder::new(defs, specs, payloads);
+    let mut builder = Builder::new(defs, specs, payloads, traits);
     let mut funcs = Vec::new();
     for (name, term) in defs {
         if matches!(term, Term::Lam(binder, _) if binder != DELAY_BINDER) {
@@ -564,13 +566,20 @@ impl Builder {
         defs: &[(String, Term)],
         specs: &[Specialization],
         payloads: &HashMap<String, Vec<Type>>,
+        traits: &TraitInfo,
     ) -> Self {
         let mut builder = Self {
             labels: Vec::new(),
             pool: HashMap::new(),
             pool_len: 0,
             roots: Vec::new(),
-            fn_order: defs.iter().map(|(name, _)| name.clone()).collect(),
+            method_order: traits
+                .traits
+                .iter()
+                .map(|(name, methods)| {
+                    (name.clone(), methods.iter().map(|method| method.name.clone()).collect())
+                })
+                .collect(),
             func_param: HashMap::new(),
             func_result: HashMap::new(),
             fn_types: HashMap::new(),
@@ -1135,13 +1144,20 @@ impl Builder {
             self.load_slot(Dest::Val, slot);
             self.pointer_slots.contains(&slot)
         } else if let Some(rest) = name.strip_prefix("__dict_") {
-            // The interpreter installs these after lowering. One method is the closure;
-            // several are a tuple in declaration order.
+            // The interpreter installs these after lowering. A projection's index is
+            // the trait's method, so an impl that writes `gt` first still slots `lt` at 0.
             let (trait_name, key) =
                 rest.split_once('_').ok_or_else(|| format!("unbound {name}"))?;
-            let prefix = format!("{trait_name}#{key}#");
-            let methods: Vec<String> =
-                self.fn_order.iter().filter(|sym| sym.starts_with(&prefix)).cloned().collect();
+            let order =
+                self.method_order.get(trait_name).ok_or_else(|| format!("unbound {name}"))?;
+            let mut methods = Vec::new();
+            for method in order {
+                let symbol = format!("{trait_name}#{key}#{method}");
+                if !self.func_param.contains_key(&symbol) {
+                    return Err(format!("unbound {name}"));
+                }
+                methods.push(symbol);
+            }
             if methods.is_empty() {
                 return Err(format!("unbound {name}"));
             }
@@ -2441,27 +2457,7 @@ impl Builder {
                 _ => None,
             }
         }
-        from_term(self, term).or_else(|| {
-            let symbol = self.current.as_str();
-            if symbol.contains("#f32#") || symbol.contains("#f64#") {
-                Some(Class::Float)
-            } else if symbol.contains("#String#") {
-                Some(Class::Str)
-            } else if symbol.contains("#Bool#") {
-                Some(Class::Bool)
-            } else if symbol.contains("#char#") {
-                Some(Class::Char)
-            } else if symbol.contains("#File#") {
-                Some(Class::File)
-            } else if ["#i64#", "#i8#", "#i32#", "#u8#", "#u32#", "#u64#"]
-                .iter()
-                .any(|key| symbol.contains(key))
-            {
-                Some(Class::Int)
-            } else {
-                None
-            }
-        })
+        from_term(self, term)
     }
 
     fn compile_builtin(&mut self, name: &str, arg: &Term, mode: Mode) -> Result<bool, String> {
@@ -2584,7 +2580,10 @@ impl Builder {
             class.ok_or_else(|| format!("{name} in {} has no operand kind", self.current))?;
         let binary = name != "__neg";
         if binary
-            && !matches!((name, class), ("__add", Class::Str) | ("__div" | "__rem", Class::Int))
+            && !matches!(
+                (name, class),
+                ("__add", Class::Str) | ("__div" | "__rem", Class::Int) | ("__rem", Class::Float)
+            )
         {
             self.emit(Inst::Load { dst: Dest::V(0), base: Dest::Val, offset: 24, width: 8 });
             self.emit(Inst::Load { dst: Dest::V(1), base: Dest::Val, offset: 32, width: 8 });
@@ -2610,6 +2609,15 @@ impl Builder {
                 });
                 Ok(false)
             }
+            ("__rem", Class::Float) => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_frem".into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
             ("__add" | "__sub" | "__mul", Class::Int) | ("__neg", Class::Int) => {
                 let op = match name {
                     "__sub" => I64Op::Sub,
@@ -2622,13 +2630,11 @@ impl Builder {
                 self.emit(Inst::CheckedI64 { op, left, right });
                 Ok(false)
             }
-            ("__add" | "__sub" | "__mul" | "__div" | "__rem", Class::Float)
-            | ("__neg", Class::Float) => {
+            ("__add" | "__sub" | "__mul" | "__div", Class::Float) | ("__neg", Class::Float) => {
                 let op = match name {
                     "__sub" => BinOp::FSub,
                     "__mul" => BinOp::FMul,
                     "__div" => BinOp::FDiv,
-                    "__rem" => BinOp::FRem,
                     "__neg" => BinOp::FNeg,
                     _ => BinOp::FAdd,
                 };

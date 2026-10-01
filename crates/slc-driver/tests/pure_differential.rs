@@ -118,7 +118,7 @@ fn compile_src(src: &str) -> Vec<u8> {
                 .unwrap_or_else(|diags| panic!("{diags:?}"));
             let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
                 .unwrap_or_else(|err| panic!("{err}"));
-            slc_native::compile(&defs, &dispatch.specializations, &dispatch.payloads)
+            slc_native::compile(&defs, &dispatch.specializations, &dispatch.payloads, &traits)
                 .unwrap_or_else(|err| panic!("{err}"))
                 .object
         })
@@ -238,4 +238,51 @@ proc main | (exit: i32) / {IO} {
 }
 ";
     compare("division by zero", div0, &scratch("div0", div0), Some("division by zero"));
+
+    let frem = "\
+proc main | (exit: i32) / {IO} {
+    <(-0.0, 1.0) | rem | println;
+    let inf = <(1.0, 0.0) | div;
+    <(1.0, inf) | rem | println;
+    <0 | exit>
+}
+";
+    compare("float rem", frem, &scratch("frem", frem), None);
+
+    let missed = "\
+proc main | (exit: i32) / {IO} {
+    <(\"hi\", 3) | index | println;
+    <0 | exit>
+}
+";
+    compare(
+        "index",
+        missed,
+        &scratch("index", missed),
+        Some("builtin type mismatch: index 3 out of range"),
+    );
+
+    // `high` is written before `low`, and the middle method is the default.
+    // The dictionary still projects the trait's index. Names stay off `Ord`.
+    let flipped = "\
+spec Flip {
+    func low(self: Self, other: Self) -> i64;
+    func mid(self: Self, other: Self) -> i64 { 7 }
+    func high(self: Self, other: Self) -> i64;
+}
+impl Flip for i64 {
+    func high(self: i64, other: i64) -> i64 { 3 }
+    func low(self: i64, other: i64) -> i64 { 1 }
+}
+func call_low<+T: Flip>(a: T, b: T) -> i64 { <(a, b) | low }
+func call_mid<+T: Flip>(a: T, b: T) -> i64 { <(a, b) | mid }
+func call_high<+T: Flip>(a: T, b: T) -> i64 { <(a, b) | high }
+proc main | (exit: i32) / {IO} {
+    <(<(1, 2) | call_low) | println;
+    <(<(1, 2) | call_mid) | println;
+    <(<(1, 2) | call_high) | println;
+    <0 | exit>
+}
+";
+    compare("dict order", flipped, &scratch("flip", flipped), None);
 }

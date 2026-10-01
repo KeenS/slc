@@ -22,7 +22,7 @@ fn pipeline(src: &str) -> crate::Compiled {
         .unwrap_or_else(|diags| panic!("{diags:?}"));
     let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
         .unwrap_or_else(|err| panic!("{err}"));
-    crate::compile(&defs, &dispatch.specializations, &dispatch.payloads)
+    crate::compile(&defs, &dispatch.specializations, &dispatch.payloads, &traits)
         .unwrap_or_else(|err| panic!("{err}"))
 }
 
@@ -1195,8 +1195,13 @@ fn write_line_after_a_segment_move_still_prints() {
 }
 
 fn core_compile(defs: Vec<(String, Term)>) -> crate::Compiled {
-    crate::compile(&defs, &[], &std::collections::HashMap::new())
-        .unwrap_or_else(|err| panic!("{err}"))
+    crate::compile(
+        &defs,
+        &[],
+        &std::collections::HashMap::new(),
+        &slc_syntax::traits::TraitInfo::default(),
+    )
+    .unwrap_or_else(|err| panic!("{err}"))
 }
 
 fn var(name: &str) -> Term {

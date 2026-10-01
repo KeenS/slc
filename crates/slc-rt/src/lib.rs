@@ -1457,6 +1457,13 @@ pub extern "C" fn slc_rt_wrapping_rem(sp: u64, a: u64, b: u64) -> u64 {
     a.wrapping_rem(b) as u64
 }
 
+/// Rust `a % b` on `f64`. Truncating `roundsd` disagrees on `-0.0` and infinity.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_frem(sp: u64, a: u64, b: u64) -> u64 {
+    let _ = sp;
+    (f64::from_bits(a) % f64::from_bits(b)).to_bits()
+}
+
 fn fits(n: i64, lo: i64, hi: i64, width: &str) -> u64 {
     if n < lo || n > hi {
         type_mismatch(&format!("arithmetic overflow: {n} does not fit in {width}"));
@@ -1586,7 +1593,7 @@ pub extern "C" fn slc_rt_index(sp: u64, s: u64, i: u64) -> u64 {
     if let Some(ch) = text.chars().nth(n as usize) {
         return ch as u64;
     }
-    type_mismatch(&format!("index {n} out of range"));
+    type_mismatch(&format!("builtin type mismatch: index {n} out of range"));
 }
 
 #[unsafe(no_mangle)]

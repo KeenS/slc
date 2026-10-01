@@ -62,7 +62,6 @@ pub enum BinOp {
     FSub,
     FMul,
     FDiv,
-    FRem,
     FNeg,
 }
 
@@ -329,8 +328,9 @@ pub fn compile(
     defs: &[(String, Term)],
     specs: &[Specialization],
     payloads: &HashMap<String, Vec<Type>>,
+    traits: &slc_syntax::traits::TraitInfo,
 ) -> Result<Compiled, String> {
-    let module = lower::lower(defs, specs, payloads)?;
+    let module = lower::lower(defs, specs, payloads, traits)?;
     let object = encode(&module);
     Ok(Compiled { module, object })
 }

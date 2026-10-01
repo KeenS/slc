@@ -373,7 +373,7 @@ impl Encoder {
                 self.buf.extend_from_slice(&[0x0F, 0xAF, 0xC3]);
                 self.rr(true, 0x89, RAX, R13);
             }
-            BinOp::FAdd | BinOp::FSub | BinOp::FMul | BinOp::FDiv | BinOp::FRem => {
+            BinOp::FAdd | BinOp::FSub | BinOp::FMul | BinOp::FDiv => {
                 self.movq_xmm_gpr(0, 10);
                 self.movq_xmm_gpr(1, 11);
                 match op {
@@ -381,14 +381,6 @@ impl Encoder {
                     BinOp::FSub => self.sd(0x5C, 0, 1),
                     BinOp::FMul => self.sd(0x59, 0, 1),
                     BinOp::FDiv => self.sd(0x5E, 0, 1),
-                    BinOp::FRem => {
-                        // Truncating remainder, the same `%` the interpreter uses on `f64`.
-                        self.buf.extend_from_slice(&[0x66, 0x0F, 0x28, 0xD0]);
-                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x5E, 0xD1]);
-                        self.buf.extend_from_slice(&[0x66, 0x0F, 0x3A, 0x0B, 0xD2, 0x03]);
-                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x59, 0xD1]);
-                        self.buf.extend_from_slice(&[0xF2, 0x0F, 0x5C, 0xC2]);
-                    }
                     BinOp::FNeg | BinOp::Xor | BinOp::WrappingMul => {}
                 }
                 self.movq_gpr_xmm(R13, 0);
