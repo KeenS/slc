@@ -48,7 +48,14 @@ pub fn try_fold(term: &Term, fuel: usize) -> Fold {
     }
     let mut env = Env::new();
     install_stdlib(&mut env);
-    if is_open(term, &env) {
+    if free_vars_term(term).iter().any(|name| {
+        let literal = matches!(name.as_str(), "$unit" | "$force" | "$adapt")
+            || name.starts_with("$int_")
+            || name.starts_with("$float_")
+            || name.starts_with("$str_")
+            || name.starts_with("$char_");
+        !literal && env.lookup(name).is_none()
+    }) {
         return Fold::Residual;
     }
     let ran = catch_unwind(AssertUnwindSafe(|| {
@@ -76,18 +83,6 @@ pub fn embed(value: &Folded) -> Term {
         Folded::Tuple(items) => Term::Tuple(items.iter().map(embed).collect()),
         Folded::Tagged { label, payload } => Term::Tag(label.clone(), Box::new(embed(payload))),
     }
-}
-
-fn is_literal_encoding(name: &str) -> bool {
-    matches!(name, "$unit" | "$force" | "$adapt")
-        || name.starts_with("$int_")
-        || name.starts_with("$float_")
-        || name.starts_with("$str_")
-        || name.starts_with("$char_")
-}
-
-fn is_open(term: &Term, env: &Env) -> bool {
-    free_vars_term(term).iter().any(|name| !is_literal_encoding(name) && env.lookup(name).is_none())
 }
 
 fn refused_name(name: &str) -> bool {

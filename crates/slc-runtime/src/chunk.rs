@@ -117,14 +117,64 @@ thread_local! {
 /// was installed before (so nested compiles — a unit test inside a run —
 /// leave the outer run's chunk intact).
 pub fn with_chunk<R>(chunk: Rc<Chunk>, body: impl FnOnce() -> R) -> R {
+    // The statement after `body()` does not run if `body` panics.
+    struct Restore(Option<Rc<Chunk>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            CURRENT.with(|c| *c.borrow_mut() = previous);
+        }
+    }
     let previous = CURRENT.with(|c| c.borrow_mut().replace(chunk));
-    let result = body();
-    CURRENT.with(|c| *c.borrow_mut() = previous);
-    result
+    let _restore = Restore(previous);
+    body()
 }
 
 /// Read node `id` of the current chunk. Panics only if the machine is run
 /// with no chunk installed, which the entry points prevent.
 pub fn node(id: NodeId) -> Node {
     CURRENT.with(|c| c.borrow().as_ref().expect("a chunk must be installed").node(id).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    fn chunk_named(name: &str) -> Rc<Chunk> {
+        let mut chunk = Chunk::new();
+        chunk.push(Node::Dynamic(Rc::from(name)));
+        Rc::new(chunk)
+    }
+
+    fn current_name() -> String {
+        match node(0) {
+            Node::Dynamic(name) => name.to_string(),
+            other => panic!("expected a named chunk, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_chunk_restores_the_previous_chunk_on_return_and_on_panic() {
+        let outer = chunk_named("outer");
+        let inner = chunk_named("inner");
+        with_chunk(outer, || {
+            assert_eq!(current_name(), "outer");
+            let result = with_chunk(Rc::clone(&inner), || {
+                assert_eq!(current_name(), "inner");
+                1
+            });
+            assert_eq!(result, 1);
+            assert_eq!(current_name(), "outer");
+
+            let panicked = catch_unwind(AssertUnwindSafe(|| {
+                with_chunk(inner, || {
+                    assert_eq!(current_name(), "inner");
+                    panic!("installed chunk must not survive");
+                });
+            }));
+            assert!(panicked.is_err());
+            assert_eq!(current_name(), "outer");
+        });
+    }
 }
