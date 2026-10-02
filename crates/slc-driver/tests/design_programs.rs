@@ -90,5 +90,17 @@ fn design_programs_compile() {
         if let Some(stage) = COMPILE_ERRORS.iter().find(|stage| stderr.contains(*stage)) {
             panic!("{label}:{line}: the program does not compile ({stage}):\n{stderr}");
         }
+        if !out.status.success() {
+            let program_error = stderr.contains("error: type mismatch:")
+                || stderr.contains("evaluation diverged (fuel exhausted)")
+                || stderr.contains("a continuation left the handler it was captured under");
+            let exited = stderr.is_empty() && out.status.code().is_some();
+            if !program_error && !exited {
+                panic!(
+                    "{label}:{line}: status {:?} is a compiler or link diagnostic:\n{stderr}",
+                    out.status.code()
+                );
+            }
+        }
     }
 }

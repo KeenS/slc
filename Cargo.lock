@@ -44,6 +44,7 @@ dependencies = [
  "slc-abi",
  "slc-check",
  "slc-core",
+ "slc-runtime",
  "slc-syntax",
 ]
 

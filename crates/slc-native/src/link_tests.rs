@@ -22,8 +22,25 @@ fn pipeline(src: &str) -> crate::Compiled {
         .unwrap_or_else(|diags| panic!("{diags:?}"));
     let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
         .unwrap_or_else(|err| panic!("{err}"));
-    crate::compile(&defs, &dispatch.specializations, &dispatch.payloads, &traits)
-        .unwrap_or_else(|err| panic!("{err}"))
+    let operations: Vec<String> = program
+        .decls
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            slc_syntax::ast::Decl::Effect { operations, .. } => Some(operations),
+            _ => None,
+        })
+        .flatten()
+        .map(|op| op.name.clone())
+        .collect();
+    crate::compile(
+        &defs,
+        &dispatch.specializations,
+        &dispatch.payloads,
+        &traits,
+        &operations,
+        usize::MAX,
+    )
+    .unwrap_or_else(|err| panic!("{err}"))
 }
 
 fn flat(func: &Function) -> Vec<&Inst> {
@@ -401,6 +418,7 @@ fn spill_slots_use_the_frame_not_a_protocol_register() {
             val_is_pointer: false,
             pointer_slots: vec![],
             spill_base: 7,
+            hide_map: 0,
             blocks: vec![crate::Block {
                 insts: vec![Inst::Mov { dst: Dest::V(10), src: Dest::V(9) }, Inst::Ret],
             }],
@@ -1200,6 +1218,8 @@ fn core_compile(defs: Vec<(String, Term)>) -> crate::Compiled {
         &[],
         &std::collections::HashMap::new(),
         &slc_syntax::traits::TraitInfo::default(),
+        &[],
+        usize::MAX,
     )
     .unwrap_or_else(|err| panic!("{err}"))
 }

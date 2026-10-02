@@ -1,5 +1,6 @@
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 
 enum RunOutcome {
     Exit(i32),
@@ -165,7 +166,7 @@ fn main() -> ExitCode {
     }
 
     let usage = || {
-        eprintln!("usage: slc run [--fuel N] <file.sl>");
+        eprintln!("usage: slc run [--fuel N] [--interpret] <file.sl>");
         eprintln!("       slc check <file.sl>...");
         eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
@@ -186,17 +187,20 @@ fn main() -> ExitCode {
     let Some(run_at) = args.iter().position(|a| a == "run") else {
         return usage();
     };
-    // A run is bounded only by memory unless `--fuel N` caps its machine
-    // steps, for a test or a program that might diverge.
-    let mut fuel = usize::MAX;
+    // A run is bounded only by memory unless `--fuel N` caps it. Omitted fuel
+    // is not the same as `--fuel 0`, which runs no SLC code.
+    let mut fuel = None;
+    let mut interpret = false;
     let mut file = None;
     let mut rest = args[run_at + 1..].iter();
     while let Some(arg) = rest.next() {
         if arg == "--fuel" {
             match rest.next().and_then(|n| n.parse().ok()) {
-                Some(n) => fuel = n,
+                Some(n) => fuel = Some(n),
                 None => return usage(),
             }
+        } else if arg == "--interpret" {
+            interpret = true;
         } else if file.is_none() {
             file = Some(PathBuf::from(arg));
         } else {
@@ -207,8 +211,13 @@ fn main() -> ExitCode {
         return usage();
     };
 
+    if !interpret {
+        run_elf(&file, fuel);
+    }
+
     // A continuation-passing program nests as deeply as its control flow,
     // and the evaluator walks the tree on the host stack, so give it room.
+    let fuel = fuel.unwrap_or(usize::MAX);
     let outcome = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(move || run_file(&file, fuel))
@@ -476,12 +485,13 @@ struct Compiled {
     program: slc_syntax::ast::Program,
     traits: slc_syntax::traits::TraitInfo,
     defs: Vec<(String, slc_core::term::Term)>,
+    dispatch: slc_syntax::lower::DispatchInfo,
 }
 
 fn run_file(path: &std::path::Path, fuel: usize) -> Result<RunOutcome, String> {
     let compile_span = slc_core::span!("compile");
     let compile_guard = compile_span.enter();
-    let Compiled { program, traits, defs } =
+    let Compiled { program, traits, defs, dispatch: _ } =
         compile_file(path).map_err(|diagnostics| diagnostics.join("\n"))?;
     // The whole program compiles to one flat chunk: every definition's
     // closures index it, so they must share it, and it stays installed for
@@ -571,7 +581,180 @@ fn compile_file(path: &std::path::Path) -> Result<Compiled, Diagnostics> {
 
     let defs = slc_syntax::lower::lower_program_resolving(&program, &resolved)
         .map_err(|e| vec![format!("lowering: {e}")])?;
-    Ok(Compiled { program, traits, defs })
+    Ok(Compiled { program, traits, defs, dispatch: resolved })
+}
+
+/// Write an object, link it with the aborting runtime, and replace this process.
+fn run_elf(path: &std::path::Path, fuel: Option<usize>) -> ! {
+    let path = path.to_path_buf();
+    let fold_fuel = fuel.unwrap_or(usize::MAX);
+    let object = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || compile_object(&path, fold_fuel))
+        .expect("failed to start the compiler")
+        .join()
+        .unwrap_or_else(|_| Err("compilation ran out of stack".into()));
+    let object = match object {
+        Ok(object) => object,
+        Err(error) => {
+            eprintln!("error: {error}");
+            std::process::exit(1);
+        }
+    };
+    link_and_exec(&object, fuel)
+}
+
+fn compile_object(path: &std::path::Path, fuel: usize) -> Result<Vec<u8>, String> {
+    let Compiled { program, traits, defs, dispatch } =
+        compile_file(path).map_err(|diagnostics| diagnostics.join("\n"))?;
+    validate_main(&program)?;
+    let operations: Vec<String> = program
+        .decls
+        .iter()
+        .filter_map(|decl| match &decl.kind {
+            slc_syntax::ast::Decl::Effect { operations, .. } => Some(operations),
+            _ => None,
+        })
+        .flatten()
+        .map(|op| op.name.clone())
+        .collect();
+    slc_native::compile(
+        &defs,
+        &dispatch.specializations,
+        &dispatch.payloads,
+        &traits,
+        &operations,
+        fuel,
+    )
+    .map(|compiled| compiled.object)
+}
+
+const ELF_DRIVER: &str = r#"
+#include <stdint.h>
+#include <stdlib.h>
+extern uint64_t slc_rt_start(
+    uint64_t fuel,
+    const void *safepoints_start, const void *safepoints_stop,
+    const void *maps_start, const void *maps_stop,
+    const void *text_start, const void *text_stop,
+    const void *scalars_start, const void *scalars_stop,
+    const void *ptrs_start, const void *ptrs_stop,
+    const void *labels_start, const void *labels_stop);
+extern char __start_slc_safepoints, __stop_slc_safepoints;
+extern char __start_slc_maps, __stop_slc_maps;
+extern char __start_slc_text, __stop_slc_text;
+extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
+extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
+extern char __start_slc_labels, __stop_slc_labels;
+int main(int argc, char **argv) {
+    uint64_t fuel = ~(uint64_t)0;
+    if (argc > 1) fuel = strtoull(argv[1], 0, 10);
+    uint64_t status = slc_rt_start(
+        fuel,
+        &__start_slc_safepoints, &__stop_slc_safepoints,
+        &__start_slc_maps, &__stop_slc_maps,
+        &__start_slc_text, &__stop_slc_text,
+        &__start_slc_pool_scalars, &__stop_slc_pool_scalars,
+        &__start_slc_pool_ptrs, &__stop_slc_pool_ptrs,
+        &__start_slc_labels, &__stop_slc_labels);
+    int32_t code = (int32_t)status;
+    if (code < 0 || code > 255) return 1;
+    return (int)code;
+}
+"#;
+
+fn runtime_archive() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest.parent().unwrap().parent().unwrap().to_path_buf();
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map_or_else(|| workspace.join("target"), PathBuf::from);
+    let output = Command::new(env!("CARGO"))
+        .current_dir(&workspace)
+        .args(["build", "-p", "slc-rt", "--profile", "release-abort", "--offline", "--target-dir"])
+        .arg(&target)
+        .output()
+        .unwrap_or_else(|error| {
+            eprintln!("error: cannot build the runtime: {error}");
+            std::process::exit(1);
+        });
+    if !output.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        eprint!("{}", String::from_utf8_lossy(&output.stdout));
+        std::process::exit(1);
+    }
+    target.join("release-abort/libslc_rt.a")
+}
+
+fn native_libs() -> Vec<String> {
+    let output = Command::new("rustc")
+        .args(["--print", "native-static-libs"])
+        .output()
+        .unwrap_or_else(|error| {
+            eprintln!("error: rustc --print native-static-libs: {error}");
+            std::process::exit(1);
+        });
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let line = text
+        .lines()
+        .find_map(|line| {
+            line.split("native-static-libs:").nth(1).or_else(|| {
+                if line.split_whitespace().any(|word| word.starts_with("-l")) {
+                    Some(line)
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or("");
+    line.split_whitespace().map(str::to_string).collect()
+}
+
+fn link_and_exec(object: &[u8], fuel: Option<usize>) -> ! {
+    let dir = std::env::temp_dir().join(format!(
+        "slc-run-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        eprintln!("error: cannot create {dir:?}: {error}");
+        std::process::exit(1);
+    }
+    let object_path = dir.join("p.o");
+    let driver_path = dir.join("main.c");
+    let exe = dir.join("p");
+    if let Err(error) =
+        std::fs::write(&object_path, object).and_then(|_| std::fs::write(&driver_path, ELF_DRIVER))
+    {
+        eprintln!("error: cannot write the object: {error}");
+        std::process::exit(1);
+    }
+    let mut cmd = Command::new("cc");
+    cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
+        .arg(&exe)
+        .arg(&driver_path)
+        .arg(&object_path)
+        .arg(runtime_archive());
+    cmd.args(native_libs());
+    let linked = cmd.output().unwrap_or_else(|error| {
+        eprintln!("error: cannot run cc: {error}");
+        std::process::exit(1);
+    });
+    if !linked.status.success() {
+        eprint!("{}", String::from_utf8_lossy(&linked.stderr));
+        eprint!("{}", String::from_utf8_lossy(&linked.stdout));
+        std::process::exit(1);
+    }
+    let mut run = Command::new(&exe);
+    if let Some(fuel) = fuel {
+        run.arg(fuel.to_string());
+    }
+    let error = run.exec();
+    eprintln!("error: cannot exec {}: {error}", exe.display());
+    std::process::exit(1);
 }
 
 /// Run a compiled program: install its globals, then run `main` through its

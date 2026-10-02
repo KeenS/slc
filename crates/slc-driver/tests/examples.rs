@@ -11,17 +11,35 @@ fn example(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples").join(name)
 }
 
-fn run_example(name: &str) -> (String, String, bool) {
+fn run_mode(name: &str, interpret: bool) -> (String, String, i32) {
+    let mut args = vec!["run".to_string()];
+    if interpret {
+        args.push("--interpret".to_string());
+    }
+    args.push(example(name).to_str().unwrap().to_string());
     let out = Command::new(env!("CARGO_BIN_EXE_slc"))
-        .args(["run", example(name).to_str().unwrap()])
+        .args(&args)
         .current_dir(env!("CARGO_MANIFEST_DIR").to_string() + "/../..")
         .output()
         .expect("failed to run slc");
+    let code = out.status.code().unwrap_or_else(|| {
+        use std::os::unix::process::ExitStatusExt;
+        128 + out.status.signal().unwrap_or(0)
+    });
     (
         String::from_utf8(out.stdout).expect("invalid UTF-8 in stdout"),
         String::from_utf8(out.stderr).expect("invalid UTF-8 in stderr"),
-        out.status.success(),
+        code,
     )
+}
+
+fn run_example(name: &str) -> (String, String, bool) {
+    let elf = run_mode(name, false);
+    let interpreted = run_mode(name, true);
+    assert_eq!(elf.0, interpreted.0, "{name}: stdout");
+    assert_eq!(elf.1, interpreted.1, "{name}: stderr");
+    assert_eq!(elf.2, interpreted.2, "{name}: status");
+    (elf.0, elf.1, elf.2 == 0)
 }
 
 #[test]

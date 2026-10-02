@@ -52,48 +52,16 @@ expression.
 
 ### Execution
 
-The evaluator is an abstract machine in the shape the calculus suggests: a
-state is what is being evaluated together with an explicit stack of frames —
-the continuation, held as data rather than as host stack. A cut pushes the
-co-term side as a frame; `μ` captures the stack into a value; a captured
-continuation is activated by reinstating its stack, down to the nearest
-handler it shares with the running one, which is why it outlives its `mu`
-and can be used more than once. `mu` branches stay unevaluated
-until activation chooses one. A run is bounded only by memory; `slc run
---fuel N` caps it at `N` machine steps, turning divergence into an error.
+`slc run` keeps one stack segment. A capture copies the frames down through
+the outermost prompt into a heap image. A prompt carries an id, and resume
+splices the image at the prompt with that id. A copy invoked under a prompt
+the image does not hold is an error. Fuel is the ELF's argument. With no
+argument the run is bounded by the segment; `--fuel N` passes `N`, and
+`N = 0` runs no SLC code. Exhausting the fuel is an error.
 
-The machine does not walk the named core. The whole program is compiled,
-once, into a single flat instruction stream — a `Chunk`, one vector of nodes
-— and every sub-expression is a node index, the machine's instruction
-pointer. In it, every lexical binder is resolved to a de Bruijn index, so a
-variable reference is a count into a positional environment rather than a walk
-comparing names. What a compiler cannot resolve lexically — a global, a
-literal, or an `of` arm's pattern variables, which the pattern engine
-injects at run time — stays a name, found in a by-name overlay and then the
-globals table. Keeping pattern injections in their own overlay is what lets
-the indices be stable: an injected binding never shifts the positional chain,
-yet, being part of the environment, it is still captured by a closure that
-escapes the arm.
-
-The continuation and all three environment layers are persistent `Rc` conses
-with their most recent entry at the head, so capturing the continuation
-(`mu`, or a handler's `resume`) or cloning the environment (which the machine
-does on nearly every step) bumps refcounts rather than copying — O(1)
-regardless of depth, and a push never disturbs a handle captured earlier.
-Resuming copies the captured slice onto the running stack, so it costs the
-slice's frames, not the stack's depth. A cut into a co-variable that only
-forwards — one nothing binds, or one holding the very stack running now —
-pushes no frame, so a loop whose body ends in such a cut runs in constant
-space, and so does a handler that resumes in tail position around it.
-
-A handler's prompt carries an id, fresh at each installation and kept by a
-resumption's copy. A jump walks the running stack from the top: at the first
-frame the captured stack shares, the captured stack replaces it; at the
-first prompt, the captured frames above that prompt go on it, or, when the
-captured stack holds no prompt with its id, the jump is the error of
-[§6](control.md#6-mu-capturing-the-current-continuation).
-Every frame records the depth beneath it, so the two stacks are lined up
-without walking either to the bottom.
+`--interpret` is the chunk machine: one flat stream of nodes, and a
+continuation held as persistent `Rc` conses. `--fuel N` caps that run at
+`N` machine steps.
 
 ### Printed form
 

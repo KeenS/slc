@@ -11,7 +11,7 @@ use slc_abi::{
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::substitution::free_vars_term;
-use slc_core::term::{DELAY_BINDER, Term};
+use slc_core::term::{CoMatchBranch, DELAY_BINDER, Term};
 use slc_core::types::{Base, Type};
 use slc_syntax::lower::Specialization;
 use slc_syntax::pattern::{self, Descriptor, Pat};
@@ -19,13 +19,21 @@ use slc_syntax::traits::TraitInfo;
 
 use crate::{BinOp, Block, Cond, Dest, Function, I64Op, Inst, MapRecord, Module, RtArg};
 
-const SCRATCHES: u16 = 4;
-const MATCH_TEMPS: u16 = 8;
+const SCRATCHES: u16 = 32;
+const MATCH_TEMPS: u16 = 32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Value,
     Tail,
+}
+
+/// A direct cut leaves the μ. `__tail` is not here: a `let` body cuts there
+/// and, in value position, has to keep going.
+#[derive(Clone, Copy)]
+enum ContExit {
+    Join(usize),
+    Ret,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +116,9 @@ struct Builder {
     current: String,
     /// Co-variables whose cut is a return. `__tail` starts here.
     forwards: HashSet<String>,
+    /// Where a cut against this μ goes. A branch join is not that exit:
+    /// otherwise the rest of the μ body still runs.
+    cont_exit: HashMap<String, ContExit>,
     /// Names used as co-terms in the function being compiled. Those slots are pointers.
     consumers: HashSet<String>,
     lifted: Vec<Function>,
@@ -119,6 +130,10 @@ struct Builder {
     cont_map: u32,
     /// `main`'s body is `λexit`. Entry calls that closure with the exit stub.
     proc_main: bool,
+    /// Non-lambda defs whose terms are data. A use compiles the literal.
+    literals: HashMap<String, Term>,
+    /// Effect operations. Any other unknown callee is unbound, not a perform.
+    operations: HashSet<String>,
 }
 
 pub fn lower(
@@ -126,9 +141,24 @@ pub fn lower(
     specs: &[Specialization],
     payloads: &HashMap<String, Vec<Type>>,
     traits: &TraitInfo,
+    operations: &[String],
 ) -> Result<Module, String> {
-    let mut builder = Builder::new(defs, specs, payloads, traits);
+    let mut builder = Builder::new(defs, specs, payloads, traits, operations);
     let mut funcs = Vec::new();
+    // A use of `__display` as a value is this closure. A call still goes to the builtin.
+    builder.func_param.insert("__display".into(), true);
+    builder.func_result.insert("__display".into(), true);
+    let display = Term::Lam(
+        "value".into(),
+        Box::new(Term::Mu(
+            "__call".into(),
+            Box::new(Command::Cut(
+                Term::Var("__display".into()),
+                CoTerm::App(Term::Var("value".into()), Box::new(CoTerm::Covar("__call".into()))),
+            )),
+        )),
+    );
+    funcs.push(builder.lower_fn("__display", &display)?);
     for (name, term) in defs {
         if matches!(term, Term::Lam(binder, _) if binder != DELAY_BINDER) {
             funcs.push(builder.lower_fn(name, term)?);
@@ -279,6 +309,7 @@ struct Suspended {
     val_ptr: bool,
     val_ty: Option<Type>,
     forwards: HashSet<String>,
+    cont_exit: HashMap<String, ContExit>,
     consumers: HashSet<String>,
 }
 
@@ -304,6 +335,7 @@ fn hand_fn(
         val_is_pointer,
         pointer_slots: pointer_slots.to_vec(),
         spill_base,
+        hide_map: 0,
         blocks: vec![Block { insts }],
         entry: false,
     }
@@ -506,6 +538,35 @@ fn cuts_coterm_tensor(param: &str, coterm: &CoTerm) -> bool {
     }
 }
 
+/// `__enter_poly(thunk)(aware)`. The thunk is the body. `aware` names the
+/// concrete operations this call catches; anything else tunnels.
+fn poly_thunk(term: &Term) -> Option<(&Term, &Term)> {
+    let Term::Mu(outer, outer_cmd) = term else { return None };
+    if outer != "__call" {
+        return None;
+    }
+    let Command::Cut(Term::Mu(inner, inner_cmd), CoTerm::App(aware, outer_cont)) =
+        outer_cmd.as_ref()
+    else {
+        return None;
+    };
+    if inner != "__call" {
+        return None;
+    }
+    let CoTerm::Covar(outer_name) = outer_cont.as_ref() else { return None };
+    if outer_name != "__call" {
+        return None;
+    }
+    let Command::Cut(Term::Var(fun), CoTerm::App(thunk, inner_cont)) = inner_cmd.as_ref() else {
+        return None;
+    };
+    if fun != "__enter_poly" {
+        return None;
+    }
+    let CoTerm::Covar(inner_name) = inner_cont.as_ref() else { return None };
+    if inner_name != "__call" { None } else { Some((thunk, aware)) }
+}
+
 /// `__handle` after `call_curried`: clauses first, then the thunk.
 fn handle_parts(term: &Term) -> Option<(&Term, &Term)> {
     let Term::Mu(outer, outer_cmd) = term else { return None };
@@ -567,6 +628,7 @@ impl Builder {
         specs: &[Specialization],
         payloads: &HashMap<String, Vec<Type>>,
         traits: &TraitInfo,
+        operations: &[String],
     ) -> Self {
         let mut builder = Self {
             labels: Vec::new(),
@@ -601,6 +663,7 @@ impl Builder {
             arm_bodies: Vec::new(),
             current: String::new(),
             forwards: HashSet::new(),
+            cont_exit: HashMap::new(),
             consumers: HashSet::new(),
             lifted: Vec::new(),
             lift_index: 0,
@@ -610,6 +673,8 @@ impl Builder {
             prompt_map: 0,
             cont_map: 0,
             proc_main: false,
+            literals: HashMap::new(),
+            operations: operations.iter().cloned().collect(),
         };
         builder.prepare_maps();
         for (name, term) in defs {
@@ -646,6 +711,29 @@ impl Builder {
                     }
                     builder.fn_types.insert(name.clone(), words);
                 }
+            }
+            // A negative function is the consumer it returns, not a `λ`. The
+            // interpreter installs that value; a use has to compile it too.
+            if !matches!(term, Term::Lam(param, _) if param != DELAY_BINDER) {
+                builder.literals.insert(name.clone(), term.clone());
+            }
+        }
+        // `def M = N` where `N` is data. The use compiles the literal.
+        loop {
+            let mut progressed = false;
+            for (name, term) in defs {
+                if builder.literals.contains_key(name) {
+                    continue;
+                }
+                if let Term::Var(other) = term
+                    && let Some(lit) = builder.literals.get(other).cloned()
+                {
+                    builder.literals.insert(name.clone(), lit);
+                    progressed = true;
+                }
+            }
+            if !progressed {
+                break;
             }
         }
         builder
@@ -851,13 +939,20 @@ impl Builder {
         self.scratch_top -= 1;
     }
 
+    /// Sibling arms reuse scratch and match temps. Pointer marks stay: one map
+    /// covers every safepoint, including the arm that stored the pointer.
+    fn restore_arm(&mut self, scratch: u16, temp: u16) {
+        self.scratch_top = scratch;
+        self.temp_used = temp;
+    }
+
     fn alloc_temp(&mut self, pointer: bool) -> Result<u16, String> {
         if self.temp_used >= MATCH_TEMPS {
             return Err(format!("too many match temps in {}", self.current));
         }
         let slot = self.temp_base + self.temp_used;
         self.temp_used += 1;
-        if pointer {
+        if pointer && !self.pointer_slots.contains(&slot) {
             self.pointer_slots.push(slot);
         }
         Ok(slot)
@@ -912,7 +1007,15 @@ impl Builder {
                 }
             }
             Term::Co(coterm) => self.collect_coterm(coterm),
-            Term::Var(_) | Term::CoMatch { .. } => {}
+            Term::CoMatch { .. } => {}
+            // An unread sequencing binder has no slot. A read is a real local.
+            Term::Var(name)
+                if name.starts_with("__discarded") && !self.slots.contains_key(name) =>
+            {
+                let index = self.slots.len() as u16;
+                self.slots.insert(name.clone(), index);
+            }
+            Term::Var(_) => {}
         }
     }
 
@@ -1010,6 +1113,26 @@ impl Builder {
     }
 
     fn compile_term(&mut self, term: &Term, mode: Mode) -> Result<bool, String> {
+        // Enter first, so closures this body allocates are born under the barrier.
+        if let Some((thunk, aware)) = poly_thunk(term) {
+            let aware_ptr = self.compile_term(aware, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Ok(aware_ptr);
+            }
+            if aware_ptr {
+                self.push_scratch(Dest::Val)?;
+            }
+            self.emit(Inst::CallRt {
+                symbol: "slc_rt_enter_poly".into(),
+                arg: RtArg::Val,
+                noreturn: false,
+                returns: false,
+            });
+            if aware_ptr {
+                self.pop_scratch();
+            }
+            return self.compile_call(thunk, &Term::Var("$unit".into()), mode);
+        }
         if let Some((clauses, thunk)) = handle_parts(term) {
             return self.compile_handle(clauses, thunk, mode);
         }
@@ -1020,9 +1143,8 @@ impl Builder {
             Term::Tag(label, payload) => self.compile_tag(label, payload, mode),
             Term::Tuple(items) => self.compile_tuple(items, mode),
             Term::Mu(name, command) => self.compile_mu(name, command, mode),
-            Term::Co(_) | Term::CoMatch { .. } => {
-                Err("handlers and consumers are not a test of this compiler".into())
-            }
+            Term::Co(coterm) => self.compile_co(coterm, mode),
+            Term::CoMatch { branches, .. } => self.compile_menu(branches, mode),
         }
     }
 
@@ -1034,7 +1156,8 @@ impl Builder {
             CoTerm::MuTildeTensor(binders, body) => self.compile_tensor(term, binders, body, mode),
             CoTerm::MuTilde(binder, body) => self.compile_bind(term, binder, body, mode),
             CoTerm::Prj(index) => self.compile_prj(term, *index, mode),
-            CoTerm::App(_, _) | CoTerm::Dtor(_, _) => Err("not a straight-line command".into()),
+            CoTerm::App(arg, cont) => self.compile_app(term, arg, cont, mode),
+            CoTerm::Dtor(label, cont) => self.compile_dtor(term, label, cont, mode),
         }
     }
 
@@ -1042,22 +1165,85 @@ impl Builder {
         if let Some(lem) = lem_shape(mu, command) {
             return self.compile_lem(mu, lem);
         }
-        if escapes(mu, command) {
+        let escaping = escapes(mu, command);
+        let mut join_after = None;
+        if escaping {
             let Some(&slot) = self.slots.get(mu) else {
                 return Err(format!("escaping {mu} has no slot"));
             };
             // The copy is taken before the slot is stored, so the image does not alias it.
-            self.emit(Inst::Capture { dst: Dest::Val });
-            self.store_slot(Dest::Val, slot);
-            self.mark_word(mu, slot, true);
+            // Tail position: the caller is already the continuation. Value position: the
+            // continuation is the code after this μ, which still lives in this frame.
+            if mode == Mode::Value {
+                let after = self.new_block();
+                self.emit(Inst::CaptureJoin { block: after, dst: Dest::Val });
+                self.store_slot(Dest::Val, slot);
+                self.mark_word(mu, slot, true);
+                join_after = Some(after);
+            } else {
+                self.emit(Inst::Capture { dst: Dest::Val });
+                self.store_slot(Dest::Val, slot);
+                self.mark_word(mu, slot, true);
+            }
         }
-        // A cut against this binder is still the μ's own return. The heap copy is for later uses.
+        // `__tail` follows the surrounding mode. A `let` body cuts there.
+        if mu == "__tail" {
+            let saved_join = join_after.and_then(|block| self.join.replace(block));
+            let fresh = self.forwards.insert(mu.to_string());
+            let result = self.compile_mu_command(mu, command, mode);
+            if fresh {
+                self.forwards.remove(mu);
+            }
+            if join_after.is_some() {
+                self.join = saved_join;
+            }
+            let result = result?;
+            if let Some(block) = join_after {
+                if !terminated(&self.blocks[self.cur].insts) {
+                    self.emit(Inst::Jmp { target: block });
+                }
+                self.cur = block;
+            }
+            return Ok(result);
+        }
+        let after = match mode {
+            Mode::Value => Some(join_after.unwrap_or_else(|| self.new_block())),
+            Mode::Tail => None,
+        };
+        let exit = match after {
+            Some(block) => ContExit::Join(block),
+            None => ContExit::Ret,
+        };
+        let saved_exit = self.cont_exit.insert(mu.to_string(), exit);
+        let saved_join = if escaping && mode == Mode::Value {
+            self.join.replace(after.expect("value μ has a join"))
+        } else {
+            None
+        };
         let fresh = self.forwards.insert(mu.to_string());
         let result = self.compile_mu_command(mu, command, mode);
         if fresh {
             self.forwards.remove(mu);
         }
-        result
+        match saved_exit {
+            Some(prev) => {
+                self.cont_exit.insert(mu.to_string(), prev);
+            }
+            None => {
+                self.cont_exit.remove(mu);
+            }
+        }
+        if escaping && mode == Mode::Value {
+            self.join = saved_join;
+        }
+        let result = result?;
+        if let Some(block) = after {
+            if !terminated(&self.blocks[self.cur].insts) {
+                self.emit(Inst::Jmp { target: block });
+            }
+            self.cur = block;
+        }
+        Ok(result)
     }
 
     fn compile_mu_command(
@@ -1082,12 +1268,343 @@ impl Builder {
                 {
                     return self.compile_call(value, arg, mode);
                 }
-                Err(format!("not a direct call in {mu}"))
+                self.compile_app(value, arg, cont, mode)
             }
             CoTerm::Covar(name) => self.deliver(value, name, mode),
             CoTerm::Prj(index) => self.compile_prj(value, *index, mode),
-            CoTerm::Dtor(_, _) => Err("not straight-line".into()),
+            CoTerm::Dtor(label, cont) => self.compile_dtor(value, label, cont, mode),
         }
+    }
+
+    /// A direct cut against this co-variable returns. A slot is a consumer to activate.
+    /// `__arm` names the ambient continuation and is never bound.
+    fn cont_is_return(&self, cont: &CoTerm) -> bool {
+        let CoTerm::Covar(name) = cont else { return false };
+        self.forwards.contains(name) || (!self.slots.contains_key(name) && name.starts_with("__"))
+    }
+
+    fn compile_app(
+        &mut self,
+        callee: &Term,
+        arg: &Term,
+        cont: &CoTerm,
+        mode: Mode,
+    ) -> Result<bool, String> {
+        if self.cont_is_return(cont) {
+            if let CoTerm::Covar(name) = cont
+                && let Some(exit) = self.cont_exit.get(name).copied()
+            {
+                let call_mode = match exit {
+                    ContExit::Ret => Mode::Tail,
+                    ContExit::Join(_) => Mode::Value,
+                };
+                let pointer = self.compile_call(callee, arg, call_mode)?;
+                self.finish_exit(exit);
+                return Ok(pointer);
+            }
+            return self.compile_call(callee, arg, mode);
+        }
+        let pointer = self.compile_call(callee, arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
+        self.deliver_ready(cont, pointer, mode)
+    }
+
+    fn compile_dtor(
+        &mut self,
+        menu: &Term,
+        label: &str,
+        cont: &CoTerm,
+        mode: Mode,
+    ) -> Result<bool, String> {
+        let pointer = self.compile_term(menu, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(pointer);
+        }
+        // A `let` of a menu binds the computation. The request is what runs it.
+        self.demand_value()?;
+        self.activate_menu(label, cont, mode)
+    }
+
+    /// A request or a projection runs a delayed computation, then uses the value.
+    /// Any other tag is already that value.
+    fn demand_value(&mut self) -> Result<(), String> {
+        let slot = self.push_scratch(Dest::Val)?;
+        self.emit(Inst::Force { slot });
+        self.pop_scratch();
+        Ok(())
+    }
+
+    /// `r13` is the menu. The request is the label over the reified continuation.
+    fn activate_menu(&mut self, label: &str, cont: &CoTerm, mode: Mode) -> Result<bool, String> {
+        let menu_slot = self.push_scratch(Dest::Val)?;
+        let payload_ptr = self.reify(cont)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            self.pop_scratch();
+            return Ok(payload_ptr);
+        }
+        let temp_mark = self.temp_used;
+        let payload_slot = if payload_ptr {
+            self.push_scratch(Dest::Val)?
+        } else {
+            let slot = self.alloc_temp(false)?;
+            self.store_slot(Dest::Val, slot);
+            if self.val_ptr {
+                self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+            }
+            slot
+        };
+        let id = self.intern(label);
+        let map = if payload_ptr { self.heap_map(&[1]) } else { MAP_EMPTY };
+        self.emit(Inst::CallAlloc { words: 2, tag: TAG_TAGGED, map_id: map, dst: Dest::V(0) });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(id) });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_LABEL as i32,
+            width: 8,
+        });
+        self.load_slot(Dest::V(1), payload_slot);
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_PAYLOAD as i32,
+            width: 8,
+        });
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        if payload_ptr {
+            self.pop_scratch();
+        } else if self.temp_used == temp_mark + 1 {
+            self.temp_used = temp_mark;
+        }
+        self.emit(Inst::Activate {
+            consumer: Dest::Slot(menu_slot),
+            tail: mode == Mode::Tail,
+            arg_is_pointer: true,
+        });
+        self.pop_scratch();
+        Ok(false)
+    }
+
+    /// The value is already in `r13`. Send it to `cont`.
+    fn deliver_ready(&mut self, cont: &CoTerm, pointer: bool, mode: Mode) -> Result<bool, String> {
+        match cont {
+            CoTerm::Covar(name) => {
+                if let Some(exit) = self.cont_exit.get(name).copied() {
+                    self.finish_exit(exit);
+                    return Ok(pointer);
+                }
+                if self.forwards.contains(name)
+                    || (!self.slots.contains_key(name) && name.starts_with("__"))
+                {
+                    if mode == Mode::Tail {
+                        self.finish(Mode::Tail);
+                    }
+                    return Ok(pointer);
+                }
+                if let Some(&slot) = self.slots.get(name) {
+                    self.emit(Inst::Activate {
+                        consumer: Dest::Slot(slot),
+                        tail: mode == Mode::Tail,
+                        arg_is_pointer: pointer,
+                    });
+                    return Ok(false);
+                }
+                let op = self.intern(name);
+                self.emit_perform(op, mode == Mode::Tail, pointer)
+            }
+            CoTerm::MuTilde(binder, body) => {
+                if let Some(&slot) = self.slots.get(binder.as_str()) {
+                    self.store_slot(Dest::Val, slot);
+                    let kept = pointer || self.word_ptr(binder);
+                    self.mark_word(binder, slot, pointer);
+                    if !kept && self.val_ptr {
+                        self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+                    }
+                }
+                self.compile_command(body, mode)
+            }
+            CoTerm::MuTildeTensor(binders, body) => {
+                for (index, name) in binders.iter().enumerate() {
+                    if let Some(&slot) = self.slots.get(name.as_str()) {
+                        self.emit(Inst::Load {
+                            dst: Dest::V(0),
+                            base: Dest::Val,
+                            offset: 24 + 8 * index as i32,
+                            width: 8,
+                        });
+                        self.store_slot(Dest::V(0), slot);
+                        self.mark_word(name, slot, false);
+                    }
+                }
+                self.compile_command(body, mode)
+            }
+            CoTerm::CoCase { branches, .. } => self.compile_cocase_ready(branches, mode),
+            CoTerm::App(arg, next) => {
+                let callee_slot = self.push_scratch(Dest::Val)?;
+                let arg_ptr = self.compile_term(arg, Mode::Value)?;
+                if terminated(&self.blocks[self.cur].insts) {
+                    self.pop_scratch();
+                    return Ok(arg_ptr);
+                }
+                self.emit(Inst::CallClosure {
+                    closure: Dest::Slot(callee_slot),
+                    tail: false,
+                    arg_is_pointer: arg_ptr,
+                });
+                self.pop_scratch();
+                self.deliver_ready(next, true, mode)
+            }
+            CoTerm::Dtor(label, tail) => {
+                self.demand_value()?;
+                self.activate_menu(label, tail, mode)
+            }
+            CoTerm::Prj(index) => {
+                self.demand_value()?;
+                self.emit(Inst::Load {
+                    dst: Dest::Val,
+                    base: Dest::Val,
+                    offset: 24 + 8 * *index as i32,
+                    width: 8,
+                });
+                if mode == Mode::Tail {
+                    self.finish(Mode::Tail);
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    fn compile_co(&mut self, coterm: &CoTerm, mode: Mode) -> Result<bool, String> {
+        match coterm {
+            CoTerm::Covar(name) => self.reify_covar(name, mode),
+            CoTerm::CoCase { owner, branches } => {
+                let body = Term::Mu(
+                    "__go".into(),
+                    Box::new(Command::Cut(
+                        Term::Var("__scrut".into()),
+                        CoTerm::CoCase { owner: owner.clone(), branches: branches.clone() },
+                    )),
+                );
+                // The argument is the labelled value.
+                self.lift_consumer("__scrut", true, &body, mode)
+            }
+            CoTerm::MuTilde(binder, cmd) => {
+                let body = Term::Mu("__go".into(), cmd.clone());
+                let ptr = param_is_pointer(binder, &body);
+                self.lift_consumer(binder, ptr, &body, mode)
+            }
+            CoTerm::MuTildeTensor(binders, cmd) => {
+                let body = Term::Mu(
+                    "__go".into(),
+                    Box::new(Command::Cut(
+                        Term::Var("__prod".into()),
+                        CoTerm::MuTildeTensor(binders.clone(), cmd.clone()),
+                    )),
+                );
+                self.lift_consumer("__prod", true, &body, mode)
+            }
+            CoTerm::Dtor(label, tail) => self.reify_dtor(label, tail, mode),
+            CoTerm::App(_, _) | CoTerm::Prj(_) => {
+                Err("cannot reify an application or a projection".into())
+            }
+        }
+    }
+
+    fn compile_menu(&mut self, branches: &[CoMatchBranch], mode: Mode) -> Result<bool, String> {
+        let cases = branches
+            .iter()
+            .map(|branch| CoCaseBranch {
+                label: branch.label.clone(),
+                binders: vec![branch.binder.clone()],
+                body: branch.body.clone(),
+            })
+            .collect();
+        let body = Term::Mu(
+            "__go".into(),
+            Box::new(Command::Cut(
+                Term::Var("__req".into()),
+                CoTerm::CoCase { owner: String::new(), branches: cases },
+            )),
+        );
+        // A request is a tagged object. The branch binds its continuation.
+        self.lift_consumer("__req", true, &body, mode)
+    }
+
+    fn lift_consumer(
+        &mut self,
+        param: &str,
+        param_ptr: bool,
+        body: &Term,
+        mode: Mode,
+    ) -> Result<bool, String> {
+        let symbol = format!("{}__lam_{}", self.current, self.lift_index);
+        self.lift_index += 1;
+        // `collect` also reserves this binder on the parent. It is the argument,
+        // not a closed-over slot: copying that reservation would clobber it.
+        let captures: Vec<_> =
+            self.capture_list(body).into_iter().filter(|(name, _)| name != param).collect();
+        self.lift_function(&symbol, param, param_ptr, body, &captures)?;
+        self.emit_code_object(&symbol, &captures, 4, true)?;
+        if mode == Mode::Tail {
+            self.finish(Mode::Tail);
+        }
+        Ok(true)
+    }
+
+    fn reify(&mut self, coterm: &CoTerm) -> Result<bool, String> {
+        self.compile_co(coterm, Mode::Value)
+    }
+
+    fn reify_covar(&mut self, name: &str, mode: Mode) -> Result<bool, String> {
+        if self.slots.contains_key(name) {
+            return self.compile_var(name, mode);
+        }
+        // No slot: this names the continuation that is current right now.
+        if self.forwards.contains(name) || name.starts_with("__") {
+            self.emit_code_object("slc_id_kont", &[], 4, true)?;
+            if mode == Mode::Tail {
+                self.finish(Mode::Tail);
+            }
+            return Ok(true);
+        }
+        self.compile_var(name, mode)
+    }
+
+    fn reify_dtor(&mut self, label: &str, tail: &CoTerm, mode: Mode) -> Result<bool, String> {
+        let payload_ptr = self.reify(tail)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(payload_ptr);
+        }
+        let scratch = if payload_ptr { Some(self.push_scratch(Dest::Val)?) } else { None };
+        let id = self.intern(label);
+        let map = if payload_ptr { self.heap_map(&[1]) } else { MAP_EMPTY };
+        self.emit(Inst::CallAlloc { words: 2, tag: TAG_TAGGED, map_id: map, dst: Dest::V(0) });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(id) });
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_LABEL as i32,
+            width: 8,
+        });
+        if let Some(slot) = scratch {
+            self.load_slot(Dest::V(1), slot);
+            self.pop_scratch();
+        } else {
+            self.emit(Inst::Mov { dst: Dest::V(1), src: Dest::Val });
+        }
+        self.emit(Inst::Store {
+            src: Dest::V(1),
+            base: Dest::V(0),
+            offset: TAGGED_PAYLOAD as i32,
+            width: 8,
+        });
+        self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+        if mode == Mode::Tail {
+            self.finish(Mode::Tail);
+        }
+        Ok(true)
     }
 
     fn compile_bind(
@@ -1136,13 +1653,14 @@ impl Builder {
             self.emit(Inst::LeaPool { dst: Dest::V(0), index });
             self.emit(Inst::Load { dst: Dest::Val, base: Dest::V(0), offset: 0, width: 8 });
             true
+        } else if let Some(&slot) = self.slots.get(name) {
+            // A local shadows a function of the same name (`index` is both).
+            self.load_slot(Dest::Val, slot);
+            self.pointer_slots.contains(&slot)
         } else if self.func_param.contains_key(name) {
             // A known function used as a value is a closure, not a call.
             self.emit_code_object(name, &[], 4, true)?;
             true
-        } else if let Some(&slot) = self.slots.get(name) {
-            self.load_slot(Dest::Val, slot);
-            self.pointer_slots.contains(&slot)
         } else if let Some(rest) = name.strip_prefix("__dict_") {
             // The interpreter installs these after lowering. A projection's index is
             // the trait's method, so an impl that writes `gt` first still slots `lt` at 0.
@@ -1194,6 +1712,8 @@ impl Builder {
                 self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
             }
             true
+        } else if let Some(term) = self.literals.get(name).cloned() {
+            return self.compile_term(&term, mode);
         } else {
             return Err(format!("unbound {name}"));
         };
@@ -1214,6 +1734,95 @@ impl Builder {
     }
 
     fn compile_tag(&mut self, label: &str, payload: &Term, mode: Mode) -> Result<bool, String> {
+        // A handler value is the clauses object paired with its return closure.
+        // `do body h` unpacks that pair; an inline `handle` compiles the same tag.
+        if label == "__clauses" {
+            let Term::Tuple(entries) = payload else {
+                return Err("handler clauses".into());
+            };
+            let saved_scratch = self.scratch_top;
+            let saved_temp = self.temp_used;
+            let mut pairs = Vec::new();
+            for entry in entries {
+                let Term::Tuple(pair) = entry else {
+                    return Err("clause pair".into());
+                };
+                let (Term::Var(op_name), closure) = (&pair[0], &pair[1]) else {
+                    return Err("clause pair".into());
+                };
+                let op = decode_lit(op_name.strip_prefix("$str_").unwrap_or(op_name));
+                self.compile_term(closure, Mode::Value)?;
+                if terminated(&self.blocks[self.cur].insts) {
+                    return Err("clause did not produce a closure".into());
+                }
+                let slot = self.push_scratch(Dest::Val)?;
+                pairs.push((op, slot));
+            }
+            let ptr_slots: Vec<u16> = (0..pairs.len()).map(|index| 2 + index as u16 * 2).collect();
+            let map = if ptr_slots.is_empty() { MAP_EMPTY } else { self.heap_map(&ptr_slots) };
+            self.emit(Inst::CallAlloc {
+                words: 1 + pairs.len() as u32 * 2,
+                tag: TAG_CLAUSES,
+                map_id: map,
+                dst: Dest::V(0),
+            });
+            self.emit(Inst::Imm { dst: Dest::V(1), value: pairs.len() as i64 });
+            self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
+            let mut ret_slot = None;
+            for (index, (op, slot)) in pairs.iter().enumerate() {
+                let id = i64::from(self.intern(op));
+                self.emit(Inst::Imm { dst: Dest::V(1), value: id });
+                self.emit(Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: 24 + 16 * index as i32,
+                    width: 8,
+                });
+                self.load_slot(Dest::V(1), *slot);
+                self.emit(Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: 32 + 16 * index as i32,
+                    width: 8,
+                });
+                if op == "return" {
+                    ret_slot = Some(*slot);
+                }
+            }
+            let Some(ret_slot) = ret_slot else {
+                return Err("handler has no return clause".into());
+            };
+            let clauses_slot = self.push_scratch(Dest::V(0))?;
+            let tuple_map = self.heap_map(&[1, 2]);
+            self.emit(Inst::CallAlloc {
+                words: 3,
+                tag: TAG_TUPLE,
+                map_id: tuple_map,
+                dst: Dest::V(0),
+            });
+            self.emit(Inst::Imm { dst: Dest::V(1), value: 2 });
+            self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
+            self.load_slot(Dest::V(1), clauses_slot);
+            self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 24, width: 8 });
+            self.load_slot(Dest::V(1), ret_slot);
+            self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 32, width: 8 });
+            self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
+            self.restore_arm(saved_scratch, saved_temp);
+            if mode == Mode::Tail {
+                self.finish(Mode::Tail);
+            }
+            return Ok(true);
+        }
+        // Folded bools re-embed as tags. Pointer equality needs the pool singletons.
+        if matches!(label, "Bool::True" | "Bool::False")
+            && matches!(payload, Term::Var(name) if name == "$unit")
+        {
+            self.load_pool(label)?;
+            if mode == Mode::Tail {
+                self.finish(Mode::Tail);
+            }
+            return Ok(true);
+        }
         let pointer = self.compile_term(payload, Mode::Value)?;
         let scratch = if pointer { Some(self.push_scratch(Dest::Val)?) } else { None };
         let id = self.intern(label);
@@ -1303,49 +1912,75 @@ impl Builder {
         Ok(true)
     }
 
-    fn compile_call(&mut self, callee: &Term, arg: &Term, mode: Mode) -> Result<bool, String> {
-        let Term::Var(symbol) = callee else {
-            // Evaluate the argument before the closure. A left-folded chain
-            // would otherwise keep every outer closure live through the inner chain.
-            let arg_ptr = self.compile_term(arg, Mode::Value)?;
-            if terminated(&self.blocks[self.cur].insts) {
-                return Ok(arg_ptr);
+    /// `callee` is not a direct symbol. The argument is evaluated first.
+    fn call_closure_term(&mut self, callee: &Term, arg: &Term, mode: Mode) -> Result<bool, String> {
+        let arg_ptr = self.compile_term(arg, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(arg_ptr);
+        }
+        let arg_mark = self.temp_used;
+        let arg_slot = if arg_ptr {
+            self.push_scratch(Dest::Val)?
+        } else {
+            let slot = self.alloc_temp(false)?;
+            self.store_slot(Dest::Val, slot);
+            if self.val_ptr {
+                self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
             }
-            let arg_mark = self.temp_used;
-            let arg_slot = if arg_ptr {
-                self.push_scratch(Dest::Val)?
-            } else {
-                let slot = self.alloc_temp(false)?;
-                self.store_slot(Dest::Val, slot);
-                if self.val_ptr {
-                    self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
-                }
-                slot
-            };
-            let closure_ptr = self.compile_term(callee, Mode::Value)?;
-            if terminated(&self.blocks[self.cur].insts) {
-                if arg_ptr {
-                    self.pop_scratch();
-                } else if self.temp_used == arg_mark + 1 {
-                    self.temp_used = arg_mark;
-                }
-                return Ok(closure_ptr);
-            }
-            let closure_slot = self.push_scratch(Dest::Val)?;
-            self.load_slot(Dest::Val, arg_slot);
-            self.emit(Inst::CallClosure {
-                closure: Dest::Slot(closure_slot),
-                tail: mode == Mode::Tail,
-                arg_is_pointer: arg_ptr,
-            });
-            self.pop_scratch();
+            slot
+        };
+        let closure_ptr = self.compile_term(callee, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
             if arg_ptr {
                 self.pop_scratch();
             } else if self.temp_used == arg_mark + 1 {
                 self.temp_used = arg_mark;
             }
-            return Ok(true);
+            return Ok(closure_ptr);
+        }
+        let closure_slot = self.push_scratch(Dest::Val)?;
+        self.load_slot(Dest::Val, arg_slot);
+        self.emit(Inst::CallClosure {
+            closure: Dest::Slot(closure_slot),
+            tail: mode == Mode::Tail,
+            arg_is_pointer: arg_ptr,
+        });
+        self.pop_scratch();
+        if arg_ptr {
+            self.pop_scratch();
+        } else if self.temp_used == arg_mark + 1 {
+            self.temp_used = arg_mark;
+        }
+        Ok(true)
+    }
+
+    fn compile_call(&mut self, callee: &Term, arg: &Term, mode: Mode) -> Result<bool, String> {
+        if let Term::Mu(binder, command) = callee
+            && binder == "__call"
+            && let Command::Cut(Term::Var(name), CoTerm::App(values, cont)) = command.as_ref()
+            && let CoTerm::Covar(cov) = cont.as_ref()
+            && cov == "__call"
+            && matches!(
+                name.as_str(),
+                "char_at"
+                    | "find_char"
+                    | "parse_int"
+                    | "__read_file"
+                    | "__open_file"
+                    | "__read_line"
+                    | "__write_file"
+            )
+        {
+            return self.compile_offering(name, values, arg, mode);
+        }
+        let Term::Var(symbol) = callee else {
+            return self.call_closure_term(callee, arg, mode);
         };
+        // A dictionary is the method closure (or the tuple of them), applied to
+        // the impl's bound dictionaries. It is not an effect.
+        if symbol.starts_with("__dict_") {
+            return self.call_closure_term(callee, arg, mode);
+        }
         if symbol == "$force" {
             return self.compile_force(arg, mode);
         }
@@ -1379,12 +2014,32 @@ impl Builder {
                 | "str_len"
                 | "__index"
                 | "char_to_code"
+                | "substring"
+                | "skip_digits"
+                | "skip_ws"
+                | "is_digit"
+                | "is_ws"
+                | "str_eq"
+                | "__close_file"
+                | "__file_exists"
         ) {
             return self.compile_builtin(symbol, arg, mode);
         }
+        if self.slots.contains_key(symbol.as_str()) {
+            return self.compile_indirect(symbol, arg, mode);
+        }
         if !self.func_param.contains_key(symbol) {
-            if self.slots.contains_key(symbol) {
-                return self.compile_indirect(symbol, arg, mode);
+            if !self.operations.contains(symbol) {
+                // Lookup fails before the argument runs.
+                let id = self.intern(symbol);
+                self.emit(Inst::Imm { dst: Dest::Val, value: i64::from(id) });
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_unbound".into(),
+                    arg: RtArg::Val,
+                    noreturn: true,
+                    returns: false,
+                });
+                return Ok(false);
             }
             let pointer = self.compile_term(arg, Mode::Value)?;
             if terminated(&self.blocks[self.cur].insts) {
@@ -1432,6 +2087,18 @@ impl Builder {
         mode: Mode,
     ) -> Result<bool, String> {
         self.compile_term(scrutinee, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(true);
+        }
+        self.compile_cocase_ready(branches, mode)
+    }
+
+    /// The labelled value is already in `r13`.
+    fn compile_cocase_ready(
+        &mut self,
+        branches: &[CoCaseBranch],
+        mode: Mode,
+    ) -> Result<bool, String> {
         let saved = self.join;
         let join = match mode {
             Mode::Value => Some(self.new_block()),
@@ -1464,10 +2131,11 @@ impl Builder {
         for (branch, block) in branches.iter().zip(arm_blocks) {
             self.cur = block;
             let scratch = self.scratch_top;
+            let temp = self.temp_used;
             self.bind_payload(&branch.binders);
             result_ptr |= self.compile_command(&branch.body, mode)?;
             self.finish(mode);
-            self.scratch_top = scratch;
+            self.restore_arm(scratch, temp);
         }
         if let Some(join) = join {
             self.cur = join;
@@ -1614,6 +2282,7 @@ impl Builder {
 
     fn emit_row(&mut self, row: &Row, mode: Mode) -> Result<bool, String> {
         let scratch = self.scratch_top;
+        let saved_temp = self.temp_used;
         for (name, place) in &row.binds {
             if let Some(&slot) = self.slots.get(name.as_str()) {
                 match place {
@@ -1629,7 +2298,26 @@ impl Builder {
         let body = self.arm_bodies[row.arm].clone();
         let result = self.compile_term(&body, mode)?;
         self.finish(mode);
-        self.scratch_top = scratch;
+        self.restore_arm(scratch, saved_temp);
+        Ok(result)
+    }
+
+    fn compile_split(
+        &mut self,
+        success: Vec<Row>,
+        fail: usize,
+        failure: Vec<Row>,
+        mode: Mode,
+    ) -> Result<bool, String> {
+        let scratch = self.scratch_top;
+        let temp = self.temp_used;
+        let mut result = self.compile_matrix(success, mode)?;
+        self.finish(mode);
+        self.restore_arm(scratch, temp);
+        self.cur = fail;
+        result |= self.compile_matrix(failure, mode)?;
+        self.finish(mode);
+        self.restore_arm(scratch, temp);
         Ok(result)
     }
 
@@ -1641,12 +2329,12 @@ impl Builder {
             Pat::Int(value) => {
                 let fail = self.new_block();
                 self.cmp_place(&place, *value, Cond::Ne, fail);
-                let mut result = self.compile_matrix(success, mode)?;
-                self.finish(mode);
-                self.cur = fail;
-                result |= self.compile_matrix(failure, mode)?;
-                self.finish(mode);
-                Ok(result)
+                self.compile_split(success, fail, failure, mode)
+            }
+            Pat::Char(value) => {
+                let fail = self.new_block();
+                self.cmp_place(&place, i64::from(*value as u32), Cond::Ne, fail);
+                self.compile_split(success, fail, failure, mode)
             }
             Pat::Float(value) => {
                 let fail = self.new_block();
@@ -1658,17 +2346,15 @@ impl Builder {
                     cond: Cond::Ne,
                     target: fail,
                 });
-                let mut result = self.compile_matrix(success, mode)?;
-                self.finish(mode);
-                self.cur = fail;
-                result |= self.compile_matrix(failure, mode)?;
-                self.finish(mode);
-                Ok(result)
+                self.compile_split(success, fail, failure, mode)
             }
             Pat::Range(lo, hi) => {
                 let fail = self.new_block();
                 match (lo.as_ref(), hi.as_ref()) {
                     (Pat::Int(lo), Pat::Int(hi)) => self.emit_range(&place, *lo, *hi, fail),
+                    (Pat::Char(lo), Pat::Char(hi)) => {
+                        self.emit_range(&place, i64::from(*lo as u32), i64::from(*hi as u32), fail)
+                    }
                     (Pat::Float(lo), Pat::Float(hi)) => {
                         let src = self.place_dest(&place);
                         self.emit(Inst::FInRange {
@@ -1678,14 +2364,9 @@ impl Builder {
                             fail,
                         });
                     }
-                    _ => return Err("only integer or float ranges".into()),
+                    _ => return Err("only integer, float, or char ranges".into()),
                 }
-                let mut result = self.compile_matrix(success, mode)?;
-                self.finish(mode);
-                self.cur = fail;
-                result |= self.compile_matrix(failure, mode)?;
-                self.finish(mode);
-                Ok(result)
+                self.compile_split(success, fail, failure, mode)
             }
             Pat::Or(alts) => {
                 let body = self.new_block();
@@ -1693,12 +2374,7 @@ impl Builder {
                 self.emit_alternatives(alts, &place, body)?;
                 self.emit(Inst::Jmp { target: fail });
                 self.cur = body;
-                let mut result = self.compile_matrix(success, mode)?;
-                self.finish(mode);
-                self.cur = fail;
-                result |= self.compile_matrix(failure, mode)?;
-                self.finish(mode);
-                Ok(result)
+                self.compile_split(success, fail, failure, mode)
             }
             other => Err(format!("match test {other:?} is not a test of this compiler")),
         }
@@ -1717,6 +2393,7 @@ impl Builder {
             let hit = if binds.is_empty() { body } else { self.new_block() };
             match &bare {
                 Pat::Int(value) => self.cmp_place(place, *value, Cond::E, hit),
+                Pat::Char(value) => self.cmp_place(place, i64::from(*value as u32), Cond::E, hit),
                 Pat::Float(value) => {
                     self.emit(Inst::Imm { dst: Dest::V(1), value: value.to_bits() as i64 });
                     let src = self.place_dest(place);
@@ -1731,6 +2408,12 @@ impl Builder {
                     let next = self.new_block();
                     match (lo.as_ref(), hi.as_ref()) {
                         (Pat::Int(lo), Pat::Int(hi)) => self.emit_range(place, *lo, *hi, next),
+                        (Pat::Char(lo), Pat::Char(hi)) => self.emit_range(
+                            place,
+                            i64::from(*lo as u32),
+                            i64::from(*hi as u32),
+                            next,
+                        ),
                         (Pat::Float(lo), Pat::Float(hi)) => {
                             let src = self.place_dest(place);
                             self.emit(Inst::FInRange {
@@ -1740,7 +2423,7 @@ impl Builder {
                                 fail: next,
                             });
                         }
-                        _ => return Err("only integer or float ranges".into()),
+                        _ => return Err("only integer, float, or char ranges".into()),
                     }
                     self.emit(Inst::Jmp { target: hit });
                     self.cur = next;
@@ -1841,9 +2524,12 @@ impl Builder {
         }
         let miss = self.new_block();
         self.emit(Inst::Jmp { target: miss });
+        let scratch = self.scratch_top;
+        let temp = self.temp_used;
         let mut result = false;
         for child in children {
             self.cur = child.block;
+            self.restore_arm(scratch, temp);
             let mut rows = child.rows;
             if !child.fields.is_empty() {
                 let temps = self.materialize_fields(
@@ -1863,6 +2549,7 @@ impl Builder {
             self.finish(mode);
         }
         self.cur = miss;
+        self.restore_arm(scratch, temp);
         let default: Vec<Row> = rows
             .iter()
             .filter(|row| matches!(row.pats[col], Pat::Wildcard))
@@ -2110,6 +2797,7 @@ impl Builder {
             val_is_pointer: param_ptr,
             pointer_slots: std::mem::take(&mut self.pointer_slots),
             spill_base: slot_count,
+            hide_map: 0,
             blocks: std::mem::take(&mut self.blocks),
             entry: false,
         })
@@ -2169,6 +2857,7 @@ impl Builder {
             val_ptr: self.val_ptr,
             val_ty: self.val_ty.take(),
             forwards: std::mem::take(&mut self.forwards),
+            cont_exit: std::mem::take(&mut self.cont_exit),
             consumers: std::mem::take(&mut self.consumers),
         }
     }
@@ -2188,6 +2877,7 @@ impl Builder {
         self.val_ptr = saved.val_ptr;
         self.val_ty = saved.val_ty;
         self.forwards = saved.forwards;
+        self.cont_exit = saved.cont_exit;
         self.consumers = saved.consumers;
     }
 
@@ -2365,8 +3055,32 @@ impl Builder {
         Ok(())
     }
 
+    /// The value is already evaluated, or `finish_exit` runs after `compile_term`.
+    fn finish_exit(&mut self, exit: ContExit) {
+        if terminated(&self.blocks[self.cur].insts) {
+            return;
+        }
+        match exit {
+            ContExit::Join(block) => self.emit(Inst::Jmp { target: block }),
+            ContExit::Ret => self.finish(Mode::Tail),
+        }
+    }
+
     fn deliver(&mut self, value: &Term, covar: &str, mode: Mode) -> Result<bool, String> {
-        if self.forwards.contains(covar) {
+        // A branch that cuts to the μ must not join and then run the rest of the body.
+        if let Some(exit) = self.cont_exit.get(covar).copied() {
+            let call_mode = match exit {
+                ContExit::Ret => Mode::Tail,
+                ContExit::Join(_) => Mode::Value,
+            };
+            let pointer = self.compile_term(value, call_mode)?;
+            self.finish_exit(exit);
+            return Ok(pointer);
+        }
+        // `__arm` is the ambient continuation of a menu or select arm.
+        if self.forwards.contains(covar)
+            || (!self.slots.contains_key(covar) && covar.starts_with("__"))
+        {
             return self.compile_term(value, mode);
         }
         let pointer = self.compile_term(value, Mode::Value)?;
@@ -2414,6 +3128,7 @@ impl Builder {
         if terminated(&self.blocks[self.cur].insts) {
             return Ok(pointer);
         }
+        self.demand_value()?;
         self.emit(Inst::Load {
             dst: Dest::Val,
             base: Dest::Val,
@@ -2531,6 +3246,8 @@ impl Builder {
                     Some(Class::Char) => 3,
                     Some(Class::File) => 4,
                     Some(Class::Int) => 0,
+                    // A delay has no class. The runtime prints `<delayed>` and does not force it.
+                    None => 5,
                     other => {
                         return Err(format!("__display of {other:?} in {}", self.current));
                     }
@@ -2569,10 +3286,213 @@ impl Builder {
                 });
                 Ok(false)
             }
+            "substring" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_substring".into(),
+                    arg: RtArg::Triple,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "skip_digits" | "skip_ws" => {
+                let symbol =
+                    if name == "skip_digits" { "slc_rt_skip_digits" } else { "slc_rt_skip_ws" };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "str_eq" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_str_eq".into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "__close_file" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_close_file".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__file_exists" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_file_exists".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "is_digit" | "is_ws" => self.compile_char_class(name, mode),
             "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__neg" | "__xor"
             | "__wrapping_mul" => self.compile_arith(name, class),
             other => Err(format!("builtin {other}")),
         }
+    }
+
+    fn compile_char_class(&mut self, name: &str, mode: Mode) -> Result<bool, String> {
+        let yes = self.new_block();
+        let no = self.new_block();
+        if name == "is_digit" {
+            self.emit(Inst::InRange {
+                src: Dest::Val,
+                lo: i64::from('0' as u32),
+                hi: i64::from('9' as u32),
+                fail: no,
+            });
+            self.emit(Inst::Jmp { target: yes });
+        } else {
+            // `char::is_whitespace`, not `skip_ws`. The latter is only space, tab, CR, and LF.
+            let miss = self.new_block();
+            self.emit(Inst::InRange { src: Dest::Val, lo: 0x9, hi: 0xD, fail: miss });
+            self.emit(Inst::Jmp { target: yes });
+            self.cur = miss;
+            for code in [0x20, 0x85, 0xA0, 0x1680, 0x202F, 0x205F, 0x3000] {
+                self.emit(Inst::CmpJcc {
+                    left: Dest::Val,
+                    right: code,
+                    cond: Cond::E,
+                    target: yes,
+                });
+            }
+            let miss = self.new_block();
+            self.emit(Inst::InRange { src: Dest::Val, lo: 0x2000, hi: 0x200A, fail: miss });
+            self.emit(Inst::Jmp { target: yes });
+            self.cur = miss;
+            self.emit(Inst::InRange { src: Dest::Val, lo: 0x2028, hi: 0x2029, fail: no });
+            self.emit(Inst::Jmp { target: yes });
+        }
+        let join = match mode {
+            Mode::Value => Some(self.new_block()),
+            Mode::Tail => None,
+        };
+        self.cur = yes;
+        self.load_pool("Bool::True")?;
+        self.finish_branch(mode, join);
+        self.cur = no;
+        self.load_pool("Bool::False")?;
+        self.finish_branch(mode, join);
+        if let Some(join) = join {
+            self.cur = join;
+        }
+        Ok(true)
+    }
+
+    fn compile_offering(
+        &mut self,
+        name: &str,
+        values: &Term,
+        conts: &Term,
+        mode: Mode,
+    ) -> Result<bool, String> {
+        let (symbol, width, arms): (&str, u8, &[bool]) = match name {
+            "parse_int" => ("slc_rt_parse_int", 1, &[false, true, true]),
+            "char_at" => ("slc_rt_char_at", 2, &[false, true]),
+            "find_char" => ("slc_rt_find_char", 3, &[false, true]),
+            "__read_file" => ("slc_rt_read_file", 1, &[true, true]),
+            "__open_file" => ("slc_rt_open_file", 1, &[false, true]),
+            "__read_line" => ("slc_rt_read_line", 1, &[true, false]),
+            "__write_file" => ("slc_rt_write_file", 2, &[false, true]),
+            other => return Err(format!("builtin {other}")),
+        };
+        let cont_ptr = self.compile_term(conts, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(cont_ptr);
+        }
+        let cont_slot = self.push_scratch(Dest::Val)?;
+        let val_ptr = self.compile_term(values, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            self.pop_scratch();
+            return Ok(val_ptr);
+        }
+        if val_ptr {
+            self.push_scratch(Dest::Val)?;
+        }
+        let disc = self.alloc_temp(false)?;
+        let arg = match width {
+            1 => RtArg::Val,
+            2 => RtArg::PairImm(0),
+            _ => RtArg::Triple,
+        };
+        self.emit(Inst::CallOffer { symbol: symbol.into(), arg, disc, arg_is_pointer: val_ptr });
+        if val_ptr {
+            self.pop_scratch();
+        }
+        // The payload's pointer bit depends on the arm. Park it untraced until that branch.
+        let payload = self.alloc_temp(false)?;
+        self.store_slot(Dest::Val, payload);
+        if self.val_ptr {
+            self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+        }
+        if self.scratch_top + 2 > self.scratch_base + SCRATCHES {
+            return Err(format!("too many live pointers in {}", self.current));
+        }
+        let rooted = self.scratch_top;
+        let consumer = self.scratch_top + 1;
+        self.scratch_top += 2;
+        self.emit(Inst::Imm { dst: Dest::V(0), value: 0 });
+        self.store_slot(Dest::V(0), rooted);
+
+        let mut blocks = Vec::new();
+        for _ in arms {
+            blocks.push(self.new_block());
+        }
+        let join = match mode {
+            Mode::Value => Some(self.new_block()),
+            Mode::Tail => None,
+        };
+        let saved = self.join;
+        self.join = join;
+        for (index, block) in blocks.iter().enumerate().take(arms.len() - 1) {
+            self.load_slot(Dest::V(0), disc);
+            self.emit(Inst::CmpJcc {
+                left: Dest::V(0),
+                right: index as i64,
+                cond: Cond::E,
+                target: *block,
+            });
+        }
+        self.emit(Inst::Jmp { target: blocks[arms.len() - 1] });
+        for (index, block) in blocks.iter().enumerate() {
+            self.cur = *block;
+            let pointer = arms[index];
+            self.load_slot(Dest::Val, payload);
+            if pointer {
+                self.store_slot(Dest::Val, rooted);
+            }
+            self.load_slot(Dest::V(0), cont_slot);
+            self.emit(Inst::Load {
+                dst: Dest::V(1),
+                base: Dest::V(0),
+                offset: 24 + 8 * index as i32,
+                width: 8,
+            });
+            self.store_slot(Dest::V(1), consumer);
+            self.load_slot(Dest::Val, payload);
+            self.emit(Inst::Activate {
+                consumer: Dest::Slot(consumer),
+                tail: mode == Mode::Tail,
+                arg_is_pointer: pointer,
+            });
+            self.finish(mode);
+        }
+        self.scratch_top -= 2;
+        self.pop_scratch();
+        if let Some(join) = join {
+            self.cur = join;
+        }
+        self.join = saved;
+        Ok(true)
     }
 
     fn compile_arith(&mut self, name: &str, class: Option<Class>) -> Result<bool, String> {
@@ -2826,67 +3746,20 @@ impl Builder {
         thunk: &Term,
         _mode: Mode,
     ) -> Result<bool, String> {
-        let Term::Tag(tag, inner) = clauses else {
-            return Err("handler clauses".into());
-        };
-        if tag != "__clauses" {
-            return Err("handler clauses".into());
+        let saved_scratch = self.scratch_top;
+        let saved_temp = self.temp_used;
+        // `(clauses, return closure)`. A name or an inline tag both compile to that pair.
+        let produced = self.compile_term(clauses, Mode::Value)?;
+        if terminated(&self.blocks[self.cur].insts) {
+            return Ok(produced);
         }
-        let Term::Tuple(entries) = inner.as_ref() else {
-            return Err("handler clauses".into());
-        };
-        let saved = self.scratch_top;
-        let mut pairs = Vec::new();
-        for entry in entries {
-            let Term::Tuple(pair) = entry else {
-                return Err("clause pair".into());
-            };
-            let (Term::Var(label), closure) = (&pair[0], &pair[1]) else {
-                return Err("clause pair".into());
-            };
-            let op = decode_lit(label.strip_prefix("$str_").unwrap_or(label));
-            self.compile_term(closure, Mode::Value)?;
-            if terminated(&self.blocks[self.cur].insts) {
-                return Err("clause did not produce a closure".into());
-            }
-            let slot = self.push_scratch(Dest::Val)?;
-            pairs.push((op, slot));
-        }
-        let ptr_slots: Vec<u16> = (0..pairs.len()).map(|index| 2 + index as u16 * 2).collect();
-        let map = if ptr_slots.is_empty() { MAP_EMPTY } else { self.heap_map(&ptr_slots) };
-        self.emit(Inst::CallAlloc {
-            words: 1 + pairs.len() as u32 * 2,
-            tag: TAG_CLAUSES,
-            map_id: map,
-            dst: Dest::V(0),
-        });
-        self.emit(Inst::Imm { dst: Dest::V(1), value: pairs.len() as i64 });
-        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
-        let mut ret_slot = None;
-        for (index, (op, slot)) in pairs.iter().enumerate() {
-            let id = i64::from(self.intern(op));
-            self.emit(Inst::Imm { dst: Dest::V(1), value: id });
-            self.emit(Inst::Store {
-                src: Dest::V(1),
-                base: Dest::V(0),
-                offset: 24 + 16 * index as i32,
-                width: 8,
-            });
-            self.load_slot(Dest::V(1), *slot);
-            self.emit(Inst::Store {
-                src: Dest::V(1),
-                base: Dest::V(0),
-                offset: 32 + 16 * index as i32,
-                width: 8,
-            });
-            if op == "return" {
-                ret_slot = Some(*slot);
-            }
-        }
-        let Some(ret_slot) = ret_slot else {
-            return Err("handler has no return clause".into());
-        };
-        let clauses_slot = self.push_scratch(Dest::V(0))?;
+        let packed = self.push_scratch(Dest::Val)?;
+        self.load_slot(Dest::V(0), packed);
+        self.emit(Inst::Load { dst: Dest::V(1), base: Dest::V(0), offset: 24, width: 8 });
+        let clauses_slot = self.push_scratch(Dest::V(1))?;
+        self.load_slot(Dest::V(0), packed);
+        self.emit(Inst::Load { dst: Dest::V(1), base: Dest::V(0), offset: 32, width: 8 });
+        let ret_slot = self.push_scratch(Dest::V(1))?;
         self.compile_term(thunk, Mode::Value)?;
         if terminated(&self.blocks[self.cur].insts) {
             return Err("handler thunk".into());
@@ -2901,7 +3774,7 @@ impl Builder {
             prompt_map: self.prompt_map,
         });
         self.cur = done;
-        self.scratch_top = saved;
+        self.restore_arm(saved_scratch, saved_temp);
         Ok(false)
     }
 
@@ -2954,9 +3827,15 @@ impl Builder {
 
     fn push_io(&mut self, funcs: &mut Vec<Function>) {
         funcs.push(self.io_return());
-        funcs.push(self.io_line_inner());
-        funcs.push(self.io_line_outer());
+        // `print` performs `write`. `println` performs `write_line`.
+        funcs.push(self.io_text_inner("slc_io_write_inner", "slc_rt_write"));
+        funcs.push(self.io_text_outer("slc_io_write_outer", "slc_io_write_inner"));
+        funcs.push(self.io_text_inner("slc_io_line_inner", "slc_rt_write_line"));
+        funcs.push(self.io_text_outer("slc_io_line_outer", "slc_io_line_inner"));
         funcs.push(self.exit_stub());
+        // Identity must not safepoint: the answer may be a scalar or a pointer,
+        // and a tail activation has left it only in `r13`.
+        funcs.push(hand_fn("slc_id_kont", 9, false, &[], 0, vec![Inst::Ret]));
     }
 
     fn io_return(&self) -> Function {
@@ -2981,9 +3860,9 @@ impl Builder {
         )
     }
 
-    fn io_line_inner(&self) -> Function {
+    fn io_text_inner(&self, symbol: &str, rt: &str) -> Function {
         hand_fn(
-            "slc_io_line_inner",
+            symbol,
             11,
             true,
             &[0],
@@ -3001,7 +3880,7 @@ impl Builder {
                 Inst::Store { src: Dest::Val, base: Dest::Frame, offset: slot_off(0), width: 8 },
                 Inst::Safepoint { map_id: 0 },
                 Inst::CallRt {
-                    symbol: "slc_rt_write_line".into(),
+                    symbol: rt.into(),
                     arg: RtArg::Env,
                     noreturn: false,
                     returns: false,
@@ -3012,10 +3891,9 @@ impl Builder {
         )
     }
 
-    fn io_line_outer(&self) -> Function {
-        let symbol = "slc_io_line_inner";
+    fn io_text_outer(&self, symbol: &str, inner: &str) -> Function {
         hand_fn(
-            "slc_io_line_outer",
+            symbol,
             11,
             true,
             &[0],
@@ -3033,7 +3911,7 @@ impl Builder {
                 Inst::Store { src: Dest::Val, base: Dest::Frame, offset: slot_off(0), width: 8 },
                 Inst::Safepoint { map_id: 0 },
                 Inst::CallAlloc { words: 4, tag: TAG_CLOSURE, map_id: MAP_EMPTY, dst: Dest::V(0) },
-                Inst::LeaSym { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::LeaSym { dst: Dest::V(1), symbol: inner.into() },
                 Inst::Store {
                     src: Dest::V(1),
                     base: Dest::V(0),
@@ -3047,14 +3925,14 @@ impl Builder {
                     offset: CLOSURE_ENV as i32,
                     width: 8,
                 },
-                Inst::SymWords { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::SymWords { dst: Dest::V(1), symbol: inner.into() },
                 Inst::Store {
                     src: Dest::V(1),
                     base: Dest::V(0),
                     offset: CLOSURE_FRAME_WORDS as i32,
                     width: 8,
                 },
-                Inst::SymMap { dst: Dest::V(1), symbol: symbol.into() },
+                Inst::SymMap { dst: Dest::V(1), symbol: inner.into() },
                 Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 },
                 Inst::Mov { dst: Dest::Val, src: Dest::V(0) },
                 Inst::Ret,
@@ -3100,6 +3978,18 @@ impl Builder {
                 slots: func.pointer_slots.clone(),
             });
             self.next_map += 1;
+            let mut hide_slots = func.pointer_slots.clone();
+            hide_slots.push(func.spill_base);
+            hide_slots.sort_unstable();
+            hide_slots.dedup();
+            func.hide_map = self.next_map;
+            self.maps.push(MapRecord {
+                map_id: func.hide_map,
+                frame_words: func.frame_words,
+                val_is_pointer: func.val_is_pointer,
+                slots: hide_slots,
+            });
+            self.next_map += 1;
         }
     }
 
@@ -3142,31 +4032,43 @@ impl Builder {
             }
         }
         let (ret_words, ret_map) = func_layout(funcs, "slc_io_return");
-        let (outer_words, outer_map) = func_layout(funcs, "slc_io_line_outer");
+        let (write_words, write_map) = func_layout(funcs, "slc_io_write_outer");
+        let (line_words, line_map) = func_layout(funcs, "slc_io_line_outer");
         self.emit_raw_closure("slc_io_return", ret_words, ret_map);
         self.store_slot(Dest::Val, 1);
-        self.emit_raw_closure("slc_io_line_outer", outer_words, outer_map);
+        self.emit_raw_closure("slc_io_write_outer", write_words, write_map);
         self.store_slot(Dest::Val, 2);
+        let write = self.intern("write");
         let write_line = self.intern("write_line");
         let ret_op = self.intern("return");
-        let clauses_map = self.heap_map(&[2, 4]);
+        // Payload words: count, then (op, closure) three times. Closures are 2, 4, 6.
+        let clauses_map = self.heap_map(&[2, 4, 6]);
         self.emit(Inst::CallAlloc {
-            words: 5,
+            words: 7,
             tag: TAG_CLAUSES,
             map_id: clauses_map,
             dst: Dest::V(0),
         });
-        self.emit(Inst::Imm { dst: Dest::V(1), value: 2 });
+        // Root the table before the next closure alloc. `write` is copied in
+        // before slot 2 is reused for `write_line`.
+        self.store_slot(Dest::V(0), 0);
+        self.emit(Inst::Imm { dst: Dest::V(1), value: 3 });
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 16, width: 8 });
-        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(write_line) });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(write) });
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 24, width: 8 });
         self.load_slot(Dest::V(1), 2);
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 32, width: 8 });
-        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(ret_op) });
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(write_line) });
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 });
-        self.load_slot(Dest::V(1), 1);
+        self.emit_raw_closure("slc_io_line_outer", line_words, line_map);
+        self.store_slot(Dest::Val, 2);
+        self.load_slot(Dest::V(0), 0);
+        self.load_slot(Dest::V(1), 2);
         self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 48, width: 8 });
-        self.store_slot(Dest::V(0), 0);
+        self.emit(Inst::Imm { dst: Dest::V(1), value: i64::from(ret_op) });
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 56, width: 8 });
+        self.load_slot(Dest::V(1), 1);
+        self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 64, width: 8 });
         self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
         self.emit(Inst::CallSlc {
             symbol: "main".into(),
@@ -3184,6 +4086,7 @@ impl Builder {
                 arg_is_pointer: true,
             });
         }
+        let hide_map = self.push_frame_map(13, true, &[0, 1, 2, 3]);
         Function {
             symbol: SLC_PROGRAM_ENTRY.to_string(),
             map_id: self.prompt_map,
@@ -3191,6 +4094,7 @@ impl Builder {
             val_is_pointer: true,
             pointer_slots: vec![0, 1, 2],
             spill_base: 3,
+            hide_map,
             blocks: std::mem::take(&mut self.blocks),
             entry: true,
         }
@@ -3356,8 +4260,14 @@ fn float_bounds(pat: &Pat) -> Option<(f64, f64)> {
 fn int_bounds(pat: &Pat) -> Option<(i64, i64)> {
     match pat {
         Pat::Int(value) => Some((*value, *value)),
+        Pat::Char(value) => Some((i64::from(*value as u32), i64::from(*value as u32))),
         Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref()) {
             (Pat::Int(lo), Pat::Int(hi)) => Some((*lo.min(hi), *lo.max(hi))),
+            (Pat::Char(lo), Pat::Char(hi)) => {
+                let lo = i64::from(*lo as u32);
+                let hi = i64::from(*hi as u32);
+                Some((lo.min(hi), lo.max(hi)))
+            }
             _ => None,
         },
         Pat::Binding(_, inner) => int_bounds(inner),
@@ -3377,15 +4287,15 @@ fn subsumes(outer: &Pat, inner: &Pat) -> bool {
         Pat::Binding(_, pattern) => subsumes(pattern, inner),
         Pat::Or(alts) => alts.iter().any(|alt| subsumes(alt, inner)),
         Pat::Int(value) => int_bounds(inner) == Some((*value, *value)),
-        Pat::Range(lo, hi) => {
-            if let (Pat::Int(lo), Pat::Int(hi), Some((start, end))) =
-                (lo.as_ref(), hi.as_ref(), int_bounds(inner))
+        // Char ranges share `int_bounds` with integers. Missing that case left
+        // the tested row in the failure set, and the same `or` was compiled again.
+        Pat::Range(_, _) => {
+            if let (Some((lo, hi)), Some((start, end))) = (int_bounds(outer), int_bounds(inner)) {
+                lo <= start && end <= hi
+            } else if let (Some((lo, hi)), Some((start, end))) =
+                (float_bounds(outer), float_bounds(inner))
             {
-                *lo.min(hi) <= start && end <= *lo.max(hi)
-            } else if let (Pat::Float(lo), Pat::Float(hi), Some((start, end))) =
-                (lo.as_ref(), hi.as_ref(), float_bounds(inner))
-            {
-                *lo <= start && end <= *hi
+                lo <= start && end <= hi
             } else {
                 false
             }

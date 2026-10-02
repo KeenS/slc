@@ -1,4 +1,4 @@
-//! ELF versus `slc run` on the pure examples. `slc run` itself still interprets.
+//! ELF versus `slc run --interpret` on the pure examples. `slc run` links an ELF.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -118,9 +118,26 @@ fn compile_src(src: &str) -> Vec<u8> {
                 .unwrap_or_else(|diags| panic!("{diags:?}"));
             let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
                 .unwrap_or_else(|err| panic!("{err}"));
-            slc_native::compile(&defs, &dispatch.specializations, &dispatch.payloads, &traits)
-                .unwrap_or_else(|err| panic!("{err}"))
-                .object
+            let operations: Vec<String> = program
+                .decls
+                .iter()
+                .filter_map(|decl| match &decl.kind {
+                    slc_syntax::ast::Decl::Effect { operations, .. } => Some(operations),
+                    _ => None,
+                })
+                .flatten()
+                .map(|op| op.name.clone())
+                .collect();
+            slc_native::compile(
+                &defs,
+                &dispatch.specializations,
+                &dispatch.payloads,
+                &traits,
+                &operations,
+                usize::MAX,
+            )
+            .unwrap_or_else(|err| panic!("{err}"))
+            .object
         })
         .expect("compile thread")
         .join()
@@ -129,7 +146,7 @@ fn compile_src(src: &str) -> Vec<u8> {
 
 fn interpret(path: &Path) -> (i32, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_slc"))
-        .args(["run", path.to_str().unwrap()])
+        .args(["run", "--interpret", path.to_str().unwrap()])
         .output()
         .expect("slc run");
     let code = out.status.code().unwrap_or_else(|| {

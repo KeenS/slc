@@ -8,6 +8,7 @@ license.workspace = true
 slc-abi = { path = "../slc-abi" }
 slc-core = { path = "../slc-core" }
 slc-syntax = { path = "../slc-syntax" }
+slc-runtime = { path = "../slc-runtime" }
 
 [dev-dependencies]
 slc-check = { path = "../slc-check" }

@@ -416,7 +416,10 @@ fn fuel_without_a_number_reports_usage() {
     for args in [&["--fuel"][..], &["--fuel", "x"][..]] {
         let (_, stderr, ok) = run_sl_with(args, "slc_test_fuel_usage.sl", LONG_LOOP);
         assert!(!ok, "{args:?}");
-        assert!(stderr.contains("usage: slc run [--fuel N] <file.sl>"), "{args:?}: {stderr}");
+        assert!(
+            stderr.contains("usage: slc run [--fuel N] [--interpret] <file.sl>"),
+            "{args:?}: {stderr}"
+        );
     }
 }
 

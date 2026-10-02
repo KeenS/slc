@@ -83,6 +83,10 @@ pub const FRAME_SLOT0: usize = 72;
 
 /// Bit 0 of the high 32 bits at offset 40.
 pub const FRAME_FLAG_PROMPT: u32 = 1;
+/// Bit 1. The frame pushed a saved origin, and `ret` pops it.
+pub const FRAME_FLAG_ORIGIN: u32 = 2;
+/// Bit 2. This frame also replaced the barrier. Bits 8..32 are the id it entered.
+pub const FRAME_FLAG_BARRIER: u32 = 4;
 
 pub const fn pack_frame_flags(map_id: u32, flags: u32) -> u64 {
     (map_id as u64) | ((flags as u64) << 32)
@@ -105,6 +109,8 @@ pub struct ClosurePrefix {
 pub const CLOSURE_CODE: usize = 16;
 pub const CLOSURE_ENV: usize = 24;
 pub const CLOSURE_FRAME_WORDS: usize = 32;
+/// Generation the closure was built under. A scalar, not a root.
+pub const CLOSURE_BIRTH: usize = 48;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +205,15 @@ pub const SLC_RT_INDEX: &str = "slc_rt_index";
 pub const SLC_RT_SUBSTRING: &str = "slc_rt_substring";
 pub const SLC_RT_SKIP_DIGITS: &str = "slc_rt_skip_digits";
 pub const SLC_RT_SKIP_WS: &str = "slc_rt_skip_ws";
+pub const SLC_RT_CHAR_AT: &str = "slc_rt_char_at";
+pub const SLC_RT_FIND_CHAR: &str = "slc_rt_find_char";
+pub const SLC_RT_PARSE_INT: &str = "slc_rt_parse_int";
+pub const SLC_RT_READ_FILE: &str = "slc_rt_read_file";
+pub const SLC_RT_OPEN_FILE: &str = "slc_rt_open_file";
+pub const SLC_RT_READ_LINE: &str = "slc_rt_read_line";
+pub const SLC_RT_CLOSE_FILE: &str = "slc_rt_close_file";
+pub const SLC_RT_WRITE_FILE: &str = "slc_rt_write_file";
+pub const SLC_RT_FILE_EXISTS: &str = "slc_rt_file_exists";
 pub const SLC_RT_EXIT: &str = "slc_rt_exit";
 pub const SLC_RT_FRESH_PROMPT_ID: &str = "slc_rt_fresh_prompt_id";
 pub const SLC_RT_STACK_WORDS: &str = "slc_rt_stack_words";
@@ -257,6 +272,15 @@ pub const EXPORTED_SYMBOLS: &[&str] = &[
     SLC_RT_SUBSTRING,
     SLC_RT_SKIP_DIGITS,
     SLC_RT_SKIP_WS,
+    SLC_RT_CHAR_AT,
+    SLC_RT_FIND_CHAR,
+    SLC_RT_PARSE_INT,
+    SLC_RT_READ_FILE,
+    SLC_RT_OPEN_FILE,
+    SLC_RT_READ_LINE,
+    SLC_RT_CLOSE_FILE,
+    SLC_RT_WRITE_FILE,
+    SLC_RT_FILE_EXISTS,
     SLC_RT_EXIT,
     SLC_RT_FRESH_PROMPT_ID,
     SLC_RT_STACK_WORDS,
@@ -312,6 +336,9 @@ mod tests {
         assert_eq!(offset_of!(ClosurePrefix, env), CLOSURE_ENV);
         assert_eq!(offset_of!(ClosurePrefix, frame_words), 32);
         assert_eq!(CLOSURE_FRAME_WORDS, 32);
+        assert_eq!(CLOSURE_BIRTH, 48);
+        assert_eq!(FRAME_FLAG_ORIGIN, 2);
+        assert_eq!(FRAME_FLAG_BARRIER, 4);
         assert_eq!(offset_of!(TaggedPrefix, label), 16);
         assert_eq!(offset_of!(TaggedPrefix, payload), 24);
         assert_eq!(TAGGED_LABEL, 16);

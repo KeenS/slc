@@ -12,8 +12,12 @@ mod link_tests;
 
 use std::collections::HashMap;
 
-use slc_core::term::Term;
+use slc_core::command::Command;
+use slc_core::coterm::CoTerm;
+use slc_core::substitution::free_vars_term;
+use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::Type;
+use slc_runtime::fold::{Fold, embed, try_fold};
 use slc_syntax::lower::Specialization;
 
 pub use encode::encode;
@@ -194,7 +198,15 @@ pub enum Inst {
         symbol: String,
     },
     /// Escaping `μ`. The stack is not mutated. `dst` receives the `Kont`.
+    /// In tail position the function's return address is that continuation.
     Capture {
+        dst: Dest,
+    },
+    /// Value-position escaping `μ`. The copy's top frame returns to `block`,
+    /// so invoking the binder resumes after the `μ` instead of returning from
+    /// the function. The body keeps running on the parent frame.
+    CaptureJoin {
+        block: usize,
         dst: Dest,
     },
     /// `Kont::jump`, then deliver `VAL`. The image is the heap object.
@@ -255,6 +267,15 @@ pub enum Inst {
         /// `rax` is the result, moved into `VAL` after the spills reload.
         returns: bool,
     },
+    /// Offering call. `rax` is the discriminant, stored in the untraced `disc` slot.
+    /// `rdx` moves to `VAL`. A safepoint would drop both if they stayed in caller-saved registers.
+    CallOffer {
+        symbol: String,
+        arg: RtArg,
+        disc: u16,
+        /// The value arguments, not the continuation. A scalar must not be traced as the live `r13`.
+        arg_is_pointer: bool,
+    },
 }
 
 /// Arguments after the frame pointer.
@@ -266,6 +287,8 @@ pub enum RtArg {
     ValImm(i64),
     /// Tuple fields at offsets 24 and 32, then this immediate in `rcx`.
     PairImm(i64),
+    /// Tuple fields at offsets 24, 32, and 40.
+    Triple,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +306,10 @@ pub struct Function {
     /// First frame slot past the named slots, scratches, and match temps.
     /// A scalar argument is parked here when `val_is_pointer` would trace it.
     pub spill_base: u16,
+    /// `map_id` plus the park slot. A peeled delay is rooted there for one poll;
+    /// the ordinary map leaves the slot untraced so a scalar parked afterwards
+    /// is not rebased.
+    pub hide_map: u32,
     pub blocks: Vec<Block>,
     /// C-callable transfer from `slc_rt_start`. No SLC prologue.
     pub entry: bool,
@@ -329,8 +356,135 @@ pub fn compile(
     specs: &[Specialization],
     payloads: &HashMap<String, Vec<Type>>,
     traits: &slc_syntax::traits::TraitInfo,
+    operations: &[String],
+    fuel: usize,
 ) -> Result<Compiled, String> {
-    let module = lower::lower(defs, specs, payloads, traits)?;
+    let folded =
+        defs.iter().map(|(name, term)| (name.clone(), fold_term(term, fuel))).collect::<Vec<_>>();
+    let module = lower::lower(&folded, specs, payloads, traits, operations)?;
     let object = encode(&module);
     Ok(Compiled { module, object })
+}
+
+/// A closed call re-embeds. A match stays, so a literal scrutinee still compiles its compare.
+fn fold_term(term: &Term, fuel: usize) -> Term {
+    if fuel > 0
+        && let Term::Mu(binder, command) = term
+        && let Command::Cut(_, CoTerm::App(_, tail)) = command.as_ref()
+        && matches!(tail.as_ref(), CoTerm::Covar(name) if name == binder)
+        && free_vars_term(term).iter().all(|name| fold_atom(name))
+        && let Fold::Value(value) = try_fold(term, fuel)
+    {
+        return embed(&value);
+    }
+    match term {
+        Term::Var(name) => Term::Var(name.clone()),
+        Term::Lam(name, body) => Term::Lam(name.clone(), Box::new(fold_term(body, fuel))),
+        Term::Mu(name, command) => Term::Mu(name.clone(), Box::new(fold_command(command, fuel))),
+        Term::Tuple(items) => Term::Tuple(items.iter().map(|item| fold_term(item, fuel)).collect()),
+        Term::Tag(label, payload) => Term::Tag(label.clone(), Box::new(fold_term(payload, fuel))),
+        Term::CoMatch { owner, branches } => Term::CoMatch {
+            owner: owner.clone(),
+            branches: branches
+                .iter()
+                .map(|branch| CoMatchBranch {
+                    label: branch.label.clone(),
+                    binder: branch.binder.clone(),
+                    body: Box::new(fold_command(&branch.body, fuel)),
+                })
+                .collect(),
+        },
+        Term::Co(co) => Term::Co(Box::new(fold_coterm(co, fuel))),
+    }
+}
+
+fn fold_command(command: &Command, fuel: usize) -> Command {
+    let Command::Cut(term, co) = command;
+    Command::Cut(fold_term(term, fuel), fold_coterm(co, fuel))
+}
+
+fn fold_coterm(co: &CoTerm, fuel: usize) -> CoTerm {
+    match co {
+        CoTerm::Covar(name) => CoTerm::Covar(name.clone()),
+        CoTerm::App(arg, tail) => {
+            CoTerm::App(fold_term(arg, fuel), Box::new(fold_coterm(tail, fuel)))
+        }
+        CoTerm::MuTilde(name, command) => {
+            CoTerm::MuTilde(name.clone(), Box::new(fold_command(command, fuel)))
+        }
+        CoTerm::Prj(index) => CoTerm::Prj(*index),
+        CoTerm::CoCase { owner, branches } => CoTerm::CoCase {
+            owner: owner.clone(),
+            branches: branches
+                .iter()
+                .map(|branch| slc_core::coterm::CoCaseBranch {
+                    label: branch.label.clone(),
+                    binders: branch.binders.clone(),
+                    body: Box::new(fold_command(&branch.body, fuel)),
+                })
+                .collect(),
+        },
+        CoTerm::MuTildeTensor(names, command) => {
+            CoTerm::MuTildeTensor(names.clone(), Box::new(fold_command(command, fuel)))
+        }
+        CoTerm::Dtor(label, tail) => CoTerm::Dtor(label.clone(), Box::new(fold_coterm(tail, fuel))),
+    }
+}
+
+fn fold_atom(name: &str) -> bool {
+    matches!(name, "$unit" | "$force" | "$adapt")
+        || name.starts_with("$int_")
+        || name.starts_with("$float_")
+        || name.starts_with("$str_")
+        || name.starts_with("$char_")
+        || matches!(
+            name,
+            "EXIT"
+                | "__index"
+                | "parse_int"
+                | "__display"
+                | "format"
+                | "__neg"
+                | "__add"
+                | "__sub"
+                | "__mul"
+                | "__div"
+                | "__rem"
+                | "__eq"
+                | "__ne"
+                | "__lt"
+                | "__gt"
+                | "__le"
+                | "__ge"
+                | "__wrapping_mul"
+                | "__xor"
+                | "char_to_code"
+                | "__to_i8"
+                | "__to_i32"
+                | "__to_i64"
+                | "__to_u8"
+                | "__to_u32"
+                | "__to_u64"
+                | "str_len"
+                | "str_concat"
+                | "int_to_str"
+                | "__read_file"
+                | "__open_file"
+                | "__read_line"
+                | "__close_file"
+                | "__write_file"
+                | "__file_exists"
+                | "__handle"
+                | "__enter_poly"
+                | "char_at"
+                | "is_digit"
+                | "is_ws"
+                | "skip_digits"
+                | "find_char"
+                | "skip_ws"
+                | "substring"
+                | "str_eq"
+                | "__io_write"
+                | "__io_write_line"
+        )
 }

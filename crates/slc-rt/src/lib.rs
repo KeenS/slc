@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use slc_abi::{
-    DISPLAY_CLOSURE, DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_PROMPT,
-    FRAME_FRAME_WORDS, FRAME_HANDLER_PREV, FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID,
-    FRAME_SLOT0, FRAME_SPILL_ENV, FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header,
-    MAP_EMPTY, MAP_UNWRITTEN, MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES,
-    STRING_CHAR_LEN, TAG_ADAPTED, TAG_CLOSURE, TAG_DELAY, TAG_KONT, TAG_OPERATION, TAG_RESUME,
-    TAG_STRING, TAG_TAGGED, pack_frame_flags, pack_meta, unpack_frame_flags, unpack_meta,
+    DISPLAY_CLOSURE, DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_BARRIER,
+    FRAME_FLAG_ORIGIN, FRAME_FLAG_PROMPT, FRAME_FRAME_WORDS, FRAME_HANDLER_PREV,
+    FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID, FRAME_SLOT0, FRAME_SPILL_ENV,
+    FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header, MAP_EMPTY, MAP_UNWRITTEN,
+    MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES, STRING_CHAR_LEN, TAG_ADAPTED,
+    TAG_CLOSURE, TAG_DELAY, TAG_KONT, TAG_OPERATION, TAG_RESUME, TAG_STRING, TAG_TAGGED,
+    pack_frame_flags, pack_meta, unpack_frame_flags, unpack_meta,
 };
 
 const INITIAL_SEGMENT_BYTES: usize = 1 << 20;
@@ -137,6 +138,7 @@ impl Runtime {
         rt.unit = unit as u64;
         rt.immortal.push(rt.unit);
         slc_rt_unit.store(rt.unit, Ordering::Relaxed);
+        rt.publish_limit();
         rt
     }
 
@@ -259,6 +261,7 @@ impl Runtime {
         let frame = self.sp();
         let (map, _) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
         self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, FRAME_FLAG_PROMPT));
+        self.stamp_barrier(frame);
         self.write(frame, FRAME_PROMPT_ID, id);
         let below = self.read(frame, FRAME_CONT_PREV) as *const u8;
         self.write(frame, FRAME_HANDLER_PREV, self.prompt_from(below));
@@ -418,6 +421,16 @@ impl Runtime {
                 break;
             }
             if self.is_prompt(frame) {
+                // The stamp is the barrier under this prompt. A closure born
+                // earlier is not aware of an operation that arrived through the row.
+                let (_, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
+                let barrier = u64::from(flags >> 8);
+                if barrier > SLC_ORIGIN.load(Ordering::Relaxed)
+                    && !barrier_knows(barrier, &label_named(op_id))
+                {
+                    frame = self.read(frame, FRAME_HANDLER_PREV) as *const u8;
+                    continue;
+                }
                 let clauses = self.read(frame, FRAME_SLOT0);
                 if let Some(found) = self.clause_for(clauses, op_id) {
                     handler = Some(frame);
@@ -440,6 +453,9 @@ impl Runtime {
         if preserved.is_null() || preserved as u64 == anchor || !self.in_segment(preserved as u64) {
             return Err(RtError::Unhandled(op_id));
         }
+        // The slice keeps the flag bits. The live copies must not leave the
+        // barrier raised for the next handler in this frame.
+        self.discard_origins_until(preserved);
         self.set_sp(preserved);
         slc_split_resume.store(resume as u64, Ordering::Relaxed);
         slc_split_clause.store(clause, Ordering::Relaxed);
@@ -604,6 +620,7 @@ impl Runtime {
 
     fn install_replace(&mut self, image: *const u8) -> Result<(), RtError> {
         let frames = self.image_frames(image);
+        self.discard_origins_until(std::ptr::null());
         if frames.is_empty() {
             self.sp_off = None;
             return Ok(());
@@ -619,6 +636,8 @@ impl Runtime {
         above: &[*const u8],
         heap_prompt: u64,
     ) -> Result<(), RtError> {
+        // The clause frames above the prompt are not coming back.
+        self.discard_origins_until(self.ptr_at(prompt_off));
         if above.is_empty() {
             self.sp_off = Some(prompt_off);
             return Ok(());
@@ -659,6 +678,11 @@ impl Runtime {
         }
         let top = placed.last().expect("placed a frame").1;
         self.sp_off = Some(self.offset_of(top));
+        // The slice was captured after its saves were popped. Put them back
+        // outer-first so a resumed barrier still tunnels.
+        for &(_, dst) in &placed {
+            self.adopt_origin(dst);
+        }
         Ok(())
     }
 
@@ -717,7 +741,94 @@ impl Runtime {
         let new_base = new_mem.as_mut_ptr() as u64;
         rebase_live(new_mem.as_mut_ptr(), self.sp_off, old_base, old_len, new_base);
         self.mem = new_mem;
+        self.publish_limit();
         Ok(())
+    }
+
+    /// End of the segment, minus a frame. Generated code compares a new frame to this.
+    fn publish_limit(&self) {
+        let end = self.mem.as_ptr() as u64 + self.mem.len() as u64;
+        slc_segment_limit.store(end.saturating_sub(64 * 1024), Ordering::Relaxed);
+    }
+
+    /// Remember the generation this frame is leaving, once. Bits 8..32 hold the
+    /// id entered, so a captured copy can adopt it again after the pop.
+    fn push_generation(&mut self, entered: u64, barrier: bool) {
+        let frame = self.sp();
+        let (map, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
+        let id = (entered as u32) << 8;
+        if flags & FRAME_FLAG_ORIGIN != 0 {
+            // One save per frame. A tail call may still move the current origin.
+            if barrier {
+                let stamped = (flags & 0xff) | FRAME_FLAG_BARRIER | id;
+                self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
+                SLC_BARRIER.store(entered, Ordering::Relaxed);
+            } else if flags & FRAME_FLAG_BARRIER == 0 {
+                let stamped = (flags & 0xff) | id;
+                self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
+            }
+            SLC_ORIGIN.store(entered, Ordering::Relaxed);
+            return;
+        }
+        origin_saved()
+            .push((SLC_ORIGIN.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
+        let mut stamped = (flags & 0xff) | FRAME_FLAG_ORIGIN | id;
+        if barrier {
+            stamped |= FRAME_FLAG_BARRIER;
+            SLC_BARRIER.store(entered, Ordering::Relaxed);
+        }
+        SLC_ORIGIN.store(entered, Ordering::Relaxed);
+        self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
+    }
+
+    fn leave_origin_frame(&mut self, frame: *mut u8) {
+        let (map, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
+        if flags & FRAME_FLAG_ORIGIN == 0 {
+            return;
+        }
+        if let Some((origin, barrier)) = origin_saved().pop() {
+            SLC_ORIGIN.store(origin, Ordering::Relaxed);
+            SLC_BARRIER.store(barrier, Ordering::Relaxed);
+        }
+        let cleared = flags & 0xff & !FRAME_FLAG_ORIGIN & !FRAME_FLAG_BARRIER;
+        self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, cleared));
+    }
+
+    /// Pop saves for frames above `stop`. `stop` itself stays.
+    fn discard_origins_until(&mut self, stop: *const u8) {
+        let mut frame = self.sp();
+        for _ in 0..1_000_000 {
+            if frame.is_null() || std::ptr::eq(frame, stop) || !self.in_segment(frame as u64) {
+                break;
+            }
+            self.leave_origin_frame(frame);
+            let prev = self.read(frame, FRAME_CONT_PREV) as *mut u8;
+            if prev == frame {
+                break;
+            }
+            frame = prev;
+        }
+    }
+
+    fn adopt_origin(&mut self, frame: *mut u8) {
+        let (_, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
+        if flags & FRAME_FLAG_ORIGIN == 0 {
+            return;
+        }
+        let entered = u64::from(flags >> 8);
+        origin_saved()
+            .push((SLC_ORIGIN.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
+        SLC_ORIGIN.store(entered, Ordering::Relaxed);
+        if flags & FRAME_FLAG_BARRIER != 0 {
+            SLC_BARRIER.store(entered, Ordering::Relaxed);
+        }
+    }
+
+    fn stamp_barrier(&mut self, frame: *mut u8) {
+        let (map, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
+        let barrier = SLC_BARRIER.load(Ordering::Relaxed) as u32;
+        let stamped = (flags & 0xff) | (barrier << 8);
+        self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
     }
 
     fn collect(&mut self) {
@@ -1062,6 +1173,46 @@ static LABELS_STOP: AtomicU64 = AtomicU64::new(0);
 #[unsafe(no_mangle)]
 pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
 
+/// First byte past the segment, minus 64 KiB, so a frame that starts below it fits.
+#[unsafe(no_mangle)]
+pub static slc_segment_limit: AtomicU64 = AtomicU64::new(0);
+
+/// Closures built while the program runs are born here. One is the program itself,
+/// so a declaration at zero can adopt whoever calls it.
+static SLC_ORIGIN: AtomicU64 = AtomicU64::new(1);
+static SLC_BARRIER: AtomicU64 = AtomicU64::new(0);
+static NEXT_BARRIER: AtomicU64 = AtomicU64::new(2);
+static ORIGIN_SAVED: std::sync::Mutex<Vec<(u64, u64)>> = std::sync::Mutex::new(Vec::new());
+static BARRIER_AWARE: std::sync::Mutex<Vec<Vec<String>>> = std::sync::Mutex::new(Vec::new());
+
+fn origin_saved() -> std::sync::MutexGuard<'static, Vec<(u64, u64)>> {
+    ORIGIN_SAVED.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn barrier_table() -> std::sync::MutexGuard<'static, Vec<Vec<String>>> {
+    BARRIER_AWARE.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn barrier_knows(id: u64, op: &str) -> bool {
+    barrier_table().get(id as usize).is_some_and(|names| names.iter().any(|name| name == op))
+}
+
+fn reset_generations() {
+    SLC_ORIGIN.store(1, Ordering::Relaxed);
+    SLC_BARRIER.store(0, Ordering::Relaxed);
+    NEXT_BARRIER.store(2, Ordering::Relaxed);
+    origin_saved().clear();
+    barrier_table().clear();
+}
+
+fn aware_names(aware: u64) -> Vec<String> {
+    if aware == 0 {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&string_bytes(aware)).into_owned();
+    text.split(',').filter(|name| !name.is_empty()).map(|name| name.to_string()).collect()
+}
+
 /// Bytes allocated since the last collection. Generated safepoints compare this to the watermark.
 #[unsafe(no_mangle)]
 pub static slc_bytes_since_gc: AtomicU64 = AtomicU64::new(0);
@@ -1121,9 +1272,10 @@ pub unsafe extern "C" fn slc_rt_start(
     labels_stop: *const u8,
 ) -> u64 {
     if fuel == 0 {
-        eprintln!("evaluation diverged (fuel exhausted)");
+        eprintln!("error: evaluation diverged (fuel exhausted)");
         std::process::exit(1);
     }
+    reset_generations();
     // The section symbols are arguments so `--gc-sections` keeps the sections.
     std::hint::black_box((
         safepoints_start,
@@ -1177,7 +1329,7 @@ pub unsafe extern "C" fn slc_rt_start(
 /// back to `slc_rt_start` with status 1. This does not return to the safepoint.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_fail() {
-    eprintln!("evaluation diverged (fuel exhausted)");
+    eprintln!("error: evaluation diverged (fuel exhausted)");
     unsafe {
         std::arch::asm!(
             "mov rsp, qword ptr [rip + {csp}]",
@@ -1259,11 +1411,107 @@ pub extern "C" fn slc_rt_fresh_prompt_id(sp: u64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_current_origin() -> u64 {
+    SLC_ORIGIN.load(Ordering::Relaxed)
+}
+
+/// A closure born under another generation adopts that generation for the call.
+/// Birth zero, or the generation already current, leaves the frame alone.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_enter_birth(sp: u64, birth: u64) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        if birth != 0 && birth != SLC_ORIGIN.load(Ordering::Relaxed) {
+            rt.push_generation(birth, false);
+        }
+        rt.sp() as u64
+    })
+}
+
+/// The body of a row-polymorphic call. Handlers it installs are stamped with
+/// this id and catch only code born here.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_enter_poly(sp: u64, aware: u64) -> u64 {
+    let names = aware_names(aware);
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        let id = NEXT_BARRIER.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut table = barrier_table();
+            let idx = id as usize;
+            if table.len() <= idx {
+                table.resize(idx + 1, Vec::new());
+            }
+            table[idx] = names;
+        }
+        rt.push_generation(id, true);
+        rt.sp() as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_leave_origin(sp: u64) {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        let frame = rt.sp();
+        rt.leave_origin_frame(frame);
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_stamp_barrier(sp: u64) {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        let frame = rt.sp();
+        rt.stamp_barrier(frame);
+    })
+}
+
+/// `frame` did not fit. Grow, then hand back the rebased pointers in `rax`/`rdx`.
+#[repr(C)]
+pub struct SlcPlace {
+    pub sp: u64,
+    pub frame: u64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_bump(sp: u64, frame: u64) -> SlcPlace {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        let old_base = rt.mem.as_ptr() as u64;
+        let frame_off = frame.wrapping_sub(old_base) as usize;
+        if let Err(err) = rt.ensure(frame_off.saturating_add(64 * 1024)) {
+            fail_rt(err);
+        }
+        rt.publish_limit();
+        let new_base = rt.mem.as_ptr() as u64;
+        let delta = new_base.wrapping_sub(old_base);
+        SlcPlace { sp: sp.wrapping_add(delta), frame: frame.wrapping_add(delta) }
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_stack_words(sp: u64) -> u64 {
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
         rt.stack_words()
     })
+}
+
+/// `|n` is the position of an anonymous sum alternative. Anything else is not.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_alt_index(id: u64) -> u64 {
+    let name = label_named(id);
+    name.strip_prefix('|').and_then(|rest| rest.parse().ok()).unwrap_or(u64::MAX)
+}
+
+/// The callee is not a function and not an effect operation. Same line as the
+/// chunk machine's lookup, including the driver's `error:` prefix.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_unbound(sp: u64, id: u64) -> ! {
+    let _ = sp;
+    eprintln!("error: unbound variable: {}", label_named(id));
+    bail(1);
 }
 
 fn label_named(id: u64) -> String {
@@ -1307,7 +1555,11 @@ fn bail(status: i32) -> ! {
 }
 
 fn fail_rt(err: RtError) -> ! {
-    eprintln!("{err}");
+    // `Unhandled` already carries the driver's `error:` prefix. The others do not.
+    match err {
+        RtError::Unhandled(_) => eprintln!("{err}"),
+        other => eprintln!("error: {other}"),
+    }
     bail(1);
 }
 
@@ -1398,13 +1650,11 @@ pub extern "C" fn slc_rt_exit(sp: u64, status: u64) -> ! {
     bail(signed as i32);
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_write_line(sp: u64, text: u64) {
-    let _ = sp;
+fn write_answered(text: u64, newline: bool, op: &str) {
     let handler = slc_answered_handler.load(Ordering::Relaxed);
     let io = slc_io_frame.load(Ordering::Relaxed);
     if handler == 0 || handler != io {
-        eprintln!("error: type mismatch: no handler for operation `write_line`");
+        eprintln!("error: type mismatch: no handler for operation `{op}`");
         bail(1);
     }
     let ptr = text as *const u8;
@@ -1413,8 +1663,22 @@ pub extern "C" fn slc_rt_write_line(sp: u64, text: u64) {
     let mut out = std::io::stdout().lock();
     use std::io::Write;
     let _ = out.write_all(bytes);
-    let _ = out.write_all(b"\n");
+    if newline {
+        let _ = out.write_all(b"\n");
+    }
     let _ = out.flush();
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_write(sp: u64, text: u64) {
+    let _ = sp;
+    write_answered(text, false, "write");
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_write_line(sp: u64, text: u64) {
+    let _ = sp;
+    write_answered(text, true, "write_line");
 }
 
 /// The interpreter's `EvalError` line, including the driver's `error:` prefix.
@@ -1538,11 +1802,39 @@ pub extern "C" fn slc_rt_int_to_str(sp: u64, n: u64) -> u64 {
     })
 }
 
+/// `None` means `value` is already the string to return.
+fn dynamic_display(value: u64) -> Option<String> {
+    with_runtime(|rt| {
+        let Some(obj) = rt.object_base(value) else {
+            return Some(format!("{}", value as i64));
+        };
+        let (tag, _, _) = unpack_meta(rt.object_header(obj).meta);
+        Some(match tag {
+            TAG_STRING => return None,
+            TAG_DELAY | TAG_ADAPTED => "<delayed>".to_string(),
+            TAG_CLOSURE => "<closure>".to_string(),
+            TAG_KONT => "<continuation>".to_string(),
+            TAG_RESUME => "<resume>".to_string(),
+            _ => format!("{}", value as i64),
+        })
+    })
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_display(sp: u64, value: u64, shape: u64) -> u64 {
     // A string's display is the string. Nothing is allocated.
     if shape == 2 {
         return value;
+    }
+    // No static class: a delay prints `<delayed>` and is not forced.
+    if shape == 5 {
+        return match dynamic_display(value) {
+            None => value,
+            Some(text) => with_runtime(|rt| {
+                rt.set_sp(sp as *mut u8);
+                make_string(rt, &text) as u64
+            }),
+        };
     }
     let text = match shape {
         0 => format!("{}", value as i64),
@@ -1594,6 +1886,255 @@ pub extern "C" fn slc_rt_index(sp: u64, s: u64, i: u64) -> u64 {
         return ch as u64;
     }
     type_mismatch(&format!("builtin type mismatch: index {n} out of range"));
+}
+
+/// Two integers in `rax`/`rdx`: discriminant, then payload. The generated code cuts.
+#[repr(C)]
+pub struct Offer {
+    pub disc: u64,
+    pub payload: u64,
+}
+
+fn offer(disc: u64, payload: u64) -> Offer {
+    Offer { disc, payload }
+}
+
+/// Handles belong to this runtime. The interpreter's thread-local map is a different process.
+static OPEN_FILES: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<u64, std::io::BufReader<std::fs::File>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+static NEXT_FILE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn files() -> std::sync::MutexGuard<'static, HashMap<u64, std::io::BufReader<std::fs::File>>> {
+    OPEN_FILES.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn heap_word(word: u64) -> bool {
+    with_runtime(|rt| rt.object_base(word).is_some_and(|base| base as u64 == word))
+}
+
+fn string_text(word: u64) -> Option<String> {
+    if !heap_word(word) {
+        return None;
+    }
+    let tag_ok = with_runtime(|rt| {
+        let (tag, _, _) = unpack_meta(rt.object_header(word as *const u8).meta);
+        tag == TAG_STRING
+    });
+    if !tag_ok {
+        return None;
+    }
+    let bytes = string_bytes(word);
+    Some(
+        String::from_utf8(bytes)
+            .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned()),
+    )
+}
+
+fn alloc_text(sp: u64, text: &str) -> u64 {
+    with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        make_string(rt, text) as u64
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_substring(sp: u64, s: u64, start: u64, end: u64) -> u64 {
+    let Some(text) = string_text(s) else {
+        type_mismatch("builtin type mismatch: substring expects (String, i64, i64)");
+    };
+    let (start, end) = (start as i64, end as i64);
+    let chars: Vec<char> = text.chars().collect();
+    let a = start.max(0) as usize;
+    let b = end.max(0) as usize;
+    if a > b || b > chars.len() {
+        type_mismatch(&format!(
+            "builtin type mismatch: slice range {start}..{end} out of bounds for length {}",
+            chars.len()
+        ));
+    }
+    alloc_text(sp, &chars[a..b].iter().collect::<String>())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_skip_digits(sp: u64, s: u64, pos: u64) -> u64 {
+    let _ = sp;
+    let Some(text) = string_text(s) else {
+        type_mismatch("builtin type mismatch: skip_digits expects (String, i64)");
+    };
+    let mut i = pos as usize;
+    let chars: Vec<char> = text.chars().collect();
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    i as u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_skip_ws(sp: u64, s: u64, pos: u64) -> u64 {
+    let _ = sp;
+    let Some(text) = string_text(s) else {
+        type_mismatch("builtin type mismatch: skip_ws expects (String, i64)");
+    };
+    let mut i = pos as usize;
+    let chars: Vec<char> = text.chars().collect();
+    while i < chars.len() && matches!(chars[i], ' ' | '\n' | '\r' | '\t') {
+        i += 1;
+    }
+    i as u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_str_eq(sp: u64, a: u64, b: u64) -> u64 {
+    slc_rt_str_cmp(sp, a, b, 0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_char_at(sp: u64, s: u64, index: u64) -> Offer {
+    let (Some(text), index) = (string_text(s), index as i64) else {
+        type_mismatch("char_at expects (String, i64)");
+    };
+    match usize::try_from(index).ok().and_then(|i| text.chars().nth(i)) {
+        Some(ch) => offer(0, ch as u64),
+        None => {
+            let msg = format!(
+                "index {index} is out of range for a string of length {}",
+                text.chars().count()
+            );
+            offer(1, alloc_text(sp, &msg))
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_find_char(sp: u64, s: u64, from: u64, target: u64) -> Offer {
+    let Some(text) = string_text(s) else {
+        type_mismatch("find_char expects (String, i64, i64)");
+    };
+    let (from, target) = (from as i64, target as i64);
+    let Some(needle) = u32::try_from(target).ok().and_then(char::from_u32) else {
+        type_mismatch(&format!("find_char expects a character code, got {target}"));
+    };
+    let start = usize::try_from(from).unwrap_or(0);
+    match text.chars().enumerate().skip(start).find(|(_, ch)| *ch == needle) {
+        Some((index, _)) => offer(0, index as u64),
+        None => offer(1, alloc_text(sp, &format!("{needle:?} does not occur from index {from}"))),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_parse_int(sp: u64, word: u64) -> Offer {
+    let Some(text) = string_text(word) else {
+        type_mismatch(&format!("parse_int expects a String, got {}", word as i64));
+    };
+    match text.parse::<i64>() {
+        Ok(n) => offer(0, n as u64),
+        Err(err) => {
+            let out_of_range =
+                err.to_string().contains("too large") || err.to_string().contains("too small");
+            let (disc, reason) = if out_of_range {
+                (2, format!("integer out of range: {text:?}"))
+            } else {
+                (1, format!("not an integer: {text:?}"))
+            };
+            offer(disc, alloc_text(sp, &reason))
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_read_file(sp: u64, path: u64) -> Offer {
+    let Some(path) = string_text(path) else {
+        return offer(1, alloc_text(sp, "builtin type mismatch: read_file expects a String path"));
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => offer(0, alloc_text(sp, &text)),
+        Err(err) => offer(1, alloc_text(sp, &format!("cannot read {path}: {err}"))),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_open_file(sp: u64, path: u64) -> Offer {
+    let Some(path) = string_text(path) else {
+        type_mismatch("open_file expects a String");
+    };
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(err) => return offer(1, alloc_text(sp, &format!("cannot open {path}: {err}"))),
+    };
+    let id = NEXT_FILE_ID.fetch_add(1, Ordering::Relaxed);
+    files().insert(id, std::io::BufReader::new(file));
+    offer(0, id)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_read_line(sp: u64, id: u64) -> Offer {
+    use std::io::BufRead;
+    if heap_word(id) {
+        type_mismatch("read_line expects a file handle");
+    }
+    let read = {
+        let mut files = files();
+        let Some(reader) = files.get_mut(&id) else {
+            type_mismatch(&format!("file handle {id} is not open"));
+        };
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => Ok(None),
+            Ok(_) => {
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
+                    }
+                }
+                Ok(Some(line))
+            }
+            Err(err) => Err(format!("cannot read from handle {id}: {err}")),
+        }
+    };
+    match read {
+        Ok(Some(line)) => offer(0, alloc_text(sp, &line)),
+        Ok(None) => offer(1, 0),
+        Err(err) => type_mismatch(&err),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_close_file(sp: u64, id: u64) -> u64 {
+    let _ = sp;
+    if heap_word(id) {
+        type_mismatch("builtin type mismatch: close_file expects a file handle");
+    }
+    if files().remove(&id).is_none() {
+        type_mismatch(&format!("file handle {id} is not open"));
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_write_file(sp: u64, path: u64, contents: u64) -> Offer {
+    let (Some(path), Some(contents)) = (string_text(path), string_text(contents)) else {
+        return offer(
+            1,
+            alloc_text(sp, "builtin type mismatch: write_file expects (path, content) Strings"),
+        );
+    };
+    match std::fs::write(&path, contents.as_bytes()) {
+        Ok(()) => offer(0, 0),
+        Err(err) => offer(1, alloc_text(sp, &format!("cannot write {path}: {err}"))),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_file_exists(sp: u64, path: u64) -> u64 {
+    let _ = sp;
+    let Some(path) = string_text(path) else {
+        type_mismatch("builtin type mismatch: file_exists expects a String path");
+    };
+    let slot =
+        if std::path::Path::new(&path).exists() { &slc_rt_bool_true } else { &slc_rt_bool_false };
+    slot.load(Ordering::Relaxed)
 }
 
 #[unsafe(no_mangle)]
