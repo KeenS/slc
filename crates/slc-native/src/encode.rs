@@ -10,6 +10,7 @@ use slc_abi::{
 
 const SLC_BYTES_SINCE_GC: &str = "slc_bytes_since_gc";
 const SLC_WATERMARK: &str = "slc_watermark";
+const SLC_ORIGIN: &str = "slc_origin";
 
 const RAX: u8 = 0;
 const RCX: u8 = 1;
@@ -72,6 +73,16 @@ pub fn encode(module: &Module) -> Vec<u8> {
     enc.patch();
     enc.safepoints.sort_by_key(|sp| sp.text_offset);
     elf(module, &enc.buf, &enc.safepoints, &enc.rels, &enc.func_at)
+}
+
+/// Same display kinds as `Runtime::alloc`. The fast path bakes the header immediate.
+fn alloc_display(tag: u16) -> u16 {
+    match tag {
+        slc_abi::TAG_KONT => slc_abi::DISPLAY_CONTINUATION,
+        slc_abi::TAG_RESUME => slc_abi::DISPLAY_RESUME,
+        slc_abi::TAG_CLOSURE => slc_abi::DISPLAY_CLOSURE,
+        _ => 0,
+    }
 }
 
 impl Encoder {
@@ -794,13 +805,7 @@ impl Encoder {
             // Same generation does not push. A different one hides the caller's until `ret`.
             self.pop(RSI);
             self.pop(RSI);
-            self.push(11);
-            self.push(11);
-            self.rr(true, 0x89, R12, RDI);
-            self.call_plt("slc_rt_enter_birth");
-            self.rr(true, 0x89, RAX, R12);
-            self.pop(11);
-            self.pop(11);
+            self.enter_birth_or_skip(11);
         }
         self.jmp_reg(11);
         self.patch_at(ret_at, self.buf.len());
@@ -818,27 +823,69 @@ impl Encoder {
         self.mem(true, 0x8B, RSI, reg, slc_abi::CLOSURE_FRAME_WORDS as i32);
         self.mem(true, 0x8B, R15, reg, slc_abi::CLOSURE_CODE as i32);
         self.mem(true, 0x8B, RAX, reg, slc_abi::CLOSURE_BIRTH as i32);
-        self.push(RAX);
-        self.push(RAX);
-        self.rr(true, 0x89, R12, RDI);
-        self.call_plt("slc_rt_grow_frame");
-        self.rr(true, 0x89, RAX, R12);
-        // Immediate reload: a segment move invalidates the handler register.
-        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
-        self.pop(RSI);
-        self.pop(RSI);
-        self.push(R15);
-        self.push(R15);
-        self.rr(true, 0x89, R12, RDI);
-        self.call_plt("slc_rt_enter_birth");
-        self.rr(true, 0x89, RAX, R12);
-        self.pop(R15);
-        self.pop(R15);
+        // Birth stays in `rax` until the frame check. The slow path saves it.
+        self.grow_frame_if_short(true);
+        self.enter_birth_or_skip(R15);
         // The segment may have moved. The spill was rebased; `r14` is a heap env.
         self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.rr(true, 0x89, R15, 11);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.jmp_reg(11);
+    }
+
+    /// `rsi` is the callee frame in words. Skip the runtime when this frame is
+    /// already that large and `r12 + rsi*8` is still below the published limit.
+    /// `keep_birth` means the generation is in `rax` and comes back in `rsi`.
+    fn grow_frame_if_short(&mut self, keep_birth: bool) {
+        self.mem(true, 0x8B, RCX, R12, slc_abi::FRAME_FRAME_WORDS as i32);
+        self.rr(true, 0x39, RCX, RSI);
+        let header_ok = self.jcc_hole_cc(0x86);
+        let need = self.jmp_hole();
+        self.patch_at(header_ok, self.buf.len());
+        // `lea rcx, [r12 + rsi*8]`.
+        self.buf.extend_from_slice(&[0x49, 0x8D, 0x0C, 0xF4]);
+        let lim = self.rip(true, 0x3B, RCX);
+        self.rels.push(Rel { at: lim, symbol: "slc_segment_limit".into(), kind: PC32, addend: -4 });
+        let seg_ok = self.jcc_hole(Cond::B);
+        self.patch_at(need, self.buf.len());
+        if keep_birth {
+            self.push(RAX);
+            self.push(RAX);
+        }
+        self.rr(true, 0x89, R12, RDI);
+        self.call_plt("slc_rt_grow_frame");
+        self.rr(true, 0x89, RAX, R12);
+        // Immediate reload: a segment move invalidates the handler register.
+        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
+        if keep_birth {
+            self.pop(RSI);
+            self.pop(RSI);
+        }
+        let grew = self.jmp_hole();
+        self.patch_at(seg_ok, self.buf.len());
+        if keep_birth {
+            self.rr(true, 0x89, RAX, RSI);
+        }
+        self.patch_at(grew, self.buf.len());
+    }
+
+    /// `rsi` is the closure's birth. Zero or the current generation does not enter.
+    /// `code` survives the call.
+    fn enter_birth_or_skip(&mut self, code: u8) {
+        self.cmp_imm(RSI, 0);
+        let none = self.jcc_hole(Cond::E);
+        let at = self.rip(true, 0x3B, RSI);
+        self.rels.push(Rel { at, symbol: SLC_ORIGIN.into(), kind: PC32, addend: -4 });
+        let same = self.jcc_hole(Cond::E);
+        self.push(code);
+        self.push(code);
+        self.rr(true, 0x89, R12, RDI);
+        self.call_plt("slc_rt_enter_birth");
+        self.rr(true, 0x89, RAX, R12);
+        self.pop(code);
+        self.pop(code);
+        self.patch_at(none, self.buf.len());
+        self.patch_at(same, self.buf.len());
     }
 
     fn force(&mut self, func: &Function, slot: u16) {
@@ -941,11 +988,8 @@ impl Encoder {
         self.mem(true, 0x8B, R14, 11, slc_abi::CLOSURE_ENV as i32);
         self.mem(true, 0x8B, RSI, 11, slc_abi::CLOSURE_FRAME_WORDS as i32);
         self.mem(true, 0x8B, R15, 11, slc_abi::CLOSURE_CODE as i32);
-        self.rr(true, 0x89, R12, RDI);
-        self.call_plt("slc_rt_grow_frame");
-        self.rr(true, 0x89, RAX, R12);
+        self.grow_frame_if_short(false);
         // The segment may have moved. The spill was rebased; `r13` is the argument.
-        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.rr(true, 0x89, R15, 11);
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.jmp_reg(11);
@@ -1183,6 +1227,23 @@ impl Encoder {
         // Birth sits at offset 48, past a 4-word closure.
         let words = if tag == slc_abi::TAG_CLOSURE { words.max(5) } else { words };
         self.safepoint(func.map_id);
+        // `alloc_raw` rounds up to 16. An odd word count is 8 bytes short of that,
+        // and the next object would no longer start on a slot.
+        let size = (16u32 + words * 8 + 15) & !15;
+        // One shared bump, not a copy at every site. `rbx` and `r12`–`r15` survive the call.
+        self.imm(RDI, i64::from(size));
+        self.imm(RSI, slc_abi::pack_meta(tag, alloc_display(tag), words) as i64);
+        self.imm(RDX, (u64::from(map_id) << 32) as i64);
+        self.call_plt("slc_rt_try_alloc");
+        self.buf.extend_from_slice(&[0x48, 0x85, 0xC0]);
+        let slow = self.jcc_hole(Cond::E);
+        if tag == slc_abi::TAG_CLOSURE {
+            self.rip_load(RCX, SLC_ORIGIN);
+            self.mem(true, 0x89, RCX, RAX, slc_abi::CLOSURE_BIRTH as i32);
+        }
+        self.store_reg(dst, RAX);
+        let done = self.jmp_hole();
+        self.patch_at(slow, self.buf.len());
         self.spill(func.map_id);
         self.rr(true, 0x89, R12, RDI);
         self.imm(RSI, i64::from(words));
@@ -1203,6 +1264,7 @@ impl Encoder {
             self.rr(true, 0x89, RCX, RAX);
         }
         self.store_reg(dst, RAX);
+        self.patch_at(done, self.buf.len());
     }
 
     fn ret(&mut self) {

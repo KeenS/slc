@@ -2,7 +2,7 @@
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 use slc_abi::{
     DISPLAY_CLOSURE, DISPLAY_CONSUMER, DISPLAY_CONTINUATION, DISPLAY_MENU, DISPLAY_RESUME,
@@ -17,6 +17,11 @@ use slc_abi::{
 
 const INITIAL_SEGMENT_BYTES: usize = 1 << 20;
 const MAX_SEGMENT_BYTES: usize = 1 << 30;
+/// Fresh objects are carved from a chunk. A swept object leaves a hole; the
+/// chunk is freed only when the runtime drops. Individual bump addresses are
+/// not passed to `dealloc`.
+const CHUNK_BYTES: usize = 1 << 20;
+const MAX_CHUNKS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtError {
@@ -56,10 +61,19 @@ struct MapRecord {
     pointer_slots: Vec<u16>,
 }
 
-struct Object {
+struct Chunk {
     ptr: *mut u8,
-    size: usize,
+    len: usize,
+    /// Bytes carved from the front of the chunk. The tail stays unused.
+    used: usize,
     layout: Layout,
+    /// One bit per 16-byte slot. The base bit is stored after the header write.
+    /// Allocated at its final size so the published pointer stays valid when
+    /// this chunk moves inside `Vec`.
+    bitmap: Box<[AtomicU64]>,
+    /// Byte size of the object whose base is this slot. Zero is empty.
+    /// Interior slots stay zero. A live size is 16-aligned and non-zero.
+    slots: Box<[u32]>,
 }
 
 enum CaptureStop {
@@ -77,7 +91,13 @@ pub struct Runtime {
     segment_cap: usize,
     sp_off: Option<usize>,
     maps: HashMap<u32, MapRecord>,
-    objects: Vec<Object>,
+    chunks: Vec<Chunk>,
+    /// Chunk that still has room, and the next free offset in it.
+    bump_index: usize,
+    bump_off: usize,
+    /// The process runtime publishes chunks so `slc_rt_word_tag` can run
+    /// without the runtime lock. Test runtimes leave this off.
+    publishing: bool,
     immortal: Vec<u64>,
     global_table: Vec<u64>,
     pointer_pool: Vec<u64>,
@@ -97,8 +117,13 @@ unsafe impl Send for Runtime {}
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        for obj in self.objects.drain(..) {
-            unsafe { dealloc(obj.ptr, obj.layout) }
+        if self.publishing {
+            PUBLISHED.spans.store(std::ptr::null_mut(), Ordering::Release);
+            slc_bump.store(0, Ordering::Release);
+            slc_bump_end.store(0, Ordering::Release);
+        }
+        for chunk in self.chunks.drain(..) {
+            unsafe { dealloc(chunk.ptr, chunk.layout) }
         }
     }
 }
@@ -122,7 +147,10 @@ impl Runtime {
             segment_cap: MAX_SEGMENT_BYTES,
             sp_off: None,
             maps: HashMap::new(),
-            objects: Vec::new(),
+            chunks: Vec::new(),
+            bump_index: 0,
+            bump_off: 0,
+            publishing: false,
             immortal: Vec::new(),
             global_table: Vec::new(),
             pointer_pool: Vec::new(),
@@ -219,16 +247,16 @@ impl Runtime {
     }
 
     pub fn is_live(&self, ptr: *const u8) -> bool {
-        self.objects.iter().any(|obj| std::ptr::eq(obj.ptr, ptr))
+        self.slot_size(ptr as u64).is_some()
     }
 
     pub fn object_size(&self, ptr: *const u8) -> usize {
-        self.find_object(ptr).size
+        self.slot_size(ptr as u64).expect("live object")
     }
 
     pub fn object_bytes(&self, ptr: *const u8) -> &[u8] {
-        let obj = self.find_object(ptr);
-        unsafe { std::slice::from_raw_parts(obj.ptr, obj.size) }
+        let size = self.object_size(ptr);
+        unsafe { std::slice::from_raw_parts(ptr, size) }
     }
 
     pub fn object_header(&self, ptr: *const u8) -> Header {
@@ -436,7 +464,7 @@ impl Runtime {
                 let knows = barrier_table()
                     .get(barrier as usize)
                     .is_some_and(|names| names.iter().any(|name| name == &op));
-                if barrier > SLC_ORIGIN.load(Ordering::Relaxed) && !knows {
+                if barrier > slc_origin.load(Ordering::Relaxed) && !knows {
                     frame = self.read(frame, FRAME_HANDLER_PREV) as *const u8;
                     continue;
                 }
@@ -546,19 +574,119 @@ impl Runtime {
             self.collect();
         }
         let size = (size + 15) & !15;
-        let layout = Layout::from_size_align(size, 16).expect("16-byte layout");
-        let ptr = unsafe { alloc_zeroed(layout) };
-        assert!(!ptr.is_null(), "out of memory");
+        assert!(size > 0 && size <= u32::MAX as usize, "object size");
+        let (chunk_i, ptr) = self.bump_alloc(size);
         unsafe {
             std::ptr::write(
                 ptr.cast::<Header>(),
                 Header { meta: pack_meta(tag, display, payload_words), mark: MARK_WHITE, map_id },
             );
         }
-        self.objects.push(Object { ptr, size, layout });
+        // The header is written before the base bit is published.
+        self.note(chunk_i, ptr, size);
         self.bytes_since_gc = self.bytes_since_gc.saturating_add(size);
         self.publish_counters();
+        self.publish_bump();
         ptr
+    }
+
+    /// Copy the cursor written by generated code into this runtime.
+    /// The fast path advances `slc_bump` without the lock.
+    fn sync_fast_heap(&mut self) {
+        if !self.publishing {
+            return;
+        }
+        self.bytes_since_gc = slc_bytes_since_gc.load(Ordering::Relaxed) as usize;
+        let bump = slc_bump.load(Ordering::Acquire);
+        if bump == 0 || self.bump_index >= self.chunks.len() {
+            return;
+        }
+        let chunk = &mut self.chunks[self.bump_index];
+        let base = chunk.ptr as u64;
+        let end = base + chunk.len as u64;
+        if bump < base || bump > end {
+            return;
+        }
+        let off = (bump - base) as usize;
+        self.bump_off = off;
+        if off > chunk.used {
+            chunk.used = off;
+        }
+    }
+
+    /// Publish the current chunk's cursor. The bump store is last, so a fast
+    /// path that sees it also sees the base, end, and table pointers.
+    fn publish_bump(&self) {
+        if !self.publishing || self.bump_index >= self.chunks.len() {
+            return;
+        }
+        let chunk = &self.chunks[self.bump_index];
+        let base = chunk.ptr as u64;
+        slc_chunk_base.store(base, Ordering::Relaxed);
+        slc_bump_end.store(base + chunk.len as u64, Ordering::Relaxed);
+        slc_heap_bitmap.store(chunk.bitmap.as_ptr() as u64, Ordering::Relaxed);
+        slc_heap_slots.store(chunk.slots.as_ptr() as u64, Ordering::Relaxed);
+        slc_bump.store(base + self.bump_off as u64, Ordering::Release);
+    }
+
+    fn bump_alloc(&mut self, size: usize) -> (usize, *mut u8) {
+        if self.bump_index < self.chunks.len()
+            && self.bump_off + size <= self.chunks[self.bump_index].len
+        {
+            let ptr = unsafe { self.chunks[self.bump_index].ptr.add(self.bump_off) };
+            self.bump_off += size;
+            self.chunks[self.bump_index].used = self.bump_off;
+            return (self.bump_index, ptr);
+        }
+        let len = size.max(CHUNK_BYTES);
+        self.add_chunk(len);
+        self.bump_index = self.chunks.len() - 1;
+        self.bump_off = size;
+        self.chunks[self.bump_index].used = size;
+        (self.bump_index, self.chunks[self.bump_index].ptr)
+    }
+
+    fn add_chunk(&mut self, len: usize) {
+        assert!(self.chunks.len() < MAX_CHUNKS, "heap chunk limit");
+        let len = (len + 15) & !15;
+        let layout = Layout::from_size_align(len, 16).expect("chunk layout");
+        let ptr = unsafe { alloc_zeroed(layout) };
+        assert!(!ptr.is_null(), "out of memory");
+        let slots_n = len / 16;
+        let bitmap_words = slots_n.div_ceil(64);
+        let bitmap: Box<[AtomicU64]> = (0..bitmap_words).map(|_| AtomicU64::new(0)).collect();
+        let slots: Box<[u32]> = vec![0; slots_n].into_boxed_slice();
+        self.chunks.push(Chunk { ptr, len, used: 0, layout, bitmap, slots });
+        if self.publishing {
+            self.publish_chunk(self.chunks.len() - 1);
+        }
+    }
+
+    fn publish_chunks(&self) {
+        for index in 0..self.chunks.len() {
+            self.publish_chunk(index);
+        }
+    }
+
+    fn publish_chunk(&self, index: usize) {
+        let chunk = &self.chunks[index];
+        let base = chunk.ptr as u64;
+        // Widen the span before the chunk becomes visible to `word_tag`.
+        PUBLISHED.min.fetch_min(base, Ordering::Release);
+        PUBLISHED.max.fetch_max(base + chunk.len as u64, Ordering::Release);
+        let bitmap = chunk.bitmap.as_ptr() as *mut AtomicU64;
+        PUBLISHED.bitmap[index].store(bitmap, Ordering::Release);
+        let mut spans = Vec::with_capacity(index + 1);
+        for (i, chunk) in self.chunks.iter().take(index + 1).enumerate() {
+            let base = chunk.ptr as u64;
+            spans.push(ChunkSpan { base, end: base + chunk.len as u64, index: i as u32 });
+        }
+        spans.sort_unstable_by_key(|span| span.base);
+        // The table is immutable after this store. Older tables stay allocated:
+        // a `word_tag` may still be reading one, and the process runtime outlives it.
+        let spans: &'static [ChunkSpan] = Box::leak(spans.into_boxed_slice());
+        let table = Box::leak(Box::new(SpanTable { len: spans.len(), spans: spans.as_ptr() }));
+        PUBLISHED.spans.store(table, Ordering::Release);
     }
 
     fn capture_image(&mut self, stop: CaptureStop, tag: u16, display: u16) -> *mut u8 {
@@ -776,17 +904,17 @@ impl Runtime {
                 let stamped = (flags & 0xff) | id;
                 self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
             }
-            SLC_ORIGIN.store(entered, Ordering::Relaxed);
+            slc_origin.store(entered, Ordering::Relaxed);
             return;
         }
         origin_saved()
-            .push((SLC_ORIGIN.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
+            .push((slc_origin.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
         let mut stamped = (flags & 0xff) | FRAME_FLAG_ORIGIN | id;
         if barrier {
             stamped |= FRAME_FLAG_BARRIER;
             SLC_BARRIER.store(entered, Ordering::Relaxed);
         }
-        SLC_ORIGIN.store(entered, Ordering::Relaxed);
+        slc_origin.store(entered, Ordering::Relaxed);
         self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
     }
 
@@ -796,7 +924,7 @@ impl Runtime {
             return;
         }
         if let Some((origin, barrier)) = origin_saved().pop() {
-            SLC_ORIGIN.store(origin, Ordering::Relaxed);
+            slc_origin.store(origin, Ordering::Relaxed);
             SLC_BARRIER.store(barrier, Ordering::Relaxed);
         }
         let cleared = flags & 0xff & !FRAME_FLAG_ORIGIN & !FRAME_FLAG_BARRIER;
@@ -826,8 +954,8 @@ impl Runtime {
         }
         let entered = u64::from(flags >> 8);
         origin_saved()
-            .push((SLC_ORIGIN.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
-        SLC_ORIGIN.store(entered, Ordering::Relaxed);
+            .push((slc_origin.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
+        slc_origin.store(entered, Ordering::Relaxed);
         if flags & FRAME_FLAG_BARRIER != 0 {
             SLC_BARRIER.store(entered, Ordering::Relaxed);
         }
@@ -848,9 +976,7 @@ impl Runtime {
             }
         }
         self.stats.collections += 1;
-        for obj in &self.objects {
-            set_mark(obj.ptr, MARK_WHITE);
-        }
+        self.each_object(|ptr, _| set_mark(ptr, MARK_WHITE));
         let mut work = Vec::new();
         work.extend(self.immortal.iter().copied());
         work.extend(self.global_table.iter().copied());
@@ -877,16 +1003,24 @@ impl Runtime {
         }
         let mut bytes = 0u64;
         let mut count = 0u64;
-        let mut i = 0;
-        while i < self.objects.len() {
-            if mark_of(self.objects[i].ptr) == MARK_WHITE {
-                let obj = self.objects.swap_remove(i);
-                bytes += obj.size as u64;
-                count += 1;
-                unsafe { dealloc(obj.ptr, obj.layout) }
-            } else {
-                set_mark(self.objects[i].ptr, MARK_WHITE);
-                i += 1;
+        for chunk_i in 0..self.chunks.len() {
+            let mut slot = 0usize;
+            let limit = self.chunks[chunk_i].used / 16;
+            while slot < limit {
+                let size = self.chunks[chunk_i].slots[slot] as usize;
+                if size == 0 {
+                    slot += 1;
+                    continue;
+                }
+                let ptr = unsafe { self.chunks[chunk_i].ptr.add(slot * 16) };
+                if mark_of(ptr) == MARK_WHITE {
+                    self.clear_slot(chunk_i, slot);
+                    bytes += size as u64;
+                    count += 1;
+                } else {
+                    set_mark(ptr, MARK_WHITE);
+                }
+                slot += size / 16;
             }
         }
         self.stats.bytes_swept += bytes;
@@ -998,20 +1132,115 @@ impl Runtime {
         self.maps.get(&map_id).unwrap_or_else(|| panic!("missing stack map"))
     }
 
-    /// Linear scan over the object list. An interval map is worth it once one heap holds
-    /// thousands of objects.
+    fn each_object(&self, mut visit: impl FnMut(*mut u8, usize)) {
+        for chunk in &self.chunks {
+            let mut slot = 0usize;
+            let limit = chunk.used / 16;
+            while slot < limit {
+                let size = chunk.slots[slot] as usize;
+                if size == 0 {
+                    slot += 1;
+                    continue;
+                }
+                visit(unsafe { chunk.ptr.add(slot * 16) }, size);
+                slot += size / 16;
+            }
+        }
+    }
+
+    fn any_tag(&self, want: u16) -> bool {
+        let mut found = false;
+        self.each_object(|ptr, _| {
+            if found {
+                return;
+            }
+            let (tag, _, _) = unpack_meta(self.object_header(ptr).meta);
+            found = tag == want;
+        });
+        found
+    }
+
+    /// Record `size` at the object's base slot and publish that bit.
+    /// A plain store of the bit word, not a locked `or`: one mutator writes it.
+    fn note(&mut self, chunk_i: usize, ptr: *mut u8, size: usize) {
+        let chunk = &mut self.chunks[chunk_i];
+        let off = (ptr as usize).wrapping_sub(chunk.ptr as usize);
+        debug_assert_eq!(off % 16, 0);
+        let slot = off / 16;
+        chunk.slots[slot] = size as u32;
+        let word = slot / 64;
+        let bit = slot % 64;
+        let bits = chunk.bitmap[word].load(Ordering::Relaxed);
+        chunk.bitmap[word].store(bits | (1u64 << bit), Ordering::Release);
+    }
+
+    fn clear_slot(&mut self, chunk_i: usize, slot: usize) {
+        let chunk = &mut self.chunks[chunk_i];
+        let word = slot / 64;
+        let bit = slot % 64;
+        let bits = chunk.bitmap[word].load(Ordering::Relaxed);
+        chunk.bitmap[word].store(bits & !(1u64 << bit), Ordering::Release);
+        chunk.slots[slot] = 0;
+    }
+
+    fn locate(&self, addr: u64) -> Option<(usize, usize)> {
+        let chunk_i = self.chunk_of(addr)?;
+        let chunk = &self.chunks[chunk_i];
+        let off = (addr - chunk.ptr as u64) as usize;
+        if off % 16 != 0 {
+            return None;
+        }
+        Some((chunk_i, off / 16))
+    }
+
+    fn chunk_of(&self, addr: u64) -> Option<usize> {
+        self.chunks.iter().position(|chunk| {
+            let base = chunk.ptr as u64;
+            addr >= base && addr < base + chunk.len as u64
+        })
+    }
+
+    fn slot_size(&self, addr: u64) -> Option<usize> {
+        let (chunk_i, slot) = self.locate(addr)?;
+        let size = self.chunks[chunk_i].slots[slot];
+        if size == 0 { None } else { Some(size as usize) }
+    }
+
+    /// The object containing `addr`, or `None` when `addr` is not in the heap.
+    /// An exact base is one slot load. An interior address walks back to the
+    /// nearest live base in that chunk and checks the object's size.
     fn object_base(&self, addr: u64) -> Option<*mut u8> {
         if addr == 0 {
             return None;
         }
-        self.objects.iter().find_map(|obj| {
-            let base = obj.ptr as u64;
-            (addr >= base && addr < base + obj.size as u64).then_some(obj.ptr)
-        })
-    }
-
-    fn find_object(&self, ptr: *const u8) -> &Object {
-        self.objects.iter().find(|obj| std::ptr::eq(obj.ptr, ptr)).expect("live object")
+        if self.slot_size(addr).is_some() {
+            return Some(addr as *mut u8);
+        }
+        let chunk_i = self.chunk_of(addr)?;
+        let chunk = &self.chunks[chunk_i];
+        let base = chunk.ptr as u64;
+        if addr >= base + chunk.used as u64 {
+            return None;
+        }
+        let off = (addr - base) as usize;
+        let mut slot = off / 16;
+        if off % 16 == 0 {
+            if slot == 0 {
+                return None;
+            }
+            slot -= 1;
+        }
+        loop {
+            let size = chunk.slots[slot];
+            if size != 0 {
+                let obj = unsafe { chunk.ptr.add(slot * 16) };
+                return (addr < obj as u64 + u64::from(size)).then_some(obj);
+            }
+            if slot == 0 {
+                return None;
+            }
+            slot -= 1;
+        }
     }
 
     fn live_frames(&self) -> Vec<*const u8> {
@@ -1187,8 +1416,9 @@ pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
 pub static slc_segment_limit: AtomicU64 = AtomicU64::new(0);
 
 /// Closures built while the program runs are born here. One is the program itself,
-/// so a declaration at zero can adopt whoever calls it.
-static SLC_ORIGIN: AtomicU64 = AtomicU64::new(1);
+/// so a declaration at zero can adopt whoever calls it. Generated code reads it.
+#[unsafe(no_mangle)]
+pub static slc_origin: AtomicU64 = AtomicU64::new(1);
 static SLC_BARRIER: AtomicU64 = AtomicU64::new(0);
 static NEXT_BARRIER: AtomicU64 = AtomicU64::new(2);
 static ORIGIN_SAVED: std::sync::Mutex<Vec<(u64, u64)>> = std::sync::Mutex::new(Vec::new());
@@ -1203,7 +1433,7 @@ fn barrier_table() -> std::sync::MutexGuard<'static, Vec<Vec<String>>> {
 }
 
 fn reset_generations() {
-    SLC_ORIGIN.store(1, Ordering::Relaxed);
+    slc_origin.store(1, Ordering::Relaxed);
     SLC_BARRIER.store(0, Ordering::Relaxed);
     NEXT_BARRIER.store(2, Ordering::Relaxed);
     origin_saved().clear();
@@ -1213,6 +1443,22 @@ fn reset_generations() {
 /// Bytes allocated since the last collection. Generated safepoints compare this to the watermark.
 #[unsafe(no_mangle)]
 pub static slc_bytes_since_gc: AtomicU64 = AtomicU64::new(0);
+
+/// Next free byte in the current chunk. Zero means the fast path must call the runtime.
+#[unsafe(no_mangle)]
+pub static slc_bump: AtomicU64 = AtomicU64::new(0);
+/// First byte past the current chunk.
+#[unsafe(no_mangle)]
+pub static slc_bump_end: AtomicU64 = AtomicU64::new(0);
+/// Base of the chunk `slc_bump` allocates from.
+#[unsafe(no_mangle)]
+pub static slc_chunk_base: AtomicU64 = AtomicU64::new(0);
+/// Bitmap of that chunk. One bit per 16-byte slot.
+#[unsafe(no_mangle)]
+pub static slc_heap_bitmap: AtomicU64 = AtomicU64::new(0);
+/// Slot table of that chunk. A live base holds the object size in bytes.
+#[unsafe(no_mangle)]
+pub static slc_heap_slots: AtomicU64 = AtomicU64::new(0);
 
 /// Collection is due when [`slc_bytes_since_gc`] reaches this. Starts at the sentinel "never".
 #[unsafe(no_mangle)]
@@ -1376,11 +1622,126 @@ pub static slc_rt_prompt_anchor: FrameHeader = FrameHeader {
     handler_prev: 0,
 };
 
+struct ChunkSpan {
+    base: u64,
+    end: u64,
+    index: u32,
+}
+
+/// One snapshot of every published chunk, sorted by base. Replaced wholesale.
+struct SpanTable {
+    len: usize,
+    spans: *const ChunkSpan,
+}
+
+/// Chunks of the process runtime. `slc_rt_word_tag` reads these without the lock.
+struct PublishedChunks {
+    min: AtomicU64,
+    max: AtomicU64,
+    spans: AtomicPtr<SpanTable>,
+    bitmap: [AtomicPtr<AtomicU64>; MAX_CHUNKS],
+}
+
+static PUBLISHED: PublishedChunks = PublishedChunks {
+    min: AtomicU64::new(u64::MAX),
+    max: AtomicU64::new(0),
+    spans: AtomicPtr::new(std::ptr::null_mut()),
+    bitmap: [const { AtomicPtr::new(std::ptr::null_mut()) }; MAX_CHUNKS],
+};
+
+/// Tag of an exact base in `bitmap`, or `0xffff` when that slot is empty.
+/// The header write happens before the base bit is released.
+fn bitmap_tag(bitmap: *const AtomicU64, word: u64, base: u64) -> u64 {
+    if bitmap.is_null() {
+        return 0xffff;
+    }
+    let slot = ((word - base) >> 4) as usize;
+    let bits = unsafe { (*bitmap.add(slot >> 6)).load(Ordering::Acquire) };
+    if bits & (1u64 << (slot & 63)) == 0 {
+        return 0xffff;
+    }
+    let meta = unsafe { std::ptr::read(word as *const u64) };
+    let (tag, _, _) = unpack_meta(meta);
+    u64::from(tag)
+}
+
+/// Tag of an exact published base, or `0xffff`. The header write happens
+/// before the base bit is released, so an acquire load of that bit sees it.
+fn published_word_tag(word: u64) -> u64 {
+    if word & 15 != 0 {
+        return 0xffff;
+    }
+    let min = PUBLISHED.min.load(Ordering::Acquire);
+    let max = PUBLISHED.max.load(Ordering::Acquire);
+    if word < min || word >= max {
+        return 0xffff;
+    }
+    let table = PUBLISHED.spans.load(Ordering::Acquire);
+    if table.is_null() {
+        return 0xffff;
+    }
+    let table = unsafe { &*table };
+    let spans = unsafe { std::slice::from_raw_parts(table.spans, table.len) };
+    let mut lo = 0;
+    let mut hi = spans.len();
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let span = &spans[mid];
+        if word < span.base {
+            hi = mid;
+            continue;
+        }
+        if word >= span.end {
+            lo = mid + 1;
+            continue;
+        }
+        let bitmap = PUBLISHED.bitmap[span.index as usize].load(Ordering::Acquire);
+        return bitmap_tag(bitmap, word, span.base);
+    }
+    0xffff
+}
+
 fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
-    static RT: std::sync::LazyLock<std::sync::Mutex<Runtime>> =
-        std::sync::LazyLock::new(|| std::sync::Mutex::new(Runtime::new()));
+    static RT: std::sync::LazyLock<std::sync::Mutex<Runtime>> = std::sync::LazyLock::new(|| {
+        let mut rt = Runtime::new();
+        rt.publishing = true;
+        rt.publish_chunks();
+        rt.publish_bump();
+        std::sync::Mutex::new(rt)
+    });
     let mut guard = RT.lock().unwrap_or_else(|err| err.into_inner());
+    guard.sync_fast_heap();
     f(&mut guard)
+}
+
+/// Carve `size` bytes from the current chunk. Returns 0 when the chunk cannot
+/// hold it, and the caller uses [`slc_rt_alloc`]. One mutator; no lock.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_try_alloc(size: u64, meta: u64, mark_map: u64) -> u64 {
+    if size == 0 || size & 15 != 0 {
+        return 0;
+    }
+    let bump = slc_bump.load(Ordering::Relaxed);
+    let end = slc_bump_end.load(Ordering::Relaxed);
+    let next = bump.wrapping_add(size);
+    if bump == 0 || next < bump || next > end {
+        return 0;
+    }
+    slc_bump.store(next, Ordering::Relaxed);
+    let base = slc_chunk_base.load(Ordering::Relaxed);
+    let slots = slc_heap_slots.load(Ordering::Relaxed) as *mut u32;
+    let bitmap = slc_heap_bitmap.load(Ordering::Relaxed) as *mut u64;
+    unsafe {
+        std::ptr::write(bump as *mut u64, meta);
+        std::ptr::write((bump as *mut u8).add(8).cast::<u64>(), mark_map);
+        let slot = ((bump - base) >> 4) as usize;
+        *slots.add(slot) = size as u32;
+        let word = bitmap.add(slot >> 6);
+        *word |= 1u64 << (slot & 63);
+    }
+    let bytes = slc_bytes_since_gc.load(Ordering::Relaxed).wrapping_add(size);
+    slc_bytes_since_gc.store(bytes, Ordering::Relaxed);
+    bump
 }
 
 #[unsafe(no_mangle)]
@@ -1409,7 +1770,7 @@ pub extern "C" fn slc_rt_fresh_prompt_id(sp: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_current_origin() -> u64 {
-    SLC_ORIGIN.load(Ordering::Relaxed)
+    slc_origin.load(Ordering::Relaxed)
 }
 
 /// A closure born under another generation adopts that generation for the call.
@@ -1418,7 +1779,7 @@ pub extern "C" fn slc_rt_current_origin() -> u64 {
 pub extern "C" fn slc_rt_enter_birth(sp: u64, birth: u64) -> u64 {
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
-        if birth != 0 && birth != SLC_ORIGIN.load(Ordering::Relaxed) {
+        if birth != 0 && birth != slc_origin.load(Ordering::Relaxed) {
             rt.push_generation(birth, false);
         }
         rt.sp() as u64
@@ -1642,18 +2003,25 @@ pub extern "C" fn slc_rt_resume_cont(sp: u64, image: u64) -> u64 {
 
 /// Tag of a heap object, or `0xffff` when `word` is not that object's address.
 /// A scalar must not be loaded as a header.
+///
+/// Fresh objects sit in the chunk `publish_bump` released. That check is one
+/// range compare; older chunks still use the span table.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_word_tag(word: u64) -> u64 {
-    with_runtime(|rt| {
-        let Some(base) = rt.object_base(word) else {
-            return 0xffff;
-        };
-        if base as u64 != word {
-            return 0xffff;
+    if word & 15 != 0 {
+        return 0xffff;
+    }
+    // The bump store is the release. Base, end, and the bitmap were stored first.
+    let bump = slc_bump.load(Ordering::Acquire);
+    if bump != 0 {
+        let base = slc_chunk_base.load(Ordering::Relaxed);
+        let end = slc_bump_end.load(Ordering::Relaxed);
+        if base != 0 && word >= base && word < end {
+            let bitmap = slc_heap_bitmap.load(Ordering::Relaxed) as *const AtomicU64;
+            return bitmap_tag(bitmap, word, base);
         }
-        let (tag, _, _) = unpack_meta(rt.object_header(base).meta);
-        u64::from(tag)
-    })
+    }
+    published_word_tag(word)
 }
 
 #[unsafe(no_mangle)]
@@ -1944,14 +2312,40 @@ pub extern "C" fn slc_rt_display(sp: u64, value: u64, shape: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_str_concat(sp: u64, a: u64, b: u64) -> u64 {
-    let mut bytes = string_bytes(a);
-    bytes.extend(string_bytes(b));
-    let text = String::from_utf8(bytes)
-        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
-        make_string(rt, &text) as u64
+        // Registers are not roots. Hold both strings across the allocation;
+        // the collector does not move a live object, so the pointers stay put.
+        let keep = rt.immortal.len();
+        rt.immortal.push(a);
+        rt.immortal.push(b);
+        let obj = concat_strings(rt, a, b);
+        rt.immortal.truncate(keep);
+        obj as u64
     })
+}
+
+/// One copy into the result. Character length adds; both sides are already strings.
+fn concat_strings(rt: &mut Runtime, a: u64, b: u64) -> *mut u8 {
+    let a_ptr = a as *const u8;
+    let b_ptr = b as *const u8;
+    let a_len = read_u64(a_ptr, STRING_BYTE_LEN) as usize;
+    let b_len = read_u64(b_ptr, STRING_BYTE_LEN) as usize;
+    let chars = read_u64(a_ptr, STRING_CHAR_LEN) + read_u64(b_ptr, STRING_CHAR_LEN);
+    let total = a_len + b_len;
+    let chunks = total.div_ceil(8);
+    let obj = rt.alloc(2 + chunks as u32, TAG_STRING, MAP_EMPTY);
+    rt.write(obj, STRING_BYTE_LEN, total as u64);
+    rt.write(obj, STRING_CHAR_LEN, chars);
+    unsafe {
+        std::ptr::copy_nonoverlapping(a_ptr.add(STRING_BYTES), obj.add(STRING_BYTES), a_len);
+        std::ptr::copy_nonoverlapping(
+            b_ptr.add(STRING_BYTES),
+            obj.add(STRING_BYTES + a_len),
+            b_len,
+        );
+    }
+    obj
 }
 
 #[unsafe(no_mangle)]
@@ -2238,10 +2632,7 @@ pub extern "C" fn slc_rt_sweep(sp: u64) {
         rt.watermark = 0;
         rt.bytes_since_gc = 1;
         rt.collect();
-        let live = rt.objects.iter().any(|obj| {
-            let (tag, _, _) = unpack_meta(rt.object_header(obj.ptr).meta);
-            tag == TAG_KONT
-        });
+        let live = rt.any_tag(TAG_KONT);
         slc_kont_live.store(u64::from(live), Ordering::Relaxed);
         rt.watermark = usize::MAX;
         rt.publish_counters();
@@ -2788,6 +3179,34 @@ mod tests {
     }
 
     #[test]
+    fn object_lookup_uses_the_span_index() {
+        let mut rt = Runtime::with_segment_bytes(4096);
+        rt.register_map(2, false, &[0]);
+        rt.push_frame(10).unwrap();
+        rt.safepoint_spill(0, 0, 0, 2, 0);
+        let kept = rt.alloc(4, TAG_STRING, MAP_EMPTY);
+        let orphan = rt.alloc(2, TAG_STRING, MAP_EMPTY);
+        rt.write(rt.sp(), FRAME_SLOT0, kept as u64);
+        let kept_addr = kept as u64;
+        let past = kept_addr + rt.object_size(kept) as u64;
+        assert_eq!(rt.object_base(kept_addr).unwrap() as u64, kept_addr);
+        assert_eq!(rt.object_base(kept_addr + 8).unwrap() as u64, kept_addr);
+        assert_eq!(rt.object_base(orphan as u64).unwrap(), orphan);
+        assert!(rt.object_base(1).is_none());
+        if let Some(found) = rt.object_base(past) {
+            assert_ne!(found as u64, kept_addr);
+        }
+        rt.set_alloc_watermark(0);
+        rt.poll();
+        assert!(rt.is_live(kept));
+        assert!(!rt.is_live(orphan));
+        assert_eq!(rt.object_base(kept_addr).unwrap() as u64, kept_addr);
+        assert_eq!(rt.object_base(kept_addr + 8).unwrap() as u64, kept_addr);
+        assert!(rt.object_base(orphan as u64).is_none());
+        assert_eq!(rt.object_base(rt.unit() as u64).unwrap() as u64, rt.unit() as u64);
+    }
+
+    #[test]
     fn idle_poll_allows_an_unwritten_map() {
         let mut rt = Runtime::with_segment_bytes(256);
         rt.push_frame(9).unwrap();
@@ -2848,6 +3267,116 @@ mod tests {
                 rt.watermark = usize::MAX;
             });
         }
+    }
+
+    #[test]
+    fn word_tag_reads_the_published_bitmap() {
+        let _guard = GlobalGuard::arm();
+        let (root, kept, orphan) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.register_map(2, false, &[0]);
+            rt.push_frame(10).unwrap();
+            let root = rt.sp();
+            let kept = rt.alloc(4, TAG_STRING, MAP_EMPTY);
+            let orphan = rt.alloc(2, TAG_STRING, MAP_EMPTY);
+            rt.write(root, FRAME_SLOT0, kept as u64);
+            rt.write(root, FRAME_MAP_FLAGS, pack_frame_flags(2, 0));
+            rt.watermark = 0;
+            (root as u64, kept as u64, orphan as u64)
+        });
+        assert_eq!(kept % 16, 0);
+        assert_eq!(slc_rt_word_tag(kept), u64::from(TAG_STRING));
+        assert_eq!(slc_rt_word_tag(kept + 8), 0xffff);
+        assert_eq!(slc_rt_word_tag(orphan), u64::from(TAG_STRING));
+        assert_eq!(slc_rt_word_tag(1), 0xffff);
+        assert_eq!(slc_rt_poll(root), root);
+        assert_eq!(slc_rt_word_tag(kept), u64::from(TAG_STRING));
+        assert_eq!(slc_rt_word_tag(orphan), 0xffff);
+    }
+
+    /// A live object stays visible after the bump moves to a later chunk.
+    #[test]
+    fn word_tag_reads_an_older_chunk_after_the_bump_moves() {
+        let _guard = GlobalGuard::arm();
+        let (old, fresh) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.push_frame(10).unwrap();
+            let old = rt.alloc(4, TAG_STRING, MAP_EMPTY) as u64;
+            let then = slc_chunk_base.load(Ordering::Relaxed);
+            // Larger than a normal chunk, so this object cannot share `old`'s chunk.
+            let _gap = rt.alloc((CHUNK_BYTES as u32) / 8, TAG_TUPLE, MAP_EMPTY);
+            let fresh = rt.alloc(2, TAG_ENV, MAP_EMPTY) as u64;
+            assert_ne!(slc_chunk_base.load(Ordering::Relaxed), then);
+            assert!(fresh >= slc_chunk_base.load(Ordering::Relaxed));
+            (old, fresh)
+        });
+        assert_eq!(slc_rt_word_tag(old), u64::from(TAG_STRING));
+        assert_eq!(slc_rt_word_tag(old + 8), 0xffff);
+        assert_eq!(slc_rt_word_tag(fresh), u64::from(TAG_ENV));
+    }
+
+    /// Generated code advances `slc_bump` without the lock. A later collection
+    /// must see that object: exact, marked, and swept when it is not a root.
+    #[test]
+    fn fast_bump_is_collected_with_the_runtime() {
+        let _guard = GlobalGuard::arm();
+        with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.register_map(2, false, &[0]);
+            rt.push_frame(10).unwrap();
+            let root = rt.sp();
+            if slc_bump_end.load(Ordering::Relaxed).saturating_sub(slc_bump.load(Ordering::Relaxed))
+                < 64
+            {
+                let _pad = rt.alloc(8, TAG_STRING, MAP_EMPTY);
+            }
+            rt.write(root, FRAME_MAP_FLAGS, pack_frame_flags(2, 0));
+            let bump = slc_bump.load(Ordering::Relaxed);
+            let base = slc_chunk_base.load(Ordering::Relaxed);
+            let slots = slc_heap_slots.load(Ordering::Relaxed) as *mut u32;
+            let bitmap = slc_heap_bitmap.load(Ordering::Relaxed) as *mut AtomicU64;
+            assert_eq!(bump % 16, 0);
+            assert!(bump + 64 <= slc_bump_end.load(Ordering::Relaxed));
+            let plant = |at: u64| {
+                let obj = at as *mut u8;
+                unsafe {
+                    std::ptr::write(
+                        obj.cast::<Header>(),
+                        Header {
+                            meta: pack_meta(TAG_STRING, 0, 2),
+                            mark: MARK_WHITE,
+                            map_id: MAP_EMPTY,
+                        },
+                    );
+                    let slot = ((at - base) >> 4) as usize;
+                    *slots.add(slot) = 32;
+                    let word = slot / 64;
+                    let bit = slot % 64;
+                    let prev = (*bitmap.add(word)).load(Ordering::Relaxed);
+                    (*bitmap.add(word)).store(prev | (1u64 << bit), Ordering::Release);
+                }
+                obj
+            };
+            let kept = plant(bump);
+            let orphan = plant(bump + 32);
+            slc_bump.store(bump + 64, Ordering::Release);
+            slc_bytes_since_gc.fetch_add(64, Ordering::Relaxed);
+            rt.write(root, FRAME_SLOT0, kept as u64);
+            rt.sync_fast_heap();
+            rt.watermark = 0;
+            rt.poll();
+            assert!(rt.is_live(kept));
+            assert_eq!(rt.object_header(kept).mark, MARK_WHITE);
+            assert_eq!(rt.object_size(kept), 32);
+            assert!(!rt.is_live(orphan));
+            assert_eq!(slc_rt_word_tag(kept as u64), u64::from(TAG_STRING));
+            assert_eq!(slc_rt_word_tag(orphan as u64), 0xffff);
+            rt.watermark = usize::MAX;
+            rt.publish_counters();
+        });
     }
 
     #[test]

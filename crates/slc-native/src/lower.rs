@@ -184,6 +184,34 @@ pub fn lower(
     })
 }
 
+/// A prelude impl whose body is the matching builtin. Other impls keep their call.
+fn prelude_primitive(symbol: &str) -> Option<&'static str> {
+    let mut parts = symbol.split('#');
+    let trait_name = parts.next()?;
+    let key = parts.next()?;
+    let method = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let numeric = matches!(key, "i64" | "i32" | "i8" | "u64" | "u32" | "u8" | "f64" | "f32");
+    let ordered = numeric || matches!(key, "char" | "String" | "Bool");
+    match (trait_name, method) {
+        ("Add", "add") if numeric || key == "String" => Some("__add"),
+        ("Sub", "sub") if numeric => Some("__sub"),
+        ("Mul", "mul") if numeric => Some("__mul"),
+        ("Div", "div") if numeric => Some("__div"),
+        ("Rem", "rem") if numeric => Some("__rem"),
+        ("Neg", "neg") if matches!(key, "i64" | "i32" | "i8" | "f64" | "f32") => Some("__neg"),
+        ("Eq", "eq") if ordered => Some("__eq"),
+        ("Eq", "ne") if ordered => Some("__ne"),
+        ("Ord", "lt") if ordered => Some("__lt"),
+        ("Ord", "gt") if ordered => Some("__gt"),
+        ("Ord", "le") if ordered => Some("__le"),
+        ("Ord", "ge") if ordered => Some("__ge"),
+        _ => None,
+    }
+}
+
 fn inflate(funcs: &mut [Function], edges: &[(String, String)]) {
     let base: Vec<u32> = funcs.iter().map(|func| func.frame_words).collect();
     let names: Vec<String> = funcs.iter().map(|func| func.symbol.clone()).collect();
@@ -2030,6 +2058,14 @@ impl Builder {
         ) {
             return self.compile_builtin(symbol, arg, mode);
         }
+        // Prelude `impl Add for i64` is `<… | __add>`. Calling that function
+        // allocates the operand tuple again and runs a full prologue. An unknown
+        // operand kind keeps the call, which still has the right body.
+        if let Some(builtin) = prelude_primitive(symbol)
+            && self.operand_class(arg).is_some()
+        {
+            return self.compile_primitive(builtin, arg, mode);
+        }
         if self.slots.contains_key(symbol.as_str()) {
             return self.compile_indirect(symbol, arg, mode);
         }
@@ -3365,7 +3401,7 @@ impl Builder {
             }
             "is_digit" | "is_ws" => self.compile_char_class(name, mode),
             "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__neg" | "__xor"
-            | "__wrapping_mul" => self.compile_arith(name, class),
+            | "__wrapping_mul" => self.compile_arith(name, class, true),
             other => Err(format!("builtin {other}")),
         }
     }
@@ -3517,11 +3553,107 @@ impl Builder {
         Ok(true)
     }
 
-    fn compile_arith(&mut self, name: &str, class: Option<Class>) -> Result<bool, String> {
+    /// `Eq#i64#eq` and the other prelude wrappers. The operand tuple is not
+    /// allocated when both words can sit in registers. Integer division, float
+    /// remainder, and string order still call the runtime through that tuple.
+    fn compile_primitive(&mut self, name: &str, arg: &Term, mode: Mode) -> Result<bool, String> {
+        let class = self.operand_class(arg);
+        let needs_tuple = matches!(
+            (name, class),
+            ("__add", Some(Class::Str))
+                | ("__div" | "__rem", Some(Class::Int))
+                | ("__rem", Some(Class::Float))
+                | ("__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge", Some(Class::Str))
+        );
+        if needs_tuple {
+            return self.compile_builtin(name, arg, mode);
+        }
+        let Term::Tuple(items) = arg else {
+            return self.compile_builtin(name, arg, mode);
+        };
+        if name == "__neg" {
+            if items.len() != 1 {
+                return self.compile_builtin(name, arg, mode);
+            }
+            self.compile_term(&items[0], Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Ok(false);
+            }
+            return self.compile_arith(name, class, false);
+        }
+        if items.len() != 2 || !self.place_pair(&items[0], &items[1])? {
+            if items.len() != 2 {
+                return self.compile_builtin(name, arg, mode);
+            }
+            return Ok(false);
+        }
+        if matches!(name, "__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge") {
+            let cond = match name {
+                "__eq" => Cond::E,
+                "__ne" => Cond::Ne,
+                "__lt" => Cond::L,
+                "__gt" => Cond::G,
+                "__le" => Cond::Le,
+                _ => Cond::Ge,
+            };
+            let kind = match class {
+                Some(Class::Float) => CmpKind::Float(cond),
+                Some(Class::Bool) if matches!(name, "__lt" | "__gt" | "__le" | "__ge") => {
+                    CmpKind::Labels(cond)
+                }
+                _ => CmpKind::Words(cond),
+            };
+            return self.compile_cmp_ready(kind, mode);
+        }
+        self.compile_arith(name, class, false)
+    }
+
+    /// Leave the two components in `V(0)` and `V(1)`. `false` means a component diverged.
+    fn place_pair(&mut self, left: &Term, right: &Term) -> Result<bool, String> {
+        let mark = self.temp_used;
+        let mut saved = Vec::new();
+        for item in [left, right] {
+            let pointer = self.compile_term(item, Mode::Value)?;
+            if terminated(&self.blocks[self.cur].insts) {
+                return Ok(false);
+            }
+            let slot = if pointer {
+                self.push_scratch(Dest::Val)?
+            } else {
+                let slot = self.alloc_temp(false)?;
+                self.store_slot(Dest::Val, slot);
+                if self.val_ptr {
+                    self.emit(Inst::Imm { dst: Dest::Val, value: 0 });
+                }
+                slot
+            };
+            saved.push((slot, pointer));
+        }
+        self.load_slot(Dest::V(0), saved[0].0);
+        self.load_slot(Dest::V(1), saved[1].0);
+        for (_, pointer) in saved.iter().rev() {
+            if *pointer {
+                self.pop_scratch();
+            }
+        }
+        let scalars = saved.iter().filter(|(_, pointer)| !pointer).count() as u16;
+        if self.temp_used == mark + scalars {
+            self.temp_used = mark;
+        }
+        Ok(true)
+    }
+
+    fn compile_arith(
+        &mut self,
+        name: &str,
+        class: Option<Class>,
+        from_tuple: bool,
+    ) -> Result<bool, String> {
         let class =
             class.ok_or_else(|| format!("{name} in {} has no operand kind", self.current))?;
         let binary = name != "__neg";
-        if binary
+        if from_tuple
+            && binary
             && !matches!(
                 (name, class),
                 ("__add", Class::Str) | ("__div" | "__rem", Class::Int) | ("__rem", Class::Float)
@@ -3608,6 +3740,11 @@ impl Builder {
         }
         self.emit(Inst::Load { dst: Dest::V(0), base: Dest::Val, offset: 24, width: 8 });
         self.emit(Inst::Load { dst: Dest::V(1), base: Dest::Val, offset: 32, width: 8 });
+        self.compile_cmp_ready(kind, mode)
+    }
+
+    /// The two words are already in `V(0)` and `V(1)`.
+    fn compile_cmp_ready(&mut self, kind: CmpKind, mode: Mode) -> Result<bool, String> {
         let yes = self.new_block();
         let no = self.new_block();
         match kind {
