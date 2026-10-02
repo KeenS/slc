@@ -1470,18 +1470,34 @@ pub extern "C" fn slc_rt_stamp_barrier(sp: u64) {
     })
 }
 
-/// `frame` did not fit. Grow, then hand back the rebased pointers in `rax`/`rdx`.
+/// Rebased top in `rax`, second word in `rdx`. `slc_rt_resume` uses this.
 #[repr(C)]
 pub struct SlcPlace {
     pub sp: u64,
     pub frame: u64,
 }
 
+/// Grown `sp`, the frame that did not fit, and the live handler.
+/// 24 bytes, so System V returns it through a hidden pointer in `rdi`.
+/// `sp`, `frame`, and the handler arrive in `rsi`, `rdx`, and `rcx`.
+#[repr(C)]
+pub struct SlcBump {
+    pub sp: u64,
+    pub frame: u64,
+    pub handler: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<SlcBump>() == 24);
+const _: () = assert!(std::mem::offset_of!(SlcBump, sp) == 0);
+const _: () = assert!(std::mem::offset_of!(SlcBump, frame) == 8);
+const _: () = assert!(std::mem::offset_of!(SlcBump, handler) == 16);
+
 #[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_bump(sp: u64, frame: u64) -> SlcPlace {
+pub extern "C" fn slc_rt_bump(sp: u64, frame: u64, handler: u64) -> SlcBump {
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
         let old_base = rt.mem.as_ptr() as u64;
+        let old_len = rt.mem.len() as u64;
         let frame_off = frame.wrapping_sub(old_base) as usize;
         if let Err(err) = rt.ensure(frame_off.saturating_add(64 * 1024)) {
             fail_rt(err);
@@ -1489,7 +1505,15 @@ pub extern "C" fn slc_rt_bump(sp: u64, frame: u64) -> SlcPlace {
         rt.publish_limit();
         let new_base = rt.mem.as_ptr() as u64;
         let delta = new_base.wrapping_sub(old_base);
-        SlcPlace { sp: sp.wrapping_add(delta), frame: frame.wrapping_add(delta) }
+        // A prompt in `rbx` is inside the segment. The spill word is not `rbx`
+        // after `install_prompt`, and a frame that has not spilled yet holds
+        // whatever the previous frame left there.
+        let handler = if handler >= old_base && handler < old_base + old_len {
+            new_base + (handler - old_base)
+        } else {
+            handler
+        };
+        SlcBump { sp: sp.wrapping_add(delta), frame: frame.wrapping_add(delta), handler }
     })
 }
 
@@ -1817,23 +1841,22 @@ fn dynamic_display(value: u64) -> Option<String> {
                 return None;
             }
         }
-        Some(render_value(rt, value, true))
+        Some(render_value(rt, value))
     })
 }
 
 /// Shape 5. A typed integer, float, char, or file never arrives here.
-/// Unit is the word 0 or the unit singleton. A surface Unicode scalar is the
-/// character. A nested non-zero scalar stays a decimal integer so a tuple of
-/// ints stays `(1, 2)`.
-fn render_value(rt: &Runtime, value: u64, surface: bool) -> String {
+/// Unit is the word 0 or the unit singleton. A non-zero untagged word is a
+/// decimal integer, the same text `Value::display` uses for an integer.
+fn render_value(rt: &Runtime, value: u64) -> String {
     if value == 0 || value == rt.unit {
         return "(,)".to_string();
     }
     let Some(obj) = rt.object_base(value) else {
-        return scalar_text(value, surface);
+        return scalar_text(value);
     };
     if obj as u64 != value {
-        return scalar_text(value, surface);
+        return scalar_text(value);
     }
     let (tag, kind, words) = unpack_meta(rt.object_header(obj).meta);
     match kind {
@@ -1858,15 +1881,14 @@ fn render_value(rt: &Runtime, value: u64, surface: bool) -> String {
         TAG_RESUME => "<resume>".to_string(),
         TAG_TUPLE => {
             let count = rt.read(obj, 16).min(u64::from(words.saturating_sub(1))) as usize;
-            let parts: Vec<String> = (0..count)
-                .map(|index| render_value(rt, rt.read(obj, 24 + 8 * index), false))
-                .collect();
+            let parts: Vec<String> =
+                (0..count).map(|index| render_value(rt, rt.read(obj, 24 + 8 * index))).collect();
             format!("({})", parts.join(", "))
         }
         TAG_TAGGED => {
             let label = label_named(rt.read(obj, TAGGED_LABEL));
             let payload = rt.read(obj, TAGGED_PAYLOAD);
-            let body = render_value(rt, payload, false);
+            let body = render_value(rt, payload);
             if let Some(rest) = label.strip_prefix('|')
                 && rest.parse::<usize>().is_ok()
             {
@@ -1883,17 +1905,12 @@ fn render_value(rt: &Runtime, value: u64, surface: bool) -> String {
         }
         TAG_ENV => "<env>".to_string(),
         TAG_CLAUSES => "<clauses>".to_string(),
-        _ => scalar_text(value, false),
+        _ => scalar_text(value),
     }
 }
 
-fn scalar_text(value: u64, surface: bool) -> String {
-    if surface
-        && (1..=0x10FFFF).contains(&value)
-        && let Some(ch) = char::from_u32(value as u32)
-    {
-        return ch.to_string();
-    }
+/// Shape 5 has no class. An untagged word is an integer, not a character.
+fn scalar_text(value: u64) -> String {
     format!("{}", value as i64)
 }
 
@@ -2368,6 +2385,45 @@ mod tests {
         slc_rt_write_line(0, text as u64);
         slc_io_frame.store(0, Ordering::Relaxed);
         slc_answered_handler.store(0, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn shape_five_prints_an_untagged_word_as_a_decimal() {
+        let rt = Runtime::with_segment_bytes(64);
+        assert_eq!(render_value(&rt, 65), "65");
+        assert_eq!(render_value(&rt, 0), "(,)");
+        assert_eq!(render_value(&rt, rt.unit), "(,)");
+    }
+
+    #[test]
+    fn bump_rebases_only_a_handler_in_the_old_segment() {
+        let _guard = GlobalGuard::arm();
+        let (sp, frame, inside, old_base) = with_runtime(|rt| {
+            rt.sp_off = None;
+            rt.watermark = usize::MAX;
+            rt.push_frame(9).unwrap();
+            let base = rt.segment_base() as u64;
+            let len = rt.mem.len() as u64;
+            (rt.sp() as u64, base + len + 64, base + 8, base)
+        });
+        let moved = slc_rt_bump(sp, frame, inside);
+        let new_base = with_runtime(|rt| rt.segment_base() as u64);
+        assert_ne!(new_base, old_base);
+        assert_eq!(moved.handler, new_base + (inside - old_base));
+        assert_eq!(moved.sp, new_base + (sp - old_base));
+        assert_eq!(moved.frame, new_base + (frame - old_base));
+
+        let (sp, frame) = with_runtime(|rt| {
+            let base = rt.segment_base() as u64;
+            let len = rt.mem.len() as u64;
+            (rt.sp() as u64, base + len + 64)
+        });
+        let heap = 0x5151u64;
+        let stayed = slc_rt_bump(sp, frame, heap);
+        assert_ne!(stayed.sp, sp);
+        assert_eq!(stayed.handler, heap);
+        let zero = slc_rt_bump(stayed.sp, stayed.frame, 0);
+        assert_eq!(zero.handler, 0);
     }
 
     #[test]

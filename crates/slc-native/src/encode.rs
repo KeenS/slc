@@ -21,6 +21,7 @@ const R12: u8 = 12;
 const R13: u8 = 13;
 const R14: u8 = 14;
 const R15: u8 = 15;
+const RSP: u8 = 4;
 
 const CALLER_SAVED: [u8; 9] = [RAX, RCX, RDX, RSI, RDI, 8, 9, 10, 11];
 
@@ -519,7 +520,9 @@ impl Encoder {
     }
 
     /// `rax` is a new frame. Past the published limit it is not in the segment,
-    /// and the next `set_sp` would abort. The slow path returns the rebased pair.
+    /// and the next `set_sp` would abort. The slow path grows and rebases
+    /// `r12`, `rax`, and `rbx`. `rbx` moves only when it addresses the old
+    /// segment. The spill stays the handler `ret` restores.
     fn guard_frame(&mut self) {
         let at = self.rip(true, 0x3B, RAX);
         self.rels.push(Rel { at, symbol: "slc_segment_limit".into(), kind: PC32, addend: -4 });
@@ -528,13 +531,18 @@ impl Encoder {
         self.push(9);
         self.push(10);
         self.push(11);
-        self.rr(true, 0x89, R12, RDI);
-        self.rr(true, 0x89, RAX, RSI);
+        // 24-byte `SlcBump`, padded to 32 so `%rsp` stays 0 mod 16. The hidden
+        // return pointer is the first argument.
+        self.buf.extend_from_slice(&[0x48, 0x83, 0xEC, 32]);
+        self.mem(true, 0x8D, RDI, RSP, 0);
+        self.rr(true, 0x89, R12, RSI);
+        self.rr(true, 0x89, RAX, RDX);
+        self.rr(true, 0x89, RBX, RCX);
         self.call_plt("slc_rt_bump");
-        self.rr(true, 0x89, RAX, R12);
-        // The copy's handler slot was rebased. `rbx` still addresses the freed segment.
-        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
-        self.rr(true, 0x89, RDX, RAX);
+        self.mem(true, 0x8B, R12, RSP, 0);
+        self.mem(true, 0x8B, RAX, RSP, 8);
+        self.mem(true, 0x8B, RBX, RSP, 16);
+        self.buf.extend_from_slice(&[0x48, 0x83, 0xC4, 32]);
         self.pop(11);
         self.pop(10);
         self.pop(9);
@@ -865,7 +873,7 @@ impl Encoder {
         self.rip_load(R13, "slc_rt_unit");
         // Tail and value position both return here. A pure tail would skip a
         // body that yields another delay or an `Adapted`. `lea_above` may move
-        // the segment; `guard_frame` reloads `rbx` from the rebased frame.
+        // the segment; `guard_frame` rebases `rbx` when it addresses that segment.
         self.lea_above();
         let ret_at = self.rip(true, 0x8D, RCX);
         self.mem(true, 0x89, RCX, RAX, 0);
