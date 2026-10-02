@@ -532,6 +532,8 @@ impl Encoder {
         self.rr(true, 0x89, RAX, RSI);
         self.call_plt("slc_rt_bump");
         self.rr(true, 0x89, RAX, R12);
+        // The copy's handler slot was rebased. `rbx` still addresses the freed segment.
+        self.mem(true, 0x8B, RBX, R12, FRAME_SPILL_HANDLERS as i32);
         self.rr(true, 0x89, RDX, RAX);
         self.pop(11);
         self.pop(10);
@@ -862,8 +864,8 @@ impl Encoder {
         self.mem(true, 0x8B, 9, RAX, 32);
         self.rip_load(R13, "slc_rt_unit");
         // Tail and value position both return here. A pure tail would skip a
-        // body that yields another delay or an `Adapted`. `rbx` is copied into
-        // the new frame; this path does not move the segment.
+        // body that yields another delay or an `Adapted`. `lea_above` may move
+        // the segment; `guard_frame` reloads `rbx` from the rebased frame.
         self.lea_above();
         let ret_at = self.rip(true, 0x8D, RCX);
         self.mem(true, 0x89, RCX, RAX, 0);
@@ -972,18 +974,15 @@ impl Encoder {
         self.rr(true, 0x89, R12, RDI);
         self.rr(true, 0x89, 11, RSI);
         self.call_plt("slc_rt_resume");
-        // `rax` is the top of the slice. `r12` is still the frame it sits on.
-        // A non-tail resume returns to this clause: the captured prompt's
-        // offset 0 is the continuation of `do`, and that would skip the rest
-        // of the clause. Point it at the instruction after this activation.
+        // `rax`/`rdx` are the rebased top and the bottom prompt. `ensure` may
+        // have dropped the caller's segment, so the prompt is patched before
+        // any other frame operand. The clause frames keep their own returns.
+        // A non-tail resume continues this clause instead of the `do`.
         let resume_back = if tail {
             None
         } else {
-            self.mem(true, 0x8B, RCX, R12, slc_abi::FRAME_FRAME_WORDS as i32);
-            self.shl3(RCX);
-            self.rr(true, 0x01, R12, RCX);
-            let back = self.rip(true, 0x8D, RDX);
-            self.mem(true, 0x89, RDX, RCX, 0);
+            let back = self.rip(true, 0x8D, RCX);
+            self.mem(true, 0x89, RCX, RDX, 0);
             Some(back)
         };
         self.rr(true, 0x89, RAX, R12);

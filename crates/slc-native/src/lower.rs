@@ -4,9 +4,10 @@
 use std::collections::{HashMap, HashSet};
 
 use slc_abi::{
-    CLOSURE_CODE, CLOSURE_ENV, CLOSURE_FRAME_WORDS, FRAME_FRAME_WORDS, FRAME_SLOT0, MAP_EMPTY,
-    SLC_PROGRAM_ENTRY, STRING_BYTE_LEN, STRING_BYTES, STRING_CHAR_LEN, TAG_CLAUSES, TAG_CLOSURE,
-    TAG_DELAY, TAG_ENV, TAG_STRING, TAG_TAGGED, TAG_TUPLE, TAGGED_LABEL, TAGGED_PAYLOAD,
+    CLOSURE_BIRTH, CLOSURE_CODE, CLOSURE_ENV, CLOSURE_FRAME_WORDS, FRAME_FRAME_WORDS, FRAME_SLOT0,
+    MAP_EMPTY, SLC_PROGRAM_ENTRY, STRING_BYTE_LEN, STRING_BYTES, STRING_CHAR_LEN, TAG_CLAUSES,
+    TAG_CLOSURE, TAG_DELAY, TAG_ENV, TAG_STRING, TAG_TAGGED, TAG_TUPLE, TAGGED_LABEL,
+    TAGGED_PAYLOAD,
 };
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
@@ -1278,9 +1279,13 @@ impl Builder {
 
     /// A direct cut against this co-variable returns. A slot is a consumer to activate.
     /// `__arm` names the ambient continuation and is never bound.
+    fn name_returns(&self, name: &str) -> bool {
+        self.forwards.contains(name) || (!self.slots.contains_key(name) && name.starts_with("__"))
+    }
+
     fn cont_is_return(&self, cont: &CoTerm) -> bool {
         let CoTerm::Covar(name) = cont else { return false };
-        self.forwards.contains(name) || (!self.slots.contains_key(name) && name.starts_with("__"))
+        self.name_returns(name)
     }
 
     fn compile_app(
@@ -1395,9 +1400,7 @@ impl Builder {
                     self.finish_exit(exit);
                     return Ok(pointer);
                 }
-                if self.forwards.contains(name)
-                    || (!self.slots.contains_key(name) && name.starts_with("__"))
-                {
+                if self.name_returns(name) {
                     if mode == Mode::Tail {
                         self.finish(Mode::Tail);
                     }
@@ -1546,7 +1549,7 @@ impl Builder {
         let captures: Vec<_> =
             self.capture_list(body).into_iter().filter(|(name, _)| name != param).collect();
         self.lift_function(&symbol, param, param_ptr, body, &captures)?;
-        self.emit_code_object(&symbol, &captures, 4, true)?;
+        self.emit_code_object(&symbol, &captures, 4, true, false)?;
         if mode == Mode::Tail {
             self.finish(Mode::Tail);
         }
@@ -1563,7 +1566,7 @@ impl Builder {
         }
         // No slot: this names the continuation that is current right now.
         if self.forwards.contains(name) || name.starts_with("__") {
-            self.emit_code_object("slc_id_kont", &[], 4, true)?;
+            self.emit_code_object("slc_id_kont", &[], 4, true, false)?;
             if mode == Mode::Tail {
                 self.finish(Mode::Tail);
             }
@@ -1659,7 +1662,7 @@ impl Builder {
             self.pointer_slots.contains(&slot)
         } else if self.func_param.contains_key(name) {
             // A known function used as a value is a closure, not a call.
-            self.emit_code_object(name, &[], 4, true)?;
+            self.emit_code_object(name, &[], 4, true, true)?;
             true
         } else if let Some(rest) = name.strip_prefix("__dict_") {
             // The interpreter installs these after lowering. A projection's index is
@@ -1680,11 +1683,11 @@ impl Builder {
                 return Err(format!("unbound {name}"));
             }
             if methods.len() == 1 {
-                self.emit_code_object(&methods[0], &[], 4, true)?;
+                self.emit_code_object(&methods[0], &[], 4, true, true)?;
             } else {
                 let mut saved = Vec::new();
                 for sym in &methods {
-                    self.emit_code_object(sym, &[], 4, true)?;
+                    self.emit_code_object(sym, &[], 4, true, true)?;
                     saved.push(self.push_scratch(Dest::Val)?);
                 }
                 let heap: Vec<u16> = (0..methods.len()).map(|index| index as u16 + 1).collect();
@@ -1729,7 +1732,7 @@ impl Builder {
         let captures = self.capture_list(body);
         // The body is not entered here. Force jumps to it with the caller's handlers.
         self.lift_function(&symbol, DELAY_BINDER, false, body, &captures)?;
-        self.emit_code_object(&symbol, &captures, 3, false)?;
+        self.emit_code_object(&symbol, &captures, 3, false, false)?;
         Ok(true)
     }
 
@@ -1960,18 +1963,20 @@ impl Builder {
             && let Command::Cut(Term::Var(name), CoTerm::App(values, cont)) = command.as_ref()
             && let CoTerm::Covar(cov) = cont.as_ref()
             && cov == "__call"
-            && matches!(
-                name.as_str(),
-                "char_at"
-                    | "find_char"
-                    | "parse_int"
-                    | "__read_file"
-                    | "__open_file"
-                    | "__read_line"
-                    | "__write_file"
-            )
         {
-            return self.compile_offering(name, values, arg, mode);
+            let spec: Option<(&str, u8, &[bool])> = match name.as_str() {
+                "parse_int" => Some(("slc_rt_parse_int", 1, &[false, true, true])),
+                "char_at" => Some(("slc_rt_char_at", 2, &[false, true])),
+                "find_char" => Some(("slc_rt_find_char", 3, &[false, true])),
+                "__read_file" => Some(("slc_rt_read_file", 1, &[true, true])),
+                "__open_file" => Some(("slc_rt_open_file", 1, &[false, true])),
+                "__read_line" => Some(("slc_rt_read_line", 1, &[true, false])),
+                "__write_file" => Some(("slc_rt_write_file", 2, &[false, true])),
+                _ => None,
+            };
+            if let Some((symbol, width, arms)) = spec {
+                return self.compile_offering(symbol, width, arms, values, arg, mode);
+            }
         }
         let Term::Var(symbol) = callee else {
             return self.call_closure_term(callee, arg, mode);
@@ -2905,7 +2910,7 @@ impl Builder {
         let captures = self.capture_list(&whole);
         let param_ptr = param_is_pointer(param, body);
         self.lift_function(&symbol, param, param_ptr, body, &captures)?;
-        self.emit_code_object(&symbol, &captures, 4, true)?;
+        self.emit_code_object(&symbol, &captures, 4, true, false)?;
         if mode == Mode::Tail {
             self.finish(Mode::Tail);
         }
@@ -2913,12 +2918,15 @@ impl Builder {
     }
 
     /// `words` is 4 for a closure (code, env, frame size, map) and 3 for a delay.
+    /// `declaration` stores birth 0 so a `func_param` or dictionary method adopts
+    /// its caller. A lambda keeps the origin `call_alloc` wrote.
     fn emit_code_object(
         &mut self,
         symbol: &str,
         captures: &[(String, bool)],
         words: u32,
         closure: bool,
+        declaration: bool,
     ) -> Result<(), String> {
         let env_slot = self.materialize_env(captures)?;
         let tag = if closure { TAG_CLOSURE } else { TAG_DELAY };
@@ -2952,6 +2960,15 @@ impl Builder {
             // The collector reads this id when the closure's frame is entered.
             self.emit(Inst::SymMap { dst: Dest::V(1), symbol: symbol.to_string() });
             self.emit(Inst::Store { src: Dest::V(1), base: Dest::V(0), offset: 40, width: 8 });
+            if declaration {
+                self.emit(Inst::Imm { dst: Dest::V(1), value: 0 });
+                self.emit(Inst::Store {
+                    src: Dest::V(1),
+                    base: Dest::V(0),
+                    offset: CLOSURE_BIRTH as i32,
+                    width: 8,
+                });
+            }
         }
         self.emit(Inst::Mov { dst: Dest::Val, src: Dest::V(0) });
         if env_slot.is_some() {
@@ -3078,9 +3095,7 @@ impl Builder {
             return Ok(pointer);
         }
         // `__arm` is the ambient continuation of a menu or select arm.
-        if self.forwards.contains(covar)
-            || (!self.slots.contains_key(covar) && covar.starts_with("__"))
-        {
+        if self.name_returns(covar) {
             return self.compile_term(value, mode);
         }
         let pointer = self.compile_term(value, Mode::Value)?;
@@ -3240,16 +3255,31 @@ impl Builder {
                 Ok(true)
             }
             "__display" => {
-                let shape = match class {
-                    Some(Class::Float) => 1,
-                    Some(Class::Str) => 2,
-                    Some(Class::Char) => 3,
-                    Some(Class::File) => 4,
-                    Some(Class::Int) => 0,
-                    // A delay has no class. The runtime prints `<delayed>` and does not force it.
-                    None => 5,
-                    other => {
-                        return Err(format!("__display of {other:?} in {}", self.current));
+                // A tuple's first word is not the tuple. Shape 5 prints the value.
+                let dynamic = match arg {
+                    Term::Tuple(_) | Term::Tag(_, _) => true,
+                    Term::Var(name) if name == "$unit" => true,
+                    Term::Var(name) => match self.word_ty(name) {
+                        Some(Type::Tensor(_)) | Some(Type::Delayed(_, _)) => true,
+                        Some(Type::Named(owner, _)) => owner != "Bool",
+                        _ => false,
+                    },
+                    _ => false,
+                };
+                let shape = if dynamic {
+                    5
+                } else {
+                    match class {
+                        Some(Class::Float) => 1,
+                        Some(Class::Str) => 2,
+                        Some(Class::Char) => 3,
+                        Some(Class::File) => 4,
+                        Some(Class::Int) => 0,
+                        // A delay has no class. The runtime prints `<delayed>` and does not force it.
+                        None => 5,
+                        other => {
+                            return Err(format!("__display of {other:?} in {}", self.current));
+                        }
                     }
                 };
                 self.emit(Inst::CallRt {
@@ -3390,21 +3420,13 @@ impl Builder {
 
     fn compile_offering(
         &mut self,
-        name: &str,
+        symbol: &str,
+        width: u8,
+        arms: &[bool],
         values: &Term,
         conts: &Term,
         mode: Mode,
     ) -> Result<bool, String> {
-        let (symbol, width, arms): (&str, u8, &[bool]) = match name {
-            "parse_int" => ("slc_rt_parse_int", 1, &[false, true, true]),
-            "char_at" => ("slc_rt_char_at", 2, &[false, true]),
-            "find_char" => ("slc_rt_find_char", 3, &[false, true]),
-            "__read_file" => ("slc_rt_read_file", 1, &[true, true]),
-            "__open_file" => ("slc_rt_open_file", 1, &[false, true]),
-            "__read_line" => ("slc_rt_read_line", 1, &[true, false]),
-            "__write_file" => ("slc_rt_write_file", 2, &[false, true]),
-            other => return Err(format!("builtin {other}")),
-        };
         let cont_ptr = self.compile_term(conts, Mode::Value)?;
         if terminated(&self.blocks[self.cur].insts) {
             return Ok(cont_ptr);
@@ -3785,7 +3807,7 @@ impl Builder {
         // One pointer capture: the continuation, filled in after the copy exists.
         let captures = vec![(name.to_string(), true)];
         self.lift_function(&symbol, lem.param, false, &body, &captures)?;
-        self.emit_code_object(&symbol, &[], 4, true)?;
+        self.emit_code_object(&symbol, &[], 4, true, false)?;
         let closure_slot = self.push_scratch(Dest::Val)?;
         let id = self.intern(lem.label);
         let map = self.heap_map(&[1]);

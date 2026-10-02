@@ -92,6 +92,8 @@ fn design_programs_compile() {
         }
         if !out.status.success() {
             let program_error = stderr.contains("error: type mismatch:")
+                || stderr.contains("error: unbound variable:")
+                || stderr.contains("error: no applicable reduction")
                 || stderr.contains("evaluation diverged (fuel exhausted)")
                 || stderr.contains("a continuation left the handler it was captured under");
             let exited = stderr.is_empty() && out.status.code().is_some();

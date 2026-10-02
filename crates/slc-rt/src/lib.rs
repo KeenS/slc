@@ -5,12 +5,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use slc_abi::{
-    DISPLAY_CLOSURE, DISPLAY_CONTINUATION, DISPLAY_RESUME, FRAME_CONT_PREV, FRAME_FLAG_BARRIER,
-    FRAME_FLAG_ORIGIN, FRAME_FLAG_PROMPT, FRAME_FRAME_WORDS, FRAME_HANDLER_PREV,
-    FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID, FRAME_SLOT0, FRAME_SPILL_ENV,
-    FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header, MAP_EMPTY, MAP_UNWRITTEN,
-    MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES, STRING_CHAR_LEN, TAG_ADAPTED,
-    TAG_CLOSURE, TAG_DELAY, TAG_KONT, TAG_OPERATION, TAG_RESUME, TAG_STRING, TAG_TAGGED,
+    DISPLAY_CLOSURE, DISPLAY_CONSUMER, DISPLAY_CONTINUATION, DISPLAY_MENU, DISPLAY_RESUME,
+    DISPLAY_SELECT, FRAME_CONT_PREV, FRAME_FLAG_BARRIER, FRAME_FLAG_ORIGIN, FRAME_FLAG_PROMPT,
+    FRAME_FRAME_WORDS, FRAME_HANDLER_PREV, FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID,
+    FRAME_SLOT0, FRAME_SPILL_ENV, FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header,
+    MAP_EMPTY, MAP_UNWRITTEN, MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES,
+    STRING_CHAR_LEN, TAG_ADAPTED, TAG_CLAUSES, TAG_CLOSURE, TAG_DELAY, TAG_ENV, TAG_KONT,
+    TAG_OPERATION, TAG_RESUME, TAG_STRING, TAG_TAGGED, TAG_TUPLE, TAGGED_LABEL, TAGGED_PAYLOAD,
     pack_frame_flags, pack_meta, unpack_frame_flags, unpack_meta,
 };
 
@@ -366,9 +367,13 @@ impl Runtime {
         self.install_above(prompt_off, &above, heap_prompt as u64)
     }
 
-    pub fn resume(&mut self, image: *const u8) -> Result<(), RtError> {
+    /// The bottom frame of the placed slice, or 0 when the image was empty.
+    /// That frame's offset 0 is the continuation of `do`.
+    pub fn resume(&mut self, image: *const u8) -> Result<u64, RtError> {
         let Some(under_off) = self.sp_off else {
-            return self.install_replace(image);
+            self.install_replace(image)?;
+            let bottom = if self.sp_off.is_some() { self.ptr_at(0) as u64 } else { 0 };
+            return Ok(bottom);
         };
         let frames = self.image_frames(image);
         let start = under_off + self.frame_nbytes_off(under_off);
@@ -379,11 +384,13 @@ impl Runtime {
         let handlers = read_u64(under_ptr, FRAME_SPILL_HANDLERS);
         let under = under_ptr as u64;
         self.place(start, &frames, &mut Vec::new(), under)?;
-        if !frames.is_empty() {
-            let bottom = self.ptr_at(start);
-            if self.is_prompt(bottom) {
+        // `start` is an offset, so this is the prompt in the segment `ensure` kept.
+        let bottom = if frames.is_empty() { 0 } else { self.ptr_at(start) as u64 };
+        if bottom != 0 {
+            let bottom_ptr = bottom as *mut u8;
+            if self.is_prompt(bottom_ptr) {
                 // The outer handler lives on the frame under the slice. The heap image keeps the anchor.
-                write_u64(bottom, FRAME_HANDLER_PREV, handlers);
+                write_u64(bottom_ptr, FRAME_HANDLER_PREV, handlers);
             }
         }
         if slc_resume_trace.load(Ordering::Relaxed) != 0 {
@@ -392,7 +399,7 @@ impl Runtime {
                 slc_resume_log[index].store(self.stack_words(), Ordering::Relaxed);
             }
         }
-        Ok(())
+        Ok(bottom)
     }
 
     /// Raise the current frame to `words` when the callee is larger. A segment move
@@ -425,9 +432,11 @@ impl Runtime {
                 // earlier is not aware of an operation that arrived through the row.
                 let (_, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
                 let barrier = u64::from(flags >> 8);
-                if barrier > SLC_ORIGIN.load(Ordering::Relaxed)
-                    && !barrier_knows(barrier, &label_named(op_id))
-                {
+                let op = label_named(op_id);
+                let knows = barrier_table()
+                    .get(barrier as usize)
+                    .is_some_and(|names| names.iter().any(|name| name == &op));
+                if barrier > SLC_ORIGIN.load(Ordering::Relaxed) && !knows {
                     frame = self.read(frame, FRAME_HANDLER_PREV) as *const u8;
                     continue;
                 }
@@ -1193,24 +1202,12 @@ fn barrier_table() -> std::sync::MutexGuard<'static, Vec<Vec<String>>> {
     BARRIER_AWARE.lock().unwrap_or_else(|err| err.into_inner())
 }
 
-fn barrier_knows(id: u64, op: &str) -> bool {
-    barrier_table().get(id as usize).is_some_and(|names| names.iter().any(|name| name == op))
-}
-
 fn reset_generations() {
     SLC_ORIGIN.store(1, Ordering::Relaxed);
     SLC_BARRIER.store(0, Ordering::Relaxed);
     NEXT_BARRIER.store(2, Ordering::Relaxed);
     origin_saved().clear();
     barrier_table().clear();
-}
-
-fn aware_names(aware: u64) -> Vec<String> {
-    if aware == 0 {
-        return Vec::new();
-    }
-    let text = String::from_utf8_lossy(&string_bytes(aware)).into_owned();
-    text.split(',').filter(|name| !name.is_empty()).map(|name| name.to_string()).collect()
 }
 
 /// Bytes allocated since the last collection. Generated safepoints compare this to the watermark.
@@ -1432,7 +1429,13 @@ pub extern "C" fn slc_rt_enter_birth(sp: u64, birth: u64) -> u64 {
 /// this id and catch only code born here.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_enter_poly(sp: u64, aware: u64) -> u64 {
-    let names = aware_names(aware);
+    // Parse before the runtime lock. `string_bytes` does not take it.
+    let names = if aware == 0 {
+        Vec::new()
+    } else {
+        let text = String::from_utf8_lossy(&string_bytes(aware)).into_owned();
+        text.split(',').filter(|name| !name.is_empty()).map(|name| name.to_string()).collect()
+    };
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
         let id = NEXT_BARRIER.fetch_add(1, Ordering::Relaxed);
@@ -1583,13 +1586,14 @@ pub extern "C" fn slc_rt_invoke(sp: u64, image: u64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_resume(sp: u64, image: u64) -> u64 {
+pub extern "C" fn slc_rt_resume(sp: u64, image: u64) -> SlcPlace {
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
-        match rt.resume(image as *const u8) {
-            Ok(()) => rt.sp() as u64,
+        let bottom = match rt.resume(image as *const u8) {
+            Ok(bottom) => bottom,
             Err(err) => fail_rt(err),
-        }
+        };
+        SlcPlace { sp: rt.sp() as u64, frame: bottom }
     })
 }
 
@@ -1805,19 +1809,92 @@ pub extern "C" fn slc_rt_int_to_str(sp: u64, n: u64) -> u64 {
 /// `None` means `value` is already the string to return.
 fn dynamic_display(value: u64) -> Option<String> {
     with_runtime(|rt| {
-        let Some(obj) = rt.object_base(value) else {
-            return Some(format!("{}", value as i64));
-        };
-        let (tag, _, _) = unpack_meta(rt.object_header(obj).meta);
-        Some(match tag {
-            TAG_STRING => return None,
-            TAG_DELAY | TAG_ADAPTED => "<delayed>".to_string(),
-            TAG_CLOSURE => "<closure>".to_string(),
-            TAG_KONT => "<continuation>".to_string(),
-            TAG_RESUME => "<resume>".to_string(),
-            _ => format!("{}", value as i64),
-        })
+        if let Some(obj) = rt.object_base(value)
+            && obj as u64 == value
+        {
+            let (tag, _, _) = unpack_meta(rt.object_header(obj).meta);
+            if tag == TAG_STRING {
+                return None;
+            }
+        }
+        Some(render_value(rt, value, true))
     })
+}
+
+/// Shape 5. A typed integer, float, char, or file never arrives here.
+/// Unit is the word 0 or the unit singleton. A surface Unicode scalar is the
+/// character. A nested non-zero scalar stays a decimal integer so a tuple of
+/// ints stays `(1, 2)`.
+fn render_value(rt: &Runtime, value: u64, surface: bool) -> String {
+    if value == 0 || value == rt.unit {
+        return "(,)".to_string();
+    }
+    let Some(obj) = rt.object_base(value) else {
+        return scalar_text(value, surface);
+    };
+    if obj as u64 != value {
+        return scalar_text(value, surface);
+    }
+    let (tag, kind, words) = unpack_meta(rt.object_header(obj).meta);
+    match kind {
+        DISPLAY_MENU => return "<menu>".to_string(),
+        DISPLAY_SELECT => return "<select>".to_string(),
+        DISPLAY_CONSUMER => return "<consumer>".to_string(),
+        DISPLAY_CONTINUATION => return "<continuation>".to_string(),
+        DISPLAY_RESUME => return "<resume>".to_string(),
+        DISPLAY_CLOSURE => return "<closure>".to_string(),
+        _ => {}
+    }
+    match tag {
+        TAG_STRING => {
+            let bytes = string_bytes(value);
+            let text = String::from_utf8(bytes)
+                .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned());
+            format!("{text:?}")
+        }
+        TAG_DELAY | TAG_ADAPTED => "<delayed>".to_string(),
+        TAG_CLOSURE => "<closure>".to_string(),
+        TAG_KONT => "<continuation>".to_string(),
+        TAG_RESUME => "<resume>".to_string(),
+        TAG_TUPLE => {
+            let count = rt.read(obj, 16).min(u64::from(words.saturating_sub(1))) as usize;
+            let parts: Vec<String> = (0..count)
+                .map(|index| render_value(rt, rt.read(obj, 24 + 8 * index), false))
+                .collect();
+            format!("({})", parts.join(", "))
+        }
+        TAG_TAGGED => {
+            let label = label_named(rt.read(obj, TAGGED_LABEL));
+            let payload = rt.read(obj, TAGGED_PAYLOAD);
+            let body = render_value(rt, payload, false);
+            if let Some(rest) = label.strip_prefix('|')
+                && rest.parse::<usize>().is_ok()
+            {
+                format!("::{rest}({body})")
+            } else if payload == 0 || payload == rt.unit {
+                label
+            } else {
+                format!("{label}({body})")
+            }
+        }
+        TAG_OPERATION => {
+            let name = if words >= 1 { label_named(rt.read(obj, 16)) } else { String::new() };
+            if name.is_empty() { "<operation>".to_string() } else { format!("<operation {name}>") }
+        }
+        TAG_ENV => "<env>".to_string(),
+        TAG_CLAUSES => "<clauses>".to_string(),
+        _ => scalar_text(value, false),
+    }
+}
+
+fn scalar_text(value: u64, surface: bool) -> String {
+    if surface
+        && (1..=0x10FFFF).contains(&value)
+        && let Some(ch) = char::from_u32(value as u32)
+    {
+        return ch.to_string();
+    }
+    format!("{}", value as i64)
 }
 
 #[unsafe(no_mangle)]

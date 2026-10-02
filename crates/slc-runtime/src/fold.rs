@@ -85,11 +85,13 @@ pub fn embed(value: &Folded) -> Term {
     }
 }
 
+// `__match_dispatch` is the interpreter's match. Folding it would erase the compare.
 fn refused_name(name: &str) -> bool {
     matches!(
         name,
         "EXIT"
             | "__handle"
+            | "__match_dispatch"
             | "__read_file"
             | "__open_file"
             | "__read_line"

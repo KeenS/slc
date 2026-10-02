@@ -14,7 +14,6 @@ use std::collections::HashMap;
 
 use slc_core::command::Command;
 use slc_core::coterm::CoTerm;
-use slc_core::substitution::free_vars_term;
 use slc_core::term::{CoMatchBranch, Term};
 use slc_core::types::Type;
 use slc_runtime::fold::{Fold, embed, try_fold};
@@ -372,7 +371,6 @@ fn fold_term(term: &Term, fuel: usize) -> Term {
         && let Term::Mu(binder, command) = term
         && let Command::Cut(_, CoTerm::App(_, tail)) = command.as_ref()
         && matches!(tail.as_ref(), CoTerm::Covar(name) if name == binder)
-        && free_vars_term(term).iter().all(|name| fold_atom(name))
         && let Fold::Value(value) = try_fold(term, fuel)
     {
         return embed(&value);
@@ -429,62 +427,4 @@ fn fold_coterm(co: &CoTerm, fuel: usize) -> CoTerm {
         }
         CoTerm::Dtor(label, tail) => CoTerm::Dtor(label.clone(), Box::new(fold_coterm(tail, fuel))),
     }
-}
-
-fn fold_atom(name: &str) -> bool {
-    matches!(name, "$unit" | "$force" | "$adapt")
-        || name.starts_with("$int_")
-        || name.starts_with("$float_")
-        || name.starts_with("$str_")
-        || name.starts_with("$char_")
-        || matches!(
-            name,
-            "EXIT"
-                | "__index"
-                | "parse_int"
-                | "__display"
-                | "format"
-                | "__neg"
-                | "__add"
-                | "__sub"
-                | "__mul"
-                | "__div"
-                | "__rem"
-                | "__eq"
-                | "__ne"
-                | "__lt"
-                | "__gt"
-                | "__le"
-                | "__ge"
-                | "__wrapping_mul"
-                | "__xor"
-                | "char_to_code"
-                | "__to_i8"
-                | "__to_i32"
-                | "__to_i64"
-                | "__to_u8"
-                | "__to_u32"
-                | "__to_u64"
-                | "str_len"
-                | "str_concat"
-                | "int_to_str"
-                | "__read_file"
-                | "__open_file"
-                | "__read_line"
-                | "__close_file"
-                | "__write_file"
-                | "__file_exists"
-                | "__handle"
-                | "__enter_poly"
-                | "char_at"
-                | "is_digit"
-                | "is_ws"
-                | "skip_digits"
-                | "find_char"
-                | "skip_ws"
-                | "substring"
-                | "str_eq"
-                | "__io_write"
-                | "__io_write_line"
-        )
 }
