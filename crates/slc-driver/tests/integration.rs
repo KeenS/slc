@@ -417,10 +417,67 @@ fn fuel_without_a_number_reports_usage() {
         let (_, stderr, ok) = run_sl_with(args, "slc_test_fuel_usage.sl", LONG_LOOP);
         assert!(!ok, "{args:?}");
         assert!(
-            stderr.contains("usage: slc run [--fuel N] [--interpret] <file.sl>"),
+            stderr.contains("usage: slc run [--fuel N] [--interpret] <file.sl> [arg]…"),
             "{args:?}: {stderr}"
         );
     }
+}
+
+fn run_both(
+    prefix: &[&str],
+    source: &str,
+    suffix: &[&str],
+) -> ((String, String, bool), (String, String, bool)) {
+    let path = std::env::temp_dir().join(format!("slc_test_both_{}.sl", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    let once = |interpret: bool| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_slc"));
+        cmd.arg("run").args(prefix);
+        if interpret {
+            cmd.arg("--interpret");
+        }
+        cmd.arg(&path).args(suffix);
+        let out = cmd.output().expect("failed to run slc");
+        (
+            String::from_utf8(out.stdout).unwrap(),
+            String::from_utf8(out.stderr).unwrap(),
+            out.status.success(),
+        )
+    };
+    let elf = once(false);
+    let interpreted = once(true);
+    let _ = std::fs::remove_file(&path);
+    (elf, interpreted)
+}
+
+const ARGUMENTS: &str = r#"proc main | (exit: i32) / {IO} {
+    let words = do (<(,) | args::arguments) args::real;
+    <words | println;
+    <0 | exit>
+}"#;
+
+#[test]
+fn program_arguments_are_the_words_after_the_file() {
+    let (elf, interpreted) = run_both(&[], ARGUMENTS, &["one", "two"]);
+    assert_eq!(elf.0, "[one, two]\n", "elf stderr: {}", elf.1);
+    assert!(elf.2, "elf stderr: {}", elf.1);
+    assert_eq!(interpreted.0, elf.0, "interpret stderr: {}", interpreted.1);
+    assert_eq!(interpreted.2, elf.2);
+}
+
+#[test]
+fn a_word_after_the_file_is_an_argument_even_when_it_looks_like_a_flag() {
+    let (elf, interpreted) = run_both(&[], ARGUMENTS, &["--interpret"]);
+    assert_eq!(elf.0, "[--interpret]\n", "elf stderr: {}", elf.1);
+    assert_eq!(interpreted.0, elf.0, "interpret stderr: {}", interpreted.1);
+}
+
+#[test]
+fn fuel_stays_a_flag_before_the_file_and_later_words_are_arguments() {
+    let (elf, interpreted) = run_both(&["--fuel", "100000"], ARGUMENTS, &["one"]);
+    assert_eq!(elf.0, "[one]\n", "elf stderr: {}", elf.1);
+    assert!(elf.2, "elf stderr: {}", elf.1);
+    assert_eq!(interpreted.0, elf.0, "interpret stderr: {}", interpreted.1);
 }
 
 #[test]

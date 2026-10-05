@@ -113,14 +113,25 @@ fn builtin_functions() -> Vec<Builtin> {
         function("__wrapping_mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("__xor", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("char_to_code", vec![char_.clone()], Some(i64.clone())),
-        // Beneath `Into`. The input is whatever integer width the impl
-        // passes; the result is the destination width.
+        // Beneath `Into`. The input is an integer or a float; the result is
+        // the destination. A value that is not exact for it does not fit.
         function("__to_i8", vec![same.clone()], Some(Type::Pos(I8))),
         function("__to_i32", vec![same.clone()], Some(Type::Pos(I32))),
         function("__to_i64", vec![same.clone()], Some(Type::Pos(I64))),
         function("__to_u8", vec![same.clone()], Some(Type::Pos(U8))),
         function("__to_u32", vec![same.clone()], Some(Type::Pos(U32))),
         function("__to_u64", vec![same.clone()], Some(Type::Pos(U64))),
+        function("__to_f32", vec![same.clone()], Some(Type::Pos(F32))),
+        function("__to_f64", vec![same.clone()], Some(Type::Pos(F64))),
+        // Square root, absolute value, floor, and ceiling on the float word.
+        function("__sqrt", vec![same.clone()], Some(same.clone())),
+        function("__abs", vec![same.clone()], Some(same.clone())),
+        function("__floor", vec![same.clone()], Some(same.clone())),
+        function("__ceil", vec![same.clone()], Some(same.clone())),
+        // The words after the program file, and a monotonic nanosecond count.
+        function("__argument_count", vec![Type::ONE], Some(i64.clone())),
+        function("__argument_at", vec![i64.clone()], Some(string.clone())),
+        function("__monotonic_ns", vec![Type::ONE], Some(i64.clone())),
         function("str_len", vec![string.clone()], Some(i64.clone())),
         function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
         function("int_to_str", vec![i64.clone()], Some(string.clone())),
@@ -168,6 +179,9 @@ pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
             | "__read_line"
             | "__close_file"
             | "__file_exists"
+            | "__argument_count"
+            | "__argument_at"
+            | "__monotonic_ns"
     )
     .then_some(IO)
 }

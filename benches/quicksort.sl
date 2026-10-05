@@ -5,6 +5,7 @@
 cite list::List;
 cite list::List::*;
 cite list::append;
+cite list::filter;
 
 def N: i64 = 350;
 
@@ -18,38 +19,12 @@ func gen(n: i64, seed: i64) -> List<i64> {
     }
 }
 
-func below(pivot: i64, xs: List<i64>) -> List<i64> {
-    of xs {
-        Nil => Nil,
-        Cons(h, rest) => {
-            let tail = <(pivot, rest) | below;
-            of (<(h, pivot) | lt) {
-                True => Cons(h, tail),
-                _ => tail,
-            }
-        },
-    }
-}
-
-func not_below(pivot: i64, xs: List<i64>) -> List<i64> {
-    of xs {
-        Nil => Nil,
-        Cons(h, rest) => {
-            let tail = <(pivot, rest) | not_below;
-            of (<(h, pivot) | lt) {
-                True => tail,
-                _ => Cons(h, tail),
-            }
-        },
-    }
-}
-
 func qsort(xs: List<i64>) -> List<i64> {
     of xs {
         Nil => Nil,
         Cons(pivot, rest) => {
-            let left = <(<(pivot, rest) | below) | qsort;
-            let right = <(<(pivot, rest) | not_below) | qsort;
+            let left = <(<(fn(h: i64) { <(h, pivot) | lt }, rest) | filter) | qsort;
+            let right = <(<(fn(h: i64) { <(<(h, pivot) | lt) | not }, rest) | filter) | qsort;
             <(left, Cons(pivot, right)) | append
         },
     }

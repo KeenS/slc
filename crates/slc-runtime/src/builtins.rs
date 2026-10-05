@@ -42,6 +42,129 @@ fn integer_destination(name: &str) -> Option<(&'static str, i64, i64)> {
     })
 }
 
+/// `2^63`. `i64::MAX` rounds to this float, and the float is not itself an `i64`.
+const TWO_63: f64 = 9223372036854775808.0;
+
+fn float_text(value: f64) -> String {
+    format!("{value}")
+}
+
+fn unfit(shown: impl std::fmt::Display, width: &str) -> BuiltinError {
+    BuiltinError::ArithmeticOverflow(format!("{shown} does not fit in {width}"))
+}
+
+/// An integer as an exact `f64`. `i64::MIN` is the power of two `-2^63`.
+fn exact_f64(n: i64) -> Option<f64> {
+    if n == i64::MIN {
+        return Some(n as f64);
+    }
+    let value = n as f64;
+    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
+}
+
+/// An integer as an exact `f32`, stored in the `f64` word both widths share.
+fn exact_f32(n: i64) -> Option<f64> {
+    if n == i64::MIN {
+        return Some(n as f32 as f64);
+    }
+    let value = n as f32 as f64;
+    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
+}
+
+/// `x` when it is an exact `f32`. Every `NaN` fits; a rounded value does not.
+fn exact_f32_from_f64(value: f64) -> Option<f64> {
+    if value.is_nan() {
+        return Some(value as f32 as f64);
+    }
+    let narrowed = value as f32 as f64;
+    if narrowed.to_bits() == value.to_bits() { Some(narrowed) } else { None }
+}
+
+/// A finite integral float inside `lo..=hi`. `+2^63` is not an `i64`.
+fn exact_int(value: f64, lo: i64, hi: i64) -> Option<i64> {
+    if !value.is_finite() || value.trunc() != value || value >= TWO_63 || value < -TWO_63 {
+        return None;
+    }
+    let n = value as i64;
+    if n < lo || n > hi { None } else { Some(n) }
+}
+
+/// Beneath `Into`. An integer stays an integer when it is inside the
+/// destination. A float stays a float when the destination is exact, and
+/// becomes an integer only when it already is one. Nothing rounds.
+fn convert_width(name: &str, value: &Value) -> Result<Value, BuiltinError> {
+    match (name, value) {
+        ("__to_f64", Value::Int(n)) => {
+            exact_f64(*n).map(Value::Float).ok_or_else(|| unfit(*n, "f64"))
+        }
+        ("__to_f32", Value::Int(n)) => {
+            exact_f32(*n).map(Value::Float).ok_or_else(|| unfit(*n, "f32"))
+        }
+        ("__to_f64", Value::Float(n)) => Ok(Value::Float(*n)),
+        ("__to_f32", Value::Float(n)) => {
+            exact_f32_from_f64(*n).map(Value::Float).ok_or_else(|| unfit(float_text(*n), "f32"))
+        }
+        (
+            "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64",
+            Value::Int(n),
+        ) => {
+            let (width, lo, hi) =
+                integer_destination(name).expect("a width builtin names its range");
+            if *n < lo || *n > hi {
+                return Err(unfit(*n, width));
+            }
+            Ok(Value::Int(*n))
+        }
+        (
+            "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64",
+            Value::Float(n),
+        ) => {
+            let (width, lo, hi) =
+                integer_destination(name).expect("a width builtin names its range");
+            exact_int(*n, lo, hi).map(Value::Int).ok_or_else(|| unfit(float_text(*n), width))
+        }
+        _ => Err(BuiltinError::TypeMismatch(format!("{name} expects an integer or a float"))),
+    }
+}
+
+thread_local! {
+    static PROGRAM_ARGS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The words `slc run` passed after the file. The evaluating thread sets them.
+pub fn set_program_arguments(args: Vec<String>) {
+    PROGRAM_ARGS.with(|slot| *slot.borrow_mut() = args);
+}
+
+fn program_arguments() -> Vec<String> {
+    PROGRAM_ARGS.with(|slot| slot.borrow().clone())
+}
+
+/// Nanoseconds since the first reading in this process. The origin is arbitrary;
+/// the difference of two readings is the time the program spent between them.
+fn monotonic_ns() -> Result<i64, BuiltinError> {
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let origin = ORIGIN.get_or_init(std::time::Instant::now);
+    let nanos = std::time::Instant::now().saturating_duration_since(*origin).as_nanos();
+    i64::try_from(nanos).map_err(|_| {
+        BuiltinError::ArithmeticOverflow("the monotonic clock does not fit in i64".into())
+    })
+}
+
+fn real_unary(name: &str, value: f64) -> Result<f64, BuiltinError> {
+    match name {
+        "__sqrt" if value < 0.0 => {
+            Err(BuiltinError::ArithmeticOverflow(format!("sqrt({})", float_text(value))))
+        }
+        "__sqrt" => Ok(value.sqrt()),
+        "__abs" => Ok(value.abs()),
+        "__floor" => Ok(value.floor()),
+        "__ceil" => Ok(value.ceil()),
+        _ => Err(BuiltinError::UnknownBuiltin(name.to_string())),
+    }
+}
+
 fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
     match name {
         "__eq" => a == b,
@@ -69,23 +192,29 @@ pub fn apply_builtin(
             Some(v) => v.display(),
             None => String::new(),
         })),
-        // Beneath `Into`. Every integer is one signed word, so the check is
-        // the destination's range. A `u64` reaches as far as `i64` does.
-        "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64" => {
-            let Some(Value::Int(n)) = args.first() else {
-                return Err(BuiltinError::TypeMismatch(format!(
-                    "{name} expects an integer argument"
-                )));
-            };
-            let (width, lo, hi) =
-                integer_destination(name).expect("a width builtin names its range");
-            if *n < lo || *n > hi {
-                return Err(BuiltinError::ArithmeticOverflow(format!(
-                    "{n} does not fit in {width}"
-                )));
+        // Beneath `Into`. Integers and floats meet in both directions, and a
+        // value that is not exact for the destination does not fit.
+        "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64" | "__to_f32"
+        | "__to_f64" => match args.first() {
+            Some(value) => convert_width(name, value),
+            None => {
+                Err(BuiltinError::TypeMismatch(format!("{name} expects an integer or a float")))
             }
-            Ok(Value::Int(*n))
-        }
+        },
+        "__sqrt" | "__abs" | "__floor" | "__ceil" => match args.first() {
+            Some(Value::Float(n)) => real_unary(name, *n).map(Value::Float),
+            _ => Err(BuiltinError::TypeMismatch(format!("{name} expects a float argument"))),
+        },
+        "__argument_count" => Ok(Value::Int(program_arguments().len() as i64)),
+        "__argument_at" => match args.first() {
+            Some(Value::Int(index)) => program_arguments()
+                .get(usize::try_from(*index).unwrap_or(usize::MAX))
+                .cloned()
+                .map(Value::Str)
+                .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {index} out of range"))),
+            _ => Err(BuiltinError::TypeMismatch("__argument_at expects an i64".into())),
+        },
+        "__monotonic_ns" => monotonic_ns().map(Value::Int),
         "__neg" => match args.first() {
             // `-n` panics in debug when `n` is `i64::MIN`.
             Some(Value::Int(n)) => n
@@ -430,7 +559,7 @@ mod tests {
         let r = apply_builtin("__neg", &[Value::Int(i64::MIN)], &mut buf);
         assert!(matches!(
             r,
-            Err(BuiltinError::ArithmeticOverflow(m)) if m == format!("neg({})", i64::MIN)
+            Err(BuiltinError::ArithmeticOverflow(ref m)) if *m == format!("neg({})", i64::MIN)
         ));
     }
 
@@ -442,9 +571,88 @@ mod tests {
         let widened = apply_builtin("__to_i64", &[Value::Int(-3)], &mut buf).unwrap();
         assert_eq!(widened, Value::Int(-3));
         let narrow = apply_builtin("__to_i8", &[Value::Int(200)], &mut buf);
-        assert!(matches!(narrow, Err(BuiltinError::ArithmeticOverflow(m)) if m.contains("i8")));
+        assert!(matches!(narrow, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("i8")));
         let negative = apply_builtin("__to_u64", &[Value::Int(-1)], &mut buf);
-        assert!(matches!(negative, Err(BuiltinError::ArithmeticOverflow(m)) if m.contains("u64")));
+        assert!(matches!(negative, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("u64")));
+    }
+
+    #[test]
+    fn integers_and_floats_meet_only_when_the_value_is_exact() {
+        let mut buf = Vec::new();
+        let widened = apply_builtin("__to_f64", &[Value::Int(4)], &mut buf).unwrap();
+        assert_eq!(widened, Value::Float(4.0));
+        let min = apply_builtin("__to_f64", &[Value::Int(i64::MIN)], &mut buf).unwrap();
+        assert_eq!(min, Value::Float(i64::MIN as f64));
+        let power = apply_builtin("__to_f32", &[Value::Int(1 << 24)], &mut buf).unwrap();
+        assert_eq!(power, Value::Float((1i64 << 24) as f64));
+        let inexact = apply_builtin("__to_f64", &[Value::Int(i64::MAX)], &mut buf);
+        assert!(
+            matches!(inexact, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("does not fit in f64")),
+            "{inexact:?}"
+        );
+        let past_f32 = apply_builtin("__to_f32", &[Value::Int((1 << 24) + 1)], &mut buf);
+        assert!(
+            matches!(past_f32, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("f32")),
+            "{past_f32:?}"
+        );
+        let whole = apply_builtin("__to_i64", &[Value::Float(4.0)], &mut buf).unwrap();
+        assert_eq!(whole, Value::Int(4));
+        let signed_zero = apply_builtin("__to_u8", &[Value::Float(-0.0)], &mut buf).unwrap();
+        assert_eq!(signed_zero, Value::Int(0));
+        let fraction = apply_builtin("__to_i64", &[Value::Float(1.5)], &mut buf);
+        assert!(
+            matches!(fraction, Err(BuiltinError::ArithmeticOverflow(ref m)) if m == "1.5 does not fit in i64"),
+            "{fraction:?}"
+        );
+        let nan = apply_builtin("__to_i32", &[Value::Float(f64::NAN)], &mut buf);
+        assert!(
+            matches!(nan, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("NaN")),
+            "{nan:?}"
+        );
+        let narrowed = apply_builtin("__to_f32", &[Value::Float(1.25)], &mut buf).unwrap();
+        assert_eq!(narrowed, Value::Float(1.25));
+        let rounded = apply_builtin("__to_f32", &[Value::Float(16_777_217.0)], &mut buf);
+        assert!(
+            matches!(rounded, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("f32")),
+            "{rounded:?}"
+        );
+        let kept_nan = apply_builtin("__to_f32", &[Value::Float(f64::NAN)], &mut buf).unwrap();
+        assert!(matches!(kept_nan, Value::Float(n) if n.is_nan()));
+        let neg_zero = apply_builtin("__to_f32", &[Value::Float(-0.0)], &mut buf).unwrap();
+        assert!(matches!(neg_zero, Value::Float(n) if n.to_bits() == (-0.0f64).to_bits()));
+    }
+
+    #[test]
+    fn square_root_rejects_a_negative_and_the_other_reals_are_total() {
+        let mut buf = Vec::new();
+        let root = apply_builtin("__sqrt", &[Value::Float(4.0)], &mut buf).unwrap();
+        assert_eq!(root, Value::Float(2.0));
+        let negative = apply_builtin("__sqrt", &[Value::Float(-1.0)], &mut buf);
+        assert!(
+            matches!(negative, Err(BuiltinError::ArithmeticOverflow(ref m)) if m == "sqrt(-1)"),
+            "{negative:?}"
+        );
+        let nan = apply_builtin("__sqrt", &[Value::Float(f64::NAN)], &mut buf).unwrap();
+        assert!(matches!(nan, Value::Float(n) if n.is_nan()));
+        let abs = apply_builtin("__abs", &[Value::Float(-3.25)], &mut buf).unwrap();
+        assert_eq!(abs, Value::Float(3.25));
+        let floor = apply_builtin("__floor", &[Value::Float(-1.5)], &mut buf).unwrap();
+        assert_eq!(floor, Value::Float(-2.0));
+        let ceil = apply_builtin("__ceil", &[Value::Float(1.2)], &mut buf).unwrap();
+        assert_eq!(ceil, Value::Float(2.0));
+    }
+
+    #[test]
+    fn program_arguments_are_the_words_set_for_this_thread() {
+        let mut buf = Vec::new();
+        set_program_arguments(vec!["one".into(), "two".into()]);
+        let count = apply_builtin("__argument_count", &[Value::Unit], &mut buf).unwrap();
+        assert_eq!(count, Value::Int(2));
+        let first = apply_builtin("__argument_at", &[Value::Int(0)], &mut buf).unwrap();
+        assert_eq!(first, Value::Str("one".into()));
+        let missing = apply_builtin("__argument_at", &[Value::Int(2)], &mut buf);
+        assert!(matches!(missing, Err(BuiltinError::TypeMismatch(_))), "{missing:?}");
+        set_program_arguments(Vec::new());
     }
 }
 

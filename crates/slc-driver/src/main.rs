@@ -30,6 +30,8 @@ const LIBRARY: &[(&str, &str)] = &[
     ("seq", include_str!("stdlib/seq.sl")),
     ("trace", include_str!("stdlib/trace.sl")),
     ("fs", include_str!("stdlib/fs.sl")),
+    ("args", include_str!("stdlib/args.sl")),
+    ("clock", include_str!("stdlib/clock.sl")),
 ];
 
 /// The library units a program needs: the prelude always, and each stdlib
@@ -166,7 +168,7 @@ fn main() -> ExitCode {
     }
 
     let usage = || {
-        eprintln!("usage: slc run [--fuel N] [--interpret] <file.sl>");
+        eprintln!("usage: slc run [--fuel N] [--interpret] <file.sl> [arg]…");
         eprintln!("       slc check <file.sl>...");
         eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
@@ -192,19 +194,22 @@ fn main() -> ExitCode {
     let mut fuel = None;
     let mut interpret = false;
     let mut file = None;
+    let mut program_args = Vec::new();
     let mut rest = args[run_at + 1..].iter();
     while let Some(arg) = rest.next() {
-        if arg == "--fuel" {
+        // Flags are only recognized before the file. Everything after it is
+        // a word the program reads, even when it looks like a flag.
+        if file.is_none() && arg == "--fuel" {
             match rest.next().and_then(|n| n.parse().ok()) {
                 Some(n) => fuel = Some(n),
                 None => return usage(),
             }
-        } else if arg == "--interpret" {
+        } else if file.is_none() && arg == "--interpret" {
             interpret = true;
         } else if file.is_none() {
             file = Some(PathBuf::from(arg));
         } else {
-            return usage();
+            program_args.push(arg.clone());
         }
     }
     let Some(file) = file else {
@@ -212,7 +217,7 @@ fn main() -> ExitCode {
     };
 
     if !interpret {
-        run_elf(&file, fuel);
+        run_elf(&file, fuel, &program_args);
     }
 
     // A continuation-passing program nests as deeply as its control flow,
@@ -220,7 +225,7 @@ fn main() -> ExitCode {
     let fuel = fuel.unwrap_or(usize::MAX);
     let outcome = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || run_file(&file, fuel))
+        .spawn(move || run_file(&file, fuel, program_args))
         .expect("failed to start the evaluator")
         .join()
         .unwrap_or_else(|_| Err("evaluation ran out of stack".into()));
@@ -488,7 +493,13 @@ struct Compiled {
     dispatch: slc_syntax::lower::DispatchInfo,
 }
 
-fn run_file(path: &std::path::Path, fuel: usize) -> Result<RunOutcome, String> {
+fn run_file(
+    path: &std::path::Path,
+    fuel: usize,
+    program_args: Vec<String>,
+) -> Result<RunOutcome, String> {
+    // The argument store is thread-local, and evaluation runs on this thread.
+    slc_runtime::builtins::set_program_arguments(program_args);
     let compile_span = slc_core::span!("compile");
     let compile_guard = compile_span.enter();
     let Compiled { program, traits, defs, dispatch: _ } =
@@ -585,7 +596,7 @@ fn compile_file(path: &std::path::Path) -> Result<Compiled, Diagnostics> {
 }
 
 /// Write an object, link it with the aborting runtime, and replace this process.
-fn run_elf(path: &std::path::Path, fuel: Option<usize>) -> ! {
+fn run_elf(path: &std::path::Path, fuel: Option<usize>, program_args: &[String]) -> ! {
     let path = path.to_path_buf();
     let fold_fuel = fuel.unwrap_or(usize::MAX);
     let object = std::thread::Builder::new()
@@ -601,7 +612,7 @@ fn run_elf(path: &std::path::Path, fuel: Option<usize>) -> ! {
             std::process::exit(1);
         }
     };
-    link_and_exec(&object, fuel)
+    link_and_exec(&object, fuel, program_args)
 }
 
 fn compile_object(path: &std::path::Path, fuel: usize) -> Result<Vec<u8>, String> {
@@ -632,6 +643,7 @@ fn compile_object(path: &std::path::Path, fuel: usize) -> Result<Vec<u8>, String
 const ELF_DRIVER: &str = r#"
 #include <stdint.h>
 #include <stdlib.h>
+extern void slc_rt_set_args(int argc, char **argv);
 extern uint64_t slc_rt_start(
     uint64_t fuel,
     const void *safepoints_start, const void *safepoints_stop,
@@ -648,7 +660,12 @@ extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
 extern char __start_slc_labels, __stop_slc_labels;
 int main(int argc, char **argv) {
     uint64_t fuel = ~(uint64_t)0;
-    if (argc > 1) fuel = strtoull(argv[1], 0, 10);
+    int from = 1;
+    if (argc > 1) {
+        fuel = strtoull(argv[1], 0, 10);
+        from = 2;
+    }
+    slc_rt_set_args(argc - from, argv + from);
     uint64_t status = slc_rt_start(
         fuel,
         &__start_slc_safepoints, &__stop_slc_safepoints,
@@ -713,7 +730,7 @@ fn native_libs() -> Vec<String> {
     line.split_whitespace().map(str::to_string).collect()
 }
 
-fn link_and_exec(object: &[u8], fuel: Option<usize>) -> ! {
+fn link_and_exec(object: &[u8], fuel: Option<usize>, program_args: &[String]) -> ! {
     let dir = std::env::temp_dir().join(format!(
         "slc-run-{}-{}",
         std::process::id(),
@@ -749,9 +766,14 @@ fn link_and_exec(object: &[u8], fuel: Option<usize>) -> ! {
         std::process::exit(1);
     }
     let mut run = Command::new(&exe);
-    if let Some(fuel) = fuel {
-        run.arg(fuel.to_string());
+    // Fuel is always argv[1] of the linked program. When the program has
+    // arguments and no `--fuel`, pass unlimited fuel so those words are not
+    // parsed as the bound. `u64::MAX` is the same word as `~(uint64_t)0`.
+    if fuel.is_some() || !program_args.is_empty() {
+        let word = fuel.map(|n| n.to_string()).unwrap_or_else(|| u64::MAX.to_string());
+        run.arg(word);
     }
+    run.args(program_args);
     let error = run.exec();
     eprintln!("error: cannot exec {}: {error}", exe.display());
     std::process::exit(1);
@@ -921,5 +943,7 @@ mod tests {
         assert_eq!(loaded("cite option;"), ["prelude", "option"]);
         // `seq` reaches `list` and `stream`, and `stream` reaches `list`.
         assert_eq!(loaded("cite seq::Seq;"), ["prelude", "list", "stream", "seq"]);
+        assert_eq!(loaded("cite args::arguments;"), ["prelude", "list", "args"]);
+        assert_eq!(loaded("cite clock::now;"), ["prelude", "clock"]);
     }
 }

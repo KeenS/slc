@@ -8,17 +8,20 @@ one must give.
 
 The everyday language: literals, functions, data, patterns, traits, modules. Start with `hello.sl`.
 
+- [`arguments.sl`](basics/arguments.sl) — The words after the source file, as `List<String>`
 - [`arithmetic.sl`](basics/arithmetic.sl) — Arithmetic with surface operators
 - [`array.sl`](basics/array.sl) — An immutable array: a 4-way trie of `Array4` nodes
 - [`associated.sl`](basics/associated.sl) — An associated type: the impl chooses it, and a bound may pin it
 - [`builders.sl`](basics/builders.sl) — Builders: the negative side of the maps and sets
+- [`clock.sl`](basics/clock.sl) — A monotonic nanosecond count, compared with a later reading
 - [`comparison.sl`](basics/comparison.sl) — Comparisons and boolean operators
 - [`defaults.sl`](basics/defaults.sl) — A default method: `Eq` writes `eq`, and `ne` is its negation
 - [`dictionaries.sl`](basics/dictionaries.sl) — Traits with no runtime method value: dispatch is resolved at compile time
 - [`hash.sl`](basics/hash.sl) — `Hash`: a non-negative `u64` for a value
 - [`hello.sl`](basics/hello.sl) — The simplest SLC program
-- [`into.sl`](basics/into.sl) — `Into`: a trait parameter solved by the expected type, and integer width conversions
+- [`into.sl`](basics/into.sl) — `Into`: a trait parameter solved by the expected type, across integer widths and floats
 - [`lambda.sl`](basics/lambda.sl) — Lambda abstraction and immediate application
+- [`list_ops.sl`](basics/list_ops.sl) — Eager `range`, `filter`, `fold`, `reverse`, `take`, `drop`, and `sum`
 - [`lists.sl`](basics/lists.sl) — Lists — an ordinary recursive enum, defined in the prelude
 - [`maps.sl`](basics/maps.sl) — Ordered maps: a persistent AVL tree in the library
 - [`menu_fields.sl`](basics/menu_fields.sl) — A menu field taking the values a demand supplies
@@ -29,6 +32,7 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`patterns.sl`](basics/patterns.sl) — A binder is a pattern
 - [`polymorphism.sl`](basics/polymorphism.sl) — Polymorphism: generic declarations, and `let` under the value restriction
 - [`projection.sl`](basics/projection.sl) — Projection: `.i` reads a tuple component, `.field` reads a record field
+- [`reals.sl`](basics/reals.sl) — `sqrt`, `abs`, `floor`, and `ceil`, and a coordinate widened from an index
 - [`sets.sl`](basics/sets.sl) — HashMap, HashSet, and the ordered Set
 - [`stdlib.sl`](basics/stdlib.sl) — The library has two layers, and this program draws on the second
 - [`strings.sl`](basics/strings.sl) — String concatenation, indexing, and slicing

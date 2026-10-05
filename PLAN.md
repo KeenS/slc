@@ -1,10 +1,9 @@
 # SLC: the standing plan
 
-SLC is a Rust-flavoured surface over a classical λ̄μμ̃ core. The redesign
-that established it is finished and recorded in `docs/HISTORY.md`; the
-language itself is defined by `DESIGN.md` and the parts under
-`docs/design/`. This file is neither — it holds
-only what is still open: the known limits, the work queued next, and what is
+SLC's core is classical λ̄μμ̃. The redesign that established the language
+is finished and recorded in `docs/HISTORY.md`; the language itself is
+defined by `DESIGN.md` and the parts under `docs/design/`. This file is
+neither — it holds only what is still open: the known limits, and what is
 deferred for discussion.
 
 The contract that keeps it short: a decision, once made, goes to the design
@@ -40,51 +39,12 @@ a general call-by-value default.
   Abstraction over unknown capability tails remains unsupported; typed
   generic applications inside concrete capabilities are supported.
 
-## Next
-
-- **Integers and floats meet.** `Into` converts among the integer widths.
-  A coordinate is computed from a pixel index, and a float result is
-  reported as an integer. `benches/mandelbrot.sl` steps by the literal
-  `0.0625` and counts the points that stay inside. Both directions are
-  part of this work, including the rule for a value that does not fit and
-  for an `i64` with no exact `f64`.
-
-- **Real functions.** The prelude's float operations are the arithmetic,
-  remainder, and comparisons. A distance needs a square root, so an
-  n-body simulation stays out of `benches/` until one exists. Square root
-  comes first. Its domain is part of this work. `abs`, `floor`, and
-  `ceil` sit beside it. Printing a real result as an integer uses
-  **Integers and floats meet**. `sin`, `ln`, and `pow` are **Further real
-  functions**.
-
-- **Generic min and max.** `num::min` and `num::max` take `i64`. `Ord`
-  already compares the base types, so both become generic over `Ord`.
-  `num::abs` stays on `i64`. A float absolute value is **Real functions**.
-
-- **The list operations.** `list` exports `length`, `append`, `map`, and
-  `nth`. Range, filter, fold, reverse, take, drop, and sum are rebuilt in
-  the benchmark programs: the partition in `benches/quicksort.sl`, the
-  reversal in `benches/fannkuch.sl`, and the candidates in
-  `benches/sieve.sl`. They are eager functions on `List`. `fold` is the
-  general form, and `sum` is `fold` of addition. `seq` keeps filter and
-  take. `stream` keeps take and drop.
-
-- **Program arguments.** `slc run` takes a file and an optional fuel
-  bound. Benchmark sizes are `def` bindings in the source. A program
-  reads the arguments it was given. The read is an effect the runtime
-  answers, as `IO` and `Fs` are. The answer type is part of this work.
-
-- **A clock.** `benches/run.sh` times the process and subtracts a separate
-  `slc check`. A program reads the time and times its own work. The read
-  is an effect the runtime answers, as `IO` and `Fs` are. The answer type
-  is part of this work.
-
 ## Deferred, for discussion
 
 Each of these waits until a program needs it.
 
-- **Further real functions.** `sin`, `ln`, and `pow`. **Real functions**
-  covers square root, `abs`, `floor`, and `ceil`. These three wait until
+- **Further real functions.** `sin`, `ln`, and `pow`. Square root, `abs`,
+  `floor`, and `ceil` are already in the prelude. These three wait until
   a program computes one.
 
 - **String scanning.** `starts_with`, and a walk over a string's scalar
@@ -114,6 +74,6 @@ Each of these waits until a program needs it.
   waits until a program packs bits.
 
 - **Environment and process.** Environment variables, sleep, and spawning
-  a process. Each is an effect the runtime answers, as **Program
-  arguments** and **A clock** are. Each waits until a program does that
+  a process. Each is an effect the runtime answers, as program arguments
+  and the monotonic clock are. Each waits until a program does that
   thing.

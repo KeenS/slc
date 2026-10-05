@@ -98,6 +98,9 @@ fn refused_name(name: &str) -> bool {
             | "__close_file"
             | "__write_file"
             | "__file_exists"
+            | "__argument_count"
+            | "__argument_at"
+            | "__monotonic_ns"
             | "__io_write"
             | "__io_write_line"
     )

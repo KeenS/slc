@@ -56,8 +56,42 @@ fn updated_feature_examples_have_exact_outputs() {
 9
 200
 -3
+4
+4
+1.25
+1.25
 ",
         ),
+        (
+            "basics/reals.sl",
+            "\
+2
+3.25
+-2
+2
+-1.3125
+-2
+1.5
+",
+        ),
+        (
+            "basics/list_ops.sl",
+            "\
+[1, 2, 3, 4]
+[2, 4]
+[4, 3, 2, 1]
+[1, 2]
+[3, 4]
+10
+10
+[]
+[]
+[1, 2, 3, 4]
+1
+",
+        ),
+        ("basics/arguments.sl", "[]\n"),
+        ("basics/clock.sl", "true\n"),
         (
             "basics/defaults.sl",
             "\
@@ -416,6 +450,8 @@ fn repository_example_suite_has_expected_results() {
                     "3",
                     "0",
                     "3",
+                    "1.5",
+                    "b",
                     "6",
                     "72",
                     "-1",

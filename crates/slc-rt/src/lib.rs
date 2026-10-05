@@ -2167,6 +2167,220 @@ pub extern "C" fn slc_rt_to_u64(sp: u64, n: u64) -> u64 {
     fits(n as i64, 0, i64::MAX, "u64")
 }
 
+/// `2^63`. `i64::MAX` rounds to this float, and the float is not itself an `i64`.
+const TWO_63: f64 = 9223372036854775808.0;
+
+fn float_text(value: f64) -> String {
+    format!("{value}")
+}
+
+fn refuse_fit(shown: impl std::fmt::Display, width: &str) -> ! {
+    type_mismatch(&format!("arithmetic overflow: {shown} does not fit in {width}"));
+}
+
+/// An integer as an exact `f64`. `i64::MIN` is the power of two `-2^63`.
+fn exact_f64(n: i64) -> Option<f64> {
+    if n == i64::MIN {
+        return Some(n as f64);
+    }
+    let value = n as f64;
+    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
+}
+
+/// An integer as an exact `f32`, stored in the `f64` word both widths share.
+fn exact_f32(n: i64) -> Option<f64> {
+    if n == i64::MIN {
+        return Some(n as f32 as f64);
+    }
+    let value = n as f32 as f64;
+    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
+}
+
+/// `x` when it is an exact `f32`. Every `NaN` fits; a rounded value does not.
+fn exact_f32_from_f64(value: f64) -> Option<f64> {
+    if value.is_nan() {
+        return Some(value as f32 as f64);
+    }
+    let narrowed = value as f32 as f64;
+    if narrowed.to_bits() == value.to_bits() { Some(narrowed) } else { None }
+}
+
+/// A finite integral float inside `lo..=hi`. `+2^63` is not an `i64`.
+fn exact_int(value: f64, lo: i64, hi: i64) -> Option<i64> {
+    if !value.is_finite() || value.trunc() != value || value >= TWO_63 || value < -TWO_63 {
+        return None;
+    }
+    let n = value as i64;
+    if n < lo || n > hi { None } else { Some(n) }
+}
+
+fn f_to_int(bits: u64, lo: i64, hi: i64, width: &str) -> u64 {
+    let value = f64::from_bits(bits);
+    match exact_int(value, lo, hi) {
+        Some(n) => n as u64,
+        None => refuse_fit(float_text(value), width),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_i8(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, i64::from(i8::MIN), i64::from(i8::MAX), "i8")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_i32(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, i64::from(i32::MIN), i64::from(i32::MAX), "i32")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_i64(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, i64::MIN, i64::MAX, "i64")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_u8(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, 0, i64::from(u8::MAX), "u8")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_u32(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, 0, i64::from(u32::MAX), "u32")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_u64(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f_to_int(bits, 0, i64::MAX, "u64")
+}
+
+fn i_to_float(n: i64, width: &str, exact: fn(i64) -> Option<f64>) -> u64 {
+    match exact(n) {
+        Some(value) => value.to_bits(),
+        None => refuse_fit(n, width),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_i_to_f64(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    i_to_float(n as i64, "f64", exact_f64)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_i_to_f32(sp: u64, n: u64) -> u64 {
+    let _ = sp;
+    i_to_float(n as i64, "f32", exact_f32)
+}
+
+/// Every `f32` word is already an `f64`.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_f64(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    bits
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_f_to_f32(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    let value = f64::from_bits(bits);
+    match exact_f32_from_f64(value) {
+        Some(narrowed) => narrowed.to_bits(),
+        None => refuse_fit(float_text(value), "f32"),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_sqrt(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    let value = f64::from_bits(bits);
+    if value < 0.0 {
+        type_mismatch(&format!("arithmetic overflow: sqrt({})", float_text(value)));
+    }
+    value.sqrt().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_abs(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f64::from_bits(bits).abs().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_floor(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f64::from_bits(bits).floor().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_ceil(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f64::from_bits(bits).ceil().to_bits()
+}
+
+static PROGRAM_ARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn program_args() -> std::sync::MutexGuard<'static, Vec<String>> {
+    PROGRAM_ARGS.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+/// Words after the fuel argument of the linked program. Empty until `main` stores them.
+///
+/// # Safety
+/// `argv` is null, or it points at `argc` C strings that outlive this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slc_rt_set_args(argc: i32, argv: *const *const std::ffi::c_char) {
+    let mut stored = Vec::new();
+    if argc > 0 && !argv.is_null() {
+        for index in 0..argc {
+            let ptr = unsafe { *argv.add(index as usize) };
+            if ptr.is_null() {
+                continue;
+            }
+            let text = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+            stored.push(text);
+        }
+    }
+    *program_args() = stored;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_argument_count(sp: u64, _unit: u64) -> u64 {
+    let _ = sp;
+    program_args().len() as u64
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_argument_at(sp: u64, index: u64) -> u64 {
+    let index = index as i64;
+    let text = {
+        let args = program_args();
+        match usize::try_from(index).ok().and_then(|slot| args.get(slot)).cloned() {
+            Some(text) => text,
+            None => type_mismatch(&format!("builtin type mismatch: index {index} out of range")),
+        }
+    };
+    alloc_text(sp, &text)
+}
+
+/// Nanoseconds since the first reading in this process. Subtract two readings
+/// to time the work between them. The count is monotonic, not a wall clock.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_monotonic_ns(sp: u64, _unit: u64) -> u64 {
+    let _ = sp;
+    static ORIGIN: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let origin = ORIGIN.get_or_init(std::time::Instant::now);
+    let nanos = std::time::Instant::now().saturating_duration_since(*origin).as_nanos();
+    match i64::try_from(nanos) {
+        Ok(n) => n as u64,
+        Err(_) => type_mismatch("arithmetic overflow: the monotonic clock does not fit in i64"),
+    }
+}
+
 /// Copy the bytes first. Allocation may collect, and a register is not a root.
 fn string_bytes(ptr: u64) -> Vec<u8> {
     let ptr = ptr as *const u8;

@@ -51,6 +51,77 @@ pub proc nth<+T, E>(xs: List<T>, i: i64) | (
     }
 }
 
+// Inclusive. Empty when `from` is past `to`. A one-element range does not
+// add, so the greatest `i64` is a range of itself.
+pub func range(from: i64, to: i64) -> List<i64> {
+    of (<(from, to) | gt) {
+        True => Nil,
+        _ => of (<(from, to) | eq) {
+            True => Cons(from, Nil),
+            _ => Cons(from, <(<(from, 1) | add, to) | range),
+        },
+    }
+}
+
+pub func filter<+T, E>(keep: (T -> Bool / {..E}), xs: List<T>) -> List<T> / {..E} {
+    of xs {
+        Nil => Nil,
+        Cons(h, rest) => of (<h | keep) {
+            True => Cons(h, <(keep, rest) | filter),
+            _ => <(keep, rest) | filter,
+        },
+    }
+}
+
+pub func fold<+A, +B, E>(xs: List<A>, init: B, f: ((B, A) -> B / {..E})) -> B / {..E} {
+    of xs {
+        Nil => init,
+        Cons(h, rest) => {
+            let next = <(init, h) | f;
+            <(rest, next, f) | fold
+        },
+    }
+}
+
+func add_i64(acc: i64, n: i64) -> i64 {
+    <(acc, n) | add
+}
+
+pub func sum(xs: List<i64>) -> i64 {
+    <(xs, 0, add_i64) | fold
+}
+
+func rev_onto<+T>(xs: List<T>, acc: List<T>) -> List<T> {
+    of xs {
+        Nil => acc,
+        Cons(h, rest) => <(rest, Cons(h, acc)) | rev_onto,
+    }
+}
+
+pub func reverse<+T>(xs: List<T>) -> List<T> {
+    <(xs, Nil) | rev_onto
+}
+
+pub func take<+T>(xs: List<T>, n: i64) -> List<T> {
+    of (<(n, 0) | le) {
+        True => Nil,
+        _ => of xs {
+            Nil => Nil,
+            Cons(h, rest) => Cons(h, <(rest, <(n, 1) | sub) | take),
+        },
+    }
+}
+
+pub func drop<+T>(xs: List<T>, n: i64) -> List<T> {
+    of (<(n, 0) | le) {
+        True => xs,
+        _ => of xs {
+            Nil => Nil,
+            Cons(_, rest) => <(rest, <(n, 1) | sub) | drop,
+        },
+    }
+}
+
 func fmt_items<+T: Display>(xs: List<T>) -> String {
     of xs {
         Nil => "",

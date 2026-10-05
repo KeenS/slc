@@ -1,11 +1,12 @@
-// `num`: what the integer builtins leave to the library. These helpers use
-// i64, matching the integer representation and the prelude's integer APIs.
+// `num`: integer helpers on i64, and `min`/`max` over anything `Ord` orders.
+// Equal arguments answer the second. `abs` stays on i64; a float absolute
+// value is the prelude's `abs`.
 
-pub func min(a: i64, b: i64) -> i64 {
+pub func min<+T: Ord>(a: T, b: T) -> T {
     of (<(a, b) | lt) { True => { a }, _ => { b } }
 }
 
-pub func max(a: i64, b: i64) -> i64 {
+pub func max<+T: Ord>(a: T, b: T) -> T {
     of (<(a, b) | gt) { True => { a }, _ => { b } }
 }
 

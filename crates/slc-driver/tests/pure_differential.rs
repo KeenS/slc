@@ -302,4 +302,48 @@ proc main | (exit: i32) / {IO} {
 }
 ";
     compare("dict order", flipped, &scratch("flip", flipped), None);
+
+    let reals = "\
+func widen(n: i64) -> f64 { <n | into }
+func whole(n: f64) -> i64 { <n | into }
+proc main | (exit: i32) / {IO} {
+    <4.0 | sqrt | println;
+    <-1.5 | floor | println;
+    <4 | widen | println;
+    <4.0 | whole | println;
+    <0 | exit>
+}
+";
+    compare("reals", reals, &scratch("reals", reals), None);
+
+    let inexact = "\
+func widen(n: i64) -> f64 { <n | into }
+proc main | (exit: i32) / {IO} {
+    <9223372036854775807 | widen | println;
+    <0 | exit>
+}
+";
+    compare(
+        "inexact f64",
+        inexact,
+        &scratch("inexact", inexact),
+        Some("9223372036854775807 does not fit in f64"),
+    );
+
+    let fraction = "\
+func whole(n: f64) -> i64 { <n | into }
+proc main | (exit: i32) / {IO} {
+    <1.5 | whole | println;
+    <0 | exit>
+}
+";
+    compare("fraction", fraction, &scratch("fraction", fraction), Some("1.5 does not fit in i64"));
+
+    let root = "\
+proc main | (exit: i32) / {IO} {
+    <-1.0 | sqrt | println;
+    <0 | exit>
+}
+";
+    compare("sqrt domain", root, &scratch("sqrt", root), Some("arithmetic overflow: sqrt(-1)"));
 }

@@ -239,6 +239,26 @@ proc main | (exit: i32) / {IO} {
 A `do` whose body is `(;)` runs it as a command under the handler. The
 hand's answer is the body's, so the same clauses serve both.
 
+The words after the program file, and a monotonic clock, are effects of
+the same shape. `args::arguments` performs `Args` and answers
+`List<String>`: the words after the source file, in order, not the runtime,
+the path, or a flag that preceded the file. `clock::now` performs `Clock`
+and answers an `i64` count of monotonic nanoseconds since an arbitrary
+origin local to the process. `args::real` and `clock::real` are hands that
+perform `IO`, as `fs::real` does, so `main` still leaves only `{IO}`:
+
+```sl
+proc main | (exit: i32) / {IO} {
+    let words = do (<(,) | args::arguments) args::real;
+    let start = do (<(,) | clock::now) clock::real;
+    …
+}
+```
+
+`slc run [--fuel N] [--interpret] <file.sl> [arg]…` recognizes flags only
+before the file. A word after the file is a program argument, including one
+that looks like a flag.
+
 **Latent rows describe effects at activation.** A function's row is charged
 when it is applied; a menu's when an item is demanded; a form's or consumer's
 when it is fed. Each uses the same effect-accounting rule, with a different

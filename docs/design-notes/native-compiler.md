@@ -1241,7 +1241,10 @@ completeness claim does not skip them.
 | `__eq`, `__ne` on `Bool` | pointer equality of the two singletons. |
 | `__lt`, `__gt`, `__le`, `__ge` on `Bool` | the boolean order, `false` before `true`, inline. Not the addresses of the singletons. `false <= false` is true. |
 | `__xor`, `__wrapping_mul`, `char_to_code` | inline. |
-| `__to_i8`, `__to_i32`, `__to_i64`, `__to_u8`, `__to_u32`, `__to_u64` | `slc_rt_to_*`. Fail with the wrapped `does not fit` text. |
+| `__to_i8`, `__to_i32`, `__to_i64`, `__to_u8`, `__to_u32`, `__to_u64` | Integer source: `slc_rt_to_*`. Float source: `slc_rt_f_to_*`. The operand class selects the symbol, because the word is untagged. Fail with the wrapped `does not fit` text. |
+| `__to_f64`, `__to_f32` | Integer source: `slc_rt_i_to_f64`, `slc_rt_i_to_f32`. Float source: `slc_rt_f_to_f64` (the word unchanged) and `slc_rt_f_to_f32`. Exact only. |
+| `__sqrt`, `__abs`, `__floor`, `__ceil` | `slc_rt_sqrt`, `slc_rt_abs`, `slc_rt_floor`, `slc_rt_ceil` on the `f64` word. A negative square root fails with `arithmetic overflow: sqrt(…)`. |
+| `__argument_count`, `__argument_at`, `__monotonic_ns` | `slc_rt_argument_count`, `slc_rt_argument_at`, `slc_rt_monotonic_ns`. `slc_rt_set_args` stores the words before `slc_rt_start`. |
 | `str_len` | inline load of offset 24. |
 | `str_concat`, `str_eq` | `slc_rt_str_concat`, `slc_rt_str_eq`. |
 | `int_to_str`, `format` | `slc_rt_int_to_str`, `slc_rt_format`. `format` joins `display` text with spaces, as `apply_builtin` does. |
@@ -1287,14 +1290,18 @@ raw `i32` to the process.
 
 `slc check` does not change.
 
-`slc run [--fuel N] [--interpret] <file.sl>`:
+`slc run [--fuel N] [--interpret] <file.sl> [arg]…`:
 
 - `--interpret` selects `run_file` as it is today, including the 256 MiB
   thread. This flag stays.
 - The default, once the last slice lands, compiles, writes a temporary
   object, links, and execs. `--fuel N` is an argument of the ELF. With no
   argument, `slc_rt_start` uses `usize::MAX` as the fuel word. `slc run`
-  passes `N` itself. The process status is the `u8` clamp above, not the
+  passes `N` itself. Words after the file are program arguments. When those
+  words are present and `--fuel` is omitted, the driver still passes
+  `u64::MAX` as `argv[1]` so the words are not parsed as fuel; the generated
+  `main` then calls `slc_rt_set_args` on `argv[2..]`. Flags are recognized
+  only before the file. The process status is the `u8` clamp above, not the
   raw `i32`. Diagnostics stay on stderr with the `error:` prefix the driver
   already prints.
 - The link line is `cc` plus the object plus `libslc_rt.a` plus whatever

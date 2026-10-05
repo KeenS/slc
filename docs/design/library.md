@@ -13,7 +13,8 @@ choices up to eight components, rendered as they are written — and
 `to_string<T: Display>`; `enum Bool { False, True }`, the type every yes-or-no
 answer has; arithmetic and comparison as the traits `Add`, `Sub`, `Mul`,
 `Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `Into<U>`,
-moving a value between integer widths; `wrapping_mul` and `xor` on the
+moving a value between the integer widths and `f32` and `f64`; `Sqrt`, `Abs`,
+`Floor`, and `Ceil` on `f32` and `f64`; `wrapping_mul` and `xor` on the
 machine word; `char_to_code`, a character's scalar value; `Hash`,
 answering a non-negative `u64` for the integer widths, `char`, `Bool`, and
 `String`; `index`,
@@ -31,7 +32,7 @@ it offers `pub`; the rest is its own.
 
 | module | what it offers |
 |---|---|
-| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `proc nth` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
+| `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `proc nth`, and the eager `range`, `filter`, `fold`, `reverse`, `take`, `drop`, and `sum` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `map` | `Map<K, V>`, an AVL tree: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, the outcome-offering `proc get`, `Display` (`{a: 1, b: 2}`), and `Builder` |
 | `set` | `Set<K>`, that tree with nothing beside the key: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, `Display` (`{1, 2, 3}`), and `Builder` |
 | `hashmap` | `HashMap<K, V>`, a 4-way hash trie: the same operations, keyed by `Hash` and `Eq`, and `Builder` |
@@ -39,11 +40,13 @@ it offers `pub`; the rest is its own.
 | `array` | `Array<T>`, an immutable 4-way trie: `empty`, `push`, `length`, `of_list`, `to_list`, and the outcome-offering `get` and `update` (`[1, 2, 3]`). `Array4<T>` is one branch, with `slots`, `slot_get`, and `slot_update` |
 | `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
 | `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `mu`s — a `form` would want every field at once |
-| `num` | `min`, `max`, `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem` |
+| `num` | `min` and `max`, generic over `Ord`; `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem`, all on `i64` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `(-> T / E)` |
 | `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
+| `args` | `arguments`, the words after the program file, as `List<String>`, performing `Args`; `real` answers from the process |
+| `clock` | `now`, a monotonic nanosecond count as `i64`, performing `Clock`; `real` answers from the runtime |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `proc tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
 
@@ -51,7 +54,10 @@ it offers `pub`; the rest is its own.
 values are positive. A key is compared with `Ord`; two keys are the same when
 neither is less. That is equality only when `Ord` is a total order: a `NaN`
 compares that way with every float, so it collides with the node the search
-reaches. Each node stores its height, and `insert` and `remove` rebalance
+reaches. `num::min` and `num::max` follow the same `Ord`: when the two
+arguments compare equal they answer the second, and `min` of `NaN` and a
+number answers the number when `NaN` is first and `NaN` when the number is first.
+Each node stores its height, and `insert` and `remove` rebalance
 until a node leans by at most one. Both answer a new map and leave the map
 they were given unchanged. `get` can find nothing, so it is a `proc`
 offering `found` and `missing`, as `list::nth` does. The map itself has no
@@ -212,6 +218,59 @@ not rewrite closures or captured continuations. Build failure consumers
 used after acquisition around the wrapped exit as well;
 `examples/programs/file_io.sl` routes its post-acquisition success and failure paths
 this way. Unrestricted control supplies no automatic resource guarantee.
+
+A conversion is the prelude's `Into<+U>`. Between the six integer widths,
+and between those widths and `f32` and `f64`, and between `f32` and `f64`,
+there is one impl for every pair. The expected type selects the destination.
+The number is kept when it fits there; a value that does not fit is an
+arithmetic overflow, as `add` overflowing is. There is no truncating or
+rounding cast. An integer fits in a float only when that float is exactly
+the integer, so an `i64` with no exact `f64` does not fit, while `i64`'s
+most negative value does: it is a power of two. A float fits in an integer
+width only when it is finite, integral, and inside that width; `NaN`, an
+infinity, and a fraction do not. A float fits in `f32` only when it is an
+exact `f32`, and every `f32` fits in `f64`. Every integer is one signed
+word, so a `u64` reaches as far as `i64` does.
+[`examples/basics/into.sl`](../../examples/basics/into.sl) runs the widths
+and a few exact float conversions.
+
+`sqrt`, `abs`, `floor`, and `ceil` are unary traits beside `Neg`, so
+`<x | sqrt` works for `f32` and `f64`. Square root's domain is the
+non-negative reals: `-0.0` is in it, and a negative number is an arithmetic
+overflow, `sqrt(-1)`. Absolute value, floor, and ceiling are the IEEE
+operations, including `NaN` and the infinities. `f32` arithmetic is IEEE on
+the `f64` word both widths share. `num::abs` stays the `i64` function.
+Printing a real as an integer is `Into` after `floor`.
+[`examples/basics/reals.sl`](../../examples/basics/reals.sl) runs them.
+`sin`, `ln`, and `pow` are not in the prelude.
+
+`list::range(from, to)` is the inclusive `i64` list, empty when `from` is
+greater than `to`. The one-element case does not add, so `i64`'s greatest
+value is a range of itself. `filter` and `fold` are eager and forward the
+row their function performs. `fold` takes the list, the initial value, and
+a function of `(accumulator, element)`. `sum` is `fold` of addition from
+`0`. `reverse` reverses. `take` and `drop` treat a non-positive count as
+nothing and the whole list, and a count past the end as the whole list and
+nothing. `seq` keeps its own `filter` and `take`. `stream` keeps its own
+`take` and `drop`. [`examples/basics/list_ops.sl`](../../examples/basics/list_ops.sl)
+runs the eager functions. The quicksort, fannkuch, and sieve benchmarks use
+them.
+
+`args::arguments` answers `List<String>`, the words after the source file,
+in order. The runtime binary, the file path, `--fuel`, and `--interpret`
+are not among them. An empty run is `Nil`, which displays `[]`. Reading
+them performs `Args`. `clock::now` answers an `i64` count of monotonic
+nanoseconds. The origin is arbitrary and local to the process; the
+difference of two readings is the elapsed time, and the count is not a wall
+clock. Reading it performs `Clock`. Both are answered the way `Fs` is:
+`do expr args::real` and `do expr clock::real` are hands that perform `IO`
+and call the runtime. `main` still leaves only `IO`. A count that does not
+fit in `i64` is an arithmetic overflow. Out-of-range `__argument_at` is a
+fatal type mismatch, as `index` is.
+[`examples/basics/arguments.sl`](../../examples/basics/arguments.sl) and
+[`examples/basics/clock.sl`](../../examples/basics/clock.sl) run them.
+`slc run [--fuel N] [--interpret] <file.sl> [arg]…` is the command; flags
+are recognized only before the file.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range
 `<(s, i) | index` and a division by zero. `index` and `div` are plain

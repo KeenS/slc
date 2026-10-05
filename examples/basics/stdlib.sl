@@ -28,6 +28,8 @@ proc main | (exit: i32) / {IO} {
 
     // Reached by path, nothing imported: the module's name is the prefix.
     <(3, 7) | num::min | println; // 3
+    <(1.5, 2.5) | num::min | println; // 1.5
+    <("b", "a") | num::max | println; // b
     <(18, -24) | num::gcd | println; // 6
     <(18, -24) | num::lcm | println; // 72
     <-7 | num::signum | println; // -1

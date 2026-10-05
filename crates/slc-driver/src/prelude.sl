@@ -134,9 +134,28 @@ impl Neg for i32 { func neg(self: i32) -> i32 { <self | __neg } }
 impl Neg for f32 { func neg(self: f32) -> f32 { <self | __neg } }
 impl Neg for f64 { func neg(self: f64) -> f64 { <self | __neg } }
 
-// A value moves between integer widths by `Into`. The expected type picks
-// the destination. The number is kept when it fits there; otherwise the
-// conversion overflows, as `add` does. There is no truncating cast.
+// Square root's domain is the non-negative reals, including `-0.0`. A
+// negative number overflows. Absolute value, floor, and ceiling are total.
+spec Sqrt { func sqrt(self: Self) -> Self; }
+impl Sqrt for f64 { func sqrt(self: f64) -> f64 { <self | __sqrt } }
+impl Sqrt for f32 { func sqrt(self: f32) -> f32 { <self | __sqrt } }
+
+spec Abs { func abs(self: Self) -> Self; }
+impl Abs for f64 { func abs(self: f64) -> f64 { <self | __abs } }
+impl Abs for f32 { func abs(self: f32) -> f32 { <self | __abs } }
+
+spec Floor { func floor(self: Self) -> Self; }
+impl Floor for f64 { func floor(self: f64) -> f64 { <self | __floor } }
+impl Floor for f32 { func floor(self: f32) -> f32 { <self | __floor } }
+
+spec Ceil { func ceil(self: Self) -> Self; }
+impl Ceil for f64 { func ceil(self: f64) -> f64 { <self | __ceil } }
+impl Ceil for f32 { func ceil(self: f32) -> f32 { <self | __ceil } }
+
+// A value moves between integer widths, and between those widths and
+// `f32` and `f64`, by `Into`. The expected type picks the destination.
+// The number is kept when it fits there exactly; otherwise the conversion
+// overflows, as `add` does. There is no truncating or rounding cast.
 spec Into<+U> {
     func into(self: Self) -> U;
 }
@@ -170,6 +189,32 @@ impl Into<i32> for u64 { func into(self: u64) -> i32 { <self | __to_i32 } }
 impl Into<i64> for u64 { func into(self: u64) -> i64 { <self | __to_i64 } }
 impl Into<u8> for u64 { func into(self: u64) -> u8 { <self | __to_u8 } }
 impl Into<u32> for u64 { func into(self: u64) -> u32 { <self | __to_u32 } }
+impl Into<f64> for i8 { func into(self: i8) -> f64 { <self | __to_f64 } }
+impl Into<f32> for i8 { func into(self: i8) -> f32 { <self | __to_f32 } }
+impl Into<f64> for i32 { func into(self: i32) -> f64 { <self | __to_f64 } }
+impl Into<f32> for i32 { func into(self: i32) -> f32 { <self | __to_f32 } }
+impl Into<f64> for i64 { func into(self: i64) -> f64 { <self | __to_f64 } }
+impl Into<f32> for i64 { func into(self: i64) -> f32 { <self | __to_f32 } }
+impl Into<f64> for u8 { func into(self: u8) -> f64 { <self | __to_f64 } }
+impl Into<f32> for u8 { func into(self: u8) -> f32 { <self | __to_f32 } }
+impl Into<f64> for u32 { func into(self: u32) -> f64 { <self | __to_f64 } }
+impl Into<f32> for u32 { func into(self: u32) -> f32 { <self | __to_f32 } }
+impl Into<f64> for u64 { func into(self: u64) -> f64 { <self | __to_f64 } }
+impl Into<f32> for u64 { func into(self: u64) -> f32 { <self | __to_f32 } }
+impl Into<i8> for f64 { func into(self: f64) -> i8 { <self | __to_i8 } }
+impl Into<i32> for f64 { func into(self: f64) -> i32 { <self | __to_i32 } }
+impl Into<i64> for f64 { func into(self: f64) -> i64 { <self | __to_i64 } }
+impl Into<u8> for f64 { func into(self: f64) -> u8 { <self | __to_u8 } }
+impl Into<u32> for f64 { func into(self: f64) -> u32 { <self | __to_u32 } }
+impl Into<u64> for f64 { func into(self: f64) -> u64 { <self | __to_u64 } }
+impl Into<f32> for f64 { func into(self: f64) -> f32 { <self | __to_f32 } }
+impl Into<i8> for f32 { func into(self: f32) -> i8 { <self | __to_i8 } }
+impl Into<i32> for f32 { func into(self: f32) -> i32 { <self | __to_i32 } }
+impl Into<i64> for f32 { func into(self: f32) -> i64 { <self | __to_i64 } }
+impl Into<u8> for f32 { func into(self: f32) -> u8 { <self | __to_u8 } }
+impl Into<u32> for f32 { func into(self: f32) -> u32 { <self | __to_u32 } }
+impl Into<u64> for f32 { func into(self: f32) -> u64 { <self | __to_u64 } }
+impl Into<f64> for f32 { func into(self: f32) -> f64 { <self | __to_f64 } }
 
 spec Eq {
     func eq(self: Self, other: Self) -> Bool;

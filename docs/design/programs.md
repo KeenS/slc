@@ -70,11 +70,18 @@ primitives are `i8`, `i32`, `i64`, `u8`, `u32`, and `u64`; a floating-point
 literal similarly takes `f32` or `f64` from its port and is `+f64` when
 unconstrained. Every other value must match its port exactly: there is no
 implicit widening or narrowing of a value that is not a literal. A
-conversion between widths is the prelude's `Into<+U>`, one impl for every
-pair of the six integer widths. The expected type selects the destination.
+conversion is the prelude's `Into<+U>`. Between the six integer widths,
+and between those widths and `f32` and `f64`, and between `f32` and `f64`,
+there is one impl for every pair. The expected type selects the destination.
 The number is kept when it fits there; a value that does not fit is an
-arithmetic overflow, as `add` overflowing is. There is no truncating cast.
-Every integer is one signed word, so a `u64` reaches as far as `i64` does.
+arithmetic overflow, as `add` overflowing is. There is no truncating or
+rounding cast. An integer fits in a float only when that float is exactly
+the integer, so an `i64` with no exact `f64` does not fit, while `i64`'s
+most negative value does: it is a power of two. A float fits in an integer
+width only when it is finite, integral, and inside that width; `NaN`, an
+infinity, and a fraction do not. A float fits in `f32` only when it is an
+exact `f32`, and every `f32` fits in `f64`. Every integer is one signed
+word, so a `u64` reaches as far as `i64` does.
 
 The numeric primitives have the `Display`, `Add`, `Sub`, `Mul`, `Div`, `Rem`,
 `Eq`, and `Ord` implementations supplied by the prelude; signed integers and

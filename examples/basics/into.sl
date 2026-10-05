@@ -1,7 +1,8 @@
 // `Into<+U>` picks its destination from the type the call is expected to
-// produce. The prelude offers it for every pair of integer widths: the
-// number is kept when it fits, and a value that does not fit overflows.
-// A program can impl the same trait for its own types.
+// produce. The prelude offers it for every pair of integer widths, and
+// between those widths and `f32` and `f64`: the number is kept when it
+// fits exactly, and a value that does not fit overflows. A program can
+// impl the same trait for its own types.
 
 enum Wrap {
     Held(i64),
@@ -59,6 +60,18 @@ func as_i32(n: u8) -> i32 {
 func as_i64_from_i8(n: i8) -> i64 {
     <n | into
 }
+func as_f64(n: i64) -> f64 {
+    <n | into
+}
+func as_i64_from_f64(n: f64) -> i64 {
+    <n | into
+}
+func as_f32(n: f64) -> f32 {
+    <n | into
+}
+func as_f64_from_f32(n: f32) -> f64 {
+    <n | into
+}
 
 proc main | (exit: i32) / {IO} {
     <Held(7) | number | println;
@@ -69,5 +82,9 @@ proc main | (exit: i32) / {IO} {
     <9 | as_u8 | println;
     <200 | as_i32 | println;
     <-3 | as_i64_from_i8 | println;
+    <4 | as_f64 | println;
+    <4.0 | as_i64_from_f64 | println;
+    <1.25 | as_f32 | println;
+    <1.25 | as_f64_from_f32 | println;
     <0 | exit>
 }

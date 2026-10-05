@@ -167,7 +167,8 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
     match name {
         "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg"
         | "char_to_code" | "__file_exists" | "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8"
-        | "__to_u32" | "__to_u64" => 1,
+        | "__to_u32" | "__to_u64" | "__to_f32" | "__to_f64" | "__sqrt" | "__abs" | "__floor"
+        | "__ceil" | "__argument_count" | "__argument_at" | "__monotonic_ns" => 1,
         "__index" => 2,
         "__close_file" => 1,
         "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__eq" | "__ne" | "__lt" | "__gt"

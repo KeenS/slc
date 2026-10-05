@@ -1,6 +1,6 @@
-// An N by N sample of the Mandelbrot set. Sampling starts at (-1.5, -1)
-// and steps by 0.0625, and each point is iterated N times. The checksum
-// is the number of points that stay inside.
+// An N by N sample of the Mandelbrot set. Pixel indexes widen to f64, so
+// column i is -1.5 + i * 0.0625 and row r is -1.0 + r * 0.0625. Each point
+// is iterated N times. The checksum is the number of points that stay inside.
 
 def N: i64 = 24;
 
@@ -24,32 +24,36 @@ func mandel(zr: f64, zi: f64, cr: f64, ci: f64, i: i64) -> Bool {
     }
 }
 
-func col(x: f64, left: i64, y: f64) -> i64 {
-    of (<(left, 0) | eq) {
+func widen(n: i64) -> f64 {
+    <n | into
+}
+
+func col(i: i64, y: f64) -> i64 {
+    of (<(i, N) | ge) {
         True => 0,
         _ => {
+            let x = <(-1.5, <(<i | widen, STEP) | mul) | add;
             let bit = of (<(0.0, 0.0, x, y, 0) | mandel) {
                 True => 1,
                 False => 0,
             };
-            let rest = <(<(x, STEP) | add, <(left, 1) | sub, y) | col;
-            <(bit, rest) | add
+            <(bit, <(<(i, 1) | add, y) | col) | add
         },
     }
 }
 
-func grid(y: f64, rows: i64) -> i64 {
-    of (<(rows, 0) | eq) {
+func grid(row: i64) -> i64 {
+    of (<(row, N) | ge) {
         True => 0,
         _ => {
-            let here = <(-1.5, N, y) | col;
-            let rest = <(<(y, STEP) | add, <(rows, 1) | sub) | grid;
-            <(here, rest) | add
+            let y = <(-1.0, <(<row | widen, STEP) | mul) | add;
+            let here = <(0, y) | col;
+            <(here, <(<(row, 1) | add) | grid) | add
         },
     }
 }
 
 proc main | (exit: i32) / {IO} {
-    <(-1.0, N) | grid | println;
+    <0 | grid | println;
     <0 | exit>
 }

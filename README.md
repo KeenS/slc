@@ -126,7 +126,9 @@ cargo run -- check examples/basics/*.sl       # the same checks, then stop
 ```
 
 `slc run --fuel N` stops after N steps of the evaluator. With no
-`--fuel`, a run is bounded by memory.
+`--fuel`, a run is bounded by memory. Words after the file are the
+program's arguments: `slc run [--fuel N] [--interpret] <file.sl> [arg]…`.
+Flags are recognized only before the file.
 
 `slc check` reports what `run` would report before evaluating. A
 diagnostic names its phase — `parse`, `resolve`, `trait`, `type`,

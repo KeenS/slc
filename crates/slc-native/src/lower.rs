@@ -202,6 +202,10 @@ fn prelude_primitive(symbol: &str) -> Option<&'static str> {
         ("Div", "div") if numeric => Some("__div"),
         ("Rem", "rem") if numeric => Some("__rem"),
         ("Neg", "neg") if matches!(key, "i64" | "i32" | "i8" | "f64" | "f32") => Some("__neg"),
+        ("Sqrt", "sqrt") if matches!(key, "f64" | "f32") => Some("__sqrt"),
+        ("Abs", "abs") if matches!(key, "f64" | "f32") => Some("__abs"),
+        ("Floor", "floor") if matches!(key, "f64" | "f32") => Some("__floor"),
+        ("Ceil", "ceil") if matches!(key, "f64" | "f32") => Some("__ceil"),
         ("Eq", "eq") if ordered => Some("__eq"),
         ("Eq", "ne") if ordered => Some("__ne"),
         ("Ord", "lt") if ordered => Some("__lt"),
@@ -209,6 +213,39 @@ fn prelude_primitive(symbol: &str) -> Option<&'static str> {
         ("Ord", "le") if ordered => Some("__le"),
         ("Ord", "ge") if ordered => Some("__ge"),
         _ => None,
+    }
+}
+
+/// The runtime symbol for a width conversion. Integer destinations with no
+/// known class stay on the integer path. A float destination does not guess.
+fn width_symbol(name: &str, class: Option<Class>) -> Result<&'static str, String> {
+    let from_float = match class {
+        Some(Class::Float) => true,
+        Some(Class::Int) => false,
+        None if matches!(name, "__to_f32" | "__to_f64") => {
+            return Err(format!("{name} needs a known integer or float"));
+        }
+        None => false,
+        Some(other) => return Err(format!("{name} of {other:?}")),
+    };
+    match (name, from_float) {
+        ("__to_i8", true) => Ok("slc_rt_f_to_i8"),
+        ("__to_i8", false) => Ok("slc_rt_to_i8"),
+        ("__to_i32", true) => Ok("slc_rt_f_to_i32"),
+        ("__to_i32", false) => Ok("slc_rt_to_i32"),
+        ("__to_i64", true) => Ok("slc_rt_f_to_i64"),
+        ("__to_i64", false) => Ok("slc_rt_to_i64"),
+        ("__to_u8", true) => Ok("slc_rt_f_to_u8"),
+        ("__to_u8", false) => Ok("slc_rt_to_u8"),
+        ("__to_u32", true) => Ok("slc_rt_f_to_u32"),
+        ("__to_u32", false) => Ok("slc_rt_to_u32"),
+        ("__to_u64", true) => Ok("slc_rt_f_to_u64"),
+        ("__to_u64", false) => Ok("slc_rt_to_u64"),
+        ("__to_f64", true) => Ok("slc_rt_f_to_f64"),
+        ("__to_f64", false) => Ok("slc_rt_i_to_f64"),
+        ("__to_f32", true) => Ok("slc_rt_f_to_f32"),
+        ("__to_f32", false) => Ok("slc_rt_i_to_f32"),
+        _ => Err(format!("builtin {name}")),
     }
 }
 
@@ -2044,6 +2081,15 @@ impl Builder {
                 | "__to_u8"
                 | "__to_u32"
                 | "__to_u64"
+                | "__to_f32"
+                | "__to_f64"
+                | "__sqrt"
+                | "__abs"
+                | "__floor"
+                | "__ceil"
+                | "__argument_count"
+                | "__argument_at"
+                | "__monotonic_ns"
                 | "str_len"
                 | "__index"
                 | "char_to_code"
@@ -3326,17 +3372,56 @@ impl Builder {
                 });
                 Ok(true)
             }
-            "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64" => {
+            "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8" | "__to_u32" | "__to_u64"
+            | "__to_f32" | "__to_f64" => {
+                // The word is untagged. The operand's class picks the symbol:
+                // an integer and a float that share a destination are different
+                // runtime functions.
+                let symbol = width_symbol(name, class)?;
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__sqrt" | "__abs" | "__floor" | "__ceil" => {
                 let symbol = match name {
-                    "__to_i8" => "slc_rt_to_i8",
-                    "__to_i32" => "slc_rt_to_i32",
-                    "__to_i64" => "slc_rt_to_i64",
-                    "__to_u8" => "slc_rt_to_u8",
-                    "__to_u32" => "slc_rt_to_u32",
-                    _ => "slc_rt_to_u64",
+                    "__sqrt" => "slc_rt_sqrt",
+                    "__abs" => "slc_rt_abs",
+                    "__floor" => "slc_rt_floor",
+                    _ => "slc_rt_ceil",
                 };
                 self.emit(Inst::CallRt {
                     symbol: symbol.into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__argument_count" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_argument_count".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__argument_at" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_argument_at".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "__monotonic_ns" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_monotonic_ns".into(),
                     arg: RtArg::Val,
                     noreturn: false,
                     returns: true,
