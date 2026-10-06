@@ -1,5 +1,8 @@
-// Highlight fenced ```sl blocks. mdBook highlights before additional scripts
-// run, so this registers the language and highlights those blocks again.
+// Highlight fenced ```sl blocks.
+// mdBook 0.4.52 ships Highlight.js 10.1.1 and highlights in book.js before
+// additional scripts run. `sl` is unknown on that first pass. This registers
+// it and highlights the blocks. Highlight.js 10 exposes highlightBlock;
+// highlightElement arrived in version 11.
 (function () {
     if (typeof hljs === "undefined") {
         return;
@@ -32,16 +35,29 @@
                 },
                 {
                     className: "number",
-                    begin: "-?\\b\\d[\\d_]*(\\.[\\d_]+)?\\b"
+                    begin: "\\b\\d[\\d_]*(\\.[\\d_]+)?\\b",
+                    relevance: 0
                 },
-                { className: "type", begin: "\\b(i8|i32|i64|u8|u32|u64|f32|f64|String|Bool|File|Self)\\b" }
+                {
+                    className: "type",
+                    begin: "\\b(i8|i32|i64|u8|u32|u64|f32|f64|String|Bool|File|Self)\\b"
+                },
+                {
+                    className: "type",
+                    begin: "\\b[A-Z][A-Za-z0-9_]*\\b",
+                    relevance: 0
+                }
             ]
         };
     });
 
-    document.querySelectorAll("code.language-sl").forEach(function (block) {
-        block.classList.remove("hljs");
-        block.removeAttribute("data-highlighted");
-        hljs.highlightElement(block);
-    });
+    var highlight = typeof hljs.highlightBlock === "function"
+        ? function (block) { hljs.highlightBlock(block); }
+        : function (block) {
+            block.classList.remove("hljs");
+            block.removeAttribute("data-highlighted");
+            hljs.highlightElement(block);
+        };
+
+    document.querySelectorAll("code.language-sl").forEach(highlight);
 })();
