@@ -1,4 +1,4 @@
-// One area, written as a function and as a consumer.
+// One area, written with -> and with <-.
 
 enum Shape {
     Circle(i64),

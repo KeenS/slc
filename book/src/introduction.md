@@ -7,9 +7,9 @@ The command-line tool is `slc`.
 
 There is one grammar. A type denotes a value or a continuation, and the arrow
 says which way a function faces, so the same program can be written
-value-first or continuation-first. The tutorial starts on the value side,
-where functions take data and give data back, and then crosses to
-continuations, effects, and the library.
+value-first or continuation-first. The early chapters write functions that
+return values. [Data](tutorial/data.md) gives values and continuations the
+same shapes: `data` and `form`, `enum` and `menu`.
 
 This book is the tutorial and the reference for the language implemented in
 the [SLC repository](https://github.com/KeenS/slc). The specification is
@@ -25,8 +25,7 @@ The programs printed in the tutorial live in
 
 ## Two ways through one pipeline
 
-A function written with `->` takes data and returns data. `of` takes a value
-apart.
+A function written with `->` is given a value and returns a value.
 
 ```sl
 func area(s: Shape) -> i64 {
@@ -37,9 +36,11 @@ func area(s: Shape) -> i64 {
 }
 ```
 
-A function written with `<-` takes a consumer of the result and returns a
-consumer of the input. `mu` takes the value apart in the same shape, and each
-arm sends its result onward.
+`of s` takes the shape apart. With 3 standing in for π, the circle of radius
+5 has area 75.
+
+A function written with `<-` is given a continuation of the result and
+returns a continuation of the input.
 
 ```sl
 func area_of(out: i64) <- Shape {
@@ -50,9 +51,12 @@ func area_of(out: i64) <- Shape {
 }
 ```
 
+`out: i64` is the continuation of the area. `mu Shape` builds the
+continuation of the shape, and each arm sends the area to `out`.
+
 `<` opens a chain with a value, and `|` carries that value from left to
 right. A chain reads each stage in the orientation that stage was written
-with, so both functions sit in the same pipeline. [The other
-direction](tutorial/continuations.md) runs this program.
+with, so both functions sit in the same pipeline. [Both
+arrows](tutorial/continuations.md) runs this program.
 The whole dual example in the repository is
 [`examples/duality/two_styles.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/two_styles.sl).

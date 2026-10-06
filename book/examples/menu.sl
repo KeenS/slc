@@ -1,4 +1,4 @@
-// A menu field is a function. The demand supplies the arguments.
+// A menu field is a function. The call supplies the arguments.
 
 menu Pair {
     both(x: i64, y: i64): i64,
