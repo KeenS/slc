@@ -16,7 +16,8 @@
    and `cargo test` green.
 4. SLC source — the examples, the prelude, `stdlib/` — is kept formatted by
    `slc fmt`, and `cargo test` fails when a file is not: run
-   `cargo run -- fmt <file.sl>`.
+   `cargo run -- fmt <file.sl>`. The programs in `book/examples/` are
+   formatted the same way and checked with `book/check.sh`.
 
 ## Style
 

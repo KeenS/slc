@@ -182,12 +182,17 @@ emacs -Q --batch -L editors/emacs -l editors/emacs/slc-mode-tests.el -f ert-run-
 
 ## Documentation
 
+- [`book/`](book) — a tutorial and a reference, published with [mdBook](https://rust-lang.github.io/mdBook/)
 - [`examples/README.md`](examples/README.md) — runnable feature examples and the output each one gives
 - [`DESIGN.md`](DESIGN.md) — the language; the parts are under [`docs/design/`](docs/design/)
 - [`PLAN.md`](PLAN.md) — known limits, and what is still open
 - [`docs/HISTORY.md`](docs/HISTORY.md) — what the λ̄μμ̃ redesign settled
 - [`docs/MIGRATION.md`](docs/MIGRATION.md) — syntax migration from the pre-redesign language
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how a change lands
+
+The book builds locally with `mdbook build book` and opens with `mdbook serve
+book`. [`book/README.md`](book/README.md) is how that site is published to
+GitHub Pages. The programs it includes stay honest through `book/check.sh`.
 
 ## Repository
 

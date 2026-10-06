@@ -1,0 +1,13 @@
+[book]
+title = "The SLC Programming Language"
+description = "A tutorial and reference for SLC, a language whose core follows the classical λ̄μμ̃ calculus."
+authors = ["The SLC contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/KeenS/slc"
+edit-url-template = "https://github.com/KeenS/slc/edit/master/book/{path}"
+site-url = "/slc/"
+additional-js = ["theme/slc-highlight.js"]
+preferred-dark-theme = "navy"
