@@ -70,8 +70,6 @@ pub(crate) struct PendingSign {
 #[derive(Debug, Clone)]
 pub(crate) struct PendingInjection {
     pub(crate) span: slc_syntax::token::Span,
-    /// The payload as written, where a swap turning it around is recorded.
-    pub(crate) value_span: slc_syntax::token::Span,
     pub(crate) index: usize,
     pub(crate) payload: Type,
     pub(crate) sum: Type,

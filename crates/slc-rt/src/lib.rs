@@ -254,7 +254,11 @@ impl Runtime {
         self.slot_size(ptr as u64).expect("live object")
     }
 
-    pub fn object_bytes(&self, ptr: *const u8) -> &[u8] {
+    /// The bytes of a live object.
+    ///
+    /// # Safety
+    /// `ptr` is the base of a live object in this runtime.
+    pub unsafe fn object_bytes(&self, ptr: *const u8) -> &[u8] {
         let size = self.object_size(ptr);
         unsafe { std::slice::from_raw_parts(ptr, size) }
     }
@@ -1187,7 +1191,7 @@ impl Runtime {
         let chunk_i = self.chunk_of(addr)?;
         let chunk = &self.chunks[chunk_i];
         let off = (addr - chunk.ptr as u64) as usize;
-        if off % 16 != 0 {
+        if !off.is_multiple_of(16) {
             return None;
         }
         Some((chunk_i, off / 16))
@@ -1224,7 +1228,7 @@ impl Runtime {
         }
         let off = (addr - base) as usize;
         let mut slot = off / 16;
-        if off % 16 == 0 {
+        if off.is_multiple_of(16) {
             if slot == 0 {
                 return None;
             }
@@ -3224,11 +3228,11 @@ mod tests {
         rt.push_frame(10).unwrap();
         rt.write(rt.sp(), FRAME_SLOT0, 0x71);
         let kont = rt.capture();
-        let before = rt.object_bytes(kont).to_vec();
+        let before = unsafe { rt.object_bytes(kont) }.to_vec();
         rt.invoke(kont).unwrap();
-        assert_eq!(rt.object_bytes(kont), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(kont) }, before.as_slice());
         rt.invoke(kont).unwrap();
-        assert_eq!(rt.object_bytes(kont), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(kont) }, before.as_slice());
     }
 
     #[test]
@@ -3239,10 +3243,10 @@ mod tests {
         rt.push_frame(10).unwrap();
         rt.write(rt.sp(), FRAME_SLOT0, 0x2);
         let kont = rt.capture();
-        let before = rt.object_bytes(kont).to_vec();
+        let before = unsafe { rt.object_bytes(kont) }.to_vec();
         rt.write(rt.sp(), FRAME_SLOT0, 0x3);
         rt.invoke(kont).unwrap();
-        assert_eq!(rt.object_bytes(kont), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(kont) }, before.as_slice());
         assert_eq!(rt.read(rt.sp(), FRAME_SLOT0), 0x2);
         let below = rt.read(rt.sp(), FRAME_CONT_PREV) as *const u8;
         assert_eq!(rt.read(below, FRAME_SLOT0), 0x1);
@@ -3271,9 +3275,9 @@ mod tests {
         rt.write(heap_top as *mut u8, FRAME_SLOT0, collide);
         rt.write(heap_top as *mut u8, FRAME_SLOT0 + 8, collide);
         rt.write(heap_below as *mut u8, FRAME_SPILL_VAL, heap_top as u64);
-        let before = rt.object_bytes(kont).to_vec();
+        let before = unsafe { rt.object_bytes(kont) }.to_vec();
         rt.invoke(kont).unwrap();
-        assert_eq!(rt.object_bytes(kont), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(kont) }, before.as_slice());
         let new_top = rt.sp();
         let new_below = rt.read(new_top, FRAME_CONT_PREV) as *const u8;
         assert_eq!(rt.read(new_top, FRAME_SPILL_ENV), new_below as u64);
@@ -3299,7 +3303,7 @@ mod tests {
         rt.write(top, FRAME_RETURN_ADDRESS, 0xA11);
         rt.write(top, FRAME_SPILL_HANDLERS, prompt as u64);
         let image = rt.capture_resume();
-        let before = rt.object_bytes(image).to_vec();
+        let before = unsafe { rt.object_bytes(image) }.to_vec();
         let (tag, display, _) = unpack_meta(rt.object_header(image).meta);
         assert_eq!((tag, display), (TAG_RESUME, DISPLAY_RESUME));
         let frames = rt.image_frames(image);
@@ -3314,7 +3318,7 @@ mod tests {
         // Perform already stored the outer handler in the caller's HANDLERS word.
         rt.write(top, FRAME_SPILL_HANDLERS, base as u64);
         rt.resume(image).unwrap();
-        assert_eq!(rt.object_bytes(image), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(image) }, before.as_slice());
         let new_top = rt.sp();
         assert_ne!(new_top, top);
         assert_eq!(rt.read(new_top, FRAME_RETURN_ADDRESS), 0xA11);
@@ -3335,7 +3339,7 @@ mod tests {
         rt.push_frame(9).unwrap();
         rt.safepoint_spill(0x1, 0x5151, 0x2, MAP_EMPTY, 0);
         let delay = rt.alloc_delay(0xC0DE, 0xE11E);
-        let before = rt.object_bytes(delay).to_vec();
+        let before = unsafe { rt.object_bytes(delay) }.to_vec();
         assert_eq!(before.len(), 32);
         assert_eq!(unpack_meta(rt.object_header(delay).meta).0, TAG_DELAY);
         rt.enter_delay(delay);
@@ -3343,7 +3347,7 @@ mod tests {
         assert_eq!(rt.read(rt.sp(), FRAME_SPILL_ENV), 0xE11E);
         assert_eq!(rt.read(rt.sp(), FRAME_SPILL_VAL), rt.unit() as u64);
         assert_eq!(rt.entered_code(), 0xC0DE);
-        assert_eq!(rt.object_bytes(delay), before.as_slice());
+        assert_eq!(unsafe { rt.object_bytes(delay) }, before.as_slice());
         assert_eq!(rt.read(delay, 16), 0xC0DE);
         assert_eq!(rt.read(delay, 24), 0xE11E);
     }

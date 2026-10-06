@@ -5328,7 +5328,6 @@ fn check_expr_unapplied(
             let sum = env.uni.fresh_var();
             env.pending_injections.push(crate::env::PendingInjection {
                 span: e.span,
-                value_span: value.span,
                 index: *index,
                 payload,
                 sum: sum.clone(),

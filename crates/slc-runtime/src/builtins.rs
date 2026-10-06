@@ -573,7 +573,9 @@ mod tests {
         let narrow = apply_builtin("__to_i8", &[Value::Int(200)], &mut buf);
         assert!(matches!(narrow, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("i8")));
         let negative = apply_builtin("__to_u64", &[Value::Int(-1)], &mut buf);
-        assert!(matches!(negative, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("u64")));
+        assert!(
+            matches!(negative, Err(BuiltinError::ArithmeticOverflow(ref m)) if m.contains("u64"))
+        );
     }
 
     #[test]
