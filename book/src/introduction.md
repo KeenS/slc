@@ -7,9 +7,10 @@ The command-line tool is `slc`.
 
 There is one grammar. A type denotes a value or a continuation, and the arrow
 says which way a function faces, so the same program can be written
-value-first or continuation-first. The early chapters write functions that
-return values. [Data](tutorial/data.md) gives values and continuations the
-same shapes: `data` and `form`, `enum` and `menu`.
+value-first or continuation-first. [Values](tutorial/values.md) and
+[Continuations](tutorial/continuations.md) are those two halves.
+[Data](tutorial/data.md) gives them the same shapes: `data` and `form`,
+`enum` and `menu`.
 
 This book is the tutorial and the reference for the language implemented in
 the [SLC repository](https://github.com/KeenS/slc). The specification is
@@ -57,6 +58,6 @@ continuation of the shape, and each arm sends the area to `out`.
 `<` opens a chain with a value, and `|` carries that value from left to
 right. A chain reads each stage in the orientation that stage was written
 with, so both functions sit in the same pipeline. [Both
-arrows](tutorial/continuations.md) runs this program.
+arrows](tutorial/arrows.md) runs this program.
 The whole dual example in the repository is
 [`examples/duality/two_styles.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/two_styles.sl).

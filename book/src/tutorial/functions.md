@@ -87,3 +87,6 @@ func greet(name: String) -> (,) / {IO} {
 
 A bare `->` is an empty effect row: the function performs nothing. The
 [effects](effects.md) chapter is where a row is handled.
+
+[Continuations](continuations.md) writes the other half of a cut: the
+continuation a value is sent to.

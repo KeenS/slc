@@ -1480,6 +1480,8 @@ pub static slc_rt_bool_true: AtomicU64 = AtomicU64::new(0);
 pub static slc_rt_bool_false: AtomicU64 = AtomicU64::new(0);
 
 // Weak so a linked object can replace it. Rust tests never call `slc_rt_start`.
+// The body is x86-64 System V. Other hosts still build the runtime library.
+#[cfg(target_arch = "x86_64")]
 std::arch::global_asm!(
     // `.globl` would promote the weak binding to STB_GLOBAL, which the assembler rejects.
     ".weak slc_program_entry",
@@ -1489,6 +1491,7 @@ std::arch::global_asm!(
     "ret",
 );
 
+#[cfg(target_arch = "x86_64")]
 unsafe extern "C" {
     fn slc_program_entry(sp: u64) -> u64;
 }
@@ -1555,7 +1558,9 @@ pub unsafe extern "C" fn slc_rt_start(
         rt.publish_counters();
         rt.sp() as u64
     });
+    #[cfg(target_arch = "x86_64")]
     let status: u64;
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         // A `clobber_abi` asm is a call site, so `%rsp` is 0 (mod 16) before `call`.
         std::arch::asm!(
@@ -1569,6 +1574,12 @@ pub unsafe extern "C" fn slc_rt_start(
             clobber_abi("sysv64"),
         );
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    let status = {
+        let _ = frame;
+        eprintln!("error: the native runtime is x86-64");
+        1
+    };
     status
 }
 
@@ -1577,6 +1588,7 @@ pub unsafe extern "C" fn slc_rt_start(
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_fail() {
     eprintln!("error: evaluation diverged (fuel exhausted)");
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::asm!(
             "mov rsp, qword ptr [rip + {csp}]",
@@ -1586,6 +1598,8 @@ pub extern "C" fn slc_rt_fail() {
             options(noreturn),
         );
     }
+    #[cfg(not(target_arch = "x86_64"))]
+    std::process::abort();
 }
 
 fn load_map_section(start: *const u8, stop: *const u8) {
@@ -1934,6 +1948,7 @@ fn label_named(id: u64) -> String {
 }
 
 fn bail(status: i32) -> ! {
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::asm!(
             "mov rsp, qword ptr [rip + {csp}]",
@@ -1943,6 +1958,11 @@ fn bail(status: i32) -> ! {
             in("edi") status,
             options(noreturn),
         );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = status;
+        std::process::abort();
     }
 }
 
@@ -2873,6 +2893,7 @@ pub unsafe extern "C" fn slc_rt_gc_stats(sp: u64, out: *mut GcStats) {
 mod tests {
     use super::*;
 
+    #[cfg(target_arch = "x86_64")]
     std::arch::global_asm!(
         ".globl slc_c_sp_probe",
         ".type slc_c_sp_probe, @function",
@@ -2883,10 +2904,12 @@ mod tests {
         csp = sym super::slc_c_sp,
     );
 
+    #[cfg(target_arch = "x86_64")]
     unsafe extern "C" {
         fn slc_c_sp_probe();
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn c_sp_points_at_the_return_address() {
         let status: u64;

@@ -1,7 +1,8 @@
 # Where to go next
 
-The tutorial covered the surface a program uses every day: chains, data,
-both arrows, commands, traits, effects, sections, the library, and demand.
+The tutorial covered the surface a program uses every day: chains, values,
+continuations, data, both arrows, commands, traits, effects, sections, the
+library, and demand.
 The reference half of this book is the lookup for the same language. The
 specification remains
 [`DESIGN.md`](https://github.com/KeenS/slc/blob/master/DESIGN.md).

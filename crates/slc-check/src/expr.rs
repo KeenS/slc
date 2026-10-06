@@ -2156,7 +2156,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             record_rigid_signs(type_param_signs, &rigid_vars, env);
             let rigid = |ty: &TypeExpr| resolve_rigid(ty, &rigid_vars, enums);
             for p in params {
-                match p.ty.as_ref().and_then(&rigid) {
+                match p.ty.as_ref().and_then(rigid) {
                     Some(ty) => {
                         let ty = normalize(&ty, env);
                         screen_projections(&ty, d.span, env, diags);
@@ -2168,7 +2168,7 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             // A negative function produces the consumer of what follows its
             // `<-`, so that is what a `mu` in its body consumes.
             let outer = env.consumed.take();
-            let declared = return_type.as_ref().and_then(&rigid).map(|ty| normalize(&ty, env));
+            let declared = return_type.as_ref().and_then(rigid).map(|ty| normalize(&ty, env));
             if let Some(written) = return_type
                 && declared.is_none()
             {

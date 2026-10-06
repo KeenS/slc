@@ -42,11 +42,11 @@ the statement, and the block continues. The chain has no closing `>`, so it
 is an application: `println` returns the unit value `(,)` after writing the
 line.
 
-`<0 | exit>` is a cut. The `>` delivers `0` to the consumer `exit` and does
-not come back. A cut is how a command ends.
+`<0 | exit>` is a cut. The `>` delivers `0` to the continuation `exit` and
+does not come back. A cut is how a command ends.
 
 A chain says what it is at both ends. `<` makes it start from a value, `>`
-makes it deliver to a consumer, and the two together are a cut. `"Hello,
+makes it deliver to a continuation, and the two together are a cut. `"Hello,
 SLC!" | println` is refused, because a string is a value and a chain without
 `<` starts with a function. `<0` alone is refused, because the value has
 nowhere to go.

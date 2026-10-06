@@ -1,65 +1,90 @@
-# Both arrows
+# Continuations
 
-`->` and `<-` are the two directions a function can face. They are different
-types. A chain reads each stage in the direction that stage was written, so
-both sit in the same pipeline, left to right.
+A continuation is what a value is sent to. `exit` in
+[the first program](first-program.md) is one: the runtime supplies it, and
+the integer sent to it is the process status. This program builds
+continuations and sends values to them.
 
 ```sl
-{{#include ../../examples/two-styles.sl}}
+{{#include ../../examples/continuations.sl}}
 ```
 
 ```text
-75
-42
+5
+Hello, SLC
+SLC
+13
+shown
 ```
 
-## `->` and `<-`
+## Naming one
+
+`mu i64 { out <= … }` names the continuation around that expression `out`.
+The body sends an `i64` to `out`. The value `out` receives is the result of
+the `mu`.
 
 ```sl
-func area(s: Shape) -> i64 {
-    of s {
-        Circle(r) => <(3, r) | mul | x => (x, r) | mul,
-        Rect(w, h) => <(w, h) | mul,
-    }
-}
+<mu i64 { out <= <(2, 3) | add | out> } | println
+```
 
-func area_of(out: i64) <- Shape {
-    mu Shape {
-        Circle(r) => <(3, r) | mul | x => (x, r) | mul | out>,
-        Rect(w, h) => <(w, h) | mul | out>,
+`<(2, 3) | add` is `5`. The cut `<5 | out>` delivers it. `println` receives
+that `5`. `mu String { … }` is the same shape for a string, and the second
+line prints `Hello, SLC`.
+
+The arm arrow is `<=`. A request for this surrounding continuation arrives
+in the arm, and `out` is the continuation the request carries.
+
+## A continuation parameter
+
+`out: -String` is a continuation of a `String`. The type under the minus is
+what the continuation accepts. `emit` sends its text there:
+
+```sl
+func emit(text: String, out: -String) -> (;) {
+    <text | out>
+}
+```
+
+The body is a cut, so it has type `(;)`. It does not come back to `emit`.
+The caller names where the text goes:
+
+```sl
+<mu String { out <= <("SLC", out) | emit> } | println
+```
+
+`out` is the continuation of that `mu String`. `emit` sends `"SLC"` to it,
+the `mu` results in `"SLC"`, and `println` prints it.
+
+`-String` and `String -> (;)` are the same type. The positive spelling
+`out: String` on a `<-` function is the same continuation again: the type
+written after the name is what it accepts. `sum_into` is written that way.
+
+## A continuation of several values
+
+A tuple arrives whole, so a continuation of a tuple has one arm and binds
+every component:
+
+```sl
+func sum_into(out: i64) <- (i64, i64) {
+    mu (i64, i64) {
+        (a, b) => <(a, b) | add | out>,
     }
 }
 ```
 
-`area` is given a `Shape` and returns an `i64`. `of s` takes that value
-apart, and the arm's value is the area.
+`out: i64` is the continuation of the sum. `<- (i64, i64)` is the
+continuation this function returns, a continuation of the pair. The arm
+arrow is `=>` because the pair arrives as a value. The arm sends the sum
+with a cut. `<(6, 7) | sum_into` sends the pair in, and the sum `13` reaches
+`println`.
 
-`area_of` is given a continuation of an `i64` and returns a continuation of
-a `Shape`. `out: i64` names the continuation it is given: the positive type
-is what that continuation accepts. `<- Shape` is the continuation this
-function returns. `mu Shape` builds it, one arm for each variant. A `Shape`
-value arrives in the arm, so the arrow is `=>`, the same arrow `mu Total`
-uses when [Data](data.md) builds a form. Each arm sends the area to `out`.
+[Data](data.md) names these shapes. A `form` is a continuation that wants
+every field, the way `sum_into` wants both components. A `menu` answers one
+item the continuation picks.
 
-`<Shape::Circle(5) | area | println` sends the circle through `area`.
-`<Shape::Rect(6, 7) | area_of | println` sends the rectangle through
-`area_of`. In both chains the area reaches `println`.
+## Writing one with `fn`
 
-The arrow on the function is the direction it faces. A function written with
-`->` returns a value, and that value may be a form or a menu.
-[Data](data.md) builds both with `mu`: `total` returns a `Total`, and
-`config` returns a `Config`. A function written with `->` may also be given
-a request and take it apart: `reroute` is given a `-Config`.
-
-## The surrounding continuation
-
-`mu i64 { out <= <42 | out> }` names the continuation around the expression
-`out`, and the expression's result is the `i64` that body sends to it. The
-[early cut](data.md) in `first_even` is this form: the caller names `out`,
-and either the function cuts to it or the caller does.
-
-A function whose body is a cut is a continuation too. `-String` and `String
--> (;)` are the same type.
+A function whose body is a cut is a continuation. `-String` is its type.
 
 ```sl
 fn(message: String) -> (;) {
@@ -68,13 +93,43 @@ fn(message: String) -> (;) {
 }
 ```
 
-The effect row belongs on that continuation when using it performs effects.
-Building the function performs nothing. The cut performs them when the
-continuation runs.
+`println` runs, then the cut sends `0` to `exit`. The call closes with `>`,
+because the function is the continuation the string is delivered to:
 
-[`examples/duality/two_styles.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/two_styles.sl)
-writes a whole program both ways.
-[`examples/duality/polarity.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/polarity.sl)
-is each of the four places a polarity can be written.
-[`examples/duality/connectives.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/connectives.sl)
-is `data`, `enum`, `menu`, and `form` in one program.
+```sl
+<"shown" | fn(message: String) -> (;) {
+    <message | println;
+    <0 | exit>
+}>
+```
+
+That line prints `shown` and ends the program. `println` and `exit` perform
+`IO` when the string is delivered. `main` declares that row.
+
+## Leaving early
+
+An arm that cuts to a continuation has type `(;)`. Another arm can return
+`(,)`, and the statements after the `of` still run on that path. The cut
+does not come back.
+
+```sl
+{{#include ../../examples/early.sl}}
+```
+
+```text
+2
+0
+```
+
+`first_even` walks a list. The even arm sends the number to `found` and
+leaves. The odd arm returns `(,)`. The caller names the surrounding
+continuation `out`. On `[1, 2, 3]` the cut carries `2`, so the `0` after
+the call is not sent. On `[1, 3]` the function returns and the caller sends
+`0`.
+
+The same early cut, with the rest of the work written after the `of`, is how
+[`examples/programs/json_parser.sl`](https://github.com/KeenS/slc/blob/master/examples/programs/json_parser.sl)
+is written.
+
+[Both arrows](arrows.md) writes one function with `->` and the same function
+with `<-`.
