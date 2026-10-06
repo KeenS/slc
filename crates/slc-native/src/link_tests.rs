@@ -361,6 +361,43 @@ fn tail_call_is_not_call_slc() {
 }
 
 #[test]
+fn a_generic_proc_calls_the_specialized_helper() {
+    let compiled = pipeline(
+        "enum Flag { Yes, No }
+         func leaf<+T>(x: T) -> T { x }
+         func wrap<+T>(x: T) -> T { <x | leaf }
+         proc offer<+T>(x: T) | (out: -T) { <x | leaf | out> }
+         func main() -> i64 {
+             let f = <Flag::Yes | wrap;
+             of f {
+                 Yes => mu i64 { out <= <41 | offer | out> },
+                 No => 0,
+             }
+         }",
+    );
+    assert!(compiled.module.functions.iter().any(|func| func.symbol == "leaf$i64"));
+    assert!(compiled.module.functions.iter().any(|func| func.symbol == "leaf$Flag"));
+    assert!(!compiled.module.functions.iter().any(|func| func.symbol == "leaf"));
+    assert!(compiled.module.functions.iter().any(|func| func.symbol.starts_with("offer$")));
+    let callers: Vec<String> = compiled
+        .module
+        .functions
+        .iter()
+        .filter(|func| {
+            flat(func).iter().any(|inst| {
+                matches!(inst, Inst::CallSlc { symbol, .. } | Inst::Tail { symbol, .. } if symbol == "leaf$i64")
+            })
+        })
+        .map(|func| func.symbol.clone())
+        .collect();
+    assert!(
+        callers.iter().any(|symbol| symbol.starts_with("offer$")),
+        "leaf$i64 is called from {callers:?}"
+    );
+    assert_eq!(link_run(&compiled.object).0, 41);
+}
+
+#[test]
 fn generic_identity_is_two_copies() {
     let compiled = pipeline(
         "enum Flag { Yes, No }

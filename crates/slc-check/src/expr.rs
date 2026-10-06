@@ -314,6 +314,11 @@ fn push_pending_inst(
     if signature.builtin || signature.signs.is_empty() {
         return;
     }
+    // An effect operation is performed by name. A copy such as `echo$i64` is
+    // not a function the backend emits, and the handler answers `echo`.
+    if env.declarations.is_some_and(|decls| decls.op_effects.contains_key(name)) {
+        return;
+    }
     env.pending_insts.push(crate::env::PendingInst {
         span,
         decl: name.to_string(),
@@ -2271,6 +2276,13 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     .push(Diagnostic { message: "a `command` returns `(;)`".into(), span: d.span });
             }
             env.push();
+            // A value-generic command is copied per instantiation, so uses in its
+            // body stay open until each copy supplies its parameters. A command
+            // with no signed parameters is one body: giving it an owner would
+            // record every local, and a later `let` of the same name would keep
+            // the first binding's type.
+            let instantiates = !type_param_signs.is_empty() || !bounds.is_empty();
+            let outer_enclosing = instantiates.then(|| env.enclosing.replace(name.clone()));
             let row_keys = row_parameter_keys(type_params, type_param_signs, env);
             let mut rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
@@ -2343,6 +2355,18 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                 });
             }
             close_declaration_rows(env, body_row, declared, rows_from, name, d.span);
+            if instantiates {
+                let context = env
+                    .rigid_vars
+                    .iter()
+                    .filter_map(|(param, ty)| match ty {
+                        Type::Var(index) => Some((param.clone(), *index)),
+                        _ => None,
+                    })
+                    .collect();
+                env.fn_context.insert(name.clone(), context);
+                env.enclosing = outer_enclosing.flatten();
+            }
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
@@ -5551,6 +5575,10 @@ fn check_expr_unapplied(
                     // A bounded command takes its dictionaries first, as a
                     // bounded function does.
                     record_signs(&signature, &seen, name, stages[index].span, env);
+                    // Naming the command, while the stages were typed, instantiated
+                    // it before these arguments solved its parameters. This push
+                    // replaces that one: `record_specializations` keeps the last.
+                    push_pending_inst(env, stages[index].span, name, &signature, &seen);
                     if !signature.bounds.is_empty() {
                         env.pending_dicts.push(crate::env::PendingDicts {
                             span: stages[index].span,

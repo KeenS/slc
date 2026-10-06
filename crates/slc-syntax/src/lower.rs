@@ -1344,6 +1344,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
         *cell.borrow_mut() = constants;
     });
     let operations = effect_operations(p);
+    // Templates a copy replaced, kept only when some other body still calls them.
+    let mut held_templates = Vec::new();
     for d in &p.decls {
         match &d.kind {
             Decl::Fn {
@@ -1395,27 +1397,7 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                     // the value arguments.
                     Ok(bind_dict_params(bounds, term))
                 };
-                let copies: Vec<String> = SPECS.with(|cell| {
-                    cell.borrow()
-                        .iter()
-                        .filter(|spec| spec.decl == *name && spec.symbol != *name)
-                        .map(|spec| spec.symbol.clone())
-                        .collect()
-                });
-                if copies.is_empty() {
-                    out.push((name.clone(), lower_body(HashMap::new())?));
-                } else {
-                    for symbol in copies {
-                        let extra = SPECS.with(|cell| {
-                            cell.borrow()
-                                .iter()
-                                .find(|spec| spec.symbol == symbol)
-                                .map(|spec| spec.uses.clone())
-                                .unwrap_or_default()
-                        });
-                        out.push((symbol, lower_body(extra)?));
-                    }
-                }
+                emit_specialized(name, lower_body, &mut out, &mut held_templates)?;
                 INST_USES.with(|cell| *cell.borrow_mut() = saved_uses);
             }
             Decl::Command {
@@ -1430,31 +1412,44 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                 ..
             } => {
                 // mu f(x: +A) | (k: -B) { E } → λx. μk. E
+                // A generic command is one copy per solved instantiation, like a
+                // function. The template stays only when another body still calls it.
                 let continuations: Vec<String> =
                     continuation_params.iter().map(continuation_name).collect();
-                let mut term = lower_expr(body, &continuations)?;
-                term = enter_poly(
-                    type_params,
-                    type_param_signs,
-                    effects,
-                    value_params
-                        .iter()
-                        .chain(continuation_params.iter())
-                        .filter_map(|param| param.ty.as_ref()),
-                    &operations,
-                    term,
-                );
-                // Two groups, two binders: the product of values, then the
-                // menu of exits, each destructured when it holds several.
-                term = bind_group(continuation_params, "row", term)?;
-                term = bind_group(value_params, "values", term)?;
-                // The value group is a group even when it is empty: a caller
-                // writes `(,) | retries | …`, so the unit still arrives.
-                if value_params.is_empty() {
-                    term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
-                }
-                term = bind_dict_params(bounds, term);
-                out.push((name.clone(), term));
+                let saved_uses = INST_USES.with(|cell| cell.borrow().clone());
+                let lower_body = |extra: HashMap<Span, String>| -> Result<Term, LowerError> {
+                    INST_USES.with(|cell| {
+                        let mut map = saved_uses.clone();
+                        map.extend(extra);
+                        *cell.borrow_mut() = map;
+                    });
+                    let mut term = lower_expr(body, &continuations)?;
+                    term = enter_poly(
+                        type_params,
+                        type_param_signs,
+                        effects,
+                        value_params
+                            .iter()
+                            .chain(continuation_params.iter())
+                            .filter_map(|param| param.ty.as_ref()),
+                        &operations,
+                        term,
+                    );
+                    // Two groups, two binders: the product of values, then the
+                    // menu of exits, each destructured when it holds several.
+                    term = bind_group(continuation_params, "row", term)?;
+                    term = bind_group(value_params, "values", term)?;
+                    // The value group is a group even when it is empty: a caller
+                    // writes `(,) | retries | …`, so the unit still arrives.
+                    if value_params.is_empty() {
+                        term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
+                    }
+                    // A bounded command takes its dictionaries outermost, before
+                    // the value arguments.
+                    Ok(bind_dict_params(bounds, term))
+                };
+                emit_specialized(name, lower_body, &mut out, &mut held_templates)?;
+                INST_USES.with(|cell| *cell.borrow_mut() = saved_uses);
             }
             Decl::Const { name, ty: _, value, .. } => {
                 out.push((name.clone(), lower_expr(value, &[])?));
@@ -1472,7 +1467,69 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
             }
         }
     }
+    retain_referenced_templates(&mut out, held_templates);
     Ok(out)
+}
+
+/// One copy per solved instantiation. The template is held back: a generic
+/// impl method is still one body for every type, and that body names the
+/// helper's template. `retain_referenced_templates` puts the template back
+/// when such a body survived. A copy's own callers name the copy, whose
+/// stack map knows which words are pointers.
+fn emit_specialized(
+    name: &str,
+    mut lower_body: impl FnMut(HashMap<Span, String>) -> Result<Term, LowerError>,
+    out: &mut Vec<(String, Term)>,
+    held: &mut Vec<(String, Term)>,
+) -> Result<(), LowerError> {
+    let copies: Vec<String> = SPECS.with(|cell| {
+        cell.borrow()
+            .iter()
+            .filter(|spec| spec.decl == name && spec.symbol != name)
+            .map(|spec| spec.symbol.clone())
+            .collect()
+    });
+    if copies.is_empty() {
+        out.push((name.to_string(), lower_body(HashMap::new())?));
+        return Ok(());
+    }
+    held.push((name.to_string(), lower_body(HashMap::new())?));
+    for symbol in copies {
+        let extra = SPECS.with(|cell| {
+            cell.borrow()
+                .iter()
+                .find(|spec| spec.symbol == symbol)
+                .map(|spec| spec.uses.clone())
+                .unwrap_or_default()
+        });
+        out.push((symbol, lower_body(extra)?));
+    }
+    Ok(())
+}
+
+/// Put back a held template when a body already chosen calls it, and repeat:
+/// that template may itself call another held template.
+fn retain_referenced_templates(out: &mut Vec<(String, Term)>, mut held: Vec<(String, Term)>) {
+    loop {
+        let mut referenced = std::collections::HashSet::new();
+        for (_, term) in out.iter() {
+            referenced.extend(slc_core::substitution::free_vars_term(term));
+        }
+        let mut kept = Vec::new();
+        let mut progress = false;
+        for (name, term) in held {
+            if referenced.contains(&name) {
+                out.push((name, term));
+                progress = true;
+            } else {
+                kept.push((name, term));
+            }
+        }
+        if !progress {
+            break;
+        }
+        held = kept;
+    }
 }
 
 /// The μ binder that wraps a cut. The binder is never referenced — a command
