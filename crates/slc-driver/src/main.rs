@@ -169,6 +169,7 @@ fn main() -> ExitCode {
 
     let usage = || {
         eprintln!("usage: slc run [--fuel N] [--interpret] <file.sl> [arg]…");
+        eprintln!("       slc compile [-o <file>] [--fuel N] <file.sl>");
         eprintln!("       slc check <file.sl>...");
         eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
@@ -182,6 +183,12 @@ fn main() -> ExitCode {
     }
     if let Some(fmt_at) = args.iter().position(|a| a == "fmt") {
         return match format_files(&args[fmt_at + 1..]) {
+            Some(code) => code,
+            None => usage(),
+        };
+    }
+    if let Some(compile_at) = args.iter().position(|a| a == "compile") {
+        return match compile_command(&args[compile_at + 1..]) {
             Some(code) => code,
             None => usage(),
         };
@@ -640,7 +647,13 @@ fn compile_object(path: &std::path::Path, fuel: usize) -> Result<Vec<u8>, String
     .map(|compiled| compiled.object)
 }
 
-const ELF_DRIVER: &str = r#"
+/// C `main` for a linked program. `setup` declares `uint64_t fuel` and stores
+/// the program's arguments. `slc run` reads fuel from `argv[1]` when that
+/// word is present. `slc compile` bakes the fuel word and leaves every
+/// argument for the program.
+fn elf_driver(setup: &str) -> String {
+    format!(
+        r#"
 #include <stdint.h>
 #include <stdlib.h>
 extern void slc_rt_set_args(int argc, char **argv);
@@ -658,14 +671,8 @@ extern char __start_slc_text, __stop_slc_text;
 extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
 extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
 extern char __start_slc_labels, __stop_slc_labels;
-int main(int argc, char **argv) {
-    uint64_t fuel = ~(uint64_t)0;
-    int from = 1;
-    if (argc > 1) {
-        fuel = strtoull(argv[1], 0, 10);
-        from = 2;
-    }
-    slc_rt_set_args(argc - from, argv + from);
+int main(int argc, char **argv) {{
+    {setup}
     uint64_t status = slc_rt_start(
         fuel,
         &__start_slc_safepoints, &__stop_slc_safepoints,
@@ -677,8 +684,30 @@ int main(int argc, char **argv) {
     int32_t code = (int32_t)status;
     if (code < 0 || code > 255) return 1;
     return (int)code;
+}}
+"#
+    )
 }
-"#;
+
+fn run_driver() -> String {
+    elf_driver(
+        "uint64_t fuel = ~(uint64_t)0;\n    \
+         int from = 1;\n    \
+         if (argc > 1) {\n        \
+             fuel = strtoull(argv[1], 0, 10);\n        \
+             from = 2;\n    \
+         }\n    \
+         slc_rt_set_args(argc - from, argv + from);",
+    )
+}
+
+fn compile_driver(fuel: Option<usize>) -> String {
+    let fuel_word = match fuel {
+        Some(n) => format!("{n}ull"),
+        None => "~(uint64_t)0".to_string(),
+    };
+    elf_driver(&format!("uint64_t fuel = {fuel_word};\n    slc_rt_set_args(argc - 1, argv + 1);"))
+}
 
 fn runtime_archive() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -730,6 +759,129 @@ fn native_libs() -> Vec<String> {
     line.split_whitespace().map(str::to_string).collect()
 }
 
+/// `slc compile`: one source, one executable. Flags may sit on either side of
+/// the file. `-o` names the executable; without it, the name is the source
+/// stem in the current directory. `--fuel N` is that executable's step bound.
+/// `None` is a usage error.
+fn compile_command(args: &[String]) -> Option<ExitCode> {
+    let mut fuel = None;
+    let mut output = None;
+    let mut file = None;
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--fuel" {
+            fuel = Some(rest.next().and_then(|n| n.parse().ok())?);
+        } else if arg == "-o" || arg == "--output" {
+            let path = PathBuf::from(rest.next()?);
+            if path.as_os_str().is_empty() {
+                return None;
+            }
+            output = Some(path);
+        } else if arg.starts_with('-') || file.is_some() {
+            return None;
+        } else {
+            file = Some(PathBuf::from(arg));
+        }
+    }
+    let file = file?;
+    let output = output.unwrap_or_else(|| PathBuf::from(file.file_stem().unwrap_or_default()));
+    if output.as_os_str().is_empty() {
+        return None;
+    }
+    Some(compile_to(&file, &output, fuel))
+}
+
+fn compile_to(source: &std::path::Path, output: &std::path::Path, fuel: Option<usize>) -> ExitCode {
+    if same_file(source, output) {
+        eprintln!("error: the output path is the source file; pass `-o` with another name");
+        return ExitCode::FAILURE;
+    }
+    let source = source.to_path_buf();
+    let fold_fuel = fuel.unwrap_or(usize::MAX);
+    let object = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || compile_object(&source, fold_fuel))
+        .expect("failed to start the compiler")
+        .join()
+        .unwrap_or_else(|_| Err("compilation ran out of stack".into()));
+    let object = match object {
+        Ok(object) => object,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match link_executable(&object, output, &compile_driver(fuel)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            report_link_error(&error);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+/// Link `object` with the runtime. The C text is the program's `main`.
+/// Scratch files go away when this returns; `exe` is the caller's path.
+fn link_executable(object: &[u8], exe: &std::path::Path, driver: &str) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!(
+        "slc-link-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    let _cleanup = LinkScratch(dir.clone());
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("cannot create {}: {error}", dir.display()))?;
+    let object_path = dir.join("p.o");
+    let driver_path = dir.join("main.c");
+    std::fs::write(&object_path, object)
+        .and_then(|_| std::fs::write(&driver_path, driver))
+        .map_err(|error| format!("cannot write the object: {error}"))?;
+    let mut cmd = Command::new("cc");
+    cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
+        .arg(exe)
+        .arg(&driver_path)
+        .arg(&object_path)
+        .arg(runtime_archive());
+    cmd.args(native_libs());
+    let linked = cmd.output().map_err(|error| format!("cannot run cc: {error}"))?;
+    if !linked.status.success() {
+        return Err(format!(
+            "{}{}",
+            String::from_utf8_lossy(&linked.stderr),
+            String::from_utf8_lossy(&linked.stdout)
+        ));
+    }
+    Ok(())
+}
+
+/// The object and the C driver. Removed when the link returns. The executable
+/// itself is a path outside this directory.
+struct LinkScratch(PathBuf);
+
+impl Drop for LinkScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn report_link_error(error: &str) {
+    if error.starts_with("cannot ") {
+        eprintln!("error: {error}");
+    } else {
+        eprint!("{error}");
+        if !error.ends_with('\n') {
+            eprintln!();
+        }
+    }
+}
+
 fn link_and_exec(object: &[u8], fuel: Option<usize>, program_args: &[String]) -> ! {
     let dir = std::env::temp_dir().join(format!(
         "slc-run-{}-{}",
@@ -737,32 +889,12 @@ fn link_and_exec(object: &[u8], fuel: Option<usize>, program_args: &[String]) ->
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
     if let Err(error) = std::fs::create_dir_all(&dir) {
-        eprintln!("error: cannot create {dir:?}: {error}");
+        eprintln!("error: cannot create {}: {error}", dir.display());
         std::process::exit(1);
     }
-    let object_path = dir.join("p.o");
-    let driver_path = dir.join("main.c");
     let exe = dir.join("p");
-    if let Err(error) =
-        std::fs::write(&object_path, object).and_then(|_| std::fs::write(&driver_path, ELF_DRIVER))
-    {
-        eprintln!("error: cannot write the object: {error}");
-        std::process::exit(1);
-    }
-    let mut cmd = Command::new("cc");
-    cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
-        .arg(&exe)
-        .arg(&driver_path)
-        .arg(&object_path)
-        .arg(runtime_archive());
-    cmd.args(native_libs());
-    let linked = cmd.output().unwrap_or_else(|error| {
-        eprintln!("error: cannot run cc: {error}");
-        std::process::exit(1);
-    });
-    if !linked.status.success() {
-        eprint!("{}", String::from_utf8_lossy(&linked.stderr));
-        eprint!("{}", String::from_utf8_lossy(&linked.stdout));
+    if let Err(error) = link_executable(object, &exe, &run_driver()) {
+        report_link_error(&error);
         std::process::exit(1);
     }
     let mut run = Command::new(&exe);

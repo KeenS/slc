@@ -3,6 +3,7 @@
 ```text
 slc --version
 slc run [--fuel N] [--interpret] <file.sl> [arg]…
+slc compile [-o <file>] [--fuel N] <file.sl>
 slc check <file.sl>…
 slc fmt [--check | --stdout] <file.sl>…
 ```
@@ -27,6 +28,28 @@ status when it fits in a byte. A status outside `0..=255` fails the process.
 A file with a `main` of the wrong shape is refused before it runs. The
 required shape is a root `proc` with no value parameters and one
 continuation, the status.
+
+## compile
+
+`slc compile` checks the file, links the native executable, and writes that
+file. It does not run the program.
+
+`-o` names the executable. `--output` is the same flag. With neither, the
+name is the source stem in the current directory, so
+`examples/basics/hello.sl` becomes `./hello`. The output path has to be a
+different file from the source.
+
+`--fuel N` is the executable's step bound, the same bound `slc run --fuel N`
+uses. With no `--fuel`, the executable is bounded by memory. Every argument
+of the executable is a program argument.
+
+```sh
+slc compile -o hello examples/basics/hello.sl
+./hello
+```
+
+A file with no `main`, or a `main` of the wrong shape, is refused and no
+executable is written.
 
 ## check
 

@@ -2715,6 +2715,119 @@ fn an_operation_performed_inside_a_reset_reaches_the_handler_outside_it() {
     assert_eq!(stdout, "42\n");
 }
 
+fn compile_scratch(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "slc_compile_{label}_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn slc_output(args: &[&str], dir: &std::path::Path) -> (String, String, bool) {
+    let out = Command::new(env!("CARGO_BIN_EXE_slc"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("failed to run slc");
+    (
+        String::from_utf8(out.stdout).unwrap(),
+        String::from_utf8(out.stderr).unwrap(),
+        out.status.success(),
+    )
+}
+
+#[test]
+fn compile_writes_an_executable_that_runs() {
+    let dir = compile_scratch("run");
+    std::fs::write(
+        dir.join("hello.sl"),
+        "proc main | (exit: -i32) / {IO} { <42 | println; <0 | exit> }",
+    )
+    .unwrap();
+    let (_, stderr, ok) = slc_output(&["compile", "-o", "hello", "hello.sl"], &dir);
+    assert!(ok, "stderr: {stderr}");
+    let out = Command::new(dir.join("hello")).output().expect("failed to run the executable");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "42\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compile_default_name_is_the_source_stem() {
+    let dir = compile_scratch("stem");
+    std::fs::write(
+        dir.join("greet.sl"),
+        "proc main | (exit: -i32) / {IO} { <\"hi\" | println; <0 | exit> }",
+    )
+    .unwrap();
+    let (_, stderr, ok) = slc_output(&["compile", "greet.sl"], &dir);
+    assert!(ok, "stderr: {stderr}");
+    let out = Command::new(dir.join("greet")).output().expect("failed to run the executable");
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "hi\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compile_passes_every_argument_to_the_program() {
+    let dir = compile_scratch("args");
+    std::fs::write(dir.join("args.sl"), ARGUMENTS).unwrap();
+    let (_, stderr, ok) = slc_output(&["compile", "args.sl", "-o", "args-bin"], &dir);
+    assert!(ok, "stderr: {stderr}");
+    let out = Command::new(dir.join("args-bin")).args(["one", "two"]).output().unwrap();
+    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), "[one, two]\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compile_bakes_a_fuel_bound() {
+    let dir = compile_scratch("fuel");
+    std::fs::write(dir.join("loop.sl"), LONG_LOOP).unwrap();
+    let (_, stderr, ok) = slc_output(&["compile", "--fuel", "0", "-o", "loop", "loop.sl"], &dir);
+    assert!(ok, "stderr: {stderr}");
+    let out = Command::new(dir.join("loop")).output().unwrap();
+    assert!(!out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("evaluation diverged (fuel exhausted)"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compile_refuses_a_program_with_no_main_and_writes_nothing() {
+    let dir = compile_scratch("nomain");
+    std::fs::write(dir.join("lib.sl"), "func helper() -> i32 { 0 }").unwrap();
+    let (_, stderr, ok) = slc_output(&["compile", "-o", "should-not-exist", "lib.sl"], &dir);
+    assert!(!ok);
+    assert!(stderr.contains("no `main`"), "stderr: {stderr}");
+    assert!(!dir.join("should-not-exist").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compile_usage_rejects_a_missing_file_and_a_bad_flag() {
+    let dir = compile_scratch("usage");
+    for args in [
+        &["compile"][..],
+        &["compile", "--fuel"][..],
+        &["compile", "-o"][..],
+        &["compile", "--nope", "a.sl"][..],
+    ] {
+        let (_, stderr, ok) = slc_output(args, &dir);
+        assert!(!ok, "{args:?}");
+        assert!(
+            stderr.contains("slc compile [-o <file>] [--fuel N] <file.sl>"),
+            "{args:?}: {stderr}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_resumption_whose_slice_crosses_a_reset_reinstates_it() {
     // `r` is captured under the `reset`, and `flip` is answered outside it,

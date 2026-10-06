@@ -1307,6 +1307,12 @@ raw `i32` to the process.
 - The link line is `cc` plus the object plus `libslc_rt.a` plus whatever
   `rustc --print native-static-libs` reports for that build. The driver does
   not hard-code `-lpthread`.
+- `slc compile [-o <file>] [--fuel N] <file.sl>` links that same executable
+  and writes it. `-o` names the file; with no `-o`, the name is the source
+  stem in the current directory. `--fuel N` is the fuel word baked into the
+  executable, and omitted fuel is `~(uint64_t)0`. Every argument of the
+  executable is a program argument. `slc run` is unchanged: its temporary
+  ELF still takes fuel as `argv[1]`.
 
 Until the last slice, the default remains the interpreter. The native crate
 can be tested without flipping the default.

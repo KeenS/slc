@@ -13,7 +13,7 @@ and the binary is then `target/release/slc`. Either one is what the rest of
 this book means by `slc`. `cargo run --` from the repository root runs the
 debug binary and passes the words after `--` to it.
 
-## Run, check, and format
+## Run, compile, check, and format
 
 ```sh
 slc run examples/basics/hello.sl
@@ -25,6 +25,16 @@ slc fmt examples/basics/hello.sl
 native executable. `slc run --interpret` evaluates the same program on the
 abstract machine. Flags belong before the file name. Words after the file are
 the program's own arguments.
+
+`slc compile` writes that executable and does not run it. `-o` names the
+file. With no `-o`, the name is the source stem in the current directory.
+`--fuel N` is the executable's step bound. The words passed to the executable
+are the program's arguments.
+
+```sh
+slc compile -o hello examples/basics/hello.sl
+./hello
+```
 
 `slc check` reports what `run` would report before evaluating, and evaluates
 nothing. A file with no `main` checks as a library. The command exits
