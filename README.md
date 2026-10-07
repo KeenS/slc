@@ -133,7 +133,8 @@ Flags are recognized only before the file.
 `slc compile [-o <file>] [--fuel N] <file.sl>` writes that executable and
 does not run it. With no `-o`, the file is the source stem in the current
 directory. `--fuel` is the executable's step bound. Every argument of the
-executable is a program argument.
+executable is a program argument. The executable is an x86-64 ELF. On any
+other host, `slc run` uses the interpreter and `slc compile` does not link.
 
 `slc check` reports what `run` would report before evaluating. A
 diagnostic names its phase — `parse`, `resolve`, `trait`, `type`,

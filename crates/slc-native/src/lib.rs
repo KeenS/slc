@@ -7,7 +7,7 @@
 mod encode;
 mod lower;
 
-#[cfg(test)]
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod link_tests;
 
 use std::collections::HashMap;

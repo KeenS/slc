@@ -223,7 +223,9 @@ fn main() -> ExitCode {
         return usage();
     };
 
-    if !interpret {
+    // The object is an x86-64 ELF. Apple ld rejects `-pie` and `--gc-sections`,
+    // and the image does not run on any other host. Those hosts use the interpreter.
+    if !interpret && host_links_elf() {
         run_elf(&file, fuel, &program_args);
     }
 
@@ -827,9 +829,18 @@ fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
     }
 }
 
+/// x86-64 Linux is the host whose `cc` accepts `-pie` and `--gc-sections` and
+/// whose kernel runs the ELF this compiler emits.
+fn host_links_elf() -> bool {
+    cfg!(all(target_arch = "x86_64", target_os = "linux"))
+}
+
 /// Link `object` with the runtime. The C text is the program's `main`.
 /// Scratch files go away when this returns; `exe` is the caller's path.
 fn link_executable(object: &[u8], exe: &std::path::Path, driver: &str) -> Result<(), String> {
+    if !host_links_elf() {
+        return Err("cannot link an x86-64 ELF on this host".into());
+    }
     let dir = std::env::temp_dir().join(format!(
         "slc-link-{}-{}",
         std::process::id(),

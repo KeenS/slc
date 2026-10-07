@@ -55,9 +55,10 @@ expression.
 `slc run` keeps one stack segment. A capture copies the frames down through
 the outermost prompt into a heap image. A prompt carries an id, and resume
 splices the image at the prompt with that id. A copy invoked under a prompt
-the image does not hold is an error. Fuel is the ELF's argument. With no
-argument the run is bounded by the segment; `--fuel N` passes `N`, and
-`N = 0` runs no SLC code. Exhausting the fuel is an error.
+the image does not hold is an error. On x86-64 Linux, fuel is the ELF's
+argument. With no argument the run is bounded by the segment; `--fuel N`
+passes `N`, and `N = 0` runs no SLC code. Exhausting the fuel is an error.
+On any other host the same command uses the interpreter.
 
 `--interpret` is the chunk machine: one flat stream of nodes, and a
 continuation held as persistent `Rc` conses. `--fuel N` caps that run at

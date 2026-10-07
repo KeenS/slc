@@ -2738,6 +2738,7 @@ fn slc_output(args: &[&str], dir: &std::path::Path) -> (String, String, bool) {
     )
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn compile_writes_an_executable_that_runs() {
     let dir = compile_scratch("run");
@@ -2754,6 +2755,7 @@ fn compile_writes_an_executable_that_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn compile_default_name_is_the_source_stem() {
     let dir = compile_scratch("stem");
@@ -2770,6 +2772,7 @@ fn compile_default_name_is_the_source_stem() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn compile_passes_every_argument_to_the_program() {
     let dir = compile_scratch("args");
@@ -2782,6 +2785,7 @@ fn compile_passes_every_argument_to_the_program() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 #[test]
 fn compile_bakes_a_fuel_bound() {
     let dir = compile_scratch("fuel");

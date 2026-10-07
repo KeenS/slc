@@ -17,9 +17,10 @@ the file. Everything after the file is a word the program reads through
 `args::arguments`, including a word that looks like a flag.
 
 With no `--interpret`, `slc` compiles to a native executable, links it with
-the runtime, and executes it. `--interpret` evaluates the checked program on
-the abstract machine. `book/check.sh` runs the tutorial programs with
-`--interpret`.
+the runtime, and executes it. That executable is an x86-64 ELF. On any other
+host, `slc run` uses the interpreter, and `slc compile` stops before linking.
+`--interpret` evaluates the checked program on the abstract machine.
+`book/check.sh` runs the tutorial programs with `--interpret`.
 
 `--fuel N` stops after N steps. Omitting `--fuel` bounds a run by memory.
 `--fuel 0` runs no SLC code. The integer sent to `exit` is the process

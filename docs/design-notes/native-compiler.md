@@ -1306,7 +1306,10 @@ raw `i32` to the process.
   already prints.
 - The link line is `cc` plus the object plus `libslc_rt.a` plus whatever
   `rustc --print native-static-libs` reports for that build. The driver does
-  not hard-code `-lpthread`.
+  not hard-code `-lpthread`. The flags are `-fPIE -pie -Wl,--gc-sections`,
+  which the GNU linker accepts. On a host other than x86-64 Linux the driver
+  does not call `cc`: `slc run` uses the interpreter, and `slc compile`
+  reports that it cannot link.
 - `slc compile [-o <file>] [--fuel N] <file.sl>` links that same executable
   and writes it. `-o` names the file; with no `-o`, the name is the source
   stem in the current directory. `--fuel N` is the fuel word baked into the

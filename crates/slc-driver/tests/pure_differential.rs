@@ -1,3 +1,4 @@
+#![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 //! ELF versus `slc run --interpret` on the pure examples. `slc run` links an ELF.
 
 use std::path::{Path, PathBuf};

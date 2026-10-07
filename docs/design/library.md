@@ -271,7 +271,8 @@ fatal type mismatch, as `index` is.
 [`examples/basics/clock.sl`](../../examples/basics/clock.sl) run them.
 `slc run [--fuel N] [--interpret] <file.sl> [arg]…` is the command; flags
 are recognized only before the file. `slc compile [-o <file>] [--fuel N] <file.sl>`
-writes the linked executable. Its arguments are those words, with no fuel
+writes the linked executable on x86-64 Linux and reports that it cannot link
+on any other host. The executable's arguments are those words, with no fuel
 word in front of them. `--fuel` on `compile` is the executable's bound.
 
 Two failures stay fatal rather than becoming outcomes: an out-of-range

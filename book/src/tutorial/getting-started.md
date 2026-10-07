@@ -22,9 +22,10 @@ slc fmt examples/basics/hello.sl
 ```
 
 `slc run` checks the program and then runs it. By default it compiles to a
-native executable. `slc run --interpret` evaluates the same program on the
-abstract machine. Flags belong before the file name. Words after the file are
-the program's own arguments.
+native x86-64 ELF. On any other host it uses the interpreter.
+`slc run --interpret` evaluates the same program on the abstract machine.
+Flags belong before the file name. Words after the file are the program's
+own arguments.
 
 `slc compile` writes that executable and does not run it. `-o` names the
 file. With no `-o`, the name is the source stem in the current directory.
