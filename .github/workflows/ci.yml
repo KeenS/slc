@@ -19,4 +19,3 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy -- -D warnings
       - run: cargo test
-      - run: cargo test -p slc-core --test bench -- --nocapture
