@@ -3743,7 +3743,7 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         let archive = target.join("release-abort/libslc_rt.a");
-        let nm = std::process::Command::new("nm").args(["-g"]).arg(&archive).output().unwrap();
+        let nm = nm_globals(&archive);
         assert!(nm.status.success(), "{}", String::from_utf8_lossy(&nm.stderr));
         let text = String::from_utf8_lossy(&nm.stdout);
         for name in [
@@ -3769,6 +3769,28 @@ mod tests {
             symbol_in(&text, Some("panic_abort-"), "__rust_start_panic", true, false),
             "panic_abort is not linked"
         );
+    }
+
+    /// Global symbols in `archive`.
+    ///
+    /// Apple `nm` is `llvm-nm`. It parses embedded bitcode, and Xcode's LLVM
+    /// cannot read the bitcode Rust 1.99 emits (`Not an int attribute`).
+    /// `--no-llvm-bc` reads the symbol table instead. GNU `nm` has no such flag.
+    fn nm_globals(archive: &std::path::Path) -> std::process::Output {
+        let output = std::process::Command::new("nm")
+            .args(["-g", "--no-llvm-bc"])
+            .arg(archive)
+            .output()
+            .expect("nm");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let unknown_flag = stderr.contains("unrecognized option")
+            || stderr.contains("Unknown command line argument")
+            || stderr.contains("unknown argument");
+        if unknown_flag {
+            std::process::Command::new("nm").args(["-g"]).arg(archive).output().expect("nm")
+        } else {
+            output
+        }
     }
 
     /// `defined_only` skips undefined (`U`) references. `exact` matches the whole symbol.
