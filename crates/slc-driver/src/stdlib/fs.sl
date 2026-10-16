@@ -11,6 +11,9 @@
 // and its siblings), or a handler of the program's own, which need not
 // touch the disk at all.
 
+cite list::List;
+cite list::List::*;
+
 // What touching a file performs. An operation answers with its outcome,
 // one alternative per continuation of the command that performs it: a
 // handler's clause runs below the handler, so the commands, not the
@@ -23,6 +26,9 @@ pub hook Fs {
     func read_line_of(file: File) -> (String | unit);
     func close_file(file: File) -> (,);
     func file_exists(path: String) -> Bool;
+    func read_directory(path: String) -> (List<String> | String);
+    func remove_path(path: String) -> (unit | String);
+    func rename_path(from: String, to: String) -> (unit | String);
 }
 
 // The whole file, or why not.
@@ -59,6 +65,34 @@ pub func exists(path: String) -> Bool / {Fs} {
     <path | file_exists
 }
 
+// The names in a directory, in order, or why not. `.` and `..` are not
+// among them. The order is the order of the names as strings.
+pub proc read_dir<E>(path: String) | (
+    ok: (-List<String> / {..E})
+    & failed: (-String / {..E})
+) / {Fs, ..E} {
+    <path | read_directory | (ok & failed)>
+}
+
+// Remove a file, or an empty directory, or say why not.
+pub proc remove<E>(path: String) | (ok: (-unit / {..E}) & failed: (-String / {..E})) / {Fs, ..E} {
+    <path | remove_path | (ok & failed)>
+}
+
+pub proc rename<E>(from: String, to: String) | (
+    ok: (-unit / {..E})
+    & failed: (-String / {..E})
+) / {Fs, ..E} {
+    <(from, to) | rename_path | (ok & failed)>
+}
+
+func names_from(i: i64, n: i64) -> List<String> / {IO} {
+    of (<(i, n) | ge) {
+        True => Nil,
+        False => Cons(<i | __dir_entry, <(<(i, 1) | add, n) | names_from),
+    }
+}
+
 // The file system itself. `do expr fs::real` answers every operation of
 // `Fs` from the disk. The clauses perform `IO`; whatever else `expr`
 // performs passes outward. A value and a command use the same hand.
@@ -81,4 +115,16 @@ pub hand real / {IO} {
         | resume,
     close_file(file): resume => <(<file | __close_file) | resume,
     file_exists(path): resume => <(<path | __file_exists) | resume,
+    read_directory(path): resume => <path
+        | __read_dir
+        | (fn(n: i64) { ::0(<(0, n) | names_from) } & fn(why: String) { ::1(why) })
+        | resume,
+    remove_path(path): resume => <path
+        | __remove_path
+        | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
+        | resume,
+    rename_path(from, to): resume => <(from, to)
+        | __rename_path
+        | (fn(done: unit) { ::0(done) } & fn(why: String) { ::1(why) })
+        | resume,
 }

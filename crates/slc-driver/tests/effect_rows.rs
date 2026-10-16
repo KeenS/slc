@@ -54,7 +54,7 @@ fn a_handler_must_answer_every_operation_of_a_handled_effect() {
             &[],
             "let outcome = do <(\"unused\", \"text\") | fs::write_file hn { fs::read_file(path): resume => <::0(\"mock\") | resume };",
         ),
-        &["fs::Fs", "6 operations", "fs::write_file", "_ => forward"],
+        &["fs::Fs", "9 operations", "fs::write_file", "_ => forward"],
     );
     for body in ["second()", "1"] {
         refused(

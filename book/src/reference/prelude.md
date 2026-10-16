@@ -72,11 +72,20 @@ and `Ord` are also implemented for `char`, `String`, and `Bool`. `Ord` and
 func index(s: String, i: i64) -> char
 func wrapping_mul(a: i64, b: i64) -> i64
 func xor(a: i64, b: i64) -> i64
+func shl(a: i64, b: i64) -> i64
+func shr(a: i64, b: i64) -> i64
+func not(b: Bool) -> Bool
+func and(a: Bool, b: Bool) -> Bool
+func or(a: Bool, b: Bool) -> Bool
 ```
 
 `index` is the character at a zero-based position. An index outside the
 string is a runtime error. `wrapping_mul` is the product on the 64-bit
-pattern, and `xor` is exclusive or on that word.
+pattern, and `xor` is exclusive or on that word. `shl` and `shr` move that
+pattern. The distance is the count's low six bits, so both are total, and
+`shr` fills from the left with zeros. `not`, `and`, and `or` are ordinary
+functions. `and` and `or` are strict: both arguments are values before the
+call. There is no `!`, `&&`, or `||`.
 
 ## Into
 
@@ -105,12 +114,18 @@ spec Sqrt  { func sqrt(self: Self) -> Self; }
 spec Abs   { func abs(self: Self) -> Self; }
 spec Floor { func floor(self: Self) -> Self; }
 spec Ceil  { func ceil(self: Self) -> Self; }
+spec Sin   { func sin(self: Self) -> Self; }
+spec Ln    { func ln(self: Self) -> Self; }
+spec Pow   { func pow(self: Self, exp: Self) -> Self; }
 ```
 
 Each is implemented for `f32` and `f64`. `sqrt` of a negative number is an
-arithmetic overflow. `-0.0` is in the domain. `abs`, `floor`, and `ceil` are
-the IEEE operations. `num::abs` is the `i64` function in the library, and it
-is a different operation.
+arithmetic overflow. `-0.0` is in the domain. `abs`, `floor`, `ceil`, and
+`sin` are the IEEE operations. `ln` overflows on zero, a negative, and `-∞`.
+`pow` overflows when the base is negative and the exponent is finite but not
+an integer, and when the base is zero and the exponent is negative. A `NaN`
+argument of `pow` stays `NaN`. `num::abs` is the `i64` function in the
+library, and it is a different operation.
 
 ## Hash
 

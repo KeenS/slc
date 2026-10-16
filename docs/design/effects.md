@@ -201,10 +201,11 @@ report the write and forward it. `examples/effects/io.sl` writes all three.
 
 The file operations are an effect of their own, the `fs` module's `Fs`, and
 can be mocked the way `println` can. `fs::read`, `write`, `open`,
-`read_line`, `close` and `exists` perform its operations, and nothing
-answers them unless a program installs a handler around the code that
-touches files: `fs::real`, which answers from the disk and performs `IO`, or
-one of the program's own. A hand is installed around the computation —
+`read_line`, `close`, `exists`, `read_dir`, `remove`, and `rename` perform
+its operations, and nothing answers them unless a program installs a handler
+around the code that touches files: `fs::real`, which answers from the disk
+and performs `IO`, or one of the program's own. A hand is installed around
+the computation —
 
 ```sl
 func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {fs::Fs, ..E} {
@@ -217,7 +218,7 @@ func canned<+A, E>(program: ((,) -> A / {fs::Fs, ..E})) -> A / {fs::Fs, ..E} {
 
 — and `fs` exports `real` as a hand, so a test installs its own. This
 partial mock still requires an outer handler such as `fs::real` for `Fs`;
-a self-contained mock answers all six operations and may discharge it. A
+a self-contained mock answers all nine operations and may discharge it. A
 clause names its operation as a row names its effect, by path. An
 operation answers with its outcome as a sum, `read_file(path) -> (String |
 String)`, which the command then offers to its continuations: a clause runs
@@ -254,6 +255,16 @@ proc main | (exit: i32) / {IO} {
     …
 }
 ```
+
+`env::get` performs `Env` and offers the variable's value or its absence.
+`env::set` performs `Env` and offers success or why the assignment was
+refused. `sleep::sleep` performs `Sleep` and waits the given number of
+nanoseconds; zero returns at once, and a negative count is an arithmetic
+overflow. `process::spawn` performs `Process` and offers the exit status or
+why the program could not be started. A non-zero exit is the status. The
+child inherits the environment and the standard streams, and the list is the
+words after the program path. `env::real`, `sleep::real`, and `process::real`
+perform `IO`, so `main` still leaves only `{IO}`.
 
 `slc run [--fuel N] [--interpret] <file.sl> [arg]…` recognizes flags only
 before the file. A word after the file is a program argument, including one

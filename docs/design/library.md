@@ -14,13 +14,13 @@ choices up to eight components, rendered as they are written — and
 answer has; arithmetic and comparison as the traits `Add`, `Sub`, `Mul`,
 `Div`, `Rem`, `Neg`, `Eq` and `Ord`, with impls for the base types; `Into<U>`,
 moving a value between the integer widths and `f32` and `f64`; `Sqrt`, `Abs`,
-`Floor`, and `Ceil` on `f32` and `f64`; `wrapping_mul` and `xor` on the
-machine word; `char_to_code`, a character's scalar value; `Hash`,
-answering a non-negative `u64` for the integer widths, `char`, `Bool`, and
-`String`; `index`,
-a `String`'s character at a position; and `not`, which negates a `Bool`,
-since there is no `!`. A
-program's own declaration of a prelude name shadows it.
+`Floor`, `Ceil`, `Sin`, `Ln`, and `Pow` on `f32` and `f64`; `wrapping_mul`,
+`xor`, `shl`, and `shr` on the machine word; `char_to_code`, a character's
+scalar value; `Hash`, answering a non-negative `u64` for the integer widths,
+`char`, `Bool`, and `String`; `index`, a `String`'s character at a position;
+and `not`, `and`, and `or` on `Bool`, since there is no `!`, `&&`, or `||`.
+`and` and `or` are strict. A program's own declaration of a prelude name
+shadows it.
 
 **The stdlib** (`crates/slc-driver/src/stdlib/`) is one module per file,
 appended after the prelude, and nothing in it is in scope until named: a
@@ -34,19 +34,22 @@ it offers `pub`; the rest is its own.
 |---|---|
 | `list` | `List<T>`, `length`, `append`, `map`, the outcome-offering `proc nth`, and the eager `range`, `filter`, `fold`, `reverse`, `take`, `drop`, and `sum` — and `impl<+T: Display> Display for List<T>`, which lives with the type and is found from anywhere (`[1, 2, 3]`) |
 | `map` | `Map<K, V>`, an AVL tree: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, the outcome-offering `proc get`, `Display` (`{a: 1, b: 2}`), and `Builder` |
-| `set` | `Set<K>`, that tree with nothing beside the key: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, `Display` (`{1, 2, 3}`), and `Builder` |
+| `set` | `Set<K>`, that tree with nothing beside the key: `empty`, `insert`, `remove`, `contains`, `length`, `of_list`, `to_list`, `union`, `intersection`, `difference`, `Display` (`{1, 2, 3}`), and `Builder` |
 | `hashmap` | `HashMap<K, V>`, a 4-way hash trie: the same operations, keyed by `Hash` and `Eq`, and `Builder` |
 | `hashset` | `HashSet<K>`, that trie with nothing beside the key, and `Builder` |
 | `array` | `Array<T>`, an immutable 4-way trie: `empty`, `push`, `length`, `of_list`, `to_list`, and the outcome-offering `get` and `update` (`[1, 2, 3]`). `Array4<T>` is one branch, with `slots`, `slot_get`, and `slot_update` |
-| `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items |
-| `option`, `either` | `Option<T>` with `unwrap_or`; `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `mu`s — a `form` would want every field at once |
+| `string` | `Builder`, a persistent string builder expressed as a `menu`; `new`, `push<T: Display>` and its `append` and `finish` items; `starts_with`, `chars`, `split`, `trim`, `replace`, `lower`, and `upper` |
+| `option`, `either` | `Option<T>` with `unwrap_or`, `map`, and `and_then` (the function comes first, as it does for `list::map`); `Either<L, R>`, `Left` or `Right` with neither meaning success. Either/or outcomes are additive, so they are enums whose consumers are `mu`s — a `form` would want every field at once |
 | `num` | `min` and `max`, generic over `Ord`; `abs`, `signum`, `is_even`, `is_odd`, Euclidean `gcd` and `lcm`, and `div_rem`, all on `i64` |
 | `stream` | `Stream<T>`, the coinductive mirror of `List`, with `repeat`, `count_from`, `iterate`, `unfold`, `map`, `zip`, `drop`, and `take` bridging back to data, since an infinite structure cannot print whole and showing `<(s, n) | take` is the honest form |
 | `seq` | `Seq<T>`, the finite codata sequence between the two (below) |
 | `lazy` | `Lazy<T, E>`, the explicit by-name thunk for either polarity; `of_delayed` and `to_delayed` convert negative-result computations to and from `(-> T / E)` |
-| `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
+| `fs` | files: `read`, `write`, `open`, `read_line`, `close`, `exists`, `read_dir`, `remove`, and `rename` — commands offering each outcome to its own continuation, performing the `Fs` effect — and `real`, the handler that answers it from the disk |
 | `args` | `arguments`, the words after the program file, as `List<String>`, performing `Args`; `real` answers from the process |
 | `clock` | `now`, a monotonic nanosecond count as `i64`, performing `Clock`; `real` answers from the runtime |
+| `env` | `get` and `set`, the process environment, performing `Env`; `real` answers from the process |
+| `sleep` | `sleep`, a wait of the given number of nanoseconds, performing `Sleep`; `real` answers from the runtime |
+| `process` | `spawn`, a child process, performing `Process`; `real` answers from the runtime |
 | `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `proc tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
 
@@ -89,7 +92,10 @@ each digit selects a slot of an `Array4`. A bitmap records which slots are
 occupied; the children are packed from the left in slot order. Keys that
 hash equal share a list. A key needs `Hash` and `Eq`, and equal keys must
 hash equal. `Set<K>` is `Map` with nothing stored beside the key, so its keys
-come out in order. `HashSet<K>` is `HashMap` in the same way.
+come out in order. `union`, `intersection`, and `difference` merge those
+ordered lists. Two keys are the same when neither is less. Difference is
+the keys of the first set that are not keys of the second. `HashSet<K>` is
+`HashMap` in the same way.
 [`examples/basics/sets.sl`](../../examples/basics/sets.sl) runs all three.
 
 Each of the four also has a `Builder`, the negative way to assemble one.
@@ -109,7 +115,16 @@ demand. `string::push` renders any `Display` value and uses `append`. Each
 builder is persistent: its menu arms close over one
 accumulated value, so adding returns a new state and a shared prefix can safely
 branch. [`examples/programs/string_builder.sl`](../../examples/programs/string_builder.sl)
-shows the complete program.
+shows the complete program. The scans live in the same module.
+`starts_with` is true of the empty prefix. `chars` is the scalar values, in
+order. `split` on an empty separator yields one string per scalar value, and
+an empty string then yields `Nil`; a trailing separator yields a trailing
+empty string. `trim` drops leading and trailing Unicode whitespace.
+`replace` replaces every non-overlapping occurrence, and an empty pattern
+leaves the text unchanged. `lower` and `upper` are the Unicode case mapping,
+which the language cannot write down: the length can change, as `straße`
+becomes `STRASSE`. [`examples/basics/scanning.sl`](../../examples/basics/scanning.sl)
+runs them.
 
 The program's text comes first in the combined source, so its spans and
 line numbers are untouched; a diagnostic inside the library names its unit,
@@ -242,7 +257,18 @@ operations, including `NaN` and the infinities. `f32` arithmetic is IEEE on
 the `f64` word both widths share. `num::abs` stays the `i64` function.
 Printing a real as an integer is `Into` after `floor`.
 [`examples/basics/reals.sl`](../../examples/basics/reals.sl) runs them.
-`sin`, `ln`, and `pow` are not in the prelude.
+`sin`, `ln`, and `pow` are traits beside those. Sine is the IEEE operation,
+including `NaN` and the infinities. The natural logarithm's domain is the
+positive reals: zero, a negative, and `-∞` overflow, as in `ln(-1)`. `pow`
+is the IEEE power, except a negative base with a non-integral exponent, and
+a zero base with a negative exponent, overflow, as in `pow(-2, 0.5)` and
+`pow(0, -1)`. A `NaN` argument stays `NaN`.
+
+`shl` and `shr` move an `i64` bit pattern. The distance is the count's low
+six bits, so a negative count uses those bits of its two's-complement
+representation, and both operations are total. `shr` fills from the left
+with zeros. [`examples/basics/bits.sl`](../../examples/basics/bits.sl) runs
+them beside `and` and `or`.
 
 `list::range(from, to)` is the inclusive `i64` list, empty when `from` is
 greater than `to`. The one-element case does not add, so `i64`'s greatest
@@ -269,6 +295,27 @@ fit in `i64` is an arithmetic overflow. Out-of-range `__argument_at` is a
 fatal type mismatch, as `index` is.
 [`examples/basics/arguments.sl`](../../examples/basics/arguments.sl) and
 [`examples/basics/clock.sl`](../../examples/basics/clock.sl) run them.
+
+`env::get` offers the value of a variable or its absence, and `env::set`
+offers success or why the assignment was refused. An empty name, a name
+containing `=`, or a null byte in the name or the value is refused. A
+present value that is not Unicode is read lossily. `sleep::sleep` waits the
+given number of nanoseconds. Zero returns at once. A negative count is an
+arithmetic overflow. `process::spawn` offers the exit status, or why the
+program could not be started. A non-zero exit is still the status: the
+process ran. The status is the code the process exited with, or 128 plus
+the signal that killed it. The child inherits the environment and the
+standard streams. The list is the words after the program path.
+`env::real`, `sleep::real`, and `process::real` perform `IO`, as `args::real`
+does. [`examples/basics/process.sl`](../../examples/basics/process.sl) runs
+them.
+
+`fs::read_dir` offers the names in a directory, in string order, or why
+not. `.` and `..` are not among them. `fs::rename` offers success or why
+not. `fs::remove` removes a file, or an empty directory, and a symlink is
+removed as a file. A directory that is not empty is the failure, not a
+recursive removal. [`examples/basics/directory.sl`](../../examples/basics/directory.sl)
+creates a directory by spawning `/bin/mkdir` and then uses the three.
 `slc run [--fuel N] [--interpret] <file.sl> [arg]…` is the command; flags
 are recognized only before the file. `slc compile [-o <file>] [--fuel N] <file.sl>`
 writes the linked executable on x86-64 Linux and reports that it cannot link

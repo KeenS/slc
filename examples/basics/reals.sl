@@ -1,6 +1,6 @@
-// Square root, absolute value, floor, and ceiling. A coordinate is a pixel
-// index widened to `f64`. Flooring that coordinate and converting it back
-// prints an integer.
+// Square root, absolute value, floor, ceiling, sine, logarithm, and power.
+// A coordinate is a pixel index widened to `f64`. Flooring that coordinate
+// and converting it back prints an integer.
 
 func widen(n: i64) -> f64 {
     <n | into
@@ -19,5 +19,8 @@ proc main | (exit: i32) / {IO} {
     <x | println;
     <(<x | floor) | whole | println;
     <(1.5, 2.5) | num::min | println;
+    <0.0 | sin | println;
+    <1.0 | ln | println;
+    <(2.0, 3.0) | pow | println;
     <0 | exit>
 }

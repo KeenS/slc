@@ -161,8 +161,33 @@ fn real_unary(name: &str, value: f64) -> Result<f64, BuiltinError> {
         "__abs" => Ok(value.abs()),
         "__floor" => Ok(value.floor()),
         "__ceil" => Ok(value.ceil()),
+        "__sin" => Ok(value.sin()),
+        "__ln" if value <= 0.0 => {
+            Err(BuiltinError::ArithmeticOverflow(format!("ln({})", float_text(value))))
+        }
+        "__ln" => Ok(value.ln()),
         _ => Err(BuiltinError::UnknownBuiltin(name.to_string())),
     }
+}
+
+/// IEEE `pow`, except the two domains that are not a real result: a negative
+/// base with a non-integral exponent, and a zero base with a negative exponent.
+fn real_pow(base: f64, exp: f64) -> Result<f64, BuiltinError> {
+    let outside =
+        (base == 0.0 && exp < 0.0) || (base < 0.0 && exp.is_finite() && exp.fract() != 0.0);
+    if !base.is_nan() && !exp.is_nan() && outside {
+        return Err(BuiltinError::ArithmeticOverflow(format!(
+            "pow({}, {})",
+            float_text(base),
+            float_text(exp)
+        )));
+    }
+    Ok(base.powf(exp))
+}
+
+/// The shift distance is the count's low six bits. `shr` is logical.
+fn shift_count(count: i64) -> u32 {
+    (count as u32) & 63
 }
 
 fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
@@ -201,9 +226,15 @@ pub fn apply_builtin(
                 Err(BuiltinError::TypeMismatch(format!("{name} expects an integer or a float")))
             }
         },
-        "__sqrt" | "__abs" | "__floor" | "__ceil" => match args.first() {
+        "__sqrt" | "__abs" | "__floor" | "__ceil" | "__sin" | "__ln" => match args.first() {
             Some(Value::Float(n)) => real_unary(name, *n).map(Value::Float),
             _ => Err(BuiltinError::TypeMismatch(format!("{name} expects a float argument"))),
+        },
+        "__pow" => match (args.first(), args.get(1)) {
+            (Some(Value::Float(base)), Some(Value::Float(exp))) => {
+                real_pow(*base, *exp).map(Value::Float)
+            }
+            _ => Err(BuiltinError::TypeMismatch("__pow expects two float arguments".into())),
         },
         "__argument_count" => Ok(Value::Int(program_arguments().len() as i64)),
         "__argument_at" => match args.first() {
@@ -453,6 +484,41 @@ pub fn apply_builtin(
             let (a, b) = two_ints(name, args)?;
             Ok(Value::Int(a ^ b))
         }
+        "__shl" => {
+            let (a, b) = two_ints(name, args)?;
+            Ok(Value::Int(a.wrapping_shl(shift_count(b))))
+        }
+        "__shr" => {
+            let (a, b) = two_ints(name, args)?;
+            Ok(Value::Int((a as u64).wrapping_shr(shift_count(b)) as i64))
+        }
+        "__lower" | "__upper" => match args.first() {
+            Some(Value::Str(text)) => {
+                let mapped =
+                    if name == "__lower" { text.to_lowercase() } else { text.to_uppercase() };
+                Ok(Value::Str(mapped))
+            }
+            _ => Err(BuiltinError::TypeMismatch(format!("{name} expects a String argument"))),
+        },
+        "__sleep_ns" => match args.first() {
+            Some(Value::Int(ns)) => sleep_ns(*ns).map(|()| Value::Unit),
+            _ => Err(BuiltinError::TypeMismatch("__sleep_ns expects an i64".into())),
+        },
+        "__dir_entry" => match args.first() {
+            Some(Value::Int(index)) => directory_entry(*index).map(Value::Str),
+            _ => Err(BuiltinError::TypeMismatch("__dir_entry expects an i64".into())),
+        },
+        "__spawn_begin" => match args.first() {
+            Some(Value::Str(program)) => {
+                spawn_begin(program);
+                Ok(Value::Unit)
+            }
+            _ => Err(BuiltinError::TypeMismatch("__spawn_begin expects a String".into())),
+        },
+        "__spawn_push" => match args.first() {
+            Some(Value::Str(arg)) => spawn_push(arg).map(|()| Value::Unit),
+            _ => Err(BuiltinError::TypeMismatch("__spawn_push expects a String".into())),
+        },
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
     }
 }
@@ -642,6 +708,45 @@ mod tests {
         assert_eq!(floor, Value::Float(-2.0));
         let ceil = apply_builtin("__ceil", &[Value::Float(1.2)], &mut buf).unwrap();
         assert_eq!(ceil, Value::Float(2.0));
+        let sine = apply_builtin("__sin", &[Value::Float(0.0)], &mut buf).unwrap();
+        assert_eq!(sine, Value::Float(0.0));
+        let log = apply_builtin("__ln", &[Value::Float(1.0)], &mut buf).unwrap();
+        assert_eq!(log, Value::Float(0.0));
+        let negative_log = apply_builtin("__ln", &[Value::Float(-1.0)], &mut buf);
+        assert!(
+            matches!(negative_log, Err(BuiltinError::ArithmeticOverflow(ref m)) if m == "ln(-1)"),
+            "{negative_log:?}"
+        );
+        let power =
+            apply_builtin("__pow", &[Value::Float(2.0), Value::Float(3.0)], &mut buf).unwrap();
+        assert_eq!(power, Value::Float(8.0));
+        let fractional = apply_builtin("__pow", &[Value::Float(-2.0), Value::Float(0.5)], &mut buf);
+        assert!(
+            matches!(fractional, Err(BuiltinError::ArithmeticOverflow(ref m)) if m == "pow(-2, 0.5)"),
+            "{fractional:?}"
+        );
+        let pole = apply_builtin("__pow", &[Value::Float(0.0), Value::Float(-1.0)], &mut buf);
+        assert!(
+            matches!(pole, Err(BuiltinError::ArithmeticOverflow(ref m)) if m == "pow(0, -1)"),
+            "{pole:?}"
+        );
+    }
+
+    #[test]
+    fn shifts_use_the_low_six_bits_and_shr_is_logical() {
+        let mut buf = Vec::new();
+        let left = apply_builtin("__shl", &[Value::Int(1), Value::Int(4)], &mut buf).unwrap();
+        assert_eq!(left, Value::Int(16));
+        let right = apply_builtin("__shr", &[Value::Int(16), Value::Int(2)], &mut buf).unwrap();
+        assert_eq!(right, Value::Int(4));
+        let logical = apply_builtin("__shr", &[Value::Int(-1), Value::Int(1)], &mut buf).unwrap();
+        assert_eq!(logical, Value::Int(i64::MAX));
+        let wrapped = apply_builtin("__shl", &[Value::Int(1), Value::Int(-1)], &mut buf).unwrap();
+        assert_eq!(wrapped, Value::Int(1i64.wrapping_shl(63)));
+        let lower = apply_builtin("__lower", &[Value::Str("AbC".into())], &mut buf).unwrap();
+        assert_eq!(lower, Value::Str("abc".into()));
+        let upper = apply_builtin("__upper", &[Value::Str("straße".into())], &mut buf).unwrap();
+        assert_eq!(upper, Value::Str("STRASSE".into()));
     }
 
     #[test]
@@ -750,7 +855,155 @@ pub fn apply_io_builtin(name: &str, args: &[Value]) -> Result<Value, BuiltinErro
             };
             Ok(crate::value::bool_value(std::path::Path::new(path).exists()))
         }
+        "__read_dir" => {
+            let Some(Value::Str(path)) = args.first() else {
+                return Err(BuiltinError::TypeMismatch("read_dir expects a String path".into()));
+            };
+            store_directory(path).map(Value::Int)
+        }
+        "__remove_path" => {
+            let Some(Value::Str(path)) = args.first() else {
+                return Err(BuiltinError::TypeMismatch("remove_path expects a String path".into()));
+            };
+            remove_path(path).map(|()| Value::Unit)
+        }
+        "__rename_path" => {
+            let (Some(Value::Str(from)), Some(Value::Str(to))) = (args.first(), args.get(1)) else {
+                return Err(BuiltinError::TypeMismatch(
+                    "rename_path expects (from, to) Strings".into(),
+                ));
+            };
+            rename_path(from, to).map(|()| Value::Unit)
+        }
+        "__env_set" => {
+            let (Some(Value::Str(name)), Some(Value::Str(value))) = (args.first(), args.get(1))
+            else {
+                return Err(BuiltinError::TypeMismatch(
+                    "env_set expects (name, value) Strings".into(),
+                ));
+            };
+            assign_env(name, value).map(|()| Value::Unit)
+        }
+        "__spawn_exec" => finish_spawn().map(Value::Int),
         other => Err(BuiltinError::UnknownBuiltin(other.to_string())),
+    }
+}
+
+fn sleep_ns(ns: i64) -> Result<(), BuiltinError> {
+    if ns < 0 {
+        return Err(BuiltinError::ArithmeticOverflow(format!("sleep({ns})")));
+    }
+    if ns > 0 {
+        std::thread::sleep(std::time::Duration::from_nanos(ns as u64));
+    }
+    Ok(())
+}
+
+thread_local! {
+    static DIR_NAMES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SPAWN_PROGRAM: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+    static SPAWN_ARGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn directory_names(path: &str) -> Result<Vec<String>, BuiltinError> {
+    let entries = std::fs::read_dir(path)
+        .map_err(|err| BuiltinError::Failed(format!("cannot read {path}: {err}")))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| BuiltinError::Failed(format!("cannot read {path}: {err}")))?;
+        names.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn store_directory(path: &str) -> Result<i64, BuiltinError> {
+    let names = directory_names(path)?;
+    let count = names.len() as i64;
+    DIR_NAMES.with(|slot| *slot.borrow_mut() = names);
+    Ok(count)
+}
+
+fn directory_entry(index: i64) -> Result<String, BuiltinError> {
+    DIR_NAMES.with(|slot| {
+        slot.borrow()
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+            .cloned()
+            .ok_or_else(|| BuiltinError::TypeMismatch(format!("index {index} out of range")))
+    })
+}
+
+fn remove_path(path: &str) -> Result<(), BuiltinError> {
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|err| BuiltinError::Failed(format!("cannot remove {path}: {err}")))?;
+    let removed =
+        if meta.is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) };
+    removed.map_err(|err| BuiltinError::Failed(format!("cannot remove {path}: {err}")))
+}
+
+fn rename_path(from: &str, to: &str) -> Result<(), BuiltinError> {
+    std::fs::rename(from, to)
+        .map_err(|err| BuiltinError::Failed(format!("cannot rename {from}: {err}")))
+}
+
+/// A present variable, lossy where the bytes are not Unicode. Absence is `None`.
+pub fn lookup_env(name: &str) -> Option<String> {
+    std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+}
+
+fn assign_env(name: &str, value: &str) -> Result<(), BuiltinError> {
+    if name.is_empty() || name.contains('=') || name.contains('\0') || value.contains('\0') {
+        return Err(BuiltinError::Failed(format!("cannot set environment variable {name}")));
+    }
+    // The runtime is the only writer, and a program runs on one thread.
+    unsafe { std::env::set_var(name, value) };
+    Ok(())
+}
+
+fn spawn_begin(program: &str) {
+    SPAWN_PROGRAM.with(|slot| *slot.borrow_mut() = Some(program.to_string()));
+    SPAWN_ARGS.with(|slot| slot.borrow_mut().clear());
+}
+
+fn spawn_push(arg: &str) -> Result<(), BuiltinError> {
+    if SPAWN_PROGRAM.with(|slot| slot.borrow().is_none()) {
+        return Err(BuiltinError::TypeMismatch("spawn was not begun".into()));
+    }
+    SPAWN_ARGS.with(|slot| slot.borrow_mut().push(arg.to_string()));
+    Ok(())
+}
+
+fn finish_spawn() -> Result<i64, BuiltinError> {
+    let program = SPAWN_PROGRAM.with(|slot| slot.borrow_mut().take());
+    let args = SPAWN_ARGS.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+    let Some(program) = program else {
+        return Err(BuiltinError::Failed("cannot spawn: program path is empty".into()));
+    };
+    if program.is_empty() {
+        return Err(BuiltinError::Failed("cannot spawn: program path is empty".into()));
+    }
+    spawn_status(&program, &args)
+}
+
+fn spawn_status(program: &str, args: &[String]) -> Result<i64, BuiltinError> {
+    match std::process::Command::new(program).args(args).status() {
+        Ok(status) => {
+            let code = status.code().unwrap_or_else(|| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    128 + status.signal().unwrap_or(0)
+                }
+                #[cfg(not(unix))]
+                {
+                    1
+                }
+            });
+            Ok(i64::from(code))
+        }
+        Err(err) => Err(BuiltinError::Failed(format!("cannot spawn {program}: {err}"))),
     }
 }
 

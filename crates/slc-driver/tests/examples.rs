@@ -72,6 +72,9 @@ fn updated_feature_examples_have_exact_outputs() {
 -1.3125
 -2
 1.5
+0
+0
+8
 ",
         ),
         (
@@ -165,6 +168,9 @@ true
 [1, 2, 3]
 {1, 3}
 3
+{1, 2, 3, 4}
+{2}
+{1, 3}
 ",
         ),
         (
@@ -288,6 +294,38 @@ false
             "laziness/lazy_effect_phases.sl",
             "factory build\nfactory ready\nfirst use\n11\nsecond use\n12\nlazy build\nlazy ready\nthird use\n23\nfourth use\n24\nlazy rebuild\nfifth use\n35\n",
         ),
+        (
+            "basics/scanning.sl",
+            "\
+true
+false
+true
+[H, e, l, l, o]
+[a, b, c]
+hi
+c-b-c
+abc
+ABC
+STRASSE
+",
+        ),
+        (
+            "basics/bits.sl",
+            "\
+false
+true
+true
+false
+16
+4
+9223372036854775807
+-9223372036854775808
+-9223372036854775808
+",
+        ),
+        ("basics/options.sl", "3\nnone\n4\nnone\nnone\n"),
+        ("basics/process.sl", "absent\nkept\ntrue\n0\n1\ncannot spawn\nhello\n0\n"),
+        ("basics/directory.sl", "0\n[a.txt, b.txt]\n[b.txt, c.txt]\nclear\n"),
     ] {
         let (stdout, stderr, success) = run_example(name);
         assert!(success, "{name}: stdout={stdout:?}, stderr={stderr:?}");

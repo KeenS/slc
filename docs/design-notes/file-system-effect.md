@@ -75,7 +75,9 @@ passes through both.
 
 ## Consequences
 
-A handler naming an operation of `Fs` must answer all six operations, or
+A handler naming an operation of `Fs` must answer all nine operations —
+`read_file`, `write_file`, `open_file`, `read_line_of`, `close_file`,
+`file_exists`, `read_directory`, `remove_path`, and `rename_path` — or
 end with `_ => forward`. Forwarding leaves `Fs` in the outward row and
 requires an outer handler, typically `fs::real` or `fs::real_command`.
 A complete mock can discharge `Fs` without touching the disk. The runtime

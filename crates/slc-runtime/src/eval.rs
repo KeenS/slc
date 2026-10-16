@@ -168,20 +168,23 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         "__display" | "str_len" | "int_to_str" | "is_digit" | "is_ws" | "__neg"
         | "char_to_code" | "__file_exists" | "__to_i8" | "__to_i32" | "__to_i64" | "__to_u8"
         | "__to_u32" | "__to_u64" | "__to_f32" | "__to_f64" | "__sqrt" | "__abs" | "__floor"
-        | "__ceil" | "__argument_count" | "__argument_at" | "__monotonic_ns" => 1,
+        | "__ceil" | "__sin" | "__ln" | "__lower" | "__upper" | "__argument_count"
+        | "__argument_at" | "__monotonic_ns" | "__sleep_ns" | "__dir_entry" | "__spawn_begin"
+        | "__spawn_push" => 1,
         "__index" => 2,
         "__close_file" => 1,
         "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__eq" | "__ne" | "__lt" | "__gt"
-        | "__le" | "__ge" | "__wrapping_mul" | "__xor" | "str_concat" | "str_eq"
-        | "skip_digits" | "skip_ws" => 2,
+        | "__le" | "__ge" | "__wrapping_mul" | "__xor" | "__shl" | "__shr" | "__pow"
+        | "str_concat" | "str_eq" | "skip_digits" | "skip_ws" => 2,
         "substring" => 3,
         // Builtins that offer their outcome to continuations: the value
         // arguments come first, then one continuation per outcome.
-        "__read_file" | "__open_file" | "__read_line" => 3,
+        "__read_file" | "__open_file" | "__read_line" | "__read_dir" | "__remove_path"
+        | "__env_get" | "__spawn_exec" => 3,
         // The runtime's own clauses for `IO`: the payload, then `resume`.
         "__io_write" | "__io_write_line" => 2,
         "__io_done" => 1,
-        "char_at" | "__write_file" | "parse_int" => 4,
+        "char_at" | "__write_file" | "parse_int" | "__rename_path" | "__env_set" => 4,
         "find_char" => 5,
         "__handle" => 2,
         "__enter_poly" => 2,
@@ -288,6 +291,59 @@ pub(crate) fn run_offering_builtin(
                     Err(e) => activate(failed, message(e.to_string())),
                 },
             )
+        }
+        "__read_dir" => {
+            let (ok, failed) = (value(1), value(2));
+            wrap(
+                match crate::builtins::apply_io_builtin("__read_dir", &args[..1.min(args.len())]) {
+                    Ok(count) => activate(ok, count),
+                    Err(e) => activate(failed, message(e.to_string())),
+                },
+            )
+        }
+        "__remove_path" => {
+            let (ok, failed) = (value(1), value(2));
+            wrap(
+                match crate::builtins::apply_io_builtin("__remove_path", &args[..1.min(args.len())])
+                {
+                    Ok(_) => activate(ok, Value::Unit),
+                    Err(e) => activate(failed, message(e.to_string())),
+                },
+            )
+        }
+        "__rename_path" => {
+            let (ok, failed) = (value(2), value(3));
+            wrap(
+                match crate::builtins::apply_io_builtin("__rename_path", &args[..2.min(args.len())])
+                {
+                    Ok(_) => activate(ok, Value::Unit),
+                    Err(e) => activate(failed, message(e.to_string())),
+                },
+            )
+        }
+        "__env_get" => {
+            let (found, absent) = (value(1), value(2));
+            let Value::Str(name) = value(0) else {
+                return Err(EvalError::TypeMismatch("env_get expects a String".into()));
+            };
+            wrap(match crate::builtins::lookup_env(&name) {
+                Some(text) => activate(found, Value::Str(text)),
+                None => activate(absent, Value::Unit),
+            })
+        }
+        "__env_set" => {
+            let (ok, failed) = (value(2), value(3));
+            wrap(match crate::builtins::apply_io_builtin("__env_set", &args[..2.min(args.len())]) {
+                Ok(_) => activate(ok, Value::Unit),
+                Err(e) => activate(failed, message(e.to_string())),
+            })
+        }
+        "__spawn_exec" => {
+            let (exited, failed) = (value(1), value(2));
+            wrap(match crate::builtins::apply_io_builtin("__spawn_exec", &[]) {
+                Ok(status) => activate(exited, status),
+                Err(e) => activate(failed, message(e.to_string())),
+            })
         }
         "char_at" => {
             let (ok, out_of_range) = (value(2), value(3));

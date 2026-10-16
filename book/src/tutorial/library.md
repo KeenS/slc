@@ -55,9 +55,10 @@ that field. `<", SLC!" | b.append` is the same demand written as a chain.
 `string::push` renders any `Display` value and appends it.
 
 `option::Option<T>` is `None` or `Some(T)`. `unwrap_or` returns the carried
-value, or the fallback when the option is `None`. `either::Either<L, R>` is
-`Left` or `Right`, and neither side means success.
+value, or the fallback when the option is `None`. `map` and `and_then` take
+the function first. `either::Either<L, R>` is `Left` or `Right`, and neither
+side means success.
 
 The [library reference](../reference/library.md) lists every public operation:
-hash maps and sets, arrays, streams, sequences, files, arguments, and the
-clock.
+hash maps and sets, arrays, streams, sequences, files, arguments, the clock,
+the environment, sleep, and spawning a process.

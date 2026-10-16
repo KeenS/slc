@@ -95,5 +95,10 @@ proc main | (exit: i32) / {IO} {
     <(<(keys, 2) | set::remove) | fmt | println; // {1, 3}
     <(<(keys, 9) | set::remove) | set::length | println; // 3
 
+    let evens = <(<(set::empty(), 2) | set::insert, 4) | set::insert;
+    <(keys, evens) | set::union | fmt | println; // {1, 2, 3, 4}
+    <(keys, evens) | set::intersection | fmt | println; // {2}
+    <(keys, evens) | set::difference | fmt | println; // {1, 3}
+
     <0 | exit>
 }

@@ -62,6 +62,68 @@ pub func of_list<+K: Ord>(xs: List<K>) -> Set<K> {
     <(xs, empty()) | of_onto
 }
 
+// Both lists are the keys in order. Two keys are the same when neither is less.
+func merge_union<+K: Ord>(xs: List<K>, ys: List<K>) -> List<K> {
+    of xs {
+        Nil => ys,
+        Cons(x, xt) => of ys {
+            Nil => xs,
+            Cons(y, yt) => of (<(x, y) | lt) {
+                True => Cons(x, <(xt, ys) | merge_union),
+                False => of (<(y, x) | lt) {
+                    True => Cons(y, <(xs, yt) | merge_union),
+                    False => Cons(x, <(xt, yt) | merge_union),
+                },
+            },
+        },
+    }
+}
+
+func merge_intersection<+K: Ord>(xs: List<K>, ys: List<K>) -> List<K> {
+    of xs {
+        Nil => Nil,
+        Cons(x, xt) => of ys {
+            Nil => Nil,
+            Cons(y, yt) => of (<(x, y) | lt) {
+                True => <(xt, ys) | merge_intersection,
+                False => of (<(y, x) | lt) {
+                    True => <(xs, yt) | merge_intersection,
+                    False => Cons(x, <(xt, yt) | merge_intersection),
+                },
+            },
+        },
+    }
+}
+
+func merge_difference<+K: Ord>(xs: List<K>, ys: List<K>) -> List<K> {
+    of xs {
+        Nil => Nil,
+        Cons(x, xt) => of ys {
+            Nil => xs,
+            Cons(y, yt) => of (<(x, y) | lt) {
+                True => Cons(x, <(xt, ys) | merge_difference),
+                False => of (<(y, x) | lt) {
+                    True => <(xs, yt) | merge_difference,
+                    False => <(xt, yt) | merge_difference,
+                },
+            },
+        },
+    }
+}
+
+pub func union<+K: Ord>(a: Set<K>, b: Set<K>) -> Set<K> {
+    <(<(<a | to_list, <b | to_list) | merge_union) | of_list
+}
+
+pub func intersection<+K: Ord>(a: Set<K>, b: Set<K>) -> Set<K> {
+    <(<(<a | to_list, <b | to_list) | merge_intersection) | of_list
+}
+
+// The keys of `a` that are not keys of `b`.
+pub func difference<+K: Ord>(a: Set<K>, b: Set<K>) -> Set<K> {
+    <(<(<a | to_list, <b | to_list) | merge_difference) | of_list
+}
+
 func fmt_keys<+K: Display>(xs: List<K>) -> String {
     of xs {
         Nil => "",

@@ -112,6 +112,8 @@ fn builtin_functions() -> Vec<Builtin> {
         // The machine word, as a bit pattern: wrapping product and exclusive or.
         function("__wrapping_mul", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("__xor", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("__shl", vec![i64.clone(), i64.clone()], Some(i64.clone())),
+        function("__shr", vec![i64.clone(), i64.clone()], Some(i64.clone())),
         function("char_to_code", vec![char_.clone()], Some(i64.clone())),
         // Beneath `Into`. The input is an integer or a float; the result is
         // the destination. A value that is not exact for it does not fit.
@@ -128,10 +130,17 @@ fn builtin_functions() -> Vec<Builtin> {
         function("__abs", vec![same.clone()], Some(same.clone())),
         function("__floor", vec![same.clone()], Some(same.clone())),
         function("__ceil", vec![same.clone()], Some(same.clone())),
+        function("__sin", vec![same.clone()], Some(same.clone())),
+        function("__ln", vec![same.clone()], Some(same.clone())),
+        function("__pow", vec![same.clone(), same.clone()], Some(same.clone())),
         // The words after the program file, and a monotonic nanosecond count.
         function("__argument_count", vec![Type::ONE], Some(i64.clone())),
         function("__argument_at", vec![i64.clone()], Some(string.clone())),
         function("__monotonic_ns", vec![Type::ONE], Some(i64.clone())),
+        function("__sleep_ns", vec![i64.clone()], Some(Type::ONE)),
+        function("__dir_entry", vec![i64.clone()], Some(string.clone())),
+        function("__spawn_begin", vec![string.clone()], Some(Type::ONE)),
+        function("__spawn_push", vec![string.clone()], Some(Type::ONE)),
         function("str_len", vec![string.clone()], Some(i64.clone())),
         function("str_concat", vec![string.clone(), string.clone()], Some(string.clone())),
         function("int_to_str", vec![i64.clone()], Some(string.clone())),
@@ -141,6 +150,8 @@ fn builtin_functions() -> Vec<Builtin> {
         function("skip_ws", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("skip_digits", vec![string.clone(), i64.clone()], Some(i64.clone())),
         function("substring", vec![string.clone(), i64.clone(), i64.clone()], Some(string.clone())),
+        function("__lower", vec![string.clone()], Some(string.clone())),
+        function("__upper", vec![string.clone()], Some(string.clone())),
         // The character at a position, beneath the prelude's `index`.
         function("__index", vec![string.clone(), i64.clone()], Some(char_.clone())),
         function("__file_exists", vec![string.clone()], Some(bool_.clone())),
@@ -162,6 +173,20 @@ fn builtin_functions() -> Vec<Builtin> {
             vec![string.clone(), string.clone()],
             vec![Type::BOTTOM, Type::Neg(Str)],
         ),
+        offers("__read_dir", vec![string.clone()], vec![Type::Neg(I64), Type::Neg(Str)]),
+        offers("__remove_path", vec![string.clone()], vec![Type::BOTTOM, Type::Neg(Str)]),
+        offers(
+            "__rename_path",
+            vec![string.clone(), string.clone()],
+            vec![Type::BOTTOM, Type::Neg(Str)],
+        ),
+        offers("__env_get", vec![string.clone()], vec![Type::Neg(Str), Type::BOTTOM]),
+        offers(
+            "__env_set",
+            vec![string.clone(), string.clone()],
+            vec![Type::BOTTOM, Type::Neg(Str)],
+        ),
+        offers("__spawn_exec", vec![Type::ONE], vec![Type::Neg(I64), Type::Neg(Str)]),
         offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
         offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
     ]
@@ -182,6 +207,16 @@ pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
             | "__argument_count"
             | "__argument_at"
             | "__monotonic_ns"
+            | "__sleep_ns"
+            | "__read_dir"
+            | "__dir_entry"
+            | "__remove_path"
+            | "__rename_path"
+            | "__env_get"
+            | "__env_set"
+            | "__spawn_begin"
+            | "__spawn_push"
+            | "__spawn_exec"
     )
     .then_some(IO)
 }

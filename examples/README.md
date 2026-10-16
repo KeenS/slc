@@ -12,11 +12,13 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`arithmetic.sl`](basics/arithmetic.sl) — Arithmetic with surface operators
 - [`array.sl`](basics/array.sl) — An immutable array: a 4-way trie of `Array4` nodes
 - [`associated.sl`](basics/associated.sl) — An associated type: the impl chooses it, and a bound may pin it
+- [`bits.sl`](basics/bits.sl) — Strict `and` and `or`, and logical `shl` and `shr` on an `i64`
 - [`builders.sl`](basics/builders.sl) — Builders: the negative side of the maps and sets
 - [`clock.sl`](basics/clock.sl) — A monotonic nanosecond count, compared with a later reading
 - [`comparison.sl`](basics/comparison.sl) — Comparisons and boolean operators
 - [`defaults.sl`](basics/defaults.sl) — A default method: `Eq` writes `eq`, and `ne` is its negation
 - [`dictionaries.sl`](basics/dictionaries.sl) — Traits with no runtime method value: dispatch is resolved at compile time
+- [`directory.sl`](basics/directory.sl) — `read_dir`, `rename`, and `remove`, after creating the directory with `/bin/mkdir`
 - [`hash.sl`](basics/hash.sl) — `Hash`: a non-negative `u64` for a value
 - [`hello.sl`](basics/hello.sl) — The simplest SLC program
 - [`into.sl`](basics/into.sl) — `Into`: a trait parameter solved by the expected type, across integer widths and floats
@@ -28,12 +30,15 @@ The everyday language: literals, functions, data, patterns, traits, modules. Sta
 - [`match_exhaustive.sl`](basics/match_exhaustive.sl) — Match exhaustiveness checking
 - [`namespaces.sl`](basics/namespaces.sl) — Modules: named scopes, flattened by resolution
 - [`nested_calls.sl`](basics/nested_calls.sl) — Nested calls compose with surface operators
+- [`options.sl`](basics/options.sl) — `option::map` and `option::and_then`, function first
 - [`pair.sl`](basics/pair.sl) — Tensor pairs construct with (a, b)
 - [`patterns.sl`](basics/patterns.sl) — A binder is a pattern
 - [`polymorphism.sl`](basics/polymorphism.sl) — Polymorphism: generic declarations, and `let` under the value restriction
+- [`process.sl`](basics/process.sl) — An environment variable, a zero-length wait, and a child process
 - [`projection.sl`](basics/projection.sl) — Projection: `.i` reads a tuple component, `.field` reads a record field
-- [`reals.sl`](basics/reals.sl) — `sqrt`, `abs`, `floor`, and `ceil`, and a coordinate widened from an index
-- [`sets.sl`](basics/sets.sl) — HashMap, HashSet, and the ordered Set
+- [`reals.sl`](basics/reals.sl) — `sqrt`, `abs`, `floor`, `ceil`, `sin`, `ln`, and `pow`, and a coordinate widened from an index
+- [`scanning.sl`](basics/scanning.sl) — Prefix, scalar values, split, trim, replace, and Unicode case mapping
+- [`sets.sl`](basics/sets.sl) — HashMap, HashSet, and the ordered Set, including union, intersection, and difference
 - [`stdlib.sl`](basics/stdlib.sl) — The library has two layers, and this program draws on the second
 - [`strings.sl`](basics/strings.sl) — String concatenation, indexing, and slicing
 - [`sums.sl`](basics/sums.sl) — Anonymous sums

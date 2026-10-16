@@ -49,6 +49,7 @@ a map is `{a: 1, b: 2}`, and for a set `{1, 2, 3}`, in key order.
 | `contains` | `(map, K) -> Bool` | `(set, K) -> Bool` |
 | `of_list` | a list of pairs, later pairs winning | a list of keys |
 | `to_list` | the pairs, in order | the keys, in order |
+| `union`, `intersection`, `difference` | sets only | `(Set<K>, Set<K>) -> Set<K>`. Difference is the first set without the second |
 | `get` | `proc (map, K) \| (found: V & missing: String)` | |
 
 `num::min` and `num::max` use the same `Ord`. When the two arguments compare
@@ -63,7 +64,8 @@ chain flows into; `builder.put` is that function demanded from the menu.
 
 `hashmap::HashMap<K, V>` is a 4-way hash trie. Keys use `Hash` and `Eq`, and
 equal keys hash equal. `hashset::HashSet<K>` stores nothing beside the key.
-The operations match `map` and `set`, with `Hash` and `Eq` as the key bounds.
+The operations match `map` and `set`, with `Hash` and `Eq` as the key bounds,
+except a set's `union`, `intersection`, and `difference`.
 `HashMap`'s `get` is the same `found` / `missing` command. `HashSet` has
 `contains` and no `get`. Builders match as well: a hash map's `put` takes
 the entry, and a hash set's `put` takes the key.
@@ -106,16 +108,28 @@ func push<+T: Display>(builder: Builder, value: T) -> Builder
 `push` renders through `Display` and appends. Each builder closes over one
 string, so a shared prefix can diverge.
 
+| Operation | Signature |
+|---|---|
+| `starts_with` | `(text, prefix) -> Bool`. The empty prefix is true |
+| `chars` | `(String) -> List<char>`, the scalar values in order |
+| `split` | `(text, sep) -> List<String>`. An empty separator yields one string per scalar value |
+| `trim` | `(String) -> String`, dropping leading and trailing Unicode whitespace |
+| `replace` | `(text, from, to) -> String`, every non-overlapping occurrence. An empty `from` leaves the text unchanged |
+| `lower`, `upper` | `(String) -> String`, the Unicode case mapping |
+
 ## option and either
 
 ```sl
 enum Option<+T> { None, Some(T) }
 func unwrap_or<+T>(o: Option<T>, fallback: T) -> T
+func map<+A, +B, E>(f: (A -> B / {..E}), o: Option<A>) -> Option<B> / {..E}
+func and_then<+A, +B, E>(f: (A -> Option<B> / {..E}), o: Option<A>) -> Option<B> / {..E}
 
 enum Either<+L, +R> { Left(L), Right(R) }
 ```
 
-`Either` has no methods. Neither side means success.
+`map` and `and_then` take the function first, as `list::map` does. `None`
+stays `None`. `Either` has no methods. Neither side means success.
 
 ## num
 
@@ -198,6 +212,9 @@ read through a closed handle fails at run time.
 | `read_line` | `proc (file) \| (line: String & end: unit)` |
 | `close` | `(File) -> (,) / {Fs}` |
 | `exists` | `(String) -> Bool / {Fs}` |
+| `read_dir` | `proc (path) \| (ok: List<String> & failed: String)`. Names only, in string order, without `.` or `..` |
+| `remove` | `proc (path) \| (ok: unit & failed: String)`. A file, a symlink, or an empty directory |
+| `rename` | `proc (from, to) \| (ok: unit & failed: String)` |
 
 ```sl
 {{#include ../../examples/fs.check.sl}}
@@ -241,6 +258,24 @@ true
 ```
 
 `slc run book/examples/args.sl one two` prints `[one, two]`.
+
+## env, sleep, and process
+
+```sl
+proc get<E>(name: String) | (found: -String & absent: -unit) / {Env, ..E}
+proc set<E>(name: String, value: String) | (ok: -unit & failed: -String) / {Env, ..E}
+func sleep(ns: i64) -> (,) / {Sleep}
+proc spawn<E>(program: String, args: List<String>) | (exited: -i64 & failed: -String) / {Process, ..E}
+```
+
+`do expr env::real` reads and writes the process environment. Absence is its
+own outcome. `set` refuses an empty name, a name containing `=`, or a null
+byte in either string. `do expr sleep::real` waits. Zero returns at once,
+and a negative count is an arithmetic overflow. `do expr process::real`
+starts a program and waits for it. The success is the exit status, including
+a non-zero one. Failure means the program could not be started. The child
+inherits the environment and the standard streams. The list is the words
+after the program path. Each hand performs `IO`.
 
 ## control
 

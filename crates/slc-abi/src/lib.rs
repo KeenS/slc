@@ -203,6 +203,8 @@ pub const SLC_RT_FORMAT: &str = "slc_rt_format";
 pub const SLC_RT_DISPLAY: &str = "slc_rt_display";
 pub const SLC_RT_INDEX: &str = "slc_rt_index";
 pub const SLC_RT_SUBSTRING: &str = "slc_rt_substring";
+pub const SLC_RT_LOWER: &str = "slc_rt_lower";
+pub const SLC_RT_UPPER: &str = "slc_rt_upper";
 pub const SLC_RT_SKIP_DIGITS: &str = "slc_rt_skip_digits";
 pub const SLC_RT_SKIP_WS: &str = "slc_rt_skip_ws";
 pub const SLC_RT_CHAR_AT: &str = "slc_rt_char_at";
@@ -214,6 +216,16 @@ pub const SLC_RT_READ_LINE: &str = "slc_rt_read_line";
 pub const SLC_RT_CLOSE_FILE: &str = "slc_rt_close_file";
 pub const SLC_RT_WRITE_FILE: &str = "slc_rt_write_file";
 pub const SLC_RT_FILE_EXISTS: &str = "slc_rt_file_exists";
+pub const SLC_RT_READ_DIR: &str = "slc_rt_read_dir";
+pub const SLC_RT_DIR_ENTRY: &str = "slc_rt_dir_entry";
+pub const SLC_RT_REMOVE_PATH: &str = "slc_rt_remove_path";
+pub const SLC_RT_RENAME_PATH: &str = "slc_rt_rename_path";
+pub const SLC_RT_ENV_GET: &str = "slc_rt_env_get";
+pub const SLC_RT_ENV_SET: &str = "slc_rt_env_set";
+pub const SLC_RT_SLEEP_NS: &str = "slc_rt_sleep_ns";
+pub const SLC_RT_SPAWN_BEGIN: &str = "slc_rt_spawn_begin";
+pub const SLC_RT_SPAWN_PUSH: &str = "slc_rt_spawn_push";
+pub const SLC_RT_SPAWN_EXEC: &str = "slc_rt_spawn_exec";
 pub const SLC_RT_EXIT: &str = "slc_rt_exit";
 pub const SLC_RT_FRESH_PROMPT_ID: &str = "slc_rt_fresh_prompt_id";
 pub const SLC_RT_STACK_WORDS: &str = "slc_rt_stack_words";
@@ -270,6 +282,8 @@ pub const EXPORTED_SYMBOLS: &[&str] = &[
     SLC_RT_DISPLAY,
     SLC_RT_INDEX,
     SLC_RT_SUBSTRING,
+    SLC_RT_LOWER,
+    SLC_RT_UPPER,
     SLC_RT_SKIP_DIGITS,
     SLC_RT_SKIP_WS,
     SLC_RT_CHAR_AT,
@@ -281,6 +295,16 @@ pub const EXPORTED_SYMBOLS: &[&str] = &[
     SLC_RT_CLOSE_FILE,
     SLC_RT_WRITE_FILE,
     SLC_RT_FILE_EXISTS,
+    SLC_RT_READ_DIR,
+    SLC_RT_DIR_ENTRY,
+    SLC_RT_REMOVE_PATH,
+    SLC_RT_RENAME_PATH,
+    SLC_RT_ENV_GET,
+    SLC_RT_ENV_SET,
+    SLC_RT_SLEEP_NS,
+    SLC_RT_SPAWN_BEGIN,
+    SLC_RT_SPAWN_PUSH,
+    SLC_RT_SPAWN_EXEC,
     SLC_RT_EXIT,
     SLC_RT_FRESH_PROMPT_ID,
     SLC_RT_STACK_WORDS,

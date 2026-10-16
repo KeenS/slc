@@ -152,6 +152,22 @@ spec Ceil { func ceil(self: Self) -> Self; }
 impl Ceil for f64 { func ceil(self: f64) -> f64 { <self | __ceil } }
 impl Ceil for f32 { func ceil(self: f32) -> f32 { <self | __ceil } }
 
+// Sine is the IEEE operation. The natural logarithm's domain is the
+// positive reals: zero, a negative, and `-∞` overflow. `pow` is the IEEE
+// power, except a negative base with a non-integral exponent, and a zero
+// base with a negative exponent, overflow.
+spec Sin { func sin(self: Self) -> Self; }
+impl Sin for f64 { func sin(self: f64) -> f64 { <self | __sin } }
+impl Sin for f32 { func sin(self: f32) -> f32 { <self | __sin } }
+
+spec Ln { func ln(self: Self) -> Self; }
+impl Ln for f64 { func ln(self: f64) -> f64 { <self | __ln } }
+impl Ln for f32 { func ln(self: f32) -> f32 { <self | __ln } }
+
+spec Pow { func pow(self: Self, exp: Self) -> Self; }
+impl Pow for f64 { func pow(self: f64, exp: f64) -> f64 { <(self, exp) | __pow } }
+impl Pow for f32 { func pow(self: f32, exp: f32) -> f32 { <(self, exp) | __pow } }
+
 // A value moves between integer widths, and between those widths and
 // `f32` and `f64`, by `Into`. The expected type picks the destination.
 // The number is kept when it fits there exactly; otherwise the conversion
@@ -340,8 +356,12 @@ impl Ord for Bool {
 
 // The machine word's product in the ring of its 64-bit patterns, and the
 // exclusive or of two such words. Checked `mul` refuses what this wraps.
+// `shl` and `shr` move that pattern. The distance is the count's low six
+// bits, so both are total. `shr` fills from the left with zeros.
 func wrapping_mul(a: i64, b: i64) -> i64 { <(a, b) | __wrapping_mul }
 func xor(a: i64, b: i64) -> i64 { <(a, b) | __xor }
+func shl(a: i64, b: i64) -> i64 { <(a, b) | __shl }
+func shr(a: i64, b: i64) -> i64 { <(a, b) | __shr }
 
 // A non-negative `u64` derived from the value. Equal values hash equal.
 // The mix multiplies the word by the bit pattern of `0x9E3779B97F4A7C15`
@@ -660,9 +680,18 @@ impl<
 
 // ── Logic ────────────────────────────────────────────────────────────────
 //
-// There is no `!`: negation is an ordinary function a `Bool` flows into,
-// `<b | not`.
+// There is no `!`, `&&`, or `||`. Negation and the two binary operations
+// are ordinary functions a `Bool` flows into. `and` and `or` are strict:
+// both arguments are values before the call.
 
 func not(b: Bool) -> Bool {
     of b { True => False, False => True }
+}
+
+func and(a: Bool, b: Bool) -> Bool {
+    of a { True => b, False => False }
+}
+
+func or(a: Bool, b: Bool) -> Bool {
+    of a { True => True, False => b }
 }

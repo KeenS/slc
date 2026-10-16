@@ -2346,6 +2346,73 @@ pub extern "C" fn slc_rt_ceil(sp: u64, bits: u64) -> u64 {
     f64::from_bits(bits).ceil().to_bits()
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_sin(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    f64::from_bits(bits).sin().to_bits()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_ln(sp: u64, bits: u64) -> u64 {
+    let _ = sp;
+    let value = f64::from_bits(bits);
+    if value <= 0.0 {
+        type_mismatch(&format!("arithmetic overflow: ln({})", float_text(value)));
+    }
+    value.ln().to_bits()
+}
+
+/// IEEE power. A negative base with a non-integral exponent, and a zero base
+/// with a negative exponent, are arithmetic overflow.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_pow(sp: u64, base_bits: u64, exp_bits: u64) -> u64 {
+    let _ = sp;
+    let (base, exp) = (f64::from_bits(base_bits), f64::from_bits(exp_bits));
+    let outside =
+        (base == 0.0 && exp < 0.0) || (base < 0.0 && exp.is_finite() && exp.fract() != 0.0);
+    if !base.is_nan() && !exp.is_nan() && outside {
+        type_mismatch(&format!(
+            "arithmetic overflow: pow({}, {})",
+            float_text(base),
+            float_text(exp)
+        ));
+    }
+    base.powf(exp).to_bits()
+}
+
+fn shift_count(count: i64) -> u32 {
+    (count as u32) & 63
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_shl(sp: u64, value: u64, count: u64) -> u64 {
+    let _ = sp;
+    (value as i64).wrapping_shl(shift_count(count as i64)) as u64
+}
+
+/// Logical right shift: zeros enter at the high bit.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_shr(sp: u64, value: u64, count: u64) -> u64 {
+    let _ = sp;
+    value.wrapping_shr(shift_count(count as i64))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_lower(sp: u64, text: u64) -> u64 {
+    let Some(text) = string_text(text) else {
+        type_mismatch("builtin type mismatch: __lower expects a String");
+    };
+    alloc_text(sp, &text.to_lowercase())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_upper(sp: u64, text: u64) -> u64 {
+    let Some(text) = string_text(text) else {
+        type_mismatch("builtin type mismatch: __upper expects a String");
+    };
+    alloc_text(sp, &text.to_uppercase())
+}
+
 static PROGRAM_ARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
 fn program_args() -> std::sync::MutexGuard<'static, Vec<String>> {
@@ -2861,6 +2928,195 @@ pub extern "C" fn slc_rt_file_exists(sp: u64, path: u64) -> u64 {
     let slot =
         if std::path::Path::new(&path).exists() { &slc_rt_bool_true } else { &slc_rt_bool_false };
     slot.load(Ordering::Relaxed)
+}
+
+static DIR_NAMES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn dir_names() -> std::sync::MutexGuard<'static, Vec<String>> {
+    DIR_NAMES.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn directory_names(path: &str) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(path).map_err(|err| format!("cannot read {path}: {err}"))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("cannot read {path}: {err}"))?;
+        names.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    names.sort();
+    Ok(names)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_read_dir(sp: u64, path: u64) -> Offer {
+    let Some(path) = string_text(path) else {
+        return offer(1, alloc_text(sp, "builtin type mismatch: read_dir expects a String path"));
+    };
+    match directory_names(&path) {
+        Ok(names) => {
+            let count = names.len() as u64;
+            *dir_names() = names;
+            offer(0, count)
+        }
+        Err(why) => offer(1, alloc_text(sp, &why)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_dir_entry(sp: u64, index: u64) -> u64 {
+    let index = index as i64;
+    let text = {
+        let names = dir_names();
+        match usize::try_from(index).ok().and_then(|slot| names.get(slot)).cloned() {
+            Some(text) => text,
+            None => type_mismatch(&format!("builtin type mismatch: index {index} out of range")),
+        }
+    };
+    alloc_text(sp, &text)
+}
+
+fn remove_os_path(path: &str) -> Result<(), String> {
+    let meta =
+        std::fs::symlink_metadata(path).map_err(|err| format!("cannot remove {path}: {err}"))?;
+    let removed =
+        if meta.is_dir() { std::fs::remove_dir(path) } else { std::fs::remove_file(path) };
+    removed.map_err(|err| format!("cannot remove {path}: {err}"))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_remove_path(sp: u64, path: u64) -> Offer {
+    let Some(path) = string_text(path) else {
+        return offer(
+            1,
+            alloc_text(sp, "builtin type mismatch: remove_path expects a String path"),
+        );
+    };
+    match remove_os_path(&path) {
+        Ok(()) => offer(0, 0),
+        Err(why) => offer(1, alloc_text(sp, &why)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_rename_path(sp: u64, from: u64, to: u64) -> Offer {
+    let (Some(from), Some(to)) = (string_text(from), string_text(to)) else {
+        return offer(
+            1,
+            alloc_text(sp, "builtin type mismatch: rename_path expects (from, to) Strings"),
+        );
+    };
+    match std::fs::rename(&from, &to) {
+        Ok(()) => offer(0, 0),
+        Err(err) => offer(1, alloc_text(sp, &format!("cannot rename {from}: {err}"))),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_env_get(sp: u64, name: u64) -> Offer {
+    let Some(name) = string_text(name) else {
+        type_mismatch("env_get expects a String");
+    };
+    match std::env::var_os(&name) {
+        Some(value) => offer(0, alloc_text(sp, &value.to_string_lossy())),
+        None => offer(1, 0),
+    }
+}
+
+fn assign_env(name: &str, value: &str) -> Result<(), String> {
+    if name.is_empty() || name.contains('=') || name.contains('\0') || value.contains('\0') {
+        return Err(format!("cannot set environment variable {name}"));
+    }
+    // The runtime is the only writer, and a program runs on one thread.
+    unsafe { std::env::set_var(name, value) };
+    Ok(())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_env_set(sp: u64, name: u64, value: u64) -> Offer {
+    let (Some(name), Some(value)) = (string_text(name), string_text(value)) else {
+        return offer(
+            1,
+            alloc_text(sp, "builtin type mismatch: env_set expects (name, value) Strings"),
+        );
+    };
+    match assign_env(&name, &value) {
+        Ok(()) => offer(0, 0),
+        Err(why) => offer(1, alloc_text(sp, &why)),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_sleep_ns(sp: u64, ns: u64) -> u64 {
+    let _ = sp;
+    let ns = ns as i64;
+    if ns < 0 {
+        type_mismatch(&format!("arithmetic overflow: sleep({ns})"));
+    }
+    if ns > 0 {
+        std::thread::sleep(std::time::Duration::from_nanos(ns as u64));
+    }
+    0
+}
+
+static SPAWN_PROGRAM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+static SPAWN_ARGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn spawn_program() -> std::sync::MutexGuard<'static, Option<String>> {
+    SPAWN_PROGRAM.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+fn spawn_args() -> std::sync::MutexGuard<'static, Vec<String>> {
+    SPAWN_ARGS.lock().unwrap_or_else(|err| err.into_inner())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_spawn_begin(sp: u64, program: u64) -> u64 {
+    let _ = sp;
+    let Some(program) = string_text(program) else {
+        type_mismatch("builtin type mismatch: __spawn_begin expects a String");
+    };
+    *spawn_program() = Some(program);
+    spawn_args().clear();
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_spawn_push(sp: u64, arg: u64) -> u64 {
+    let _ = sp;
+    if spawn_program().is_none() {
+        type_mismatch("builtin type mismatch: spawn was not begun");
+    }
+    let Some(arg) = string_text(arg) else {
+        type_mismatch("builtin type mismatch: __spawn_push expects a String");
+    };
+    spawn_args().push(arg);
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_spawn_exec(sp: u64, _unit: u64) -> Offer {
+    let program = spawn_program().take();
+    let args = std::mem::take(&mut *spawn_args());
+    let Some(program) = program.filter(|program| !program.is_empty()) else {
+        return offer(1, alloc_text(sp, "cannot spawn: program path is empty"));
+    };
+    match std::process::Command::new(&program).args(&args).status() {
+        Ok(status) => {
+            let code = status.code().unwrap_or_else(|| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    128 + status.signal().unwrap_or(0)
+                }
+                #[cfg(not(unix))]
+                {
+                    1
+                }
+            });
+            offer(0, code as u64)
+        }
+        Err(err) => offer(1, alloc_text(sp, &format!("cannot spawn {program}: {err}"))),
+    }
 }
 
 #[unsafe(no_mangle)]

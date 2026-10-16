@@ -1173,9 +1173,13 @@ machine does not do that; `eval` and `compile_term` do not either. Only
 `run_program` did, and the folder must do it itself. A name is open when
 `free_vars_term` contains it and it is not a literal encoding and not a
 name `install_stdlib` defined. `__add` is therefore closed. `add` is not.
-The refusal list, applied before execution, is still `EXIT`, `__handle`,
-`__read_file`, `__open_file`, `__read_line`, `__close_file`,
-`__write_file`, `__file_exists`, `__io_write`, and `__io_write_line`.
+The refusal list, applied before execution, is `EXIT`, `__handle`,
+`__match_dispatch`, the file primitives (`__read_file`, `__open_file`,
+`__read_line`, `__close_file`, `__write_file`, `__file_exists`,
+`__read_dir`, `__dir_entry`, `__remove_path`, `__rename_path`), the
+environment and process primitives (`__env_get`, `__env_set`, `__sleep_ns`,
+`__spawn_begin`, `__spawn_push`, `__spawn_exec`), `__argument_count`,
+`__argument_at`, `__monotonic_ns`, `__io_write`, and `__io_write_line`.
 
 The run is `compile_term`, that environment, no `IO` prompt, and a budget
 of 100_000 interpreter steps, not the program's `--fuel`. Exhausting it
@@ -1244,6 +1248,10 @@ completeness claim does not skip them.
 | `__to_i8`, `__to_i32`, `__to_i64`, `__to_u8`, `__to_u32`, `__to_u64` | Integer source: `slc_rt_to_*`. Float source: `slc_rt_f_to_*`. The operand class selects the symbol, because the word is untagged. Fail with the wrapped `does not fit` text. |
 | `__to_f64`, `__to_f32` | Integer source: `slc_rt_i_to_f64`, `slc_rt_i_to_f32`. Float source: `slc_rt_f_to_f64` (the word unchanged) and `slc_rt_f_to_f32`. Exact only. |
 | `__sqrt`, `__abs`, `__floor`, `__ceil` | `slc_rt_sqrt`, `slc_rt_abs`, `slc_rt_floor`, `slc_rt_ceil` on the `f64` word. A negative square root fails with `arithmetic overflow: sqrt(…)`. |
+| `__sin`, `__ln` | `slc_rt_sin`, `slc_rt_ln` on the `f64` word. Sine is total. A non-positive logarithm fails with `arithmetic overflow: ln(…)`. |
+| `__pow` | `slc_rt_pow`. A negative base with a non-integral exponent, and a zero base with a negative exponent, fail with `arithmetic overflow: pow(…)`. The operand pair is still in `VAL`; the call reloads it the way `slc_rt_wrapping_div` does. |
+| `__shl`, `__shr` | `slc_rt_shl`, `slc_rt_shr`. The distance is the count's low six bits. `shr` is logical. Both are total. The same pair reload. |
+| `__lower`, `__upper` | `slc_rt_lower`, `slc_rt_upper`. Unicode case mapping. The result is a new string. |
 | `__argument_count`, `__argument_at`, `__monotonic_ns` | `slc_rt_argument_count`, `slc_rt_argument_at`, `slc_rt_monotonic_ns`. `slc_rt_set_args` stores the words before `slc_rt_start`. |
 | `str_len` | inline load of offset 24. |
 | `str_concat`, `str_eq` | `slc_rt_str_concat`, `slc_rt_str_eq`. |
@@ -1255,6 +1263,11 @@ completeness claim does not skip them.
 | `skip_digits`, `skip_ws` | `slc_rt_skip_digits`, `slc_rt_skip_ws`. |
 | `char_at`, `find_char`, `parse_int` | offering symbols. A discriminant and a payload; generated code cuts to the continuation. `char_at`'s out-of-range text is the one in `run_offering_builtin`. |
 | `__read_file`, `__open_file`, `__read_line`, `__close_file`, `__write_file`, `__file_exists` | the `Fs` symbols. Handles live in `OPEN_FILES`. Discriminants match `run_offering_builtin`. |
+| `__read_dir`, `__dir_entry` | `slc_rt_read_dir` stores the sorted names and returns the count. `slc_rt_dir_entry` indexes that list. The runtime does not allocate a `Cons` cell. An index with no listing is `error: type mismatch: builtin type mismatch: index {i} out of range`. |
+| `__remove_path`, `__rename_path` | `slc_rt_remove_path`, `slc_rt_rename_path`. A directory removal is `remove_dir` and is not recursive. A symlink is removed as a file. |
+| `__env_get`, `__env_set` | `slc_rt_env_get`, `slc_rt_env_set`. Absence is the second outcome. A non-string `__env_get` argument is a fatal type mismatch, `env_get expects a String`. |
+| `__sleep_ns` | `slc_rt_sleep_ns`. A negative count fails with `arithmetic overflow: sleep(…)`. Zero returns at once. |
+| `__spawn_begin`, `__spawn_push`, `__spawn_exec` | The handler walks `List<String>`. `__spawn_exec` returns the exit status, or why the program could not be started. An empty path is `cannot spawn: program path is empty`. |
 | `__io_write`, `__io_write_line`, `__io_done` | the `IO` clauses and the identity return. |
 | `EXIT` | `slc_rt_exit`. |
 | `str_len_bytes`, `char_code_at`, `code_to_char`, `string_push`, `str_to_int` | Dead. `apply_builtin` has arms for them. `install_stdlib` does not, `builtin_arity` does not, and no `.sl` source names them. They are not installed and not exported. A term that mentions one is unbound, as it is on the interpreter today. |
@@ -1305,8 +1318,11 @@ raw `i32` to the process.
   raw `i32`. Diagnostics stay on stderr with the `error:` prefix the driver
   already prints.
 - The link line is `cc` plus the object plus `libslc_rt.a` plus whatever
-  `rustc --print native-static-libs` reports for that build. The driver does
-  not hard-code `-lpthread`. The flags are `-fPIE -pie -Wl,--gc-sections`,
+  `rustc --print native-static-libs` reports for that build. The print needs
+  a crate, so the driver compiles an empty one from stdin. rustc names that
+  crate `librust_out` and writes it in the working directory, so each print
+  uses a directory of its own. The line includes `-lm`, which `sin`, `ln`,
+  and `pow` call. The driver does not hard-code `-lpthread`. The flags are `-fPIE -pie -Wl,--gc-sections`,
   which the GNU linker accepts. On a host other than x86-64 Linux the driver
   does not call `cc`: `slc run` uses the interpreter, and `slc compile`
   reports that it cannot link.

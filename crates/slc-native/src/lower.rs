@@ -206,6 +206,9 @@ fn prelude_primitive(symbol: &str) -> Option<&'static str> {
         ("Abs", "abs") if matches!(key, "f64" | "f32") => Some("__abs"),
         ("Floor", "floor") if matches!(key, "f64" | "f32") => Some("__floor"),
         ("Ceil", "ceil") if matches!(key, "f64" | "f32") => Some("__ceil"),
+        ("Sin", "sin") if matches!(key, "f64" | "f32") => Some("__sin"),
+        ("Ln", "ln") if matches!(key, "f64" | "f32") => Some("__ln"),
+        ("Pow", "pow") if matches!(key, "f64" | "f32") => Some("__pow"),
         ("Eq", "eq") if ordered => Some("__eq"),
         ("Eq", "ne") if ordered => Some("__ne"),
         ("Ord", "lt") if ordered => Some("__lt"),
@@ -2037,6 +2040,12 @@ impl Builder {
                 "__open_file" => Some(("slc_rt_open_file", 1, &[false, true])),
                 "__read_line" => Some(("slc_rt_read_line", 1, &[true, false])),
                 "__write_file" => Some(("slc_rt_write_file", 2, &[false, true])),
+                "__read_dir" => Some(("slc_rt_read_dir", 1, &[false, true])),
+                "__remove_path" => Some(("slc_rt_remove_path", 1, &[false, true])),
+                "__rename_path" => Some(("slc_rt_rename_path", 2, &[false, true])),
+                "__env_get" => Some(("slc_rt_env_get", 1, &[true, false])),
+                "__env_set" => Some(("slc_rt_env_set", 2, &[false, true])),
+                "__spawn_exec" => Some(("slc_rt_spawn_exec", 1, &[false, true])),
                 _ => None,
             };
             if let Some((symbol, width, arms)) = spec {
@@ -2087,9 +2096,20 @@ impl Builder {
                 | "__abs"
                 | "__floor"
                 | "__ceil"
+                | "__sin"
+                | "__ln"
+                | "__pow"
+                | "__shl"
+                | "__shr"
+                | "__lower"
+                | "__upper"
                 | "__argument_count"
                 | "__argument_at"
                 | "__monotonic_ns"
+                | "__sleep_ns"
+                | "__dir_entry"
+                | "__spawn_begin"
+                | "__spawn_push"
                 | "str_len"
                 | "__index"
                 | "char_to_code"
@@ -3386,12 +3406,14 @@ impl Builder {
                 });
                 Ok(false)
             }
-            "__sqrt" | "__abs" | "__floor" | "__ceil" => {
+            "__sqrt" | "__abs" | "__floor" | "__ceil" | "__sin" | "__ln" => {
                 let symbol = match name {
                     "__sqrt" => "slc_rt_sqrt",
                     "__abs" => "slc_rt_abs",
                     "__floor" => "slc_rt_floor",
-                    _ => "slc_rt_ceil",
+                    "__ceil" => "slc_rt_ceil",
+                    "__sin" => "slc_rt_sin",
+                    _ => "slc_rt_ln",
                 };
                 self.emit(Inst::CallRt {
                     symbol: symbol.into(),
@@ -3400,6 +3422,31 @@ impl Builder {
                     returns: true,
                 });
                 Ok(false)
+            }
+            "__pow" | "__shl" | "__shr" => {
+                // `PairImm` reads the operand tuple still sitting in `VAL`.
+                let symbol = match name {
+                    "__pow" => "slc_rt_pow",
+                    "__shl" => "slc_rt_shl",
+                    _ => "slc_rt_shr",
+                };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::PairImm(0),
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__lower" | "__upper" => {
+                let symbol = if name == "__lower" { "slc_rt_lower" } else { "slc_rt_upper" };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
             }
             "__argument_count" => {
                 self.emit(Inst::CallRt {
@@ -3422,6 +3469,38 @@ impl Builder {
             "__monotonic_ns" => {
                 self.emit(Inst::CallRt {
                     symbol: "slc_rt_monotonic_ns".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__sleep_ns" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_sleep_ns".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
+            }
+            "__dir_entry" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_dir_entry".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(true)
+            }
+            "__spawn_begin" | "__spawn_push" => {
+                let symbol = if name == "__spawn_begin" {
+                    "slc_rt_spawn_begin"
+                } else {
+                    "slc_rt_spawn_push"
+                };
+                self.emit(Inst::CallRt {
+                    symbol: symbol.into(),
                     arg: RtArg::Val,
                     noreturn: false,
                     returns: true,
@@ -3656,6 +3735,9 @@ impl Builder {
         let Term::Tuple(items) = arg else {
             return self.compile_builtin(name, arg, mode);
         };
+        if name == "__pow" {
+            return self.compile_builtin(name, arg, mode);
+        }
         if name == "__neg" {
             if items.len() != 1 {
                 return self.compile_builtin(name, arg, mode);

@@ -47,7 +47,8 @@ the given index for the scalar whose code is the third argument.
 ## Under the library
 
 These perform `IO` and are reached through a `hand`, not called at the top
-of a program that wants its effects in `Fs`, `Args`, or `Clock`.
+of a program that wants its effects in `Fs`, `Args`, `Clock`, `Env`,
+`Sleep`, or `Process`.
 
 | Operation | Role |
 |---|---|
@@ -57,9 +58,17 @@ of a program that wants its effects in `Fs`, `Args`, or `Clock`.
 | `__read_line` | `fs::read_line`, a line or the end |
 | `__close_file` | `fs::close` |
 | `__file_exists` | `fs::exists` |
+| `__read_dir`, `__dir_entry` | `fs::read_dir`. The count, then one name per index |
+| `__remove_path` | `fs::remove` |
+| `__rename_path` | `fs::rename` |
 | `__argument_count`, `__argument_at` | `args::arguments` |
 | `__monotonic_ns` | `clock::now` |
+| `__env_get`, `__env_set` | `env::get` and `env::set` |
+| `__sleep_ns` | `sleep::sleep` |
+| `__spawn_begin`, `__spawn_push`, `__spawn_exec` | `process::spawn` |
 
 The arithmetic builtins `__add`, `__sub`, `__mul`, `__div`, `__rem`,
-`__neg`, the comparisons, `__sqrt`, `__abs`, `__floor`, `__ceil`, and the
-`__to_*` conversions are the bodies of the prelude traits.
+`__neg`, the comparisons, `__sqrt`, `__abs`, `__floor`, `__ceil`, `__sin`,
+`__ln`, `__pow`, `__shl`, `__shr`, and the `__to_*` conversions are the
+bodies of the prelude traits. `__lower` and `__upper` are `string::lower`
+and `string::upper`.

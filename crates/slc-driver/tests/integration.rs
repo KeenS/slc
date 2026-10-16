@@ -1236,6 +1236,9 @@ fn a_program_mocks_the_file_system_with_a_handler_of_its_own() {
                 fs::read_line_of(file): resume => <::1((,)) | resume,
                 fs::close_file(file): resume => <(,) | resume,
                 fs::file_exists(path): resume => <False | resume,
+                fs::read_directory(path): resume => <::1("not supported") | resume,
+                fs::remove_path(path): resume => <::1("not supported") | resume,
+                fs::rename_path(from, to): resume => <::1("not supported") | resume,
             }
         }
 
@@ -1264,6 +1267,9 @@ fn a_computation_is_handed_to_a_handler_as_fn_braces() {
                 fs::read_line_of(file): resume => <::1((,)) | resume,
                 fs::close_file(file): resume => <(,) | resume,
                 fs::file_exists(path): resume => <False | resume,
+                fs::read_directory(path): resume => <::1("not supported") | resume,
+                fs::remove_path(path): resume => <::1("not supported") | resume,
+                fs::rename_path(from, to): resume => <::1("not supported") | resume,
             }
         }
 
@@ -1298,6 +1304,9 @@ fn a_program_ending_in_a_cut_is_handed_to_a_command_handler() {
                 fs::read_line_of(file): resume => <::1((,)) | resume,
                 fs::close_file(file): resume => <(,) | resume,
                 fs::file_exists(path): resume => <False | resume,
+                fs::read_directory(path): resume => <::1("not supported") | resume,
+                fs::remove_path(path): resume => <::1("not supported") | resume,
+                fs::rename_path(from, to): resume => <::1("not supported") | resume,
             }
         }
 
@@ -1344,6 +1353,9 @@ fn a_handler_clause_names_its_operation_by_path() {
                 fs::read_line_of(file): resume => <::1((,)) | resume,
                 fs::close_file(file): resume => <(,) | resume,
                 fs::file_exists(path): resume => <False | resume,
+                fs::read_directory(path): resume => <::1("not supported") | resume,
+                fs::remove_path(path): resume => <::1("not supported") | resume,
+                fs::rename_path(from, to): resume => <::1("not supported") | resume,
             }
         }
 

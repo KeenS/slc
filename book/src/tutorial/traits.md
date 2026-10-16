@@ -90,8 +90,8 @@ The widths and the float operations are the next program.
 2
 ```
 
-`sqrt`, `abs`, `floor`, and `ceil` are methods of `f32` and `f64`. `num::abs`
-is a separate function on `i64`.
+`sqrt`, `abs`, `floor`, `ceil`, `sin`, `ln`, and `pow` are methods of `f32`
+and `f64`. `num::abs` is a separate function on `i64`.
 
 An associated type is chosen by the impl:
 

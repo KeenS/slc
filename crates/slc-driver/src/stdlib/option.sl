@@ -15,3 +15,18 @@ pub func unwrap_or<+T>(o: Option<T>, fallback: T) -> T {
         Option::Some(x) => x,
     }
 }
+
+// The function comes first, as it does for `list::map`. `None` stays `None`.
+pub func map<+A, +B, E>(f: (A -> B / {..E}), o: Option<A>) -> Option<B> / {..E} {
+    of o {
+        Option::None => Option::None,
+        Option::Some(x) => Option::Some(<x | f),
+    }
+}
+
+pub func and_then<+A, +B, E>(f: (A -> Option<B> / {..E}), o: Option<A>) -> Option<B> / {..E} {
+    of o {
+        Option::None => Option::None,
+        Option::Some(x) => <x | f,
+    }
+}

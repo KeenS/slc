@@ -32,6 +32,9 @@ const LIBRARY: &[(&str, &str)] = &[
     ("fs", include_str!("stdlib/fs.sl")),
     ("args", include_str!("stdlib/args.sl")),
     ("clock", include_str!("stdlib/clock.sl")),
+    ("env", include_str!("stdlib/env.sl")),
+    ("sleep", include_str!("stdlib/sleep.sl")),
+    ("process", include_str!("stdlib/process.sl")),
 ];
 
 /// The library units a program needs: the prelude always, and each stdlib
@@ -733,14 +736,59 @@ fn runtime_archive() -> PathBuf {
     target.join("release-abort/libslc_rt.a")
 }
 
+/// A fresh directory for one `rustc --print native-static-libs` invocation.
+/// rustc names the stdin crate `librust_out` and writes it in the working
+/// directory, so parallel compiles each need a directory of their own.
+fn native_libs_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "slc-native-libs-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        eprintln!("error: rustc --print native-static-libs: {error}");
+        std::process::exit(1);
+    }
+    dir
+}
+
 fn native_libs() -> Vec<String> {
-    let output = Command::new("rustc")
-        .args(["--print", "native-static-libs"])
-        .output()
+    // `rustc --print native-static-libs` refuses to run without a crate. The
+    // empty crate is enough: the line is the host's, including `-lm` for the
+    // real functions.
+    let out_dir = native_libs_dir();
+    let mut child = Command::new("rustc")
+        .current_dir(&out_dir)
+        .args([
+            "--print",
+            "native-static-libs",
+            "--crate-type",
+            "staticlib",
+            "--edition",
+            "2024",
+            "--out-dir",
+        ])
+        .arg(&out_dir)
+        .arg("-")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap_or_else(|error| {
             eprintln!("error: rustc --print native-static-libs: {error}");
             std::process::exit(1);
         });
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(b"pub fn slc() {}\n");
+    }
+    let output = child.wait_with_output().unwrap_or_else(|error| {
+        eprintln!("error: rustc --print native-static-libs: {error}");
+        std::process::exit(1);
+    });
+    let _ = std::fs::remove_dir_all(&out_dir);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -758,7 +806,13 @@ fn native_libs() -> Vec<String> {
             })
         })
         .unwrap_or("");
-    line.split_whitespace().map(str::to_string).collect()
+    let libs: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+    if libs.is_empty() {
+        eprintln!("error: rustc --print native-static-libs reported no libraries");
+        eprint!("{}", String::from_utf8_lossy(&output.stderr));
+        std::process::exit(1);
+    }
+    libs
 }
 
 /// `slc compile`: one source, one executable. Flags may sit on either side of
@@ -1081,12 +1135,19 @@ mod tests {
     #[test]
     fn a_module_loads_with_the_modules_it_reaches() {
         // A path is enough; so is a `cite`, of a name or a glob.
-        assert_eq!(loaded("x | fs::read"), ["prelude", "fs"]);
+        // `fs` reaches `list`, for the names a directory lists. Units stay in
+        // library order, so `string` precedes `list` and `list` precedes `fs`.
+        assert_eq!(loaded("x | fs::read"), ["prelude", "list", "fs"]);
+        assert_eq!(loaded("cite string::chars;"), ["prelude", "string", "list"]);
         assert_eq!(loaded("cite num::*;"), ["prelude", "num"]);
         assert_eq!(loaded("cite option;"), ["prelude", "option"]);
         // `seq` reaches `list` and `stream`, and `stream` reaches `list`.
         assert_eq!(loaded("cite seq::Seq;"), ["prelude", "list", "stream", "seq"]);
         assert_eq!(loaded("cite args::arguments;"), ["prelude", "list", "args"]);
         assert_eq!(loaded("cite clock::now;"), ["prelude", "clock"]);
+        assert_eq!(loaded("cite env::get;"), ["prelude", "env"]);
+        assert_eq!(loaded("cite sleep::sleep;"), ["prelude", "sleep"]);
+        // `process` reaches `list`, for the words after the program path.
+        assert_eq!(loaded("cite process::spawn;"), ["prelude", "list", "process"]);
     }
 }

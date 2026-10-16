@@ -80,11 +80,41 @@ fn runtime_archive() -> PathBuf {
 }
 
 fn native_libs() -> Vec<String> {
+    use std::sync::atomic::{AtomicU64, Ordering};
     static CACHE: OnceLock<Vec<String>> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     CACHE
         .get_or_init(|| {
-            let output =
-                Command::new("rustc").args(["--print", "native-static-libs"]).output().unwrap();
+            // rustc names the stdin crate `librust_out` and writes it in the
+            // working directory. A private directory keeps parallel tests apart.
+            let out_dir = std::env::temp_dir().join(format!(
+                "slc-native-libs-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir_all(&out_dir).unwrap();
+            let mut child = Command::new("rustc")
+                .current_dir(&out_dir)
+                .args([
+                    "--print",
+                    "native-static-libs",
+                    "--crate-type",
+                    "staticlib",
+                    "--edition",
+                    "2024",
+                    "--out-dir",
+                ])
+                .arg(&out_dir)
+                .arg("-")
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            std::io::Write::write_all(&mut child.stdin.take().unwrap(), b"pub fn slc() {}\n")
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            let _ = std::fs::remove_dir_all(&out_dir);
             let text = format!(
                 "{}{}",
                 String::from_utf8_lossy(&output.stdout),
