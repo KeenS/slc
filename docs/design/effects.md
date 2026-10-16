@@ -393,3 +393,74 @@ all continuations — so its `Self` is the type it *consumes*, and dispatch
 reads the value the cut sends: `<42 | deliver | s>` finds the `i64` impl,
 `<True | deliver | s>` the `Bool` one. Both shapes resolve statically, and a
 bound forwards through either.
+
+#### Parallel demands
+
+Overlap of two pure thunks is the library effect `Fork`, in the module
+`fork`. `together` receives two `lazy::Lazy` values whose demand row is
+empty and resumes once with the pair of their forces. `fork::sequential`
+forces the left thunk, then the right. `fork::parallel` forces both at
+once. On the empty row the pair is the same either way. A loop in one
+force does not hide a fatal in the other. When both forces fail, which
+fatal is reported is not specified. A program that installs neither
+hand does not overlap, and `Fork` is not answered around `main`.
+
+An effect handled inside a force is discharged before `together` sees the
+thunk. A thunk whose demand row is not empty is refused. `Link` is such a
+row, so a pure pair carries no messages. One installation of `Fork<A, B>`
+has one `A` and one `B`. A region whose calls disagree needs a `do` per
+instantiation.
+
+Communication among the arms is `Link`, under one hand, `exchange`, started
+by one function, `talk`. Each party is an `End` menu the program names.
+`writer.give(done)` sends to that end and suspends until the arm that owns
+it performs `writer.take`. `computer.take` suspends until some arm performs
+`computer.give`. The waiting `give` is the one value in flight. The next
+`take` does not see it again.
+
+The arms of one talk are an `Arms` spine. A menu is negative, and
+`List<+T>` holds positive values, so a list of consumers is its own
+declaration. `talk` returns the positive `List<A>`, in spine order.
+
+```sl
+pub enum Arms<-A> { Stop, Arm(A, Arms<A>), }
+…
+pub func talk<+A, +T>(arms: Arms<Lazy<A, {Link<T>}>>) -> List<A> / {Talk<A, T>} { … }
+```
+
+Several arms may give to one end. They are served in spine order. An
+earlier arm is waited for even when a later giver is already suspended. A
+second `give` from the same arm is delivered on the next `take` after the
+earlier arms have been served. One end has one taker. A different arm
+taking an end that another arm has taken is the fatal `end already taken`.
+The same arm may take twice.
+
+`end` mints a token and builds the menu in SLC. Bind it with `let+` inside
+the `do`, before `talk`. A plain `let` delays the negative menu, and a
+delayed `end()` mints a new token on every force. Bind each arm menu with
+`let+` before placing the name in the spine, so the spine holds the menu.
+`exchange` answers `Link` and `Talk`, and the forces run under that hand.
+`sequential` cannot run the arms: the first `give` would wait for an arm
+that has not started.
+
+One `exchange` has one payload type. A nested `converse` while it is open
+is the fatal `link already open`. An arm that has finished while another
+is still waiting, or every arm suspended with no complement, is the fatal
+`unmatched link`. The program does not spin, and the waiting arm does not
+receive a failure value.
+
+A pure `both` shares the positive values the thunks already close over.
+The arms observe each other through `Link`. Copying one continuation onto
+both forces, and using the joint `(k1 ; k2)` as the channel, stay outside
+this rule. Multi-shot clauses such as `flip` stay sequential on one stack.
+`process::spawn` stays the isolated child.
+
+```sl
+let pair = do (<(left, right) | fork::both) fork::parallel;
+…
+let answers = do {
+    let+ hear = end();
+    …
+    <Arm(tell, Arm(heard, Stop)) | talk
+} exchange;
+```

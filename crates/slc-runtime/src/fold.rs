@@ -111,6 +111,11 @@ fn refused_name(name: &str) -> bool {
             | "__argument_count"
             | "__argument_at"
             | "__monotonic_ns"
+            | "__link_mint"
+            | "__link_run"
+            | "__link_give"
+            | "__link_take"
+            | "__fork_both"
             | "__io_write"
             | "__io_write_line"
     )

@@ -160,6 +160,21 @@ pub fn lower(
         )),
     );
     funcs.push(builder.lower_fn("__display", &display)?);
+    // `fork::parallel` enters this function on each thunk. The demand peels a
+    // delay, then cuts the `force` answer into the worker's return continuation.
+    // `--gc-sections` drops it when the program never calls `__fork_both`.
+    builder.func_param.insert("slc_fork_force".into(), true);
+    let fork_force = Term::Lam(
+        "thunk".into(),
+        Box::new(Term::Mu(
+            "k".into(),
+            Box::new(Command::Cut(
+                Term::Var("thunk".into()),
+                CoTerm::Dtor("lazy::Lazy::force".into(), Box::new(CoTerm::Covar("k".into()))),
+            )),
+        )),
+    );
+    funcs.push(builder.lower_fn("slc_fork_force", &fork_force)?);
     for (name, term) in defs {
         if matches!(term, Term::Lam(binder, _) if binder != DELAY_BINDER) {
             funcs.push(builder.lower_fn(name, term)?);
@@ -307,6 +322,9 @@ fn patch(funcs: &mut [Function]) {
                     Inst::SymMap { dst, symbol } => {
                         let value = i64::from(maps[symbol]);
                         *inst = Inst::Imm { dst: *dst, value };
+                    }
+                    Inst::ForkBoth { frame_words } => {
+                        *frame_words = sizes["slc_fork_force"];
                     }
                     _ => {}
                 }
@@ -2121,6 +2139,11 @@ impl Builder {
                 | "str_eq"
                 | "__close_file"
                 | "__file_exists"
+                | "__link_mint"
+                | "__link_run"
+                | "__link_give"
+                | "__link_take"
+                | "__fork_both"
         ) {
             return self.compile_builtin(symbol, arg, mode);
         }
@@ -3562,6 +3585,22 @@ impl Builder {
                     returns: true,
                 });
                 Ok(true)
+            }
+            "__fork_both" => {
+                // The tuple stays in a scratch across the safepoint inside the call.
+                let _slot = self.push_scratch(Dest::Val)?;
+                self.emit(Inst::ForkBoth { frame_words: 0 });
+                self.pop_scratch();
+                Ok(true)
+            }
+            "__link_mint" | "__link_run" | "__link_give" | "__link_take" => {
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_link_unavailable".into(),
+                    arg: RtArg::Val,
+                    noreturn: true,
+                    returns: false,
+                });
+                Ok(false)
             }
             "is_digit" | "is_ws" => self.compile_char_class(name, mode),
             "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__neg" | "__xor"

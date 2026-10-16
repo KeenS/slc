@@ -12,7 +12,7 @@ use crate::chunk::{Branch, Chunk, Node, NodeId};
 use slc_core::command::Command;
 use slc_core::coterm::{CoCaseBranch, CoTerm};
 use slc_core::term::Term;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The binders in force while compiling, innermost last.
 #[derive(Default, Clone)]
@@ -35,36 +35,36 @@ impl Scope {
 
 /// Compile a single core term into its own chunk, returning the chunk and the
 /// root node.
-pub(crate) fn compile_term(t: &Term) -> (Rc<Chunk>, NodeId) {
+pub(crate) fn compile_term(t: &Term) -> (Arc<Chunk>, NodeId) {
     let mut chunk = Chunk::new();
     let root = compile_ir(t, &Scope::default(), &mut chunk);
-    (Rc::new(chunk), root)
+    (Arc::new(chunk), root)
 }
 
 /// Compile a single core command into its own chunk.
-pub(crate) fn compile_command(c: &Command) -> (Rc<Chunk>, NodeId) {
+pub(crate) fn compile_command(c: &Command) -> (Arc<Chunk>, NodeId) {
     let mut chunk = Chunk::new();
     let root = compile_cmd(c, &Scope::default(), &mut chunk);
-    (Rc::new(chunk), root)
+    (Arc::new(chunk), root)
 }
 
 /// Compile every top-level definition into one shared chunk, returning it and
 /// each definition's root node. A closure built from any of them indexes this
 /// chunk, so they must share it.
-pub fn compile_program(defs: &[(String, Term)]) -> (Rc<Chunk>, Vec<(String, NodeId)>) {
+pub fn compile_program(defs: &[(String, Term)]) -> (Arc<Chunk>, Vec<(String, NodeId)>) {
     let mut chunk = Chunk::new();
     let roots = defs
         .iter()
         .map(|(name, term)| (name.clone(), compile_ir(term, &Scope::default(), &mut chunk)))
         .collect();
-    (Rc::new(chunk), roots)
+    (Arc::new(chunk), roots)
 }
 
 fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
     let node = match t {
         Term::Var(x) => match scope.index(x) {
             Some(i) => Node::Local(i),
-            None => Node::Dynamic(Rc::from(x.as_str())),
+            None => Node::Dynamic(Arc::from(x.as_str())),
         },
         Term::Lam(x, body) => {
             let body = compile_ir(body, &scope.with(std::slice::from_ref(x)), chunk);
@@ -77,10 +77,10 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
             Node::Mu(body)
         }
         Term::Tuple(items) => {
-            Node::Tuple(Rc::new(items.iter().map(|item| compile_ir(item, scope, chunk)).collect()))
+            Node::Tuple(Arc::new(items.iter().map(|item| compile_ir(item, scope, chunk)).collect()))
         }
         Term::Tag(label, payload) => {
-            Node::Tag(Rc::from(label.as_str()), compile_ir(payload, scope, chunk))
+            Node::Tag(Arc::from(label.as_str()), compile_ir(payload, scope, chunk))
         }
         Term::CoMatch { branches, .. } => {
             let branches = branches
@@ -88,10 +88,10 @@ fn compile_ir(t: &Term, scope: &Scope, chunk: &mut Chunk) -> NodeId {
                 .map(|b| {
                     let body =
                         compile_cmd(&b.body, &scope.with(std::slice::from_ref(&b.binder)), chunk);
-                    Branch { label: Rc::from(b.label.as_str()), arity: 1, body }
+                    Branch { label: Arc::from(b.label.as_str()), arity: 1, body }
                 })
                 .collect();
-            Node::CoMatch(Rc::new(branches))
+            Node::CoMatch(Arc::new(branches))
         }
         Term::Co(e) => Node::Co(compile_coterm(e, scope, chunk)),
     };
@@ -102,7 +102,7 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
     let node = match e {
         CoTerm::Covar(a) => match scope.index(a) {
             Some(i) => Node::CoLocal(i),
-            None => Node::CoDynamic(Rc::from(a.as_str())),
+            None => Node::CoDynamic(Arc::from(a.as_str())),
         },
         CoTerm::App(v, tail) => {
             let v = compile_ir(v, scope, chunk);
@@ -116,14 +116,14 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
         CoTerm::Prj(index) => Node::Prj(*index),
         CoTerm::CoCase { branches, .. } => {
             let branches = branches.iter().map(|b| compile_branch(b, scope, chunk)).collect();
-            Node::CoCase(Rc::new(branches))
+            Node::CoCase(Arc::new(branches))
         }
         CoTerm::MuTildeTensor(binders, c) => {
             let body = compile_cmd(c, &scope.with(binders), chunk);
             Node::MuTildeTensor(binders.len(), body)
         }
         CoTerm::Dtor(label, e) => {
-            Node::Dtor(Rc::from(label.as_str()), compile_coterm(e, scope, chunk))
+            Node::Dtor(Arc::from(label.as_str()), compile_coterm(e, scope, chunk))
         }
     };
     chunk.push(node)
@@ -131,7 +131,7 @@ fn compile_coterm(e: &CoTerm, scope: &Scope, chunk: &mut Chunk) -> NodeId {
 
 fn compile_branch(b: &CoCaseBranch, scope: &Scope, chunk: &mut Chunk) -> Branch {
     let body = compile_cmd(&b.body, &scope.with(&b.binders), chunk);
-    Branch { label: Rc::from(b.label.as_str()), arity: b.binders.len(), body }
+    Branch { label: Arc::from(b.label.as_str()), arity: b.binders.len(), body }
 }
 
 fn compile_cmd(c: &Command, scope: &Scope, chunk: &mut Chunk) -> NodeId {

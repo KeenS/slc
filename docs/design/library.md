@@ -322,6 +322,26 @@ writes the linked executable on x86-64 Linux and reports that it cannot link
 on any other host. The executable's arguments are those words, with no fuel
 word in front of them. `--fuel` on `compile` is the executable's bound.
 
+`fork` is two pure demands and a rendezvous among the arms of one talk.
+`fork::both` performs `Fork`. `fork::sequential` forces the left `Lazy`,
+then the right. `fork::parallel` forces both at once. The thunks have an
+empty demand row, so the pair is the same either way. A loop in one force
+does not hide a fatal in the other.
+[`examples/effects/fork_pair.sl`](../../examples/effects/fork_pair.sl)
+prints that pair under both hands. A thunk whose demand row is not empty
+is refused. `fork::end` builds an `End` menu: `writer.give(done)` sends to
+that end, and `writer.take` receives. `fork::talk` starts an `Arms` spine
+of thunks that perform `Link` and returns their results as `List`. A menu
+is negative and `List<+T>` holds positive values, so the spine is
+`Arms<-A>` and the results are the list. `fork::exchange` matches `give`
+with `take` in spine order. The waiting `give` is the one value in flight.
+An unmatched wait is the fatal `unmatched link`. A second arm taking an
+end is `end already taken`. A nested exchange is `link already open`.
+Bind `end()` and each arm menu with `let+`. The interpreter interleaves
+the arms. The native runtime does not schedule an exchange, so `slc run`
+on x86-64 Linux stops with `link exchange is not implemented in the native
+runtime`. A Link program uses `slc run --interpret`.
+
 Two failures stay fatal rather than becoming outcomes: an out-of-range
 `<(s, i) | index` and a division by zero. `index` and `div` are plain
 functions, which have nowhere to put a continuation, and — as in Rust, where

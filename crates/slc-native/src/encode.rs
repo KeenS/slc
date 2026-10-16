@@ -10,7 +10,6 @@ use slc_abi::{
 
 const SLC_BYTES_SINCE_GC: &str = "slc_bytes_since_gc";
 const SLC_WATERMARK: &str = "slc_watermark";
-const SLC_ORIGIN: &str = "slc_origin";
 
 const RAX: u8 = 0;
 const RCX: u8 = 1;
@@ -294,6 +293,7 @@ impl Encoder {
             Inst::Activate { consumer, tail, arg_is_pointer } => {
                 self.activate(func, *consumer, *tail, *arg_is_pointer);
             }
+            Inst::ForkBoth { frame_words } => self.fork_both(func, *frame_words),
             Inst::CallRt { symbol, arg, noreturn, returns } => {
                 self.safepoint(func.map_id);
                 self.spill(func.map_id);
@@ -343,6 +343,21 @@ impl Encoder {
                 self.mem(true, 0x8B, RCX, R13, 40);
             }
         }
+    }
+
+    /// `VAL` is the pair of thunks. Each worker enters `slc_fork_force`.
+    fn fork_both(&mut self, func: &Function, frame_words: u32) {
+        self.safepoint(func.map_id);
+        self.spill(func.map_id);
+        self.rr(true, 0x89, R12, RDI);
+        self.mem(true, 0x8B, RSI, R13, 24);
+        self.mem(true, 0x8B, RDX, R13, 32);
+        let at = self.rip(true, 0x8D, RCX);
+        self.syms.push(FixSym { at, symbol: "slc_fork_force".into() });
+        self.imm(8, i64::from(frame_words));
+        self.call_plt("slc_rt_fork_both");
+        self.rr(true, 0x89, RAX, R13);
+        self.reload_frame();
     }
 
     fn reload_frame(&mut self) {
@@ -871,14 +886,25 @@ impl Encoder {
 
     /// `rsi` is the closure's birth. Zero or the current generation does not enter.
     /// `code` survives the call.
+    /// `rsi` is the closure's birth. Zero or the current generation does not enter.
+    /// The generation is thread-local, so this asks the runtime instead of
+    /// reading the process-wide symbol.
     fn enter_birth_or_skip(&mut self, code: u8) {
         self.cmp_imm(RSI, 0);
         let none = self.jcc_hole(Cond::E);
-        let at = self.rip(true, 0x3B, RSI);
-        self.rels.push(Rel { at, symbol: SLC_ORIGIN.into(), kind: PC32, addend: -4 });
-        let same = self.jcc_hole(Cond::E);
         self.push(code);
         self.push(code);
+        self.push(RSI);
+        self.push(RSI);
+        self.call_plt("slc_rt_current_origin");
+        self.pop(RSI);
+        self.pop(RSI);
+        self.rr(true, 0x39, RAX, RSI);
+        let differ = self.jcc_hole(Cond::Ne);
+        self.pop(code);
+        self.pop(code);
+        let same = self.jmp_hole();
+        self.patch_at(differ, self.buf.len());
         self.rr(true, 0x89, R12, RDI);
         self.call_plt("slc_rt_enter_birth");
         self.rr(true, 0x89, RAX, R12);
@@ -1238,7 +1264,13 @@ impl Encoder {
         self.buf.extend_from_slice(&[0x48, 0x85, 0xC0]);
         let slow = self.jcc_hole(Cond::E);
         if tag == slc_abi::TAG_CLOSURE {
-            self.rip_load(RCX, SLC_ORIGIN);
+            // Two pushes keep `%rsp` 0 mod 16. The object stays live in `rax`.
+            self.push(RAX);
+            self.push(RAX);
+            self.call_plt("slc_rt_current_origin");
+            self.rr(true, 0x89, RAX, RCX);
+            self.pop(RAX);
+            self.pop(RAX);
             self.mem(true, 0x89, RCX, RAX, slc_abi::CLOSURE_BIRTH as i32);
         }
         self.store_reg(dst, RAX);
@@ -1292,10 +1324,27 @@ impl Encoder {
 
     fn safepoint(&mut self, map_id: u32) {
         assert!(map_id != 0, "safepoint map");
+        // While `slc_fork_fair` is set, a force that is ahead of its sibling
+        // yields. The byte is clear for the rest of the program, so this is
+        // one predicted compare on the single-thread path.
+        let fair_at = self.rip(false, 0x80, 7);
+        self.buf.push(0);
+        self.rels.push(Rel { at: fair_at, symbol: "slc_fork_fair".into(), kind: PC32, addend: -5 });
+        let skip_fair = self.jcc_hole(Cond::E);
+        self.call_plt("slc_rt_fork_fair");
+        self.patch_at(skip_fair, self.buf.len());
+        // `lock sub` so two forces share one counter. The reloc still sits on
+        // the disp32; the prefix is in front of the instruction.
+        self.buf.push(0xF0);
         let fuel = self.rip_ext(0x83, 5);
         self.buf.push(1);
         self.rel_fuel(fuel);
         let jz = self.jcc_hole(Cond::E);
+        // A sibling force failed. Stop even if `lock sub` wrapped a zero counter.
+        let cancel_at = self.rip(false, 0x80, 7);
+        self.buf.push(0);
+        self.rels.push(Rel { at: cancel_at, symbol: "CANCEL".into(), kind: PC32, addend: -5 });
+        let cancel = self.jcc_hole(Cond::Ne);
         self.rip_load(RAX, SLC_BYTES_SINCE_GC);
         self.rip_load(RCX, SLC_WATERMARK);
         self.rr(true, 0x39, RCX, RAX);
@@ -1311,11 +1360,13 @@ impl Encoder {
         self.buf.push(0);
         self.rel_fuel(fuel0);
         let poll = self.jcc_hole(Cond::Ne);
-        // Fuel is zero. `slc_rt_fail` prints the diverged diagnostic and returns
-        // to `slc_rt_start`; it does not come back to this safepoint.
+        // Fuel is zero, or the sibling force failed. `slc_rt_fail` does not
+        // come back to this safepoint.
+        let fail_at = self.buf.len();
         self.call_plt(SLC_RT_FAIL);
         let call = self.buf.len();
         self.patch_at(poll, call);
+        self.patch_at(cancel, fail_at);
         self.spill(map_id);
         self.rr(true, 0x89, R12, RDI);
         self.call_plt(SLC_RT_POLL);

@@ -25,6 +25,7 @@ const LIBRARY: &[(&str, &str)] = &[
     ("option", include_str!("stdlib/option.sl")),
     ("either", include_str!("stdlib/either.sl")),
     ("lazy", include_str!("stdlib/lazy.sl")),
+    ("fork", include_str!("stdlib/fork.sl")),
     ("control", include_str!("stdlib/control.sl")),
     ("stream", include_str!("stdlib/stream.sl")),
     ("seq", include_str!("stdlib/seq.sl")),
@@ -1145,6 +1146,8 @@ mod tests {
         assert_eq!(loaded("cite seq::Seq;"), ["prelude", "list", "stream", "seq"]);
         assert_eq!(loaded("cite args::arguments;"), ["prelude", "list", "args"]);
         assert_eq!(loaded("cite clock::now;"), ["prelude", "clock"]);
+        // `fork` reaches `list` and `lazy`, for the arm list and the thunks.
+        assert_eq!(loaded("cite fork::talk;"), ["prelude", "list", "lazy", "fork"]);
         assert_eq!(loaded("cite env::get;"), ["prelude", "env"]);
         assert_eq!(loaded("cite sleep::sleep;"), ["prelude", "sleep"]);
         // `process` reaches `list`, for the words after the program path.

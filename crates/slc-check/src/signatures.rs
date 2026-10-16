@@ -188,7 +188,27 @@ fn builtin_functions() -> Vec<Builtin> {
         ),
         offers("__spawn_exec", vec![Type::ONE], vec![Type::Neg(I64), Type::Neg(Str)]),
         offers("char_at", vec![string.clone(), i64.clone()], vec![Type::Neg(Char), Type::Neg(Str)]),
-        offers("find_char", vec![string, i64.clone(), i64], vec![Type::Neg(I64), Type::Neg(Str)]),
+        offers(
+            "find_char",
+            vec![string, i64.clone(), i64.clone()],
+            vec![Type::Neg(I64), Type::Neg(Str)],
+        ),
+        // `fork::exchange`. The resume is a value the runtime parks. The
+        // payload and the resume are different template slots, so a `give`
+        // does not force them to be the same type. The result is a command:
+        // the clause does not answer the handler's result type itself.
+        function("__link_mint", vec![Type::ONE], Some(i64.clone())),
+        function("__link_run", vec![Type::Var(0), Type::Var(1)], Some(Type::BOTTOM)),
+        function("__link_give", vec![i64.clone(), Type::Var(0), Type::Var(1)], Some(Type::BOTTOM)),
+        function("__link_take", vec![i64, Type::Var(0)], Some(Type::BOTTOM)),
+        // `fork::parallel`. The arguments are the thunks and the result is the
+        // pair of forces. Those are different types: the handler's answer,
+        // not the `Lazy` menus, fills in the result.
+        function(
+            "__fork_both",
+            vec![Type::Var(0), Type::Var(1)],
+            Some(Type::Tensor(vec![Type::Var(2), Type::Var(3)])),
+        ),
     ]
 }
 

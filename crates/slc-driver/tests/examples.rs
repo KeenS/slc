@@ -285,6 +285,7 @@ false
         ("effects/handler_values.sl", "140\n72\n42\n"),
         ("effects/generic_effects.sl", "42\nhello\n7\n"),
         ("effects/composable_capture.sl", "30\n"),
+        ("effects/fork_pair.sl", "(9, 16)\n(9, 16)\n(3, 42)\n(3, 42)\n"),
         ("laziness/inferred_demand.sl", "0\ndemand\ndemand\n3\nstored\ncalled\n42\ncalled\n42\n"),
         (
             "laziness/delayed_and_lazy.sl",

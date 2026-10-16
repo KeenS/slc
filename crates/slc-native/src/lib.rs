@@ -266,6 +266,11 @@ pub enum Inst {
         /// `rax` is the result, moved into `VAL` after the spills reload.
         returns: bool,
     },
+    /// Force both fields of the tuple in `VAL`. `frame_words` is `slc_fork_force`.
+    /// The pair comes back in `VAL`.
+    ForkBoth {
+        frame_words: u32,
+    },
     /// Offering call. `rax` is the discriminant, stored in the untraced `disc` slot.
     /// `rdx` moves to `VAL`. A safepoint would drop both if they stayed in caller-saved registers.
     CallOffer {

@@ -1,8 +1,9 @@
 //! Stack, heap, and mark-sweep for native SLC. Frames are built by hand; nothing here compiles.
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use slc_abi::{
     DISPLAY_CLOSURE, DISPLAY_CONSUMER, DISPLAY_CONTINUATION, DISPLAY_MENU, DISPLAY_RESUME,
@@ -22,6 +23,19 @@ const MAX_SEGMENT_BYTES: usize = 1 << 30;
 /// not passed to `dealloc`.
 const CHUNK_BYTES: usize = 1 << 20;
 const MAX_CHUNKS: usize = 1024;
+/// A parallel force starts with this much stack. Growth keeps the rest.
+const ARM_BYTES: usize = 2 << 20;
+/// Tuple map for the pair `__fork_both` returns. Not a compiler stack map.
+const PAIR_MAP: u32 = 0xFFFF_FFFE;
+
+/// One force's stack. The parent segment stays put; this buffer moves only
+/// when the force itself grows it.
+struct Arm {
+    id: u64,
+    mem: Vec<u8>,
+}
+
+static NEXT_ARM: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtError {
@@ -110,6 +124,10 @@ pub struct Runtime {
     /// Live `slc_pool_ptrs` words. Scanned in place; a startup copy would miss later stores.
     pool_section: *const u64,
     pool_section_len: usize,
+    /// Stacks of forces running under `fork::parallel`.
+    arms: Vec<Arm>,
+    /// Index of the arm currently installed as `mem`, if a worker call swapped it in.
+    swapped: Option<usize>,
 }
 
 // Owned addresses. The process entry shares one runtime under a mutex.
@@ -162,7 +180,10 @@ impl Runtime {
             entered_code: 0,
             pool_section: std::ptr::null(),
             pool_section_len: 0,
+            arms: Vec::new(),
+            swapped: None,
         };
+        rt.register_map(PAIR_MAP, false, &[1, 2]);
         let unit = rt.alloc(2, TAG_TAGGED, MAP_EMPTY);
         rt.unit = unit as u64;
         rt.immortal.push(rt.unit);
@@ -195,8 +216,34 @@ impl Runtime {
     }
 
     pub fn set_sp(&mut self, frame: *mut u8) {
+        if self.swapped.is_some() && !self.in_segment(frame as u64) {
+            self.swap_arm_out();
+        }
+        if !self.in_segment(frame as u64)
+            && let Some(index) = self.arm_index(frame as u64)
+        {
+            self.swap_arm_in(index);
+        }
         assert!(self.in_segment(frame as u64), "sp is not in the segment");
         self.sp_off = Some(frame as usize - self.mem.as_ptr() as usize);
+    }
+
+    fn arm_index(&self, addr: u64) -> Option<usize> {
+        self.arms.iter().position(|arm| {
+            let base = arm.mem.as_ptr() as u64;
+            addr >= base && addr < base + arm.mem.len() as u64
+        })
+    }
+
+    fn swap_arm_in(&mut self, index: usize) {
+        std::mem::swap(&mut self.mem, &mut self.arms[index].mem);
+        self.swapped = Some(index);
+    }
+
+    fn swap_arm_out(&mut self) {
+        if let Some(index) = self.swapped.take() {
+            std::mem::swap(&mut self.mem, &mut self.arms[index].mem);
+        }
     }
 
     pub fn read(&self, ptr: *const u8, offset: usize) -> u64 {
@@ -468,7 +515,7 @@ impl Runtime {
                 let knows = barrier_table()
                     .get(barrier as usize)
                     .is_some_and(|names| names.iter().any(|name| name == &op));
-                if barrier > slc_origin.load(Ordering::Relaxed) && !knows {
+                if barrier > origin_now() && !knows {
                     frame = self.read(frame, FRAME_HANDLER_PREV) as *const u8;
                     continue;
                 }
@@ -550,7 +597,7 @@ impl Runtime {
     pub fn poll(&mut self) {
         // The Rust fields stay the source of truth. Publish so generated code sees a test's write.
         self.publish_counters();
-        if !self.collection_due() {
+        if FORK_DEPTH.load(Ordering::Relaxed) > 0 || !self.collection_due() {
             return;
         }
         self.collect();
@@ -574,7 +621,12 @@ impl Runtime {
         map_id: u32,
     ) -> *mut u8 {
         // Id 0 is not a layout, and the object is not a root yet, so do not collect for it.
-        if map_id != MAP_UNWRITTEN && self.collection_due() {
+        // A parallel region has more than one stack. Collection waits until
+        // the forces have joined and the pair is the root.
+        if map_id != MAP_UNWRITTEN
+            && FORK_DEPTH.load(Ordering::Relaxed) == 0
+            && self.collection_due()
+        {
             self.collect();
         }
         let size = (size + 15) & !15;
@@ -887,7 +939,14 @@ impl Runtime {
     }
 
     /// End of the segment, minus a frame. Generated code compares a new frame to this.
+    /// During a parallel region the limit is zero, so every new frame takes the
+    /// slow path and a worker stack can grow. Publishing a worker's end would
+    /// make the other force treat that address as its own segment.
     fn publish_limit(&self) {
+        if FORK_DEPTH.load(Ordering::Relaxed) > 0 {
+            slc_segment_limit.store(0, Ordering::Relaxed);
+            return;
+        }
         let end = self.mem.as_ptr() as u64 + self.mem.len() as u64;
         slc_segment_limit.store(end.saturating_sub(64 * 1024), Ordering::Relaxed);
     }
@@ -903,22 +962,21 @@ impl Runtime {
             if barrier {
                 let stamped = (flags & 0xff) | FRAME_FLAG_BARRIER | id;
                 self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
-                SLC_BARRIER.store(entered, Ordering::Relaxed);
+                set_barrier_now(entered);
             } else if flags & FRAME_FLAG_BARRIER == 0 {
                 let stamped = (flags & 0xff) | id;
                 self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
             }
-            slc_origin.store(entered, Ordering::Relaxed);
+            set_origin_now(entered);
             return;
         }
-        origin_saved()
-            .push((slc_origin.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
+        push_saved((origin_now(), barrier_now()));
         let mut stamped = (flags & 0xff) | FRAME_FLAG_ORIGIN | id;
         if barrier {
             stamped |= FRAME_FLAG_BARRIER;
-            SLC_BARRIER.store(entered, Ordering::Relaxed);
+            set_barrier_now(entered);
         }
-        slc_origin.store(entered, Ordering::Relaxed);
+        set_origin_now(entered);
         self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
     }
 
@@ -927,9 +985,9 @@ impl Runtime {
         if flags & FRAME_FLAG_ORIGIN == 0 {
             return;
         }
-        if let Some((origin, barrier)) = origin_saved().pop() {
-            slc_origin.store(origin, Ordering::Relaxed);
-            SLC_BARRIER.store(barrier, Ordering::Relaxed);
+        if let Some((origin, barrier)) = pop_saved() {
+            set_origin_now(origin);
+            set_barrier_now(barrier);
         }
         let cleared = flags & 0xff & !FRAME_FLAG_ORIGIN & !FRAME_FLAG_BARRIER;
         self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, cleared));
@@ -957,17 +1015,16 @@ impl Runtime {
             return;
         }
         let entered = u64::from(flags >> 8);
-        origin_saved()
-            .push((slc_origin.load(Ordering::Relaxed), SLC_BARRIER.load(Ordering::Relaxed)));
-        slc_origin.store(entered, Ordering::Relaxed);
+        push_saved((origin_now(), barrier_now()));
+        set_origin_now(entered);
         if flags & FRAME_FLAG_BARRIER != 0 {
-            SLC_BARRIER.store(entered, Ordering::Relaxed);
+            set_barrier_now(entered);
         }
     }
 
     fn stamp_barrier(&mut self, frame: *mut u8) {
         let (map, flags) = unpack_frame_flags(self.read(frame, FRAME_MAP_FLAGS));
-        let barrier = SLC_BARRIER.load(Ordering::Relaxed) as u32;
+        let barrier = barrier_now() as u32;
         let stamped = (flags & 0xff) | (barrier << 8);
         self.write(frame, FRAME_MAP_FLAGS, pack_frame_flags(map, stamped));
     }
@@ -1165,7 +1222,7 @@ impl Runtime {
     }
 
     /// Record `size` at the object's base slot and publish that bit.
-    /// A plain store of the bit word, not a locked `or`: one mutator writes it.
+    /// `word_tag` reads the bit without the alloc lock, so the publish is atomic.
     fn note(&mut self, chunk_i: usize, ptr: *mut u8, size: usize) {
         let chunk = &mut self.chunks[chunk_i];
         let off = (ptr as usize).wrapping_sub(chunk.ptr as usize);
@@ -1174,8 +1231,7 @@ impl Runtime {
         chunk.slots[slot] = size as u32;
         let word = slot / 64;
         let bit = slot % 64;
-        let bits = chunk.bitmap[word].load(Ordering::Relaxed);
-        chunk.bitmap[word].store(bits | (1u64 << bit), Ordering::Release);
+        chunk.bitmap[word].fetch_or(1u64 << bit, Ordering::Release);
     }
 
     fn clear_slot(&mut self, chunk_i: usize, slot: usize) {
@@ -1415,6 +1471,28 @@ static LABELS_STOP: AtomicU64 = AtomicU64::new(0);
 #[unsafe(no_mangle)]
 pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
 
+/// Nested `fork::parallel` regions. Non-zero suppresses collection and publishes
+/// a zero segment limit so each force grows its own stack.
+static FORK_DEPTH: AtomicU64 = AtomicU64::new(0);
+/// A force has failed. Its sibling's next safepoint stops without a second diagnostic.
+/// Generated code compares this byte, so the symbol is public.
+#[unsafe(no_mangle)]
+pub static CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Non-zero while a parallel force should not run far ahead of its sibling.
+/// Generated safepoints compare this byte and call `slc_rt_fork_fair`.
+#[unsafe(no_mangle)]
+pub static slc_fork_fair: AtomicBool = AtomicBool::new(false);
+
+/// Steps each force has taken while `slc_fork_fair` is set. `u64::MAX` means
+/// that force has finished, so its sibling runs without yielding.
+struct Fair {
+    steps: [AtomicU64; 2],
+}
+
+const FAIR_AHEAD: u64 = 64;
+const FAIR_WARMUP: u64 = 256;
+
 /// First byte past the segment, minus 64 KiB, so a frame that starts below it fits.
 #[unsafe(no_mangle)]
 pub static slc_segment_limit: AtomicU64 = AtomicU64::new(0);
@@ -1432,11 +1510,78 @@ fn origin_saved() -> std::sync::MutexGuard<'static, Vec<(u64, u64)>> {
     ORIGIN_SAVED.lock().unwrap_or_else(|err| err.into_inner())
 }
 
+thread_local! {
+    static TLS_ORIGIN: Cell<u64> = const { Cell::new(1) };
+    static TLS_BARRIER: Cell<u64> = const { Cell::new(0) };
+    static TLS_SAVED: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
+    static TLS_WORKER: Cell<bool> = const { Cell::new(false) };
+    static TLS_WORKER_RSP: Cell<u64> = const { Cell::new(0) };
+    static TLS_WORKER_FAILED: Cell<bool> = const { Cell::new(false) };
+    static TLS_FAIR: Cell<*const Fair> = const { Cell::new(std::ptr::null()) };
+    static TLS_FAIR_SLOT: Cell<u8> = const { Cell::new(0) };
+}
+
+fn worker_active() -> bool {
+    TLS_WORKER.with(|cell| cell.get())
+}
+
+fn origin_now() -> u64 {
+    TLS_ORIGIN.with(|cell| cell.get())
+}
+
+fn set_origin_now(value: u64) {
+    TLS_ORIGIN.with(|cell| cell.set(value));
+    if !worker_active() {
+        slc_origin.store(value, Ordering::Relaxed);
+    }
+}
+
+fn barrier_now() -> u64 {
+    TLS_BARRIER.with(|cell| cell.get())
+}
+
+fn set_barrier_now(value: u64) {
+    TLS_BARRIER.with(|cell| cell.set(value));
+    if !worker_active() {
+        SLC_BARRIER.store(value, Ordering::Relaxed);
+    }
+}
+
+fn push_saved(pair: (u64, u64)) {
+    TLS_SAVED.with(|cell| cell.borrow_mut().push(pair));
+    if !worker_active() {
+        origin_saved().push(pair);
+    }
+}
+
+fn pop_saved() -> Option<(u64, u64)> {
+    let pair = TLS_SAVED.with(|cell| cell.borrow_mut().pop());
+    if !worker_active() {
+        origin_saved().pop();
+    }
+    pair
+}
+
+fn snapshot_generation() -> (u64, u64, Vec<(u64, u64)>) {
+    (origin_now(), barrier_now(), TLS_SAVED.with(|cell| cell.borrow().clone()))
+}
+
+fn install_generation(origin: u64, barrier: u64, saved: Vec<(u64, u64)>) {
+    TLS_WORKER.with(|cell| cell.set(true));
+    TLS_ORIGIN.with(|cell| cell.set(origin));
+    TLS_BARRIER.with(|cell| cell.set(barrier));
+    TLS_SAVED.with(|cell| *cell.borrow_mut() = saved);
+    TLS_WORKER_FAILED.with(|cell| cell.set(false));
+}
+
 fn barrier_table() -> std::sync::MutexGuard<'static, Vec<Vec<String>>> {
     BARRIER_AWARE.lock().unwrap_or_else(|err| err.into_inner())
 }
 
 fn reset_generations() {
+    TLS_ORIGIN.with(|cell| cell.set(1));
+    TLS_BARRIER.with(|cell| cell.set(0));
+    TLS_SAVED.with(|cell| cell.borrow_mut().clear());
     slc_origin.store(1, Ordering::Relaxed);
     SLC_BARRIER.store(0, Ordering::Relaxed);
     NEXT_BARRIER.store(2, Ordering::Relaxed);
@@ -1587,7 +1732,14 @@ pub unsafe extern "C" fn slc_rt_start(
 /// back to `slc_rt_start` with status 1. This does not return to the safepoint.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_fail() {
+    // The sibling already failed and zeroed the fuel. This force stops quietly.
+    if worker_active() && CANCEL.load(Ordering::Relaxed) {
+        worker_return(1);
+    }
     eprintln!("error: evaluation diverged (fuel exhausted)");
+    if worker_active() {
+        worker_return(1);
+    }
     #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::asm!(
@@ -1719,7 +1871,12 @@ fn published_word_tag(word: u64) -> u64 {
     0xffff
 }
 
+/// Serializes the bump cursor. `with_runtime` takes this before the runtime
+/// lock, and `try_alloc` takes only this, so the two cannot deadlock.
+static ALLOC: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
+    let _alloc = ALLOC.lock().unwrap_or_else(|err| err.into_inner());
     static RT: std::sync::LazyLock<std::sync::Mutex<Runtime>> = std::sync::LazyLock::new(|| {
         let mut rt = Runtime::new();
         rt.publishing = true;
@@ -1729,36 +1886,39 @@ fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
     });
     let mut guard = RT.lock().unwrap_or_else(|err| err.into_inner());
     guard.sync_fast_heap();
-    f(&mut guard)
+    let result = f(&mut guard);
+    guard.swap_arm_out();
+    result
 }
 
 /// Carve `size` bytes from the current chunk. Returns 0 when the chunk cannot
-/// hold it, and the caller uses [`slc_rt_alloc`]. One mutator; no lock.
+/// hold it, and the caller uses [`slc_rt_alloc`]. The bump update is serialized
+/// so two forces do not hand out the same address. The header and the base bit
+/// are published before the cursor moves.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_try_alloc(size: u64, meta: u64, mark_map: u64) -> u64 {
     if size == 0 || size & 15 != 0 {
         return 0;
     }
+    let _alloc = ALLOC.lock().unwrap_or_else(|err| err.into_inner());
     let bump = slc_bump.load(Ordering::Relaxed);
     let end = slc_bump_end.load(Ordering::Relaxed);
     let next = bump.wrapping_add(size);
     if bump == 0 || next < bump || next > end {
         return 0;
     }
-    slc_bump.store(next, Ordering::Relaxed);
     let base = slc_chunk_base.load(Ordering::Relaxed);
     let slots = slc_heap_slots.load(Ordering::Relaxed) as *mut u32;
-    let bitmap = slc_heap_bitmap.load(Ordering::Relaxed) as *mut u64;
+    let bitmap = slc_heap_bitmap.load(Ordering::Relaxed) as *const AtomicU64;
     unsafe {
         std::ptr::write(bump as *mut u64, meta);
         std::ptr::write((bump as *mut u8).add(8).cast::<u64>(), mark_map);
         let slot = ((bump - base) >> 4) as usize;
         *slots.add(slot) = size as u32;
-        let word = bitmap.add(slot >> 6);
-        *word |= 1u64 << (slot & 63);
+        (*bitmap.add(slot >> 6)).fetch_or(1u64 << (slot & 63), Ordering::Release);
     }
-    let bytes = slc_bytes_since_gc.load(Ordering::Relaxed).wrapping_add(size);
-    slc_bytes_since_gc.store(bytes, Ordering::Relaxed);
+    slc_bytes_since_gc.fetch_add(size, Ordering::Relaxed);
+    slc_bump.store(next, Ordering::Release);
     bump
 }
 
@@ -1788,7 +1948,7 @@ pub extern "C" fn slc_rt_fresh_prompt_id(sp: u64) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_current_origin() -> u64 {
-    slc_origin.load(Ordering::Relaxed)
+    origin_now()
 }
 
 /// A closure born under another generation adopts that generation for the call.
@@ -1797,7 +1957,7 @@ pub extern "C" fn slc_rt_current_origin() -> u64 {
 pub extern "C" fn slc_rt_enter_birth(sp: u64, birth: u64) -> u64 {
     with_runtime(|rt| {
         rt.set_sp(sp as *mut u8);
-        if birth != 0 && birth != slc_origin.load(Ordering::Relaxed) {
+        if birth != 0 && birth != origin_now() {
             rt.push_generation(birth, false);
         }
         rt.sp() as u64
@@ -1920,6 +2080,248 @@ pub extern "C" fn slc_rt_unbound(sp: u64, id: u64) -> ! {
     bail(1);
 }
 
+/// `fork::exchange` is scheduled by the interpreter. The native runtime has
+/// no scheduler for it yet, so a linked program stops here.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_link_unavailable(sp: u64, _val: u64) -> ! {
+    let _ = sp;
+    eprintln!("error: type mismatch: link exchange is not implemented in the native runtime");
+    bail(1);
+}
+
+/// The trampoline records the stack it will restore if this force fails.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_worker_enter(rsp: u64) {
+    TLS_WORKER_RSP.with(|cell| cell.set(rsp));
+    TLS_WORKER_FAILED.with(|cell| cell.set(false));
+}
+
+#[cfg(target_arch = "x86_64")]
+std::arch::global_asm!(
+    ".globl slc_worker_call",
+    ".globl slc_fork_return",
+    ".type slc_worker_call, @function",
+    ".type slc_fork_return, @function",
+    "slc_worker_call:",
+    "push rbx",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "mov rax, rsp",
+    "push rdi",
+    "push rsi",
+    "push rdx",
+    "push rax",
+    "mov rdi, rax",
+    "call slc_rt_worker_enter",
+    "pop rax",
+    "pop rdx",
+    "pop rsi",
+    "pop rdi",
+    "mov r12, rdi",
+    "mov r13, rsi",
+    "xor r14, r14",
+    "mov r15, qword ptr [r12 + 8]",
+    "xor ebx, ebx",
+    "jmp rdx",
+    "slc_fork_return:",
+    "mov rax, r13",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbx",
+    "ret",
+);
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn slc_worker_call(frame: *mut u8, thunk: u64, code: *const u8) -> u64;
+    fn slc_fork_return();
+}
+
+struct ForceOut {
+    value: u64,
+    failed: bool,
+}
+
+fn bind_fair(fair: &Fair, slot: u8) {
+    TLS_FAIR.with(|cell| cell.set(std::ptr::from_ref(fair)));
+    TLS_FAIR_SLOT.with(|cell| cell.set(slot));
+}
+
+fn clear_fair() {
+    TLS_FAIR.with(|cell| cell.set(std::ptr::null()));
+}
+
+/// A safepoint found `slc_fork_fair` set. Yield if this force is ahead of its
+/// sibling. Once both have warmed up, or one has finished, clear the byte so
+/// later safepoints stay on the fast path.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_fork_fair() {
+    if CANCEL.load(Ordering::Relaxed) || !slc_fork_fair.load(Ordering::Relaxed) {
+        return;
+    }
+    let fair = TLS_FAIR.with(|cell| cell.get());
+    if fair.is_null() {
+        return;
+    }
+    let slot = TLS_FAIR_SLOT.with(|cell| cell.get()) as usize;
+    if slot > 1 {
+        return;
+    }
+    let steps = unsafe { &(*fair).steps };
+    let mine = steps[slot].fetch_add(1, Ordering::Relaxed);
+    let other = steps[1 - slot].load(Ordering::Relaxed);
+    if other == u64::MAX || (mine > FAIR_WARMUP && other > FAIR_WARMUP) {
+        slc_fork_fair.store(false, Ordering::Relaxed);
+        return;
+    }
+    if mine > other.saturating_add(FAIR_AHEAD) {
+        std::thread::yield_now();
+    }
+}
+
+/// Both arms pass this before either force charges fuel, so a loop in the
+/// arm that the scheduler runs first cannot spend the shared budget during
+/// the other arm's startup.
+fn arrive(entered: &AtomicU64) {
+    entered.fetch_add(1, Ordering::Release);
+    while entered.load(Ordering::Acquire) < 2 {
+        std::thread::yield_now();
+    }
+    std::thread::yield_now();
+}
+
+/// Force `thunk` on a private stack. A fatal returns here; it does not jump to
+/// the parent's `slc_c_sp`.
+fn force_one(
+    thunk: u64,
+    code: u64,
+    frame_words: u32,
+    origin: u64,
+    barrier: u64,
+    saved: Vec<(u64, u64)>,
+    gate: &AtomicU64,
+) -> ForceOut {
+    install_generation(origin, barrier, saved);
+    let words = frame_words.max(9);
+    let bytes = (FRAME_HEADER_BYTES + words as usize * 8 + 64 * 1024).max(ARM_BYTES);
+    let mut mem = vec![0u8; bytes];
+    let force = unsafe { mem.as_mut_ptr().add(FRAME_HEADER_BYTES) };
+    write_u64(mem.as_mut_ptr(), FRAME_CONT_PREV, anchor_addr());
+    write_u64(mem.as_mut_ptr(), FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, 0));
+    write_u64(mem.as_mut_ptr(), FRAME_FRAME_WORDS, 9);
+    #[cfg(target_arch = "x86_64")]
+    write_u64(force, 0, slc_fork_return as *const () as u64);
+    write_u64(force, FRAME_CONT_PREV, mem.as_mut_ptr() as u64);
+    write_u64(force, FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, 0));
+    write_u64(force, FRAME_FRAME_WORDS, u64::from(words));
+    let id = NEXT_ARM.fetch_add(1, Ordering::Relaxed);
+    let force = with_runtime(|rt| {
+        let force = unsafe { mem.as_mut_ptr().add(FRAME_HEADER_BYTES) };
+        rt.arms.push(Arm { id, mem });
+        force
+    });
+    // The stack is ready. Wait until the sibling is too, then charge fuel.
+    arrive(gate);
+    #[cfg(target_arch = "x86_64")]
+    let value = unsafe { slc_worker_call(force, thunk, code as *const u8) };
+    #[cfg(not(target_arch = "x86_64"))]
+    let value = {
+        let _ = (force, thunk, code);
+        eprintln!("error: type mismatch: parallel forces are not implemented on this host");
+        0
+    };
+    let failed =
+        TLS_WORKER_FAILED.with(|cell| cell.replace(false) || cfg!(not(target_arch = "x86_64")));
+    if failed {
+        // Before the sibling's next safepoint. `CANCEL` first, so a wrapped
+        // fuel counter still takes the quiet path.
+        CANCEL.store(true, Ordering::Relaxed);
+        slc_fuel.store(0, Ordering::Relaxed);
+    }
+    with_runtime(|rt| {
+        if let Some(index) = rt.arms.iter().position(|arm| arm.id == id) {
+            rt.arms.swap_remove(index);
+        }
+    });
+    ForceOut { value, failed }
+}
+
+/// Force both thunks and return the positional pair. `left` and `right` are
+/// the tuple fields. `code` is `slc_fork_force`.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_fork_both(
+    sp: u64,
+    left: u64,
+    right: u64,
+    code: u64,
+    frame_words: u64,
+) -> u64 {
+    let (origin, barrier, saved) = snapshot_generation();
+    let depth = FORK_DEPTH.fetch_add(1, Ordering::Relaxed);
+    if depth == 0 {
+        CANCEL.store(false, Ordering::Relaxed);
+        slc_segment_limit.store(0, Ordering::Relaxed);
+    }
+    let words = frame_words as u32;
+    let entered = AtomicU64::new(0);
+    let fair = Fair { steps: [AtomicU64::new(0), AtomicU64::new(0)] };
+    let entered = &entered;
+    let fair = &fair;
+    slc_fork_fair.store(true, Ordering::Relaxed);
+    let mut done = [None, None];
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        for (index, thunk) in [left, right].into_iter().enumerate() {
+            let tx = tx.clone();
+            let saved = saved.clone();
+            scope.spawn(move || {
+                bind_fair(fair, index as u8);
+                let result = force_one(thunk, code, words, origin, barrier, saved, entered);
+                if !result.failed {
+                    fair.steps[index].store(u64::MAX, Ordering::Relaxed);
+                }
+                clear_fair();
+                let _ = tx.send((index, result));
+            });
+        }
+        drop(tx);
+        while done.iter().any(|slot| slot.is_none()) {
+            let (index, result) = rx.recv().expect("a parallel force sends its result");
+            done[index] = Some(result);
+        }
+    });
+    let left = done[0].take().expect("left force");
+    let right = done[1].take().expect("right force");
+    if left.failed || right.failed {
+        let prev = FORK_DEPTH.fetch_sub(1, Ordering::Relaxed);
+        if prev == 1 {
+            CANCEL.store(false, Ordering::Relaxed);
+            slc_fork_fair.store(false, Ordering::Relaxed);
+            with_runtime(|rt| rt.publish_limit());
+        }
+        // The failing force already printed its diagnostic.
+        bail(1);
+    }
+    let pair = with_runtime(|rt| {
+        rt.set_sp(sp as *mut u8);
+        let obj = rt.alloc(3, TAG_TUPLE, PAIR_MAP);
+        rt.write(obj, 16, 2);
+        rt.write(obj, 24, left.value);
+        rt.write(obj, 32, right.value);
+        obj as u64
+    });
+    let prev = FORK_DEPTH.fetch_sub(1, Ordering::Relaxed);
+    if prev == 1 {
+        slc_fork_fair.store(false, Ordering::Relaxed);
+        with_runtime(|rt| rt.publish_limit());
+    }
+    pair
+}
+
 fn label_named(id: u64) -> String {
     let start = LABELS_START.load(Ordering::Relaxed) as *const u8;
     let stop = LABELS_STOP.load(Ordering::Relaxed) as *const u8;
@@ -1948,6 +2350,9 @@ fn label_named(id: u64) -> String {
 }
 
 fn bail(status: i32) -> ! {
+    if worker_active() && TLS_WORKER_RSP.with(|cell| cell.get()) != 0 {
+        worker_return(status);
+    }
     #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::asm!(
@@ -1962,6 +2367,34 @@ fn bail(status: i32) -> ! {
     #[cfg(not(target_arch = "x86_64"))]
     {
         let _ = status;
+        std::process::abort();
+    }
+}
+
+/// A force failed. Return to `slc_worker_call`'s caller with the callee-saved
+/// registers restored, instead of unwinding onto the parent's C stack.
+fn worker_return(status: i32) -> ! {
+    TLS_WORKER_FAILED.with(|cell| cell.set(true));
+    let rsp = TLS_WORKER_RSP.with(|cell| cell.get());
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::asm!(
+            "mov rsp, rdi",
+            "pop r15",
+            "pop r14",
+            "pop r13",
+            "pop r12",
+            "pop rbx",
+            "mov eax, esi",
+            "ret",
+            in("rdi") rsp,
+            in("esi") status,
+            options(noreturn),
+        );
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (status, rsp);
         std::process::abort();
     }
 }

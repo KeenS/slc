@@ -257,8 +257,9 @@ not share objects. A folded value is re-embedded as a core constant and then
 as a machine immediate or a constant-pool descriptor. Interpreter `Value`s
 are never passed into the native heap.
 
-The language is single-threaded. One stack segment list, one heap, one fuel
-counter. `slc-rt` is not `Sync`.
+Outside `fork::parallel`, a program runs on one thread: one stack segment
+list, one heap, one fuel counter. A parallel force shares that heap and
+that fuel counter and keeps its own stack. `slc-rt` is not `Sync`.
 
 ### Pipeline
 

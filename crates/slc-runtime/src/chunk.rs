@@ -1,6 +1,6 @@
 //! The flat instruction stream the machine runs.
 //!
-//! The closed IR was a tree of `Rc`-linked nodes; walking it chased a pointer
+//! The closed IR was a tree of `Arc`-linked nodes; walking it chased a pointer
 //! and bumped a refcount at every child. Here the whole program is compiled
 //! once into a single `Chunk` — a flat `Vec<Node>` — and every reference to a
 //! sub-expression is a `NodeId`, an index into that vector. The machine holds
@@ -15,7 +15,7 @@
 //! globals, literals, and `match` pattern variables stay names.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// An index into a `Chunk`'s node vector — the machine's instruction pointer.
 pub type NodeId = u32;
@@ -28,7 +28,7 @@ pub enum Node {
     /// A lexical variable, by de Bruijn index (0 = innermost).
     Local(usize),
     /// A name: a literal encoding, a global, or an injected pattern variable.
-    Dynamic(Rc<str>),
+    Dynamic(Arc<str>),
     /// `λ. t` — binds one positional slot; child is the body term.
     Lam(NodeId),
     /// `λ$delay. t` — a delayed computation, run each time it is demanded.
@@ -37,11 +37,11 @@ pub enum Node {
     /// `μ. c` — binds one positional slot; child is the command.
     Mu(NodeId),
     /// A tuple: its component terms, evaluated left to right.
-    Tuple(Rc<Vec<NodeId>>),
-    Tag(Rc<str>, NodeId),
+    Tuple(Arc<Vec<NodeId>>),
+    Tag(Arc<str>, NodeId),
     /// `μ[…]` — a menu value: its branches, each binding one positional
     /// slot (the request's continuation) before its body.
-    CoMatch(Rc<Vec<Branch>>),
+    CoMatch(Arc<Vec<Branch>>),
     /// A reified co-term value; child is the co-term node.
     Co(NodeId),
 
@@ -49,7 +49,7 @@ pub enum Node {
     /// A lexical co-variable, by de Bruijn index.
     CoLocal(usize),
     /// A name used as a co-variable (a forwarding continuation, or a global).
-    CoDynamic(Rc<str>),
+    CoDynamic(Arc<str>),
     Forward,
     /// `v · e` — application: the argument term, then the tail co-term that
     /// consumes the result.
@@ -59,12 +59,12 @@ pub enum Node {
     /// Projection of a tuple's `index`-th component.
     Prj(usize),
     /// A labelled consumer: its branches.
-    CoCase(Rc<Vec<Branch>>),
+    CoCase(Arc<Vec<Branch>>),
     /// A product consumer binding `arity` slots; child is the command.
     MuTildeTensor(usize, NodeId),
     /// `.d(e)` — a request: the destructor label, and the co-term that
     /// consumes the answer.
-    Dtor(Rc<str>, NodeId),
+    Dtor(Arc<str>, NodeId),
 
     // ── commands ──
     /// `⟨ t ∥ e ⟩` — a cut of a term against a co-term.
@@ -74,7 +74,7 @@ pub enum Node {
 /// One branch of a compiled labelled consumer.
 #[derive(Debug, Clone)]
 pub struct Branch {
-    pub label: Rc<str>,
+    pub label: Arc<str>,
     /// How many positional slots this branch binds before its body.
     pub arity: usize,
     /// The branch body — a command node.
@@ -110,15 +110,15 @@ thread_local! {
     /// chunk, set here for the duration of its run; every value (a closure, a
     /// consumer) holds `NodeId`s into it, so a value never outlives the chunk
     /// it indexes. Nested runs (a handler's `resume`) share it.
-    static CURRENT: RefCell<Option<Rc<Chunk>>> = const { RefCell::new(None) };
+    static CURRENT: RefCell<Option<Arc<Chunk>>> = const { RefCell::new(None) };
 }
 
 /// Run `body` with `chunk` installed as the current chunk, restoring whatever
 /// was installed before (so nested compiles — a unit test inside a run —
 /// leave the outer run's chunk intact).
-pub fn with_chunk<R>(chunk: Rc<Chunk>, body: impl FnOnce() -> R) -> R {
+pub fn with_chunk<R>(chunk: Arc<Chunk>, body: impl FnOnce() -> R) -> R {
     // The statement after `body()` does not run if `body` panics.
-    struct Restore(Option<Rc<Chunk>>);
+    struct Restore(Option<Arc<Chunk>>);
     impl Drop for Restore {
         fn drop(&mut self) {
             let previous = self.0.take();
@@ -136,15 +136,21 @@ pub fn node(id: NodeId) -> Node {
     CURRENT.with(|c| c.borrow().as_ref().expect("a chunk must be installed").node(id).clone())
 }
 
+/// The chunk installed on this thread. A parallel force runs it on another
+/// thread, which installs the same `Arc`.
+pub(crate) fn current_chunk() -> Arc<Chunk> {
+    CURRENT.with(|c| c.borrow().as_ref().expect("a chunk must be installed").clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::panic::{AssertUnwindSafe, catch_unwind};
 
-    fn chunk_named(name: &str) -> Rc<Chunk> {
+    fn chunk_named(name: &str) -> Arc<Chunk> {
         let mut chunk = Chunk::new();
-        chunk.push(Node::Dynamic(Rc::from(name)));
-        Rc::new(chunk)
+        chunk.push(Node::Dynamic(Arc::from(name)));
+        Arc::new(chunk)
     }
 
     fn current_name() -> String {
@@ -160,7 +166,7 @@ mod tests {
         let inner = chunk_named("inner");
         with_chunk(outer, || {
             assert_eq!(current_name(), "outer");
-            let result = with_chunk(Rc::clone(&inner), || {
+            let result = with_chunk(Arc::clone(&inner), || {
                 assert_eq!(current_name(), "inner");
                 1
             });

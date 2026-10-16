@@ -22,7 +22,7 @@
 //!   not hold is an error: the continuation belongs outside that handler.
 //!
 //! The stack is a persistent cons (`Kont`) with the top at the head, so a
-//! capture — `mu`, or a handler's `resume` — clones one `Rc`: O(1), no
+//! capture — `mu`, or a handler's `resume` — clones one `Arc`: O(1), no
 //! matter how deep, and repeatable. Pushing a frame never disturbs a stack
 //! already captured, so a resumed continuation walks its own copy. Resuming
 //! pushes the captured slice onto the running stack, so what it performs
@@ -37,7 +37,7 @@ use crate::matching::{
     Descriptor, parse_runtime_pattern, pattern_matches, split_match_payload, unwrap_match_arm,
 };
 use crate::value::{Env, Value};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// What the machine is doing right now. A `NodeId` is the instruction pointer
 /// into the current chunk.
@@ -57,7 +57,7 @@ pub enum Frame {
     /// the one at `next`.
     Tuple {
         done: Vec<Value>,
-        items: Rc<Vec<NodeId>>,
+        items: Arc<Vec<NodeId>>,
         next: usize,
         env: Env,
     },
@@ -72,7 +72,7 @@ pub enum Frame {
     /// `mu` continuation captured under it recognizes the copy.
     Prompt {
         id: u64,
-        clauses: std::rc::Rc<std::collections::HashMap<String, Value>>,
+        clauses: std::sync::Arc<std::collections::HashMap<String, Value>>,
         ret: Value,
     },
     /// `resume(v)` then apply the produced closure to this value: a handler
@@ -86,21 +86,26 @@ pub enum Frame {
     /// through the row parameter.
     Barrier {
         id: u32,
-        aware: std::rc::Rc<std::collections::HashSet<String>>,
+        aware: std::sync::Arc<std::collections::HashSet<String>>,
     },
     /// Birth barrier of the code now running. The nearest frame wins.
     Origin {
         birth: u32,
     },
+    /// One arm of `fork::exchange`, sitting above that hand's prompt. The
+    /// arm's value returns here instead of to the prompt's return clause.
+    LinkArm {
+        index: usize,
+    },
 }
 
 /// The continuation as a persistent stack: a shared cons of frames with the
 /// top at the head. Capturing it — `mu`'s `Value::Kont`, or a handler's
-/// `resume` — clones one `Rc`, regardless of depth, and the clone walks
+/// `resume` — clones one `Arc`, regardless of depth, and the clone walks
 /// independently of the live stack. That is what makes a jump and a
 /// multi-shot `resume` cheap.
 #[derive(Clone, Debug, Default)]
-pub struct Kont(Option<Rc<KontNode>>);
+pub struct Kont(Option<Arc<KontNode>>);
 
 /// A node knows how many frames lie at and below it, so a jump lines two
 /// stacks up without walking either to the bottom.
@@ -108,10 +113,10 @@ pub struct Kont(Option<Rc<KontNode>>);
 struct KontNode {
     frame: Frame,
     depth: usize,
-    tail: Option<Rc<KontNode>>,
+    tail: Option<Arc<KontNode>>,
 }
 
-fn depth(link: &Option<Rc<KontNode>>) -> usize {
+fn depth(link: &Option<Arc<KontNode>>) -> usize {
     link.as_ref().map_or(0, |node| node.depth)
 }
 
@@ -137,7 +142,7 @@ impl Kont {
     /// its own view — the push only extends this handle.
     pub(crate) fn push(&mut self, frame: Frame) {
         let tail = self.0.take();
-        self.0 = Some(Rc::new(KontNode { frame, depth: depth(&tail) + 1, tail }));
+        self.0 = Some(Arc::new(KontNode { frame, depth: depth(&tail) + 1, tail }));
     }
 
     /// Jump to `target`, a `mu` continuation: replace the running stack down
@@ -162,7 +167,7 @@ impl Kont {
             while depth(&theirs) > node.depth {
                 theirs = theirs.and_then(|t| t.tail.clone());
             }
-            if theirs.as_ref().is_some_and(|t| Rc::ptr_eq(t, &node)) {
+            if theirs.as_ref().is_some_and(|t| Arc::ptr_eq(t, &node)) {
                 break;
             }
             if let Frame::Prompt { id, .. } = &node.frame {
@@ -198,7 +203,7 @@ impl Kont {
     /// so another handle onto the same stack is left intact.
     pub(crate) fn pop(&mut self) -> Option<Frame> {
         let node = self.0.take()?;
-        match Rc::try_unwrap(node) {
+        match Arc::try_unwrap(node) {
             Ok(node) => {
                 self.0 = node.tail;
                 Some(node.frame)
@@ -226,10 +231,52 @@ impl Kont {
         }
     }
 
+    /// The nearest prompt, from the top. A captured handler resume holds the
+    /// prompt that answered the operation.
+    pub(crate) fn top_prompt(&self) -> Option<Frame> {
+        let mut cursor = self.0.as_ref();
+        while let Some(node) = cursor {
+            if matches!(node.frame, Frame::Prompt { .. }) {
+                return Some(node.frame.clone());
+            }
+            cursor = node.tail.as_ref();
+        }
+        None
+    }
+
+    pub(crate) fn contains_prompt(&self, id: u64) -> bool {
+        let mut cursor = self.0.as_ref();
+        while let Some(node) = cursor {
+            if matches!(node.frame, Frame::Prompt { id: found, .. } if found == id) {
+                return true;
+            }
+            cursor = node.tail.as_ref();
+        }
+        false
+    }
+
+    /// Pop frames through the prompt `id`, including it. The frames above it
+    /// are dropped. When the stack has no such prompt, it is left as it was.
+    pub(crate) fn pop_through_prompt(&mut self, id: u64) -> bool {
+        let mut held = Vec::new();
+        while let Some(frame) = self.pop() {
+            if let Frame::Prompt { id: found, .. } = &frame
+                && *found == id
+            {
+                return true;
+            }
+            held.push(frame);
+        }
+        for frame in held.into_iter().rev() {
+            self.push(frame);
+        }
+        false
+    }
+
     /// Two captured stacks are equal when they are the same node.
     pub(crate) fn ptr_eq(a: &Kont, b: &Kont) -> bool {
         match (&a.0, &b.0) {
-            (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         }
@@ -250,7 +297,7 @@ impl Kont {
     /// The nearest barrier under `prompt` is a row-polymorphic call that
     /// began after `origin` and does not name `op` in its type. The prompt
     /// belongs to that call, and `op` arrived through its row parameter.
-    fn tunneled(prompt_tail: &Option<Rc<KontNode>>, origin: u32, op: &str) -> bool {
+    fn tunneled(prompt_tail: &Option<Arc<KontNode>>, origin: u32, op: &str) -> bool {
         let mut cursor = prompt_tail.clone();
         while let Some(node) = cursor {
             if let Frame::Barrier { id, aware } = &node.frame {
@@ -328,26 +375,62 @@ pub(crate) fn run_apply_under_io(
     let mut kont = Kont::empty();
     kont.push(Frame::Prompt {
         id: fresh_prompt_id(),
-        clauses: Rc::new(clauses),
+        clauses: Arc::new(clauses),
         ret: Value::Builtin("__io_done".into()),
     });
     // Closures built while the program runs are born here, after every
     // declaration's closure. A declaration stays at generation zero and
     // adopts whoever calls it.
     let id = fresh_barrier_id();
-    kont.push(Frame::Barrier { id, aware: Rc::new(std::collections::HashSet::new()) });
+    kont.push(Frame::Barrier { id, aware: Arc::new(std::collections::HashSet::new()) });
     kont.push(Frame::Origin { birth: id });
     run(State::Apply { callee, arg }, kont, fuel)
 }
 
-fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
+thread_local! {
+    /// The fuel counter of the `run` on this thread. `__fork_both` reads it
+    /// while that `run` is blocked inside the builtin, then writes the shared
+    /// remainder back.
+    static FUEL: std::cell::Cell<*mut usize> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+pub(crate) fn read_fuel() -> usize {
+    let ptr = FUEL.with(|cell| cell.get());
+    if ptr.is_null() { usize::MAX } else { unsafe { *ptr } }
+}
+
+pub(crate) fn write_fuel(remaining: usize) {
+    let ptr = FUEL.with(|cell| cell.get());
+    if !ptr.is_null() {
+        unsafe { *ptr = remaining }
+    }
+}
+
+pub(crate) fn charge(fuel: &mut usize) -> Result<(), EvalError> {
+    if let Some(clock) = crate::fork::clock() {
+        return clock.charge();
+    }
+    if *fuel == 0 {
+        return Err(EvalError::Diverged);
+    }
+    *fuel -= 1;
+    Ok(())
+}
+
+pub(crate) fn run(start: State, kont: Kont, fuel: &mut usize) -> Result<Value, EvalError> {
+    let _link = crate::link::Guard::enter();
+    let previous = FUEL.with(|cell| cell.replace(fuel));
+    struct Restore(*mut usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FUEL.with(|cell| cell.set(self.0));
+        }
+    }
+    let _restore = Restore(previous);
     let mut state = start;
     let mut kont = kont;
     loop {
-        if *fuel == 0 {
-            return Err(EvalError::Diverged);
-        }
-        *fuel -= 1;
+        charge(fuel)?;
         state = match state {
             State::Term(t, env) => step_term(t, env, &mut kont)?,
             State::Command(c, env) => step_command(c, env, &mut kont)?,
@@ -370,7 +453,7 @@ fn step_term(t: NodeId, env: Env, kont: &mut Kont) -> Result<State, EvalError> {
         Node::Delay(body) => State::Return(Value::Delayed { body, env }),
         Node::Mu(command) => {
             // The μ: bind the co-variable (positional slot 0) to the
-            // continuation itself. Capturing the stack is one `Rc` bump.
+            // continuation itself. Capturing the stack is one `Arc` bump.
             let mut env2 = env;
             env2.define_local(Value::Kont(kont.clone()));
             State::Command(command, env2)
@@ -482,6 +565,7 @@ fn step_frame(frame: Frame, v: Value, kont: &mut Kont) -> Result<State, EvalErro
         Frame::ApplyTo(arg) => State::Apply { callee: v, arg },
         // Both are markers for effect search. A value returns through them.
         Frame::Barrier { .. } | Frame::Origin { .. } => State::Return(v),
+        Frame::LinkArm { index } => return crate::link::arm_finished(index, v, kont),
     })
 }
 
@@ -500,7 +584,7 @@ fn run_delayed(body: NodeId, env: Env) -> State {
     State::Term(body, env)
 }
 
-fn force_value(value: Value, kont: &mut Kont) -> State {
+pub(crate) fn force_value(value: Value, kont: &mut Kont) -> State {
     let mut current = value;
     loop {
         match current {
@@ -812,7 +896,12 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
 
 /// One request meeting one menu: the label chooses a branch, which runs
 /// with the request's continuation bound.
-fn menu_dispatch(menu: NodeId, env: Env, label: &str, payload: Value) -> Result<State, EvalError> {
+pub(crate) fn menu_dispatch(
+    menu: NodeId,
+    env: Env,
+    label: &str,
+    payload: Value,
+) -> Result<State, EvalError> {
     let Node::CoMatch(branches) = node(menu) else {
         return Err(EvalError::TypeMismatch("a menu value must be `μ[…]`".into()));
     };
@@ -856,7 +945,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
                 }
             }
         }
-        kont.push(Frame::Prompt { id: fresh_prompt_id(), clauses: Rc::new(clauses), ret });
+        kont.push(Frame::Prompt { id: fresh_prompt_id(), clauses: Arc::new(clauses), ret });
         return Ok(State::Apply { callee: body_thunk, arg: Value::Unit });
     }
     if name == "__enter_poly" {
@@ -878,7 +967,7 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
                 aware.insert(name.to_string());
             }
         }
-        kont.push(Frame::Barrier { id, aware: Rc::new(aware) });
+        kont.push(Frame::Barrier { id, aware: Arc::new(aware) });
         kont.push(Frame::Origin { birth: id });
         let mut call_env = env;
         call_env.define_local(Value::Unit);
@@ -893,6 +982,31 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
             arms.pop();
         }
         return next_match_arm(scrutinee, arms);
+    }
+    if name == "__link_mint" {
+        return crate::link::mint();
+    }
+    if name == "__link_run" {
+        return crate::link::start(args, kont);
+    }
+    if name == "__link_give" {
+        let mut args = args.into_iter();
+        let token = args.next().unwrap_or(Value::Unit);
+        let value = args.next().unwrap_or(Value::Unit);
+        let resume = args.next().unwrap_or(Value::Unit);
+        return crate::link::give(token, value, resume, kont);
+    }
+    if name == "__link_take" {
+        let mut args = args.into_iter();
+        let token = args.next().unwrap_or(Value::Unit);
+        let resume = args.next().unwrap_or(Value::Unit);
+        return crate::link::take(token, resume, kont);
+    }
+    if name == "__fork_both" {
+        let mut args = args.into_iter();
+        let left = args.next().unwrap_or(Value::Unit);
+        let right = args.next().unwrap_or(Value::Unit);
+        return Ok(State::Return(crate::fork::both(left, right)?));
     }
     // A builtin that offers its outcome activates one of its continuations;
     // the rest return a value.
@@ -961,7 +1075,7 @@ mod tunnel {
         let mut kont = tail;
         kont.push(Frame::Prompt {
             id: 1,
-            clauses: Rc::new(std::collections::HashMap::from([("throw".into(), Value::Unit)])),
+            clauses: Arc::new(std::collections::HashMap::from([("throw".into(), Value::Unit)])),
             ret: Value::Unit,
         });
         kont
@@ -970,7 +1084,7 @@ mod tunnel {
     #[test]
     fn an_older_closure_tunnels_through_an_unaware_handler() {
         let mut under = Kont::empty();
-        under.push(Frame::Barrier { id: 2, aware: Rc::new(HashSet::new()) });
+        under.push(Frame::Barrier { id: 2, aware: Arc::new(HashSet::new()) });
         let prompt = prompt_over(under);
         let tail = prompt.0.unwrap().tail.clone();
         assert!(Kont::tunneled(&tail, 1, "throw"));
@@ -981,7 +1095,7 @@ mod tunnel {
         let mut aware = HashSet::new();
         aware.insert("throw".into());
         let mut under = Kont::empty();
-        under.push(Frame::Barrier { id: 2, aware: Rc::new(aware) });
+        under.push(Frame::Barrier { id: 2, aware: Arc::new(aware) });
         let prompt = prompt_over(under);
         let tail = prompt.0.unwrap().tail.clone();
         assert!(!Kont::tunneled(&tail, 1, "throw"));
@@ -990,7 +1104,7 @@ mod tunnel {
     #[test]
     fn code_born_inside_the_call_is_caught() {
         let mut under = Kont::empty();
-        under.push(Frame::Barrier { id: 2, aware: Rc::new(HashSet::new()) });
+        under.push(Frame::Barrier { id: 2, aware: Arc::new(HashSet::new()) });
         let prompt = prompt_over(under);
         let tail = prompt.0.unwrap().tail.clone();
         assert!(!Kont::tunneled(&tail, 2, "throw"));

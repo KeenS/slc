@@ -1,9 +1,8 @@
 //! Runtime values for the SLC interpreter.
 
 use slc_core::types::Type;
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 /// A persistent environment in three layers.
 ///
@@ -17,33 +16,33 @@ use std::rc::Rc;
 /// Keeping pattern injections in their own by-name overlay is what lets de
 /// Bruijn indices be stable: an injected binding never shifts the positional
 /// chain, yet, being part of the environment, it is still captured by a
-/// closure that escapes the arm. Every layer is a cons of `Rc` links, so
+/// closure that escapes the arm. Every layer is a cons of `Arc` links, so
 /// cloning the environment — which the machine does on nearly every step —
 /// bumps refcounts rather than copying, and extending one chain leaves a
 /// clone taken earlier with its own view.
 #[derive(Debug, Clone)]
 pub struct Env {
-    globals: Rc<RefCell<HashMap<String, Value>>>,
-    locals: Option<Rc<Slot>>,
-    overlay: Option<Rc<Named>>,
+    globals: Arc<RwLock<HashMap<String, Value>>>,
+    locals: Option<Arc<Slot>>,
+    overlay: Option<Arc<Named>>,
 }
 
 #[derive(Debug)]
 struct Slot {
     value: Value,
-    parent: Option<Rc<Slot>>,
+    parent: Option<Arc<Slot>>,
 }
 
 #[derive(Debug)]
 struct Named {
     name: String,
     value: Value,
-    parent: Option<Rc<Named>>,
+    parent: Option<Arc<Named>>,
 }
 
 impl Env {
     pub fn new() -> Self {
-        Self { globals: Rc::new(RefCell::new(HashMap::new())), locals: None, overlay: None }
+        Self { globals: Arc::new(RwLock::new(HashMap::new())), locals: None, overlay: None }
     }
 
     /// Kept for the existing push/define call shape; bindings link
@@ -54,7 +53,7 @@ impl Env {
     /// Push a lexical binding onto the positional chain. It becomes de Bruijn
     /// index 0 for the scope that follows.
     pub fn define_local(&mut self, v: Value) {
-        self.locals = Some(Rc::new(Slot { value: v, parent: self.locals.take() }));
+        self.locals = Some(Arc::new(Slot { value: v, parent: self.locals.take() }));
     }
 
     /// The value at de Bruijn index `i` (0 = innermost), if the chain is that
@@ -70,13 +69,13 @@ impl Env {
     /// Inject a binding reachable by name (a `match` arm's pattern variable).
     pub fn define_named(&mut self, name: impl Into<String>, v: Value) {
         self.overlay =
-            Some(Rc::new(Named { name: name.into(), value: v, parent: self.overlay.take() }));
+            Some(Arc::new(Named { name: name.into(), value: v, parent: self.overlay.take() }));
     }
 
     /// Define a global (top-level) binding, visible from every env derived
     /// from this one via clone.
     pub fn define_global(&mut self, name: impl Into<String>, v: Value) {
-        self.globals.borrow_mut().insert(name.into(), v);
+        self.globals.write().unwrap_or_else(|err| err.into_inner()).insert(name.into(), v);
     }
 
     /// Resolve a name: the overlay first, then the globals table. The
@@ -89,7 +88,7 @@ impl Env {
             }
             scope = s.parent.as_deref();
         }
-        self.globals.borrow().get(name).cloned()
+        self.globals.read().unwrap_or_else(|err| err.into_inner()).get(name).cloned()
     }
 }
 
@@ -347,6 +346,11 @@ pub fn install_stdlib(env: &mut Env) {
         "__match_dispatch",
         "__handle",
         "__enter_poly",
+        "__link_mint",
+        "__link_run",
+        "__link_give",
+        "__link_take",
+        "__fork_both",
         "char_at",
         "is_digit",
         "is_ws",

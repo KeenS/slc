@@ -3,6 +3,8 @@ pub mod chunk;
 pub mod compile;
 pub mod eval;
 pub mod fold;
+mod fork;
+mod link;
 pub mod machine;
 mod matching;
 pub mod value;
