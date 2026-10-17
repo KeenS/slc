@@ -9,8 +9,8 @@ func join(dir: String, name: String) -> String {
 }
 
 // A missing path is the same as a removed one: both outcomes continue.
-func drop_path(path: String) -> (,) / {fs::Fs} {
-    mu unit { done <= <path | fs::remove | (done & mu String { _ => <(,) | done> })> }
+func drop_path(done: (,)) <- String / {fs::Fs} {
+    fs::remove | (done & fn(_: String) { <(,) | done> })>
 }
 
 proc main | (exit: i32) / {IO} {
