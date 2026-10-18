@@ -455,6 +455,14 @@ both forces, and using the joint `(k1 ; k2)` as the channel, stay outside
 this rule. Multi-shot clauses such as `flip` stay sequential on one stack.
 `process::spawn` stays the isolated child.
 
+`spawn` runs a proc with `main`'s signature, `proc worker | (exit: i32) / {IO}`,
+on another host thread. The call performs `IO` and returns `(,)`. The `i32`
+passed to `exit` stays on that thread. The process waits for those threads
+before it exits, so their `IO` finishes, and a fatal in one of them fails
+the process when `main` itself reported success. `process::spawn` does not
+share the heap, the handlers, or these threads. The reason is
+`docs/design-notes/spawn.md`.
+
 ```sl
 let pair = do (<(left, right) | fork::both) fork::parallel;
 …

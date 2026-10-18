@@ -209,6 +209,14 @@ fn builtin_functions() -> Vec<Builtin> {
             vec![Type::Var(0), Type::Var(1)],
             Some(Type::Tensor(vec![Type::Var(2), Type::Var(3)])),
         ),
+        // A proc with `main`'s signature. Naming it is `(+i32 / {IO})`: the
+        // empty value group is applied first, then the exit. The status is
+        // not a result of `spawn`.
+        function(
+            "spawn",
+            vec![Type::rowed(Type::Pos(I32), Row { effects: [IO.into()].into(), tail: None })],
+            Some(Type::ONE),
+        ),
     ]
 }
 
@@ -237,6 +245,7 @@ pub(crate) fn builtin_effect(name: &str) -> Option<&'static str> {
             | "__spawn_begin"
             | "__spawn_push"
             | "__spawn_exec"
+            | "spawn"
     )
     .then_some(IO)
 }

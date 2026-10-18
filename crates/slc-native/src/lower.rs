@@ -2144,6 +2144,7 @@ impl Builder {
                 | "__link_give"
                 | "__link_take"
                 | "__fork_both"
+                | "spawn"
         ) {
             return self.compile_builtin(symbol, arg, mode);
         }
@@ -3592,6 +3593,16 @@ impl Builder {
                 self.emit(Inst::ForkBoth { frame_words: 0 });
                 self.pop_scratch();
                 Ok(true)
+            }
+            "spawn" => {
+                // The proc closure is the argument. The runtime returns unit.
+                self.emit(Inst::CallRt {
+                    symbol: "slc_rt_spawn".into(),
+                    arg: RtArg::Val,
+                    noreturn: false,
+                    returns: true,
+                });
+                Ok(false)
             }
             "__link_mint" | "__link_run" | "__link_give" | "__link_take" => {
                 self.emit(Inst::CallRt {

@@ -360,6 +360,18 @@ impl Encoder {
         self.reload_frame();
     }
 
+    /// `slc_rt_split` left handlers, resume, and clause for this thread.
+    /// A 24-byte return arrives through the hidden pointer in `rdi`.
+    fn take_split(&mut self) {
+        self.buf.extend_from_slice(&[0x48, 0x83, 0xEC, 32]);
+        self.mem(true, 0x8D, RDI, RSP, 0);
+        self.call_plt("slc_rt_take_split");
+        self.mem(true, 0x8B, RBX, RSP, 0);
+        self.mem(true, 0x8B, R14, RSP, 8);
+        self.mem(true, 0x8B, R15, RSP, 16);
+        self.buf.extend_from_slice(&[0x48, 0x83, 0xC4, 32]);
+    }
+
     fn reload_frame(&mut self) {
         // `r13` is the callee's result. Reloading the spill would replace it.
         self.mem(true, 0x8B, R14, R12, FRAME_SPILL_ENV as i32);
@@ -732,10 +744,10 @@ impl Encoder {
         self.rr(true, 0x89, RAX, R12);
         // Resume and clause are not in a frame yet. Hold them in callee-saved
         // registers until ApplyTo's map is stored, and spill the resume as ENV
-        // (that word is always a root).
-        self.rip_load(RBX, "slc_split_handlers");
-        self.rip_load(R14, "slc_split_resume");
-        self.rip_load(R15, "slc_split_clause");
+        // (that word is always a root). A child of `spawn` reads its own
+        // thread; the main thread still reads the process statics, which
+        // `collect` roots.
+        self.take_split();
         self.lea_above();
         self.store_imm(RAX, 0, 0);
         self.mem(true, 0x89, R12, RAX, FRAME_CONT_PREV as i32);
@@ -752,11 +764,8 @@ impl Encoder {
         self.mem(true, 0x8B, R15, R12, FRAME_CONT_PREV as i32);
         self.safepoint(apply_map);
         self.spill(apply_map);
-        // The map names the slots. Drop the statics so the resume is not immortal.
-        self.zero(RAX);
-        self.rip_store(RAX, "slc_split_resume");
-        self.rip_store(RAX, "slc_split_clause");
-        self.rip_store(RAX, "slc_split_handlers");
+        // The map names the slots. Drop the split results so the resume is not immortal.
+        self.call_plt("slc_rt_clear_split");
         self.mem(true, 0x8B, 11, R12, FRAME_SLOT0 as i32 + 8);
         self.dyn_call_closure(11, true, true);
         // r13 = inner closure, r12 = ApplyTo.

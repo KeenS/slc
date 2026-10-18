@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use slc_abi::{
-    DISPLAY_CLOSURE, DISPLAY_CONSUMER, DISPLAY_CONTINUATION, DISPLAY_MENU, DISPLAY_RESUME,
-    DISPLAY_SELECT, FRAME_CONT_PREV, FRAME_FLAG_BARRIER, FRAME_FLAG_ORIGIN, FRAME_FLAG_PROMPT,
-    FRAME_FRAME_WORDS, FRAME_HANDLER_PREV, FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID,
+    CLOSURE_BIRTH, CLOSURE_CODE, CLOSURE_ENV, CLOSURE_FRAME_WORDS, DISPLAY_CLOSURE,
+    DISPLAY_CONSUMER, DISPLAY_CONTINUATION, DISPLAY_MENU, DISPLAY_RESUME, DISPLAY_SELECT,
+    FRAME_CONT_PREV, FRAME_FLAG_BARRIER, FRAME_FLAG_ORIGIN, FRAME_FLAG_PROMPT, FRAME_FRAME_WORDS,
+    FRAME_HANDLER_PREV, FRAME_HEADER_BYTES, FRAME_MAP_FLAGS, FRAME_PROMPT_ID, FRAME_RETURN_ADDRESS,
     FRAME_SLOT0, FRAME_SPILL_ENV, FRAME_SPILL_HANDLERS, FRAME_SPILL_VAL, FrameHeader, Header,
     MAP_EMPTY, MAP_UNWRITTEN, MARK_BLACK, MARK_WHITE, STRING_BYTE_LEN, STRING_BYTES,
     STRING_CHAR_LEN, TAG_ADAPTED, TAG_CLAUSES, TAG_CLOSURE, TAG_DELAY, TAG_ENV, TAG_KONT,
@@ -534,7 +535,6 @@ impl Runtime {
             return Err(RtError::Unhandled(op_id));
         };
         // Record the handler before the slice is dropped. ApplyTo reuses those bytes.
-        slc_answered_handler.store(handler as u64, Ordering::Relaxed);
         let resume = self.capture_through(handler);
         let preserved = self.read(handler, FRAME_CONT_PREV) as *mut u8;
         let outer = self.read(handler, FRAME_HANDLER_PREV);
@@ -545,9 +545,9 @@ impl Runtime {
         // barrier raised for the next handler in this frame.
         self.discard_origins_until(preserved);
         self.set_sp(preserved);
-        slc_split_resume.store(resume as u64, Ordering::Relaxed);
-        slc_split_clause.store(clause, Ordering::Relaxed);
-        slc_split_handlers.store(outer, Ordering::Relaxed);
+        // The main thread publishes where `collect` can see the resume. A
+        // `spawn` proc publishes on its own thread so it does not race that.
+        publish_split(handler as u64, resume as u64, clause, outer);
         Ok(())
     }
 
@@ -1367,15 +1367,34 @@ fn relocate(value: u64, map: &[(u64, u64)]) -> u64 {
     map.iter().find(|(old, _)| *old == value).map(|(_, new)| *new).unwrap_or(value)
 }
 
+fn rebase_if_inside(value: u64, old_base: u64, old_len: u64, new_base: u64) -> u64 {
+    if value >= old_base && value < old_base + old_len {
+        new_base + (value - old_base)
+    } else {
+        value
+    }
+}
+
 fn rebase_live(mem: *mut u8, sp_off: Option<usize>, old_base: u64, old_len: u64, new_base: u64) {
     // Saved interior addresses are not inside a frame field. Compare generations
     // by moving each one with the segment. Heap statics stay put.
     for cell in [&slc_io_frame, &slc_answered_handler, &slc_split_handlers] {
         let value = cell.load(Ordering::Relaxed);
-        if value >= old_base && value < old_base + old_len {
-            cell.store(new_base + (value - old_base), Ordering::Relaxed);
-        }
+        cell.store(rebase_if_inside(value, old_base, old_len, new_base), Ordering::Relaxed);
     }
+    // A `spawn` proc's prompt lives in this segment when it is the one growing.
+    TLS_IO_FRAME.with(|cell| {
+        cell.set(rebase_if_inside(cell.get(), old_base, old_len, new_base));
+    });
+    TLS_ANSWERED.with(|cell| {
+        cell.set(rebase_if_inside(cell.get(), old_base, old_len, new_base));
+    });
+    TLS_SPLIT_HANDLERS.with(|cell| {
+        cell.set(rebase_if_inside(cell.get(), old_base, old_len, new_base));
+    });
+    TLS_SPAWN_PROMPT.with(|cell| {
+        cell.set(rebase_if_inside(cell.get(), old_base, old_len, new_base));
+    });
     let Some(mut off) = sp_off else { return };
     let anchor = anchor_addr();
     for _ in 0..1_000_000 {
@@ -1433,7 +1452,8 @@ pub static slc_resume_log: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 #[unsafe(no_mangle)]
 pub static slc_resume_log_len: AtomicU64 = AtomicU64::new(0);
 
-/// Prompt whose clauses answered the latest `split`. `write_line` accepts only the startup IO frame.
+/// Prompt whose clauses answered the latest `split` on this thread. `write` and
+/// `write_line` accept it only when it is this thread's IO prompt.
 #[unsafe(no_mangle)]
 pub static slc_answered_handler: AtomicU64 = AtomicU64::new(0);
 
@@ -1471,8 +1491,9 @@ static LABELS_STOP: AtomicU64 = AtomicU64::new(0);
 #[unsafe(no_mangle)]
 pub static slc_fuel: AtomicU64 = AtomicU64::new(0);
 
-/// Nested `fork::parallel` regions. Non-zero suppresses collection and publishes
-/// a zero segment limit so each force grows its own stack.
+/// Nested `fork::parallel` regions and live `spawn` procs. Non-zero suppresses
+/// collection and publishes a zero segment limit so each extra stack grows on
+/// its own.
 static FORK_DEPTH: AtomicU64 = AtomicU64::new(0);
 /// A force has failed. Its sibling's next safepoint stops without a second diagnostic.
 /// Generated code compares this byte, so the symbol is public.
@@ -1519,6 +1540,103 @@ thread_local! {
     static TLS_WORKER_FAILED: Cell<bool> = const { Cell::new(false) };
     static TLS_FAIR: Cell<*const Fair> = const { Cell::new(std::ptr::null()) };
     static TLS_FAIR_SLOT: Cell<u8> = const { Cell::new(0) };
+    /// The IO prompt of a `spawn` proc. The main thread keeps using `slc_io_frame`.
+    static TLS_IO_FRAME: Cell<u64> = const { Cell::new(0) };
+    static TLS_ANSWERED: Cell<u64> = const { Cell::new(0) };
+    static TLS_SPLIT_RESUME: Cell<u64> = const { Cell::new(0) };
+    static TLS_SPLIT_CLAUSE: Cell<u64> = const { Cell::new(0) };
+    static TLS_SPLIT_HANDLERS: Cell<u64> = const { Cell::new(0) };
+    static TLS_SPAWN_PROMPT: Cell<u64> = const { Cell::new(0) };
+    static TLS_SPAWN_EXITED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Handlers, resume, and clause from the latest split on this thread.
+fn publish_split(handler: u64, resume: u64, clause: u64, outer: u64) {
+    if worker_active() {
+        TLS_ANSWERED.with(|cell| cell.set(handler));
+        TLS_SPLIT_RESUME.with(|cell| cell.set(resume));
+        TLS_SPLIT_CLAUSE.with(|cell| cell.set(clause));
+        TLS_SPLIT_HANDLERS.with(|cell| cell.set(outer));
+    } else {
+        slc_answered_handler.store(handler, Ordering::Relaxed);
+        slc_split_resume.store(resume, Ordering::Relaxed);
+        slc_split_clause.store(clause, Ordering::Relaxed);
+        slc_split_handlers.store(outer, Ordering::Relaxed);
+    }
+}
+
+fn split_now() -> (u64, u64, u64) {
+    if worker_active() {
+        (
+            TLS_SPLIT_HANDLERS.with(|cell| cell.get()),
+            TLS_SPLIT_RESUME.with(|cell| cell.get()),
+            TLS_SPLIT_CLAUSE.with(|cell| cell.get()),
+        )
+    } else {
+        (
+            slc_split_handlers.load(Ordering::Relaxed),
+            slc_split_resume.load(Ordering::Relaxed),
+            slc_split_clause.load(Ordering::Relaxed),
+        )
+    }
+}
+
+fn clear_split_now() {
+    if worker_active() {
+        TLS_SPLIT_RESUME.with(|cell| cell.set(0));
+        TLS_SPLIT_CLAUSE.with(|cell| cell.set(0));
+        TLS_SPLIT_HANDLERS.with(|cell| cell.set(0));
+    } else {
+        slc_split_resume.store(0, Ordering::Relaxed);
+        slc_split_clause.store(0, Ordering::Relaxed);
+        slc_split_handlers.store(0, Ordering::Relaxed);
+    }
+}
+
+fn answered_now() -> u64 {
+    if worker_active() {
+        TLS_ANSWERED.with(|cell| cell.get())
+    } else {
+        slc_answered_handler.load(Ordering::Relaxed)
+    }
+}
+
+fn io_frame_now() -> u64 {
+    if worker_active() {
+        TLS_IO_FRAME.with(|cell| cell.get())
+    } else {
+        slc_io_frame.load(Ordering::Relaxed)
+    }
+}
+
+/// Handlers, resume, and clause. 24 bytes, so the caller passes a pointer
+/// in `rdi` the way [`SlcBump`] returns. Field order is the registers
+/// `perform` reloads: `rbx`, `r14`, `r15`.
+#[repr(C)]
+pub struct SlcSplit {
+    handlers: u64,
+    resume: u64,
+    clause: u64,
+}
+
+const _: () = assert!(std::mem::size_of::<SlcSplit>() == 24);
+const _: () = assert!(std::mem::offset_of!(SlcSplit, handlers) == 0);
+const _: () = assert!(std::mem::offset_of!(SlcSplit, resume) == 8);
+const _: () = assert!(std::mem::offset_of!(SlcSplit, clause) == 16);
+
+/// # Safety
+/// `out` points at a writable [`SlcSplit`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slc_rt_take_split(out: *mut SlcSplit) {
+    let (handlers, resume, clause) = split_now();
+    unsafe {
+        std::ptr::write(out, SlcSplit { handlers, resume, clause });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_clear_split() {
+    clear_split_now();
 }
 
 fn worker_active() -> bool {
@@ -1725,7 +1843,11 @@ pub unsafe extern "C" fn slc_rt_start(
         eprintln!("error: the native runtime is x86-64");
         1
     };
-    status
+    // `spawn` has returned `(,)` already. Wait for those procs here, and
+    // keep `main`'s status when every one of them left through its exit.
+    // A fatal was already printed on that proc's thread.
+    let failed = join_spawned();
+    if failed && status == 0 { 1 } else { status }
 }
 
 /// Fuel hit zero at a safepoint. Same diagnostic as fuel 0 before entry, then
@@ -2141,6 +2263,72 @@ unsafe extern "C" {
     fn slc_fork_return();
 }
 
+// `frame`, `closure`, `handlers`, `arg`. Five callee-saved pushes leave
+// `%rsp ≡ 0`. Six more (the four arguments, the saved `%rsp`, and one
+// padding push) keep that alignment for `call slc_rt_worker_enter`.
+// The closure's `ret` lands on `slc_spawn_return` with those five pushes
+// still in place, so that `call` is aligned too. `slc_spawn_exit_code` is
+// the exit closure: it is jumped to with the same five pushes.
+#[cfg(target_arch = "x86_64")]
+std::arch::global_asm!(
+    ".globl slc_spawn_call",
+    ".globl slc_spawn_return",
+    ".globl slc_spawn_exit_code",
+    ".type slc_spawn_call, @function",
+    ".type slc_spawn_return, @function",
+    ".type slc_spawn_exit_code, @function",
+    "slc_spawn_call:",
+    "push rbx",
+    "push r12",
+    "push r13",
+    "push r14",
+    "push r15",
+    "mov rax, rsp",
+    "push rdi",
+    "push rsi",
+    "push rdx",
+    "push rcx",
+    "push rax",
+    "push rax",
+    "mov rdi, rax",
+    "call slc_rt_worker_enter",
+    "pop rax",
+    "pop rax",
+    "pop rcx",
+    "pop rdx",
+    "pop rsi",
+    "pop rdi",
+    "mov r12, rdi",
+    "mov r13, rcx",
+    "mov rbx, rdx",
+    "mov r14, qword ptr [rsi + 24]",
+    "mov r15, qword ptr [r12 + 8]",
+    "mov rax, qword ptr [rsi + 16]",
+    "jmp rax",
+    "slc_spawn_return:",
+    "mov rdi, r12",
+    "mov rsi, r13",
+    "call slc_rt_note_spawn_return",
+    "pop r15",
+    "pop r14",
+    "pop r13",
+    "pop r12",
+    "pop rbx",
+    "ret",
+    "slc_spawn_exit_code:",
+    "mov rdi, r12",
+    "mov rsi, r13",
+    "call slc_rt_spawn_exit",
+    "ud2",
+);
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    fn slc_spawn_call(frame: *mut u8, closure: u64, handlers: u64, arg: u64) -> u64;
+    fn slc_spawn_return();
+    fn slc_spawn_exit_code();
+}
+
 struct ForceOut {
     value: u64,
     failed: bool,
@@ -2322,6 +2510,307 @@ pub extern "C" fn slc_rt_fork_both(
     pair
 }
 
+/// Host stack for one `spawn` proc. The main thread is given 8 MiB; a
+/// spawned thread would otherwise be 2 MiB and refuse a recursion `main` can run.
+#[cfg(target_arch = "x86_64")]
+const SPAWN_HOST_STACK: usize = 8 << 20;
+/// Anchor (9 words) plus the IO prompt (13 words). The callee frame starts here.
+#[cfg(target_arch = "x86_64")]
+const SPAWN_CALLEE_AT: usize = FRAME_HEADER_BYTES + 13 * 8;
+
+fn spawn_jobs() -> &'static std::sync::Mutex<Vec<std::thread::JoinHandle<bool>>> {
+    static JOBS: std::sync::Mutex<Vec<std::thread::JoinHandle<bool>>> =
+        std::sync::Mutex::new(Vec::new());
+    &JOBS
+}
+
+/// `true` when a proc failed. Its diagnostic was already printed.
+fn join_spawned() -> bool {
+    let mut failed = false;
+    loop {
+        let batch = {
+            let mut guard = spawn_jobs().lock().unwrap_or_else(|err| err.into_inner());
+            std::mem::take(&mut *guard)
+        };
+        if batch.is_empty() {
+            break;
+        }
+        for handle in batch {
+            match handle.join() {
+                Ok(true) => failed = true,
+                Ok(false) => {}
+                Err(_) => {
+                    eprintln!("error: spawned proc panicked");
+                    failed = true;
+                }
+            }
+        }
+    }
+    failed
+}
+
+/// The proc closure's frame, or a fatal when the word is not that closure.
+#[cfg(target_arch = "x86_64")]
+fn spawn_frame_words(closure: u64) -> u32 {
+    if closure == 0 || !closure.is_multiple_of(16) {
+        type_mismatch("spawn expects a proc");
+    }
+    if slc_rt_word_tag(closure) != u64::from(TAG_CLOSURE) {
+        type_mismatch("spawn expects a proc");
+    }
+    let words = read_u64(closure as *const u8, CLOSURE_FRAME_WORDS);
+    if !(9..1_048_576).contains(&words) {
+        type_mismatch("spawn expects a proc");
+    }
+    words as u32
+}
+
+/// Clauses and the return closure of this thread's IO prompt.
+#[cfg(target_arch = "x86_64")]
+fn io_prompt_parts() -> (u64, u64) {
+    let io = io_frame_now();
+    if io == 0 {
+        type_mismatch("spawn has no IO prompt");
+    }
+    let frame = io as *const u8;
+    (read_u64(frame, FRAME_SLOT0), read_u64(frame, FRAME_SLOT0 + 8))
+}
+
+#[cfg(target_arch = "x86_64")]
+struct SpawnJob {
+    closure: u64,
+    frame_words: u32,
+    origin: u64,
+    barrier: u64,
+    saved: Vec<(u64, u64)>,
+    prompt_id: u64,
+    clauses: u64,
+    ret_closure: u64,
+}
+
+/// Drops the proc's stack and the `FORK_DEPTH` this thread holds. The
+/// depth was incremented on the parent before the thread started.
+#[cfg(target_arch = "x86_64")]
+struct SpawnLeave {
+    arm: Option<u64>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for SpawnLeave {
+    fn drop(&mut self) {
+        if self.arm.is_some() {
+            with_runtime(|rt| {
+                rt.swap_arm_out();
+                if let Some(id) = self.arm.take()
+                    && let Some(index) = rt.arms.iter().position(|arm| arm.id == id)
+                {
+                    rt.arms.swap_remove(index);
+                }
+            });
+        }
+        let prev = FORK_DEPTH.fetch_sub(1, Ordering::Relaxed);
+        if prev == 1 {
+            with_runtime(|rt| rt.publish_limit());
+        }
+    }
+}
+
+/// Anchor, a private IO prompt, and the first callee frame. The prompt's
+/// barrier bits stay clear: `push_prompt` would stamp the parent's barrier
+/// and the proc's `IO` would walk past it. `handler_prev` is 0. The
+/// prompt's `cont_prev` is the anchor on this stack, which is in the segment.
+#[cfg(target_arch = "x86_64")]
+fn build_spawn_stack(job: &SpawnJob) -> (u64, u64, u64) {
+    let words = job.frame_words.max(9);
+    let bytes = (SPAWN_CALLEE_AT + words as usize * 8 + 64 * 1024).max(ARM_BYTES);
+    let mut mem = vec![0u8; bytes];
+    let base = mem.as_mut_ptr();
+    write_u64(base, FRAME_CONT_PREV, anchor_addr());
+    write_u64(base, FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, 0));
+    write_u64(base, FRAME_FRAME_WORDS, 9);
+    let prompt = unsafe { base.add(FRAME_HEADER_BYTES) };
+    write_u64(prompt, FRAME_CONT_PREV, base as u64);
+    write_u64(prompt, FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, FRAME_FLAG_PROMPT));
+    write_u64(prompt, FRAME_FRAME_WORDS, 13);
+    write_u64(prompt, FRAME_PROMPT_ID, job.prompt_id);
+    write_u64(prompt, FRAME_HANDLER_PREV, 0);
+    write_u64(prompt, FRAME_SLOT0, job.clauses);
+    write_u64(prompt, FRAME_SLOT0 + 8, job.ret_closure);
+    let callee = unsafe { prompt.add(13 * 8) };
+    write_u64(callee, FRAME_RETURN_ADDRESS, slc_spawn_return as *const () as u64);
+    write_u64(callee, FRAME_CONT_PREV, prompt as u64);
+    write_u64(callee, FRAME_SPILL_HANDLERS, prompt as u64);
+    write_u64(callee, FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, 0));
+    write_u64(callee, FRAME_FRAME_WORDS, u64::from(words));
+    let id = NEXT_ARM.fetch_add(1, Ordering::Relaxed);
+    let prompt = prompt as u64;
+    let callee = callee as u64;
+    with_runtime(|rt| {
+        rt.arms.push(Arm { id, mem });
+    });
+    (id, prompt, callee)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn alloc_exit_stub() -> u64 {
+    with_runtime(|rt| {
+        let obj = rt.alloc(5, TAG_CLOSURE, MAP_EMPTY);
+        rt.write(obj, CLOSURE_CODE, slc_spawn_exit_code as *const () as u64);
+        rt.write(obj, CLOSURE_ENV, 0);
+        rt.write(obj, CLOSURE_FRAME_WORDS, 9);
+        rt.write(obj, 40, u64::from(MAP_EMPTY));
+        rt.write(obj, CLOSURE_BIRTH, 0);
+        obj as u64
+    })
+}
+
+/// Grow the arm so the exit frame fits, and return the prompt and that frame
+/// after a move. `fail_rt` is not used: the saved trampoline `%rsp` would
+/// return into a call that has already returned.
+#[cfg(target_arch = "x86_64")]
+fn place_exit_frame(prompt: u64, words: u32) -> Result<(u64, u64), RtError> {
+    with_runtime(|rt| {
+        rt.set_sp(prompt as *mut u8);
+        let off = rt.offset_of(rt.sp());
+        let need = off + 13 * 8 + words as usize * 8 + 64 * 1024;
+        rt.ensure(need)?;
+        let prompt = rt.sp() as u64;
+        TLS_IO_FRAME.with(|cell| cell.set(prompt));
+        Ok((prompt, prompt + 13 * 8))
+    })
+}
+
+#[cfg(target_arch = "x86_64")]
+fn write_callee_header(callee: u64, prompt: u64, words: u32) {
+    let frame = callee as *mut u8;
+    unsafe { std::ptr::write_bytes(frame, 0, words as usize * 8) };
+    write_u64(frame, FRAME_RETURN_ADDRESS, slc_spawn_return as *const () as u64);
+    write_u64(frame, FRAME_CONT_PREV, prompt);
+    write_u64(frame, FRAME_SPILL_HANDLERS, prompt);
+    write_u64(frame, FRAME_MAP_FLAGS, pack_frame_flags(MAP_EMPTY, 0));
+    write_u64(frame, FRAME_FRAME_WORDS, u64::from(words));
+}
+
+/// Apply the unit, then the exit, under this thread's IO prompt.
+/// `true` when the proc failed.
+#[cfg(target_arch = "x86_64")]
+fn run_spawned(job: SpawnJob) -> bool {
+    let mut leave = SpawnLeave { arm: None };
+    install_generation(job.origin, job.barrier, job.saved.clone());
+    TLS_SPAWN_EXITED.with(|cell| cell.set(false));
+    let (id, prompt, callee) = build_spawn_stack(&job);
+    leave.arm = Some(id);
+    TLS_IO_FRAME.with(|cell| cell.set(prompt));
+    let value = unsafe { slc_spawn_call(callee as *mut u8, job.closure, prompt, 0) };
+    if TLS_WORKER_FAILED.with(|cell| cell.get()) {
+        return true;
+    }
+    if value == 0 || !value.is_multiple_of(16) || slc_rt_word_tag(value) != u64::from(TAG_CLOSURE) {
+        eprintln!("error: type mismatch: spawned proc did not return an exit");
+        return true;
+    }
+    let words = read_u64(value as *const u8, CLOSURE_FRAME_WORDS) as u32;
+    let words = words.max(9);
+    let stub = alloc_exit_stub();
+    let prompt = TLS_SPAWN_PROMPT.with(|cell| cell.get());
+    let prompt = if prompt == 0 { TLS_IO_FRAME.with(|cell| cell.get()) } else { prompt };
+    let (prompt, callee) = match place_exit_frame(prompt, words) {
+        Ok(pair) => pair,
+        Err(_) => {
+            eprintln!("error: SLC stack overflow");
+            return true;
+        }
+    };
+    write_callee_header(callee, prompt, words);
+    TLS_SPAWN_EXITED.with(|cell| cell.set(false));
+    let _value = unsafe { slc_spawn_call(callee as *mut u8, value, prompt, stub) };
+    if TLS_SPAWN_EXITED.with(|cell| cell.get()) && !TLS_WORKER_FAILED.with(|cell| cell.get()) {
+        return false;
+    }
+    if TLS_WORKER_FAILED.with(|cell| cell.get()) {
+        return true;
+    }
+    eprintln!("error: spawned proc finished without leaving through its exit");
+    true
+}
+
+#[cfg(target_arch = "x86_64")]
+fn start_spawn(closure: u64) {
+    let frame_words = spawn_frame_words(closure);
+    let (clauses, ret_closure) = io_prompt_parts();
+    let prompt_id = with_runtime(|rt| rt.fresh_prompt_id());
+    let (origin, barrier, saved) = snapshot_generation();
+    let depth = FORK_DEPTH.fetch_add(1, Ordering::Relaxed);
+    if depth == 0 {
+        slc_segment_limit.store(0, Ordering::Relaxed);
+    }
+    let job =
+        SpawnJob { closure, frame_words, origin, barrier, saved, prompt_id, clauses, ret_closure };
+    let started = std::thread::Builder::new()
+        .name("slc-spawn".into())
+        .stack_size(SPAWN_HOST_STACK)
+        .spawn(move || {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_spawned(job))) {
+                Ok(failed) => failed,
+                Err(_) => {
+                    eprintln!("error: spawned proc panicked");
+                    true
+                }
+            }
+        });
+    let handle = match started {
+        Ok(handle) => handle,
+        Err(error) => {
+            let prev = FORK_DEPTH.fetch_sub(1, Ordering::Relaxed);
+            if prev == 1 {
+                with_runtime(|rt| rt.publish_limit());
+            }
+            type_mismatch(&format!("spawn did not start: {error}"));
+        }
+    };
+    spawn_jobs().lock().unwrap_or_else(|err| err.into_inner()).push(handle);
+}
+
+/// Run `closure` on another host thread and return `(,)`. The proc is applied
+/// to the unit, then to an exit that discards the `i32`. The process waits
+/// for the thread in `slc_rt_start`.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_spawn(sp: u64, closure: u64) -> u64 {
+    let _ = sp;
+    #[cfg(target_arch = "x86_64")]
+    {
+        start_spawn(closure);
+        0
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = closure;
+        type_mismatch("spawn is not implemented on this host");
+    }
+}
+
+/// `ret` from the unit or the exit. `prompt` is the frame `ret` restored,
+/// which has moved when the stack grew. The value stays the trampoline's result.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_note_spawn_return(prompt: u64, value: u64) -> u64 {
+    TLS_SPAWN_PROMPT.with(|cell| cell.set(prompt));
+    TLS_IO_FRAME.with(|cell| cell.set(prompt));
+    value
+}
+
+/// The exit closure. The `i32` is checked and then forgotten. A status that
+/// does not fit is the same fatal as `main`.
+#[unsafe(no_mangle)]
+pub extern "C" fn slc_rt_spawn_exit(sp: u64, status: u64) -> ! {
+    let _ = sp;
+    let signed = status as i64;
+    if signed < i64::from(i32::MIN) || signed > i64::from(i32::MAX) {
+        type_mismatch("EXIT status must fit in i32");
+    }
+    TLS_SPAWN_EXITED.with(|cell| cell.set(true));
+    unwind_worker(signed as i32, false);
+}
+
 fn label_named(id: u64) -> String {
     let start = LABELS_START.load(Ordering::Relaxed) as *const u8;
     let stop = LABELS_STOP.load(Ordering::Relaxed) as *const u8;
@@ -2371,10 +2860,16 @@ fn bail(status: i32) -> ! {
     }
 }
 
-/// A force failed. Return to `slc_worker_call`'s caller with the callee-saved
+/// A force failed. Return to the trampoline's caller with the callee-saved
 /// registers restored, instead of unwinding onto the parent's C stack.
 fn worker_return(status: i32) -> ! {
-    TLS_WORKER_FAILED.with(|cell| cell.set(true));
+    unwind_worker(status, true);
+}
+
+/// `failed` is false when a `spawn` proc left through its own exit. The
+/// `i32` stays in `eax` for the trampoline and is not the process status.
+fn unwind_worker(status: i32, failed: bool) -> ! {
+    TLS_WORKER_FAILED.with(|cell| cell.set(failed));
     let rsp = TLS_WORKER_RSP.with(|cell| cell.get());
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -2504,8 +2999,8 @@ pub extern "C" fn slc_rt_exit(sp: u64, status: u64) -> ! {
 }
 
 fn write_answered(text: u64, newline: bool, op: &str) {
-    let handler = slc_answered_handler.load(Ordering::Relaxed);
-    let io = slc_io_frame.load(Ordering::Relaxed);
+    let handler = answered_now();
+    let io = io_frame_now();
     if handler == 0 || handler != io {
         eprintln!("error: type mismatch: no handler for operation `{op}`");
         bail(1);

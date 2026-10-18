@@ -534,7 +534,23 @@ fn run_file(
     let _eval_guard = eval_span.enter();
 
     slc_runtime::chunk::with_chunk(chunk, || {
-        run_program(&program, &traits, &roots, main_root, fuel)
+        let outcome = run_program(&program, &traits, &roots, main_root, fuel);
+        // `spawn` returns before its proc finishes. Wait here, still inside
+        // the chunk those procs close over, and keep `main`'s status when
+        // every proc left through its own exit.
+        match slc_runtime::spawn::finish() {
+            Ok(()) => outcome,
+            Err(message) => match outcome {
+                // `main` already chose a status. A spawned fatal is reported
+                // and that status stays.
+                Ok(RunOutcome::Exit(code)) if code != 0 => {
+                    eprintln!("error: {message}");
+                    Ok(RunOutcome::Exit(code))
+                }
+                Ok(_) => Err(message),
+                Err(error) => Err(format!("{error}\n{message}")),
+            },
+        }
     })
 }
 

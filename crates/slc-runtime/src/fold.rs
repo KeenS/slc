@@ -116,6 +116,7 @@ fn refused_name(name: &str) -> bool {
             | "__link_give"
             | "__link_take"
             | "__fork_both"
+            | "spawn"
             | "__io_write"
             | "__io_write_line"
     )

@@ -72,3 +72,10 @@ The arithmetic builtins `__add`, `__sub`, `__mul`, `__div`, `__rem`,
 `__ln`, `__pow`, `__shl`, `__shr`, and the `__to_*` conversions are the
 bodies of the prelude traits. `__lower` and `__upper` are `string::lower`
 and `string::upper`.
+
+`spawn` takes a proc with `main`'s signature,
+`proc worker | (exit: i32) / {IO}`, runs it on another host thread, and
+returns `(,)`. The call performs `IO`. The proc's status is not a result.
+`process::spawn` is the separate operating-system child, reached through
+`__spawn_begin`, `__spawn_push`, and `__spawn_exec`.
+

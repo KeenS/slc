@@ -1008,6 +1008,10 @@ fn builtin_step(name: &str, args: Vec<Value>, kont: &mut Kont) -> Result<State, 
         let right = args.next().unwrap_or(Value::Unit);
         return Ok(State::Return(crate::fork::both(left, right)?));
     }
+    if name == "spawn" {
+        let job = args.into_iter().next().unwrap_or(Value::Unit);
+        return Ok(State::Return(crate::spawn::launch(job)?));
+    }
     // A builtin that offers its outcome activates one of its continuations;
     // the rest return a value.
     match crate::eval::run_offering_builtin(name, &args)? {

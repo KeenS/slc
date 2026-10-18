@@ -351,6 +351,7 @@ pub fn install_stdlib(env: &mut Env) {
         "__link_give",
         "__link_take",
         "__fork_both",
+        "spawn",
         "char_at",
         "is_digit",
         "is_ws",

@@ -80,6 +80,7 @@ Algebraic effects, handlers as values, delimited control, and rows on the negati
 - [`handler_forwarding.sl`](effects/handler_forwarding.sl) — A complete handler against one that forwards with `_ => forward`
 - [`handler_values.sl`](effects/handler_values.sl) — Handlers as values: stored in a list, chosen, installed with `do`
 - [`io.sl`](effects/io.sl) — `IO`, the effect the runtime handles
+- [`spawn.sl`](effects/spawn.sl) — `spawn` runs a proc with `main`'s signature on another host thread and returns `(,)` before that proc finishes
 - [`latent_effects.sl`](effects/latent_effects.sl) — The dual of effects: latent rows on the negative side
 - [`multi.sl`](effects/multi.sl) — Several traits and several effects in one function
 

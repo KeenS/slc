@@ -7,4 +7,5 @@ mod fork;
 mod link;
 pub mod machine;
 mod matching;
+pub mod spawn;
 pub mod value;

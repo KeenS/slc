@@ -174,7 +174,7 @@ pub(crate) fn builtin_arity(name: &str) -> usize {
         | "__to_u32" | "__to_u64" | "__to_f32" | "__to_f64" | "__sqrt" | "__abs" | "__floor"
         | "__ceil" | "__sin" | "__ln" | "__lower" | "__upper" | "__argument_count"
         | "__argument_at" | "__monotonic_ns" | "__sleep_ns" | "__dir_entry" | "__spawn_begin"
-        | "__spawn_push" | "__link_mint" => 1,
+        | "__spawn_push" | "__link_mint" | "spawn" => 1,
         "__index" => 2,
         "__close_file" => 1,
         "__add" | "__sub" | "__mul" | "__div" | "__rem" | "__eq" | "__ne" | "__lt" | "__gt"
