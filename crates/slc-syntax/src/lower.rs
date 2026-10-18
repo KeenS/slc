@@ -1717,8 +1717,7 @@ fn select_arm_shape(
 ) -> Result<(Option<String>, Vec<String>, Command), LowerError> {
     match pattern {
         // `Red`: an unqualified variant written without a payload. Any other
-        // name binds the whole value: a type with no structure has one shape
-        // whose single component is the value itself.
+        // name binds the whole value, an enum included: one binder, `μ̃x. c`.
         Pattern::Ident(name) => match lookup_variant(name) {
             Some(label) => Ok((Some(label), Vec::new(), command)),
             None => Ok((None, vec![name.clone()], command)),
@@ -2671,6 +2670,22 @@ mod tests {
             assert_eq!(arg, value);
             assert_eq!(consumer, "return");
         }
+    }
+
+    #[test]
+    fn lower_select_over_an_enum_binder_is_the_value_abstraction() {
+        let out = lower_str(
+            "enum Color { Red, Green }
+             func keep(out: Color) <- Color { mu Color { c => <c | out> } }",
+        );
+        let Term::Lam(_, body) = &out.iter().find(|(name, _)| name == "keep").unwrap().1 else {
+            panic!("expected a co-abstraction");
+        };
+        let Term::Co(coterm) = body.as_ref() else { panic!("expected a reified co-term") };
+        let CoTerm::MuTilde(binder, _) = coterm.as_ref() else {
+            panic!("a variable pattern over an enum is `μ̃x. c`: {coterm}");
+        };
+        assert_eq!(binder, "c");
     }
 
     #[test]

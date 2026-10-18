@@ -146,7 +146,13 @@ fn check_expr(
             };
             match written {
                 Some(name) if enums.variants_of(&name).is_some() => {
-                    check_branch_coverage("mu", &name, "variant", arms, enums, e.span, diags);
+                    // One name, or `_`, binds the enum whole. That is `μ̃b. c`,
+                    // the same binder an atom uses, so the variants stay intact.
+                    // Several arms still name variants: a binder among them
+                    // would be a default, and a branch table is unordered.
+                    if arms.len() != 1 || !whole_value_pattern(&arms[0].pattern, enums) {
+                        check_branch_coverage("mu", &name, "variant", arms, enums, e.span, diags);
+                    }
                 }
                 // A bare name that is neither declared nor built in is not
                 // a type.
@@ -291,6 +297,16 @@ fn refutable_shape(pattern: &Pattern) -> String {
         Pattern::Inject { .. } => "an alternative of a sum".into(),
         Pattern::Tuple(_) | Pattern::Bundle(_) => "this pattern".into(),
         _ => "a literal".into(),
+    }
+}
+
+/// A `mu` arm that names the scrutinee whole: `_`, or a name that is not a
+/// variant. It covers an enum without taking its variants apart.
+fn whole_value_pattern(pattern: &Pattern, enums: &Declarations) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+        Pattern::Ident(name) => enums.variant(name).is_none() && !enums.is_ambiguous_variant(name),
+        _ => false,
     }
 }
 
@@ -870,6 +886,18 @@ mod tests {
         )
         .unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("missing variants Green")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_variable_pattern_covers_an_enum() {
+        assert!(
+            check("func keep(out: Bool) <- Bool { mu Bool { b => <b | out> } }").is_ok(),
+            "a name binds the enum whole"
+        );
+        assert!(
+            check("func always(out: Bool) <- Bool { mu Bool { _ => <True | out> } }").is_ok(),
+            "`_` binds the enum whole"
+        );
     }
 
     #[test]
