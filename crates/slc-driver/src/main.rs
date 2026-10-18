@@ -229,7 +229,7 @@ fn main() -> ExitCode {
 
     // The object is an x86-64 ELF. Apple ld rejects `-pie` and `--gc-sections`,
     // and the image does not run on any other host. Those hosts use the interpreter.
-    if !interpret && host_links_elf() {
+    if !interpret && slc_native::host_links_elf() {
         run_elf(&file, fuel, &program_args);
     }
 
@@ -648,16 +648,7 @@ fn compile_object(path: &std::path::Path, fuel: usize) -> Result<Vec<u8>, String
     let Compiled { program, traits, defs, dispatch } =
         compile_file(path).map_err(|diagnostics| diagnostics.join("\n"))?;
     validate_main(&program)?;
-    let operations: Vec<String> = program
-        .decls
-        .iter()
-        .filter_map(|decl| match &decl.kind {
-            slc_syntax::ast::Decl::Effect { operations, .. } => Some(operations),
-            _ => None,
-        })
-        .flatten()
-        .map(|op| op.name.clone())
-        .collect();
+    let operations = program.operation_names();
     slc_native::compile(
         &defs,
         &dispatch.specializations,
@@ -679,35 +670,17 @@ fn elf_driver(setup: &str) -> String {
 #include <stdint.h>
 #include <stdlib.h>
 extern void slc_rt_set_args(int argc, char **argv);
-extern uint64_t slc_rt_start(
-    uint64_t fuel,
-    const void *safepoints_start, const void *safepoints_stop,
-    const void *maps_start, const void *maps_stop,
-    const void *text_start, const void *text_stop,
-    const void *scalars_start, const void *scalars_stop,
-    const void *ptrs_start, const void *ptrs_stop,
-    const void *labels_start, const void *labels_stop);
-extern char __start_slc_safepoints, __stop_slc_safepoints;
-extern char __start_slc_maps, __stop_slc_maps;
-extern char __start_slc_text, __stop_slc_text;
-extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
-extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
-extern char __start_slc_labels, __stop_slc_labels;
+{externs}
 int main(int argc, char **argv) {{
     {setup}
-    uint64_t status = slc_rt_start(
-        fuel,
-        &__start_slc_safepoints, &__stop_slc_safepoints,
-        &__start_slc_maps, &__stop_slc_maps,
-        &__start_slc_text, &__stop_slc_text,
-        &__start_slc_pool_scalars, &__stop_slc_pool_scalars,
-        &__start_slc_pool_ptrs, &__stop_slc_pool_ptrs,
-        &__start_slc_labels, &__stop_slc_labels);
+    uint64_t status = {call};
     int32_t code = (int32_t)status;
     if (code < 0 || code > 255) return 1;
     return (int)code;
 }}
-"#
+"#,
+        externs = slc_native::entry_externs(),
+        call = slc_native::entry_call("fuel"),
     )
 }
 
@@ -729,107 +702,6 @@ fn compile_driver(fuel: Option<usize>) -> String {
         None => "~(uint64_t)0".to_string(),
     };
     elf_driver(&format!("uint64_t fuel = {fuel_word};\n    slc_rt_set_args(argc - 1, argv + 1);"))
-}
-
-fn runtime_archive() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest.parent().unwrap().parent().unwrap().to_path_buf();
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map_or_else(|| workspace.join("target"), PathBuf::from);
-    let output = Command::new(env!("CARGO"))
-        .current_dir(&workspace)
-        .args(["build", "-p", "slc-rt", "--profile", "release-abort", "--offline", "--target-dir"])
-        .arg(&target)
-        .output()
-        .unwrap_or_else(|error| {
-            eprintln!("error: cannot build the runtime: {error}");
-            std::process::exit(1);
-        });
-    if !output.status.success() {
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-        eprint!("{}", String::from_utf8_lossy(&output.stdout));
-        std::process::exit(1);
-    }
-    target.join("release-abort/libslc_rt.a")
-}
-
-/// A fresh directory for one `rustc --print native-static-libs` invocation.
-/// rustc names the stdin crate `librust_out` and writes it in the working
-/// directory, so parallel compiles each need a directory of their own.
-fn native_libs_dir() -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "slc-native-libs-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    if let Err(error) = std::fs::create_dir_all(&dir) {
-        eprintln!("error: rustc --print native-static-libs: {error}");
-        std::process::exit(1);
-    }
-    dir
-}
-
-fn native_libs() -> Vec<String> {
-    // `rustc --print native-static-libs` refuses to run without a crate. The
-    // empty crate is enough: the line is the host's, including `-lm` for the
-    // real functions.
-    let out_dir = native_libs_dir();
-    let mut child = Command::new("rustc")
-        .current_dir(&out_dir)
-        .args([
-            "--print",
-            "native-static-libs",
-            "--crate-type",
-            "staticlib",
-            "--edition",
-            "2024",
-            "--out-dir",
-        ])
-        .arg(&out_dir)
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| {
-            eprintln!("error: rustc --print native-static-libs: {error}");
-            std::process::exit(1);
-        });
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(b"pub fn slc() {}\n");
-    }
-    let output = child.wait_with_output().unwrap_or_else(|error| {
-        eprintln!("error: rustc --print native-static-libs: {error}");
-        std::process::exit(1);
-    });
-    let _ = std::fs::remove_dir_all(&out_dir);
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let line = text
-        .lines()
-        .find_map(|line| {
-            line.split("native-static-libs:").nth(1).or_else(|| {
-                if line.split_whitespace().any(|word| word.starts_with("-l")) {
-                    Some(line)
-                } else {
-                    None
-                }
-            })
-        })
-        .unwrap_or("");
-    let libs: Vec<String> = line.split_whitespace().map(str::to_string).collect();
-    if libs.is_empty() {
-        eprintln!("error: rustc --print native-static-libs reported no libraries");
-        eprint!("{}", String::from_utf8_lossy(&output.stderr));
-        std::process::exit(1);
-    }
-    libs
 }
 
 /// `slc compile`: one source, one executable. Flags may sit on either side of
@@ -900,16 +772,10 @@ fn same_file(left: &std::path::Path, right: &std::path::Path) -> bool {
     }
 }
 
-/// x86-64 Linux is the host whose `cc` accepts `-pie` and `--gc-sections` and
-/// whose kernel runs the ELF this compiler emits.
-fn host_links_elf() -> bool {
-    cfg!(all(target_arch = "x86_64", target_os = "linux"))
-}
-
 /// Link `object` with the runtime. The C text is the program's `main`.
 /// Scratch files go away when this returns; `exe` is the caller's path.
 fn link_executable(object: &[u8], exe: &std::path::Path, driver: &str) -> Result<(), String> {
-    if !host_links_elf() {
+    if !slc_native::host_links_elf() {
         return Err("cannot link an x86-64 ELF on this host".into());
     }
     let dir = std::env::temp_dir().join(format!(
@@ -925,22 +791,7 @@ fn link_executable(object: &[u8], exe: &std::path::Path, driver: &str) -> Result
     std::fs::write(&object_path, object)
         .and_then(|_| std::fs::write(&driver_path, driver))
         .map_err(|error| format!("cannot write the object: {error}"))?;
-    let mut cmd = Command::new("cc");
-    cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
-        .arg(exe)
-        .arg(&driver_path)
-        .arg(&object_path)
-        .arg(runtime_archive());
-    cmd.args(native_libs());
-    let linked = cmd.output().map_err(|error| format!("cannot run cc: {error}"))?;
-    if !linked.status.success() {
-        return Err(format!(
-            "{}{}",
-            String::from_utf8_lossy(&linked.stderr),
-            String::from_utf8_lossy(&linked.stdout)
-        ));
-    }
-    Ok(())
+    slc_native::link_pie(exe, &driver_path, &object_path)
 }
 
 /// The object and the C driver. Removed when the link returns. The executable

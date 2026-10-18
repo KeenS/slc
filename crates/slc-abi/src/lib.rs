@@ -1,4 +1,12 @@
-//! Layout shared by generated code and the runtime. Names and offsets only.
+//! Layout shared by generated code and the runtime, and the numeric
+//! conversions both engines apply.
+
+mod number;
+
+pub use number::{
+    exact_f32, exact_f32_from_f64, exact_f64, exact_int, float_text, int_bounds, real_ln, real_pow,
+    real_sqrt, shift_count,
+};
 
 /// Bits 0..16 tag, 16..32 display kind, 32..64 payload words excluding the header.
 #[repr(C)]

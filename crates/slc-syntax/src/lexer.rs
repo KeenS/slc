@@ -8,10 +8,6 @@ pub struct LexError {
     pub span: Span,
 }
 
-fn retired(found: &'static str, replacement: &'static str) -> TokenKind {
-    TokenKind::Retired { found, replacement }
-}
-
 pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = source.chars().collect();
@@ -89,18 +85,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 "dual" => TokenKind::Dual,
                 "def" => TokenKind::Const,
                 "pub" => TokenKind::Pub,
-                "mod" => retired("mod", "sect"),
-                "use" => retired("use", "cite"),
-                "command" => retired("command", "proc"),
-                "trait" => retired("trait", "spec"),
-                "effect" => retired("effect", "hook"),
-                "const" => retired("const", "def"),
-                "match" => retired("match", "of"),
-                "handle" => retired("handle", "do"),
-                "handler" => retired("handler", "hn"),
-                "op" => retired("op", "hn"),
-                "with" => retired("with", "do"),
-                "select" => retired("select", "mu"),
                 _ => TokenKind::Ident(ident),
             };
             tokens.push(Token { kind, span: Span { start, end: i } });
@@ -217,16 +201,11 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
         }
         if let Some([a, b]) = two {
             let kind = match (a, b) {
-                ('=', '=') => Some(TokenKind::EqEq),
-                ('!', '=') => Some(TokenKind::NotEq),
                 ('<', '=') => Some(TokenKind::Le),
-                ('>', '=') => Some(TokenKind::Ge),
                 ('-', '>') => Some(TokenKind::Arrow),
                 ('<', '-') => Some(TokenKind::ReverseArrow),
                 ('=', '>') => Some(TokenKind::FatArrow),
                 (':', ':') => Some(TokenKind::ColonColon),
-                ('&', '&') => Some(TokenKind::AmpAmp),
-                ('|', '|') => Some(TokenKind::PipePipe),
                 ('.', '.') => Some(TokenKind::DotDot),
                 _ => None,
             };
@@ -249,19 +228,15 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             ':' => TokenKind::Colon,
             '.' => TokenKind::Dot,
             '@' => TokenKind::At,
-            '!' => TokenKind::Bang,
             '+' => TokenKind::Plus,
             '-' => TokenKind::Minus,
             '*' => TokenKind::Star,
             '/' => TokenKind::Slash,
-            '%' => TokenKind::Percent,
             '|' => TokenKind::Pipe,
             '&' => TokenKind::Amp,
             '<' => TokenKind::Lt,
             '>' => TokenKind::Gt,
             '=' => TokenKind::Assign,
-            '⟨' => TokenKind::CutOpen,
-            '⟩' => TokenKind::CutClose,
             other => {
                 return Err(LexError {
                     message: format!("unexpected character: {other}"),
@@ -324,14 +299,15 @@ mod tests {
     }
 
     #[test]
-    fn lex_retired_keywords_keep_their_word() {
-        let toks = lex("command match select").unwrap();
-        assert!(matches!(
-            &toks[0].kind,
-            TokenKind::Retired { found: "command", replacement: "proc" }
-        ));
-        assert!(matches!(&toks[1].kind, TokenKind::Retired { found: "match", .. }));
-        assert!(matches!(&toks[2].kind, TokenKind::Retired { found: "select", .. }));
+    fn retired_spellings_are_identifiers() {
+        let toks = lex("command match select mod use op with").unwrap();
+        assert!(matches!(&toks[0].kind, TokenKind::Ident(s) if s == "command"));
+        assert!(matches!(&toks[1].kind, TokenKind::Ident(s) if s == "match"));
+        assert!(matches!(&toks[2].kind, TokenKind::Ident(s) if s == "select"));
+        assert!(matches!(&toks[3].kind, TokenKind::Ident(s) if s == "mod"));
+        assert!(matches!(&toks[4].kind, TokenKind::Ident(s) if s == "use"));
+        assert!(matches!(&toks[5].kind, TokenKind::Ident(s) if s == "op"));
+        assert!(matches!(&toks[6].kind, TokenKind::Ident(s) if s == "with"));
     }
 
     #[test]
@@ -363,21 +339,20 @@ mod tests {
     #[test]
     fn the_connective_glyphs_are_not_surface_syntax() {
         // The surface is ASCII: `,` `;` `|` `&` join types, and `(;)` is the unit of `;`.
-        for glyph in ["⊗", "⅋", "⊥"] {
+        for glyph in ["⊗", "⅋", "⊥", "⟨", "⟩"] {
             assert!(lex(glyph).is_err(), "{glyph} lexed");
         }
     }
 
     #[test]
     fn lex_operators() {
-        let toks = lex("+ - * / % == != <= >= -> :: @").unwrap();
+        let toks = lex("+ - * / <= -> :: @").unwrap();
         assert_eq!(toks[0].kind, TokenKind::Plus);
         assert_eq!(toks[3].kind, TokenKind::Slash);
-        assert_eq!(toks[5].kind, TokenKind::EqEq);
-        assert_eq!(toks[7].kind, TokenKind::Le);
-        assert_eq!(toks[9].kind, TokenKind::Arrow);
-        assert_eq!(toks[10].kind, TokenKind::ColonColon);
-        assert_eq!(toks[11].kind, TokenKind::At);
+        assert_eq!(toks[4].kind, TokenKind::Le);
+        assert_eq!(toks[5].kind, TokenKind::Arrow);
+        assert_eq!(toks[6].kind, TokenKind::ColonColon);
+        assert_eq!(toks[7].kind, TokenKind::At);
     }
 
     #[test]
@@ -394,7 +369,9 @@ mod tests {
 
     #[test]
     fn lex_error_bad_char() {
-        assert!(lex("#").is_err());
+        for glyph in ["#", "!", "%"] {
+            assert!(lex(glyph).is_err(), "{glyph} lexed");
+        }
     }
 
     #[test]

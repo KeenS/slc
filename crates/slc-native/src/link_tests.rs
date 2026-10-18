@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
 
 use slc_abi::{FRAME_SLOT0, TAGGED_LABEL, TAGGED_PAYLOAD};
 use slc_core::command::Command as Cut;
@@ -22,16 +21,7 @@ fn pipeline(src: &str) -> crate::Compiled {
         .unwrap_or_else(|diags| panic!("{diags:?}"));
     let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
         .unwrap_or_else(|err| panic!("{err}"));
-    let operations: Vec<String> = program
-        .decls
-        .iter()
-        .filter_map(|decl| match &decl.kind {
-            slc_syntax::ast::Decl::Effect { operations, .. } => Some(operations),
-            _ => None,
-        })
-        .flatten()
-        .map(|op| op.name.clone())
-        .collect();
+    let operations = program.operation_names();
     crate::compile(
         &defs,
         &dispatch.specializations,
@@ -47,124 +37,20 @@ fn flat(func: &Function) -> Vec<&Inst> {
     func.blocks.iter().flat_map(|block| block.insts.iter()).collect()
 }
 
-fn runtime_archive() -> PathBuf {
-    static CACHE: OnceLock<PathBuf> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let workspace = manifest.parent().unwrap().parent().unwrap().to_path_buf();
-            let target = std::env::var_os("CARGO_TARGET_DIR")
-                .map_or_else(|| workspace.join("target"), PathBuf::from);
-            let output = Command::new(env!("CARGO"))
-                .current_dir(&workspace)
-                .args([
-                    "build",
-                    "-p",
-                    "slc-rt",
-                    "--profile",
-                    "release-abort",
-                    "--offline",
-                    "--target-dir",
-                ])
-                .arg(&target)
-                .output()
-                .expect("cargo build");
-            assert!(
-                output.status.success(),
-                "release-abort build failed\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            target.join("release-abort/libslc_rt.a")
-        })
-        .clone()
-}
-
-fn native_libs() -> Vec<String> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static CACHE: OnceLock<Vec<String>> = OnceLock::new();
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    CACHE
-        .get_or_init(|| {
-            // rustc names the stdin crate `librust_out` and writes it in the
-            // working directory. A private directory keeps parallel tests apart.
-            let out_dir = std::env::temp_dir().join(format!(
-                "slc-native-libs-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            std::fs::create_dir_all(&out_dir).unwrap();
-            let mut child = Command::new("rustc")
-                .current_dir(&out_dir)
-                .args([
-                    "--print",
-                    "native-static-libs",
-                    "--crate-type",
-                    "staticlib",
-                    "--edition",
-                    "2024",
-                    "--out-dir",
-                ])
-                .arg(&out_dir)
-                .arg("-")
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-                .unwrap();
-            std::io::Write::write_all(&mut child.stdin.take().unwrap(), b"pub fn slc() {}\n")
-                .unwrap();
-            let output = child.wait_with_output().unwrap();
-            let _ = std::fs::remove_dir_all(&out_dir);
-            let text = format!(
-                "{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let line = text
-                .lines()
-                .find_map(|line| {
-                    line.split("native-static-libs:").nth(1).or_else(|| {
-                        if line.split_whitespace().any(|word| word.starts_with("-l")) {
-                            Some(line)
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .unwrap_or("");
-            line.split_whitespace().map(str::to_string).collect()
-        })
-        .clone()
-}
-
-const DRIVER: &str = r#"
+fn bare_driver(fuel: &str) -> String {
+    format!(
+        r#"
 #include <stdint.h>
-extern uint64_t slc_rt_start(
-    uint64_t fuel,
-    const void *safepoints_start, const void *safepoints_stop,
-    const void *maps_start, const void *maps_stop,
-    const void *text_start, const void *text_stop,
-    const void *scalars_start, const void *scalars_stop,
-    const void *ptrs_start, const void *ptrs_stop,
-    const void *labels_start, const void *labels_stop);
-extern char __start_slc_safepoints, __stop_slc_safepoints;
-extern char __start_slc_maps, __stop_slc_maps;
-extern char __start_slc_text, __stop_slc_text;
-extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
-extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
-extern char __start_slc_labels, __stop_slc_labels;
-int main(void) {
-    uint64_t status = slc_rt_start(
-        ~(uint64_t)0,
-        &__start_slc_safepoints, &__stop_slc_safepoints,
-        &__start_slc_maps, &__stop_slc_maps,
-        &__start_slc_text, &__stop_slc_text,
-        &__start_slc_pool_scalars, &__stop_slc_pool_scalars,
-        &__start_slc_pool_ptrs, &__stop_slc_pool_ptrs,
-        &__start_slc_labels, &__stop_slc_labels);
+{externs}
+int main(void) {{
+    uint64_t status = {call};
     return (int)status;
+}}
+"#,
+        externs = crate::entry_externs(),
+        call = crate::entry_call(fuel),
+    )
 }
-"#;
 
 fn link_run(object: &[u8]) -> (i32, PathBuf) {
     let (code, _, _, dir) = link_run_fuel(object, "~(uint64_t)0");
@@ -172,7 +58,7 @@ fn link_run(object: &[u8]) -> (i32, PathBuf) {
 }
 
 fn link_run_fuel(object: &[u8], fuel: &str) -> (i32, String, String, PathBuf) {
-    link_driver(object, &DRIVER.replace("~(uint64_t)0", fuel))
+    link_driver(object, &bare_driver(fuel))
 }
 
 fn link_driver(object: &[u8], driver: &str) -> (i32, String, String, PathBuf) {
@@ -186,20 +72,8 @@ fn link_driver(object: &[u8], driver: &str) -> (i32, String, String, PathBuf) {
     std::fs::write(&object_path, object).unwrap();
     std::fs::write(dir.join("main.c"), driver).unwrap();
     let exe = dir.join("p");
-    let mut cmd = Command::new("cc");
-    cmd.args(["-fPIE", "-pie", "-Wl,--gc-sections", "-o"])
-        .arg(&exe)
-        .arg(dir.join("main.c"))
-        .arg(&object_path)
-        .arg(runtime_archive());
-    cmd.args(native_libs());
-    let output = cmd.output().unwrap();
-    assert!(
-        output.status.success(),
-        "link failed\n{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    crate::link_pie(&exe, &dir.join("main.c"), &object_path)
+        .unwrap_or_else(|error| panic!("link failed\n{error}"));
     let ran = Command::new(&exe).output().unwrap();
     let code = ran.status.code().unwrap_or_else(|| {
         #[cfg(unix)]
@@ -771,35 +645,6 @@ fn fuel_exhaustion_returns_the_diverged_diagnostic() {
     assert!(stderr.contains("evaluation diverged (fuel exhausted)"), "{stderr}");
 }
 
-const ENTRY_EXTERN: &str = r#"
-extern uint64_t slc_rt_start(
-    uint64_t fuel,
-    const void *safepoints_start, const void *safepoints_stop,
-    const void *maps_start, const void *maps_stop,
-    const void *text_start, const void *text_stop,
-    const void *scalars_start, const void *scalars_stop,
-    const void *ptrs_start, const void *ptrs_stop,
-    const void *labels_start, const void *labels_stop);
-extern char __start_slc_safepoints, __stop_slc_safepoints;
-extern char __start_slc_maps, __stop_slc_maps;
-extern char __start_slc_text, __stop_slc_text;
-extern char __start_slc_pool_scalars, __stop_slc_pool_scalars;
-extern char __start_slc_pool_ptrs, __stop_slc_pool_ptrs;
-extern char __start_slc_labels, __stop_slc_labels;
-"#;
-
-fn entry_call(fuel: &str) -> String {
-    format!(
-        "slc_rt_start(\n        {fuel},\n        \
-         &__start_slc_safepoints, &__stop_slc_safepoints,\n        \
-         &__start_slc_maps, &__stop_slc_maps,\n        \
-         &__start_slc_text, &__stop_slc_text,\n        \
-         &__start_slc_pool_scalars, &__stop_slc_pool_scalars,\n        \
-         &__start_slc_pool_ptrs, &__stop_slc_pool_ptrs,\n        \
-         &__start_slc_labels, &__stop_slc_labels)"
-    )
-}
-
 #[test]
 fn verdict_prints_big_through_the_live_io_prompt() {
     let compiled = pipeline(
@@ -887,7 +732,7 @@ fn tail_resume_keeps_a_constant_stack_depth() {
         r#"
         #include <stdint.h>
         #include <stdio.h>
-        {ENTRY_EXTERN}
+        {externs}
         extern uint64_t slc_resume_trace;
         extern uint64_t slc_resume_log[8];
         extern uint64_t slc_resume_log_len;
@@ -912,7 +757,8 @@ fn tail_resume_keeps_a_constant_stack_depth() {
             return 0;
         }}
         "#,
-        call = entry_call("10000")
+        externs = crate::entry_externs(),
+        call = crate::entry_call("10000")
     );
     let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
     assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");
@@ -936,7 +782,7 @@ fn lem_cycle_is_swept_after_the_roots_drop() {
         r#"
         #include <stdint.h>
         #include <stdio.h>
-        {ENTRY_EXTERN}
+        {externs}
         extern uint64_t slc_sweep_on_exit;
         extern uint64_t slc_kont_live;
         typedef struct {{
@@ -964,7 +810,8 @@ fn lem_cycle_is_swept_after_the_roots_drop() {
             return 0;
         }}
         "#,
-        call = entry_call("~(uint64_t)0")
+        externs = crate::entry_externs(),
+        call = crate::entry_call("~(uint64_t)0")
     );
     let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
     assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");
@@ -1264,7 +1111,7 @@ fn write_line_after_a_segment_move_still_prints() {
     let driver = format!(
         r#"
         #include <stdint.h>
-        {ENTRY_EXTERN}
+        {externs}
         extern uint64_t slc_segment_bytes;
         int main(void) {{
             slc_segment_bytes = 4096;
@@ -1272,7 +1119,8 @@ fn write_line_after_a_segment_move_still_prints() {
             return (int)status;
         }}
         "#,
-        call = entry_call("~(uint64_t)0")
+        externs = crate::entry_externs(),
+        call = crate::entry_call("~(uint64_t)0")
     );
     let (status, stdout, stderr, _) = link_driver(&compiled.object, &driver);
     assert_eq!(status, 0, "stdout: {stdout} stderr: {stderr}");

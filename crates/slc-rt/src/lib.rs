@@ -3076,138 +3076,59 @@ pub extern "C" fn slc_rt_frem(sp: u64, a: u64, b: u64) -> u64 {
     (f64::from_bits(a) % f64::from_bits(b)).to_bits()
 }
 
-fn fits(n: i64, lo: i64, hi: i64, width: &str) -> u64 {
+fn convert_int(n: i64, width: &str) -> u64 {
+    let Some((_, lo, hi)) = slc_abi::int_bounds(width) else {
+        type_mismatch(&format!("arithmetic overflow: unknown width {width}"));
+    };
     if n < lo || n > hi {
         type_mismatch(&format!("arithmetic overflow: {n} does not fit in {width}"));
     }
     n as u64
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_i8(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    fits(n as i64, i64::from(i8::MIN), i64::from(i8::MAX), "i8")
+fn convert_float(bits: u64, width: &str) -> u64 {
+    let Some((_, lo, hi)) = slc_abi::int_bounds(width) else {
+        type_mismatch(&format!("arithmetic overflow: unknown width {width}"));
+    };
+    let value = f64::from_bits(bits);
+    match slc_abi::exact_int(value, lo, hi) {
+        Some(n) => n as u64,
+        None => refuse_fit(slc_abi::float_text(value), width),
+    }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_i32(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    fits(n as i64, i64::from(i32::MIN), i64::from(i32::MAX), "i32")
+macro_rules! width_extern {
+    ($to_int:ident, $from_float:ident, $width:literal) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $to_int(sp: u64, n: u64) -> u64 {
+            let _ = sp;
+            convert_int(n as i64, $width)
+        }
+
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $from_float(sp: u64, bits: u64) -> u64 {
+            let _ = sp;
+            convert_float(bits, $width)
+        }
+    };
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_i64(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    n
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_u8(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    fits(n as i64, 0, i64::from(u8::MAX), "u8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_u32(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    fits(n as i64, 0, i64::from(u32::MAX), "u32")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_to_u64(sp: u64, n: u64) -> u64 {
-    let _ = sp;
-    fits(n as i64, 0, i64::MAX, "u64")
-}
-
-/// `2^63`. `i64::MAX` rounds to this float, and the float is not itself an `i64`.
-const TWO_63: f64 = 9223372036854775808.0;
-
-fn float_text(value: f64) -> String {
-    format!("{value}")
-}
+width_extern!(slc_rt_to_i8, slc_rt_f_to_i8, "i8");
+width_extern!(slc_rt_to_i32, slc_rt_f_to_i32, "i32");
+width_extern!(slc_rt_to_i64, slc_rt_f_to_i64, "i64");
+width_extern!(slc_rt_to_u8, slc_rt_f_to_u8, "u8");
+width_extern!(slc_rt_to_u32, slc_rt_f_to_u32, "u32");
+width_extern!(slc_rt_to_u64, slc_rt_f_to_u64, "u64");
 
 fn refuse_fit(shown: impl std::fmt::Display, width: &str) -> ! {
     type_mismatch(&format!("arithmetic overflow: {shown} does not fit in {width}"));
 }
 
-/// An integer as an exact `f64`. `i64::MIN` is the power of two `-2^63`.
-fn exact_f64(n: i64) -> Option<f64> {
-    if n == i64::MIN {
-        return Some(n as f64);
+fn real_word(result: Result<f64, String>) -> u64 {
+    match result {
+        Ok(value) => value.to_bits(),
+        Err(message) => type_mismatch(&format!("arithmetic overflow: {message}")),
     }
-    let value = n as f64;
-    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
-}
-
-/// An integer as an exact `f32`, stored in the `f64` word both widths share.
-fn exact_f32(n: i64) -> Option<f64> {
-    if n == i64::MIN {
-        return Some(n as f32 as f64);
-    }
-    let value = n as f32 as f64;
-    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
-}
-
-/// `x` when it is an exact `f32`. Every `NaN` fits; a rounded value does not.
-fn exact_f32_from_f64(value: f64) -> Option<f64> {
-    if value.is_nan() {
-        return Some(value as f32 as f64);
-    }
-    let narrowed = value as f32 as f64;
-    if narrowed.to_bits() == value.to_bits() { Some(narrowed) } else { None }
-}
-
-/// A finite integral float inside `lo..=hi`. `+2^63` is not an `i64`.
-fn exact_int(value: f64, lo: i64, hi: i64) -> Option<i64> {
-    if !value.is_finite() || value.trunc() != value || value >= TWO_63 || value < -TWO_63 {
-        return None;
-    }
-    let n = value as i64;
-    if n < lo || n > hi { None } else { Some(n) }
-}
-
-fn f_to_int(bits: u64, lo: i64, hi: i64, width: &str) -> u64 {
-    let value = f64::from_bits(bits);
-    match exact_int(value, lo, hi) {
-        Some(n) => n as u64,
-        None => refuse_fit(float_text(value), width),
-    }
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_i8(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, i64::from(i8::MIN), i64::from(i8::MAX), "i8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_i32(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, i64::from(i32::MIN), i64::from(i32::MAX), "i32")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_i64(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, i64::MIN, i64::MAX, "i64")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_u8(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, 0, i64::from(u8::MAX), "u8")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_u32(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, 0, i64::from(u32::MAX), "u32")
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn slc_rt_f_to_u64(sp: u64, bits: u64) -> u64 {
-    let _ = sp;
-    f_to_int(bits, 0, i64::MAX, "u64")
 }
 
 fn i_to_float(n: i64, width: &str, exact: fn(i64) -> Option<f64>) -> u64 {
@@ -3220,13 +3141,13 @@ fn i_to_float(n: i64, width: &str, exact: fn(i64) -> Option<f64>) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_i_to_f64(sp: u64, n: u64) -> u64 {
     let _ = sp;
-    i_to_float(n as i64, "f64", exact_f64)
+    i_to_float(n as i64, "f64", slc_abi::exact_f64)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_i_to_f32(sp: u64, n: u64) -> u64 {
     let _ = sp;
-    i_to_float(n as i64, "f32", exact_f32)
+    i_to_float(n as i64, "f32", slc_abi::exact_f32)
 }
 
 /// Every `f32` word is already an `f64`.
@@ -3240,20 +3161,16 @@ pub extern "C" fn slc_rt_f_to_f64(sp: u64, bits: u64) -> u64 {
 pub extern "C" fn slc_rt_f_to_f32(sp: u64, bits: u64) -> u64 {
     let _ = sp;
     let value = f64::from_bits(bits);
-    match exact_f32_from_f64(value) {
+    match slc_abi::exact_f32_from_f64(value) {
         Some(narrowed) => narrowed.to_bits(),
-        None => refuse_fit(float_text(value), "f32"),
+        None => refuse_fit(slc_abi::float_text(value), "f32"),
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_sqrt(sp: u64, bits: u64) -> u64 {
     let _ = sp;
-    let value = f64::from_bits(bits);
-    if value < 0.0 {
-        type_mismatch(&format!("arithmetic overflow: sqrt({})", float_text(value)));
-    }
-    value.sqrt().to_bits()
+    real_word(slc_abi::real_sqrt(f64::from_bits(bits)))
 }
 
 #[unsafe(no_mangle)]
@@ -3283,11 +3200,7 @@ pub extern "C" fn slc_rt_sin(sp: u64, bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_ln(sp: u64, bits: u64) -> u64 {
     let _ = sp;
-    let value = f64::from_bits(bits);
-    if value <= 0.0 {
-        type_mismatch(&format!("arithmetic overflow: ln({})", float_text(value)));
-    }
-    value.ln().to_bits()
+    real_word(slc_abi::real_ln(f64::from_bits(bits)))
 }
 
 /// IEEE power. A negative base with a non-integral exponent, and a zero base
@@ -3295,34 +3208,20 @@ pub extern "C" fn slc_rt_ln(sp: u64, bits: u64) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_pow(sp: u64, base_bits: u64, exp_bits: u64) -> u64 {
     let _ = sp;
-    let (base, exp) = (f64::from_bits(base_bits), f64::from_bits(exp_bits));
-    let outside =
-        (base == 0.0 && exp < 0.0) || (base < 0.0 && exp.is_finite() && exp.fract() != 0.0);
-    if !base.is_nan() && !exp.is_nan() && outside {
-        type_mismatch(&format!(
-            "arithmetic overflow: pow({}, {})",
-            float_text(base),
-            float_text(exp)
-        ));
-    }
-    base.powf(exp).to_bits()
-}
-
-fn shift_count(count: i64) -> u32 {
-    (count as u32) & 63
+    real_word(slc_abi::real_pow(f64::from_bits(base_bits), f64::from_bits(exp_bits)))
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_shl(sp: u64, value: u64, count: u64) -> u64 {
     let _ = sp;
-    (value as i64).wrapping_shl(shift_count(count as i64)) as u64
+    (value as i64).wrapping_shl(slc_abi::shift_count(count as i64)) as u64
 }
 
 /// Logical right shift: zeros enter at the high bit.
 #[unsafe(no_mangle)]
 pub extern "C" fn slc_rt_shr(sp: u64, value: u64, count: u64) -> u64 {
     let _ = sp;
-    value.wrapping_shr(shift_count(count as i64))
+    value.wrapping_shr(slc_abi::shift_count(count as i64))
 }
 
 #[unsafe(no_mangle)]

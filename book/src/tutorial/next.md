@@ -50,5 +50,5 @@ indentation that agrees with `slc fmt`.
 [`PLAN.md`](https://github.com/KeenS/slc/blob/master/PLAN.md) is what the
 implementation still leaves open.
 [`docs/MIGRATION.md`](https://github.com/KeenS/slc/blob/master/docs/MIGRATION.md)
-is the older spelling of each keyword, which the parser still names when it
-sees one.
+records the older spelling of each keyword. Those words are ordinary
+identifiers now.

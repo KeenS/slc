@@ -460,7 +460,7 @@ impl Formatter {
             Some(T::Const) => self.const_decl()?,
             Some(T::Mod) => {
                 let mut head = vec![self.bump(), text(" "), self.name("a module name")?];
-                // `mod name;`, a module in a file of its own.
+                // `sect name;`, a module in a file of its own.
                 if self.at(&T::Semicolon) {
                     head.push(self.bump());
                     concat(head)

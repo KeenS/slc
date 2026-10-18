@@ -1,6 +1,8 @@
 /target
 /proof/.lake
 /book/book
+# rustc --print native-static-libs names its stdin crate this.
+librust_out.a
 # Local agent/editor artifacts; never commit these.
 instructions.txt
 .#instructions.txt

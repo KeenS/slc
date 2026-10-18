@@ -97,7 +97,7 @@
     (,(concat "\\_<\\(?:data\\|enum\\|menu\\|form\\|spec\\|hook\\)\\s-+\\("
               slc--name "\\)")
      1 font-lock-type-face)
-    (,(concat "\\_<mod\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
+    (,(concat "\\_<sect\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
     (,(concat "\\_<def\\s-+\\(" slc--name "\\)") 1 font-lock-constant-face)
     ;; The builtins beneath the prelude's operators: `__add'.
     ("\\_<__[[:alnum:]_]+\\_>" . font-lock-builtin-face)
@@ -251,7 +251,7 @@ shown; the buffer is then left as it was."
      1)
     ("Traits" ,(concat "^\\s-*\\(?:pub\\s-+\\)?spec\\s-+\\(" slc--name "\\)") 1)
     ("Effects" ,(concat "^\\s-*\\(?:pub\\s-+\\)?hook\\s-+\\(" slc--name "\\)") 1)
-    ("Modules" ,(concat "^\\s-*\\(?:pub\\s-+\\)?mod\\s-+\\(" slc--name "\\)") 1))
+    ("Modules" ,(concat "^\\s-*\\(?:pub\\s-+\\)?sect\\s-+\\(" slc--name "\\)") 1))
   "The declarations `imenu' lists.")
 
 (defvar slc-mode-map

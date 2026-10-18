@@ -49,12 +49,6 @@ pub enum TokenKind {
     /// A definition, `def`.
     Const,
     Pub,
-    /// A keyword the surface no longer spells this way. `replacement` is the
-    /// spelling the parser names in the error.
-    Retired {
-        found: &'static str,
-        replacement: &'static str,
-    },
 
     // Punctuation
     LParen,
@@ -80,23 +74,12 @@ pub enum TokenKind {
     Minus,
     Star,
     Slash,
-    Percent,
-    EqEq,
-    NotEq,
     Lt,
     Gt,
     Le,
-    Ge,
     Assign,
     Pipe,
     Amp,
-    AmpAmp,
-    PipePipe,
-    Bang,
-
-    // Unicode
-    CutOpen,  // ⟨
-    CutClose, // ⟩
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -136,7 +119,6 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Dual => write!(f, "`dual`"),
             TokenKind::Const => write!(f, "`def`"),
             TokenKind::Pub => write!(f, "`pub`"),
-            TokenKind::Retired { found, .. } => write!(f, "`{found}`"),
             TokenKind::LParen => write!(f, "`(`"),
             TokenKind::RParen => write!(f, "`)`"),
             TokenKind::LBrace => write!(f, "`{{`"),
@@ -158,21 +140,12 @@ impl std::fmt::Display for TokenKind {
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
             TokenKind::Slash => write!(f, "`/`"),
-            TokenKind::Percent => write!(f, "`%`"),
-            TokenKind::EqEq => write!(f, "`==`"),
-            TokenKind::NotEq => write!(f, "`!=`"),
             TokenKind::Lt => write!(f, "`<`"),
             TokenKind::Gt => write!(f, "`>`"),
             TokenKind::Le => write!(f, "`<=`"),
-            TokenKind::Ge => write!(f, "`>=`"),
             TokenKind::Assign => write!(f, "`=`"),
             TokenKind::Pipe => write!(f, "`|`"),
             TokenKind::Amp => write!(f, "`&`"),
-            TokenKind::CutOpen => write!(f, "`⟨`"),
-            TokenKind::CutClose => write!(f, "`⟩`"),
-            TokenKind::AmpAmp => write!(f, "`&&`"),
-            TokenKind::PipePipe => write!(f, "`||`"),
-            TokenKind::Bang => write!(f, "`!`"),
         }
     }
 }

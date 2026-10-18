@@ -35,8 +35,7 @@ A string literal is a `String`. A character literal is a `char`. The escapes
 are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, and `\'`.
 
 `True` and `False` are the variants of `Bool`, which is an ordinary enum in
-the prelude. Negation is `<b | not`. A `!`, `&&`, or `||` is a parse error
-that names `not` or `of`. A choice on a `Bool` is an `of`:
+the prelude. Negation is `<b | not`. A choice on a `Bool` is an `of`:
 
 ```sl
 of ready {
@@ -61,14 +60,8 @@ Arithmetic and comparison are functions. A pair flows into the function:
 <(3, 5) | lt
 ```
 
-The same pattern is `eq`, `ne`, `gt`, `le`, and `ge`. Writing `1 + 2` is a
-parse error that names `add`:
-
-```text
-there is no `+` operator: flow the operands into `add`, `<(a, b) | add`
-```
-
-The pair is one argument. `<1 | add` does not wait for a second operand.
+The same pattern is `eq`, `ne`, `gt`, `le`, and `ge`. The pair is one
+argument. `<1 | add` does not wait for a second operand.
 
 Division by zero and an overflowing arithmetic result are runtime errors.
 Signed integers and the floats also have `neg`. Unsigned widths have no

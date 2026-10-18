@@ -5,7 +5,12 @@
 //! copy frames itself.
 
 mod encode;
+mod host;
 mod lower;
+
+pub use host::{
+    entry_call, entry_externs, host_links_elf, link_pie, native_static_libs, runtime_archive,
+};
 
 #[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod link_tests;

@@ -37,26 +37,9 @@ These words are tokens:
 
 `let+` and `let-` are `let` with a sign touching the keyword.
 
-An older spelling is a parse error that names the current one.
-
-| Older spelling | Current spelling |
-|---|---|
-| `fn` on a named declaration | `func` |
-| `command` | `proc` |
-| `trait` | `spec` |
-| `effect` | `hook` |
-| `const` | `def` |
-| `match` | `of` |
-| `handle` | `do` |
-| `handler` | `hn` |
-| `op` | `hn` |
-| `with` | `do` |
-| `select` | `mu` |
-| `mod` | `sect` |
-| `use` | `cite` |
-
-The lambda stays `fn`. The migration note is
+The lambda stays `fn`. A named function is `func`. The migration note is
 [`docs/MIGRATION.md`](https://github.com/KeenS/slc/blob/master/docs/MIGRATION.md).
+Words it records, such as `command` and `mod`, are ordinary identifiers.
 
 ## Literals
 
@@ -78,13 +61,11 @@ String and character escapes are `\n`, `\t`, `\r`, `\0`, `\\`, `\"`, and
 ## Punctuation
 
 Arrows: `->`, `<-`, `=>`, `<=`. Paths: `::`. Ranges in patterns: `..=`.
-The flow operators are `<`, `|`, and `>`. Type and effect rows use `/` and
-`..`, as in `/ {IO}` and `..E`.
+The flow marks are `<`, `|`, and `>`. Type and effect rows use `/` and
+`..`, as in `/ {IO}` and `..E`. `+`, `-`, and `*` are signs on a type, and
+`+` and `-` also mark `let+` and `let-`. A `-` that touches a number is part
+of that literal. `@` binds a pattern: `name @ pattern`.
 
-`+`, `-`, `*`, `/`, `%`, `==`, `!=`, `<` as a comparison, `<=` as a
-comparison, `>=`, `>`, `&&`, `||`, and `!` are recognized so the parser can
-name the function or the `of` that replaces them. `<=` is a comparison only
-where a pattern range or a copattern arrow is not being parsed; the
-comparison token `<=` is `Le`, and the copattern arrow is the same spelling
-in arm position. Writing `a <= b` as a comparison is the error that names
-`le`.
+`<=` is the demand arrow, in a `mu` arm and in a chain binder `k <= e`.
+`!`, `%`, `==`, `!=`, `>=`, `&&`, `||`, and the brackets `⟨` `⟩` are not
+tokens.

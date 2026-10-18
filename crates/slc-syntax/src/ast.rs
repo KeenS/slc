@@ -762,3 +762,18 @@ pub struct TraitMethod {
 pub struct Program {
     pub decls: Vec<Node<Decl>>,
 }
+
+impl Program {
+    /// Effect operation names, in declaration order.
+    pub fn operation_names(&self) -> Vec<String> {
+        self.decls
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                Decl::Effect { operations, .. } => Some(operations.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .map(|op| op.name.clone())
+            .collect()
+    }
+}

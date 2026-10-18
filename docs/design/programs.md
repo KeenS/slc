@@ -118,8 +118,8 @@ A phase stops before later phases once it reports a diagnostic. Consequently,
 diagnostics take precedence over polarity and exhaustiveness; and
 so on. Within one phase, diagnostics are source-ordered. Every diagnostic
 names its `line:column` and quotes the source it is about — a lex or parse
-error as a checker's does: `parse error: there is no `+` operator … (at 3:8
-`+`)`. A syntax error's span can run to the end of the file, as an
+error as a checker's does: `parse error: expected `=>`, found identifier
+(at 2:14 `if`)`. A syntax error's span can run to the end of the file, as an
 unterminated string's does, so only its first line is quoted; and one with no
 extent, at the end of input, names no place rather than a wrong one.
 

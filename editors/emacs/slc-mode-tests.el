@@ -109,7 +109,7 @@
             (should (equal (buffer-string) formatted))))))))
 
 (ert-deftest slc-imenu-lists-declarations ()
-  (slc-tests--with "mod m {\n    pub func length() -> i64 { 0 }\n    proc go | (exit: i32) { <0 | exit> }\n    enum Bool { False, True }\n}\n"
+  (slc-tests--with "sect m {\n    pub func length() -> i64 { 0 }\n    proc go | (exit: i32) { <0 | exit> }\n    enum Bool { False, True }\n}\n"
     (let ((index (funcall imenu-create-index-function)))
       (should (assoc "length" (cdr (assoc "Functions" index))))
       (should (assoc "go" (cdr (assoc "Commands" index))))

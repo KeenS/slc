@@ -17,12 +17,9 @@ fn stderr_of(name: &str, source: &str) -> String {
 
 #[test]
 fn a_parse_error_names_its_line_and_column_and_quotes_the_token() {
-    let stderr = stderr_of(
-        "parse",
-        "proc main | (exit: i32) / {IO} {\n    let x = 1;\n    <x + 2 | exit>\n}\n",
-    );
-    assert!(stderr.contains("parse error: there is no `+` operator"), "{stderr}");
-    assert!(stderr.contains("(at 3:8 `+`)"), "{stderr}");
+    let stderr = stderr_of("parse", "func f(c: i64) -> i64 {\n    of c { _ if 1 => 0 }\n}\n");
+    assert!(stderr.contains("parse error: expected `=>`, found identifier"), "{stderr}");
+    assert!(stderr.contains("(at 2:14 `if`)"), "{stderr}");
 }
 
 #[test]
@@ -64,13 +61,11 @@ fn an_error_at_the_end_of_input_claims_no_place_it_does_not_have() {
 }
 
 #[test]
-fn guidance_for_what_is_gone_names_what_exists() {
-    // `&&` and `||` are gone. The messages name the `Bool` variants `True`
-    // and `False`.
-    for (name, body, gone) in [("and", "<a && b", "`&&`"), ("or", "<a || b", "`&&` or `||`")] {
-        let stderr = stderr_of(name, &format!("func f(a: Bool, b: Bool) -> Bool {{ {body} }}"));
-        assert!(stderr.contains(gone), "{stderr}");
-        assert!(stderr.contains("True =>"), "{stderr}");
-        assert!(!stderr.contains("true =>") && !stderr.contains("=> false"), "{stderr}");
-    }
+fn guidance_names_what_exists() {
+    // A minus that does not touch its digits names `neg`, the function that
+    // negates, and the literal form `-1`.
+    let stderr = stderr_of("neg", "func f(x: i64) -> i64 { - x }");
+    assert!(stderr.contains("there is no prefix `-`"), "{stderr}");
+    assert!(stderr.contains("`neg`"), "{stderr}");
+    assert!(stderr.contains("`-1`"), "{stderr}");
 }

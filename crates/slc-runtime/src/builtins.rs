@@ -1,5 +1,10 @@
 //! Builtin operations for the standard library.
 
+use slc_abi::{
+    exact_f32, exact_f32_from_f64, exact_f64, exact_int, float_text, int_bounds, real_ln, real_pow,
+    real_sqrt, shift_count,
+};
+
 use crate::value::Value;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,62 +36,20 @@ impl std::error::Error for BuiltinError {}
 /// `i64::MAX`: the machine word is signed, and a larger magnitude has
 /// nowhere to sit.
 fn integer_destination(name: &str) -> Option<(&'static str, i64, i64)> {
-    Some(match name {
-        "__to_i8" => ("i8", i64::from(i8::MIN), i64::from(i8::MAX)),
-        "__to_i32" => ("i32", i64::from(i32::MIN), i64::from(i32::MAX)),
-        "__to_i64" => ("i64", i64::MIN, i64::MAX),
-        "__to_u8" => ("u8", 0, i64::from(u8::MAX)),
-        "__to_u32" => ("u32", 0, i64::from(u32::MAX)),
-        "__to_u64" => ("u64", 0, i64::MAX),
+    let width = match name {
+        "__to_i8" => "i8",
+        "__to_i32" => "i32",
+        "__to_i64" => "i64",
+        "__to_u8" => "u8",
+        "__to_u32" => "u32",
+        "__to_u64" => "u64",
         _ => return None,
-    })
-}
-
-/// `2^63`. `i64::MAX` rounds to this float, and the float is not itself an `i64`.
-const TWO_63: f64 = 9223372036854775808.0;
-
-fn float_text(value: f64) -> String {
-    format!("{value}")
+    };
+    int_bounds(width)
 }
 
 fn unfit(shown: impl std::fmt::Display, width: &str) -> BuiltinError {
     BuiltinError::ArithmeticOverflow(format!("{shown} does not fit in {width}"))
-}
-
-/// An integer as an exact `f64`. `i64::MIN` is the power of two `-2^63`.
-fn exact_f64(n: i64) -> Option<f64> {
-    if n == i64::MIN {
-        return Some(n as f64);
-    }
-    let value = n as f64;
-    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
-}
-
-/// An integer as an exact `f32`, stored in the `f64` word both widths share.
-fn exact_f32(n: i64) -> Option<f64> {
-    if n == i64::MIN {
-        return Some(n as f32 as f64);
-    }
-    let value = n as f32 as f64;
-    if value.abs() < TWO_63 && value as i64 == n { Some(value) } else { None }
-}
-
-/// `x` when it is an exact `f32`. Every `NaN` fits; a rounded value does not.
-fn exact_f32_from_f64(value: f64) -> Option<f64> {
-    if value.is_nan() {
-        return Some(value as f32 as f64);
-    }
-    let narrowed = value as f32 as f64;
-    if narrowed.to_bits() == value.to_bits() { Some(narrowed) } else { None }
-}
-
-/// A finite integral float inside `lo..=hi`. `+2^63` is not an `i64`.
-fn exact_int(value: f64, lo: i64, hi: i64) -> Option<i64> {
-    if !value.is_finite() || value.trunc() != value || value >= TWO_63 || value < -TWO_63 {
-        return None;
-    }
-    let n = value as i64;
-    if n < lo || n > hi { None } else { Some(n) }
 }
 
 /// Beneath `Into`. An integer stays an integer when it is inside the
@@ -153,41 +116,16 @@ fn monotonic_ns() -> Result<i64, BuiltinError> {
 }
 
 fn real_unary(name: &str, value: f64) -> Result<f64, BuiltinError> {
-    match name {
-        "__sqrt" if value < 0.0 => {
-            Err(BuiltinError::ArithmeticOverflow(format!("sqrt({})", float_text(value))))
-        }
-        "__sqrt" => Ok(value.sqrt()),
+    let result = match name {
+        "__sqrt" => real_sqrt(value),
         "__abs" => Ok(value.abs()),
         "__floor" => Ok(value.floor()),
         "__ceil" => Ok(value.ceil()),
         "__sin" => Ok(value.sin()),
-        "__ln" if value <= 0.0 => {
-            Err(BuiltinError::ArithmeticOverflow(format!("ln({})", float_text(value))))
-        }
-        "__ln" => Ok(value.ln()),
-        _ => Err(BuiltinError::UnknownBuiltin(name.to_string())),
-    }
-}
-
-/// IEEE `pow`, except the two domains that are not a real result: a negative
-/// base with a non-integral exponent, and a zero base with a negative exponent.
-fn real_pow(base: f64, exp: f64) -> Result<f64, BuiltinError> {
-    let outside =
-        (base == 0.0 && exp < 0.0) || (base < 0.0 && exp.is_finite() && exp.fract() != 0.0);
-    if !base.is_nan() && !exp.is_nan() && outside {
-        return Err(BuiltinError::ArithmeticOverflow(format!(
-            "pow({}, {})",
-            float_text(base),
-            float_text(exp)
-        )));
-    }
-    Ok(base.powf(exp))
-}
-
-/// The shift distance is the count's low six bits. `shr` is logical.
-fn shift_count(count: i64) -> u32 {
-    (count as u32) & 63
+        "__ln" => real_ln(value),
+        _ => return Err(BuiltinError::UnknownBuiltin(name.to_string())),
+    };
+    result.map_err(BuiltinError::ArithmeticOverflow)
 }
 
 fn cmp_op<T: PartialOrd>(name: &str, a: T, b: T) -> bool {
@@ -232,7 +170,7 @@ pub fn apply_builtin(
         },
         "__pow" => match (args.first(), args.get(1)) {
             (Some(Value::Float(base)), Some(Value::Float(exp))) => {
-                real_pow(*base, *exp).map(Value::Float)
+                real_pow(*base, *exp).map(Value::Float).map_err(BuiltinError::ArithmeticOverflow)
             }
             _ => Err(BuiltinError::TypeMismatch("__pow expects two float arguments".into())),
         },
@@ -488,6 +426,7 @@ pub fn apply_builtin(
             let (a, b) = two_ints(name, args)?;
             Ok(Value::Int(a.wrapping_shl(shift_count(b))))
         }
+        // Logical: zeros enter at the high bit.
         "__shr" => {
             let (a, b) = two_ints(name, args)?;
             Ok(Value::Int((a as u64).wrapping_shr(shift_count(b)) as i64))
