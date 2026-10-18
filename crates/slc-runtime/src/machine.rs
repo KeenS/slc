@@ -683,7 +683,7 @@ fn step_consume(v: Value, e: NodeId, env: Env, kont: &mut Kont) -> Result<State,
                 )));
             };
             let Some(branch) = branches.iter().find(|b| *b.label == label) else {
-                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in select")));
+                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in `mu`")));
             };
             let mut env2 = env;
             bind_components(branch.arity, *payload, &mut env2)?;
@@ -750,7 +750,7 @@ fn step_apply(callee: Value, arg: Value, kont: &mut Kont) -> Result<State, EvalE
                 )));
             };
             let Some(branch) = branches.iter().find(|b| *b.label == label) else {
-                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in select")));
+                return Err(EvalError::TypeMismatch(format!("no `{label}` alternative in `mu`")));
             };
             let mut branch_env = env;
             bind_components(branch.arity, *payload, &mut branch_env)?;

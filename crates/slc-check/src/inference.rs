@@ -99,7 +99,7 @@ pub fn infer_expr(
                 slc_syntax::ast::TypeExpr::Base(name) => {
                     declarations.get(name).cloned().ok_or_else(|| {
                         InferenceError::Diag(vec![Diagnostic {
-                            message: format!("`select {name}` refers to an unknown type"),
+                            message: format!("`mu {name}` refers to an unknown type"),
                             span: e.span,
                         }])
                     })?

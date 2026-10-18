@@ -2197,6 +2197,11 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     |ty| resolve_rigid(ty, &rigid_vars, enums),
                 )
                 .unwrap_or_default();
+            if name == "not" {
+                eprintln!(
+                    "DEBUG not polarity={polarity:?} body={body_type:?} declared={declared:?}"
+                );
+            }
             let promised = match polarity {
                 slc_syntax::ast::FunctionPolarity::Positive => declared,
                 // A negative function's row is performed on its watch: by
@@ -2205,6 +2210,9 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     declared.map(|ty| Type::rowed(ty.dual(), declared_row.clone()))
                 }
             };
+            if name == "not" {
+                eprintln!("DEBUG not promised={promised:?}");
+            }
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
                 && actual != &Type::BOTTOM
             {
@@ -3722,7 +3730,7 @@ fn bind_select_arm(
         (Type::Named(name, _), Pattern::Data { name: written, .. }) => {
             if written != name {
                 diags.push(Diagnostic {
-                    message: format!("`select {consumed}` arm cannot bind a `{written}`"),
+                    message: format!("`mu {consumed}` arm cannot bind a `{written}`"),
                     span,
                 });
                 return;
@@ -3748,7 +3756,7 @@ fn bind_select_arm(
         }
         _ => {
             diags.push(Diagnostic {
-                message: format!("a `select {consumed}` arm must cover a shape of {consumed}"),
+                message: format!("a `mu {consumed}` arm must cover a shape of {consumed}"),
                 span,
             });
             return;
