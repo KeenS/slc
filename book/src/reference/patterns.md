@@ -28,7 +28,9 @@ with an `of` inside the arm.
 
 Literal patterns and ranges are ordered by the value, and they are part of
 an `of`. A `mu` arm does not use a literal pattern. Each `mu` arm covers one
-shape, and a nested `of` distinguishes literals inside the arm.
+shape, and a nested `of` distinguishes literals inside the arm. A single arm
+that is a name or `_` binds the whole value, an enum included, and then it is
+the only arm.
 
 Or-patterns and ranges share an arm, so they cover several values under one
 body. Repeating a value across arms is an exhaustiveness error. Omitting a

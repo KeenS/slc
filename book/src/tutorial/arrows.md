@@ -50,8 +50,9 @@ The arrow on the function is the direction it faces. A function written with
 [Data](data.md) builds both with `mu`: `total` returns a `Total`, and
 `config` returns a `Config`. A function written with `->` may also be given
 a request and take it apart: `reroute` is given a `-Config`.
-[Continuations](continuations.md) writes `sum_into` in the same shape as
-`area_of`, for a tuple instead of an enum.
+[Continuations](continuations.md) writes `product` with `<-` and gives it one
+continuation for each way the walk can finish. `area_of` is the same arrow
+with one continuation, and `mu` takes the `Shape` apart.
 
 [`examples/duality/two_styles.sl`](https://github.com/KeenS/slc/blob/master/examples/duality/two_styles.sl)
 writes a whole program both ways.

@@ -1,135 +1,140 @@
 # Continuations
 
-A continuation is what a value is sent to. `exit` in
-[the first program](first-program.md) is one: the runtime supplies it, and
-the integer sent to it is the process status. This program builds
-continuations and sends values to them.
+A continuation is the rest of a computation. A cut sends a value into that
+rest, and the rest runs. A `<-` function is given one or more of these rests
+and produces a consumer. The consumer cuts to one of them.
+
+This walk writes a product. Each kept element saves a continuation that
+prepends `n*` to whatever the rest of the list produces. A zero cuts to a
+different continuation, so those prepends never run, and the elements after
+the zero are never visited.
 
 ```sl
 {{#include ../../examples/continuations.sl}}
 ```
 
 ```text
-5
-Hello, SLC
-SLC
-13
-shown
+resumed 1
+visit 2
+visit 3
+resumed 2*3*1
+visit 2
+visit 0
+stopped 0
 ```
 
-## Naming one
+## Two rests
 
-`mu i64 { out <= … }` names the continuation around that expression `out`.
-The body sends an `i64` to `out`. The value `out` receives is the result of
-the `mu`.
+`product` is given two continuations and produces a continuation of a list.
+`resumed` accepts the product when every remaining element is kept.
+`stopped` accepts the product when a zero is found. The type after each name
+is what that continuation accepts. `<- List<i64>` is the consumer `product`
+produces.
 
 ```sl
-<mu i64 { out <= <(2, 3) | add | out> } | println
+func product(resumed: String & stopped: String) <- List<i64> / {IO} {
 ```
 
-`<(2, 3) | add` is `5`. The cut `<5 | out>` delivers it. `println` receives
-that `5`. `mu String { … }` is the same shape for a string, and the second
-line prints `Hello, SLC`.
+`resumed: String & stopped: String` declares the two continuations, in that
+order. A call passes the same bundle as one tuple.
 
-The arm arrow is `<=`. A request for this surrounding continuation arrives
-in the arm, and `out` is the continuation the request carries.
+The body is the consumer, written with `fn`. The list arrives as `xs`. The
+body of that `fn` is a cut, so its result type is `(;)`.
 
-## A continuation parameter
+`list::List` is `Nil`, or `Cons` of an element and the rest of the list.
+[The library](library.md) defines it. `cite list::List` brings the type.
+`cite list::List::*;` brings `Nil` and `Cons`. A constructor in a pattern is
+a path, which [Data](data.md) covers. `of` chooses one arm, as it does for
+`Bool` in [Values](values.md). The walk prints each element it reaches, so
+`product` declares `{IO}`.
 
-`out: -String` is a continuation of a `String`. The type under the minus is
-what the continuation accepts. `emit` sends its text there:
+## The empty product
+
+`Nil` has no factors. The arm cuts `"1"` to `resumed`.
 
 ```sl
-func emit(text: String, out: -String) -> (;) {
-    <text | out>
-}
+Nil => <"1" | resumed>,
 ```
 
-The body is a cut, so it has type `(;)`. It does not come back to `emit`.
-The caller names where the text goes:
+`<Nil | report` prints `resumed 1`.
+
+## A zero leaves the saved rest unentered
+
+A `Cons` prints the element, then matches it. Zero cuts `"0"` to `stopped`.
 
 ```sl
-<mu String { out <= <("SLC", out) | emit> } | println
+<("visit ", <n | int_to_str) | add | println;
 ```
-
-`out` is the continuation of that `mu String`. `emit` sends `"SLC"` to it,
-the `mu` results in `"SLC"`, and `println` prints it.
-
-`-String` and `String -> (;)` are the same type. The positive spelling
-`out: String` on a `<-` function is the same continuation again: the type
-written after the name is what it accepts. `sum_into` is written that way.
-
-## A continuation of several values
-
-A tuple arrives whole, so a continuation of a tuple has one arm and binds
-every component:
 
 ```sl
-func sum_into(out: i64) <- (i64, i64) {
-    mu (i64, i64) {
-        (a, b) => <(a, b) | add | out>,
-    }
-}
+0 => <"0" | stopped>,
 ```
 
-`out: i64` is the continuation of the sum. `<- (i64, i64)` is the
-continuation this function returns, a continuation of the pair. The arm
-arrow is `=>` because the pair arrives as a value. The arm sends the sum
-with a cut. `<(6, 7) | sum_into` sends the pair in, and the sum `13` reaches
-`println`.
+On `Cons(2, Cons(0, Cons(9, Nil)))` the walk prints `visit 2`, then
+`visit 0`, then `stopped 0`. The output has no `visit 9`: the cell after the
+zero is never reached. The `2*` lives in the continuation that `2` passed
+down. The zero cuts elsewhere, so that caller never prepends. Handing `"0"`
+back would leave it in the caller's hands, and the line would be `2*0`.
 
-[Data](data.md) names these shapes. A `form` is a continuation that wants
-every field, the way `sum_into` wants both components. A `menu` answers one
-item the continuation picks.
+## A kept element builds the next rest
 
-## Writing one with `fn`
-
-A function whose body is a cut is a continuation. `-String` is its type.
+Any other element calls `product` on the tail. It passes `stopped` through
+unchanged. It passes a new `resumed`: `prepend` runs only when that tail
+cuts a string to it. `int_to_str` writes the element as digits. `prepend`
+joins those digits, `*`, and the tail's string, then cuts the result to the
+`resumed` this step was given.
 
 ```sl
-fn(message: String) -> (;) {
-    <message | println;
-    <0 | exit>
-}
+let prepend = fn(tail: String) -> (;) {
+    let factor = <n | int_to_str;
+    let suffix = <("*", tail) | add;
+    let joined = <(factor, suffix) | add;
+    <joined | resumed>
+};
+<rest | (<(prepend, stopped) | product)>
 ```
 
-`println` runs, then the cut sends `0` to `exit`. The call closes with `>`,
-because the function is the continuation the string is delivered to:
+`<(prepend, stopped) | product` builds the consumer. `<rest | …>` gives it
+the tail.
+
+On `Cons(2, Cons(3, Nil))` the walk prints `visit 2`, then `visit 3`. The
+empty tail cuts `"1"` to the `prepend` that `3` saved, which cuts `"3*1"` to
+the `prepend` that `2` saved, which cuts `"2*3*1"` to the original
+`resumed`. The line is `resumed 2*3*1`. Each `prepend` is the rest of the
+product from that element on. Each one runs because the walk resumed.
+
+## Both rests finish in one continuation
+
+`report` prints whichever string the walk cuts. Its two exits both finish
+by cutting a labelled string to `out`.
 
 ```sl
-<"shown" | fn(message: String) -> (;) {
-    <message | println;
-    <0 | exit>
-}>
+<mu String {
+    out <= {
+        let resumed = fn(text: String) -> (;) { <("resumed ", text) | add | out> };
+        let stopped = fn(text: String) -> (;) { <("stopped ", text) | add | out> };
+        <xs | (<(resumed, stopped) | product)>
+    },
+} | println
 ```
 
-That line prints `shown` and ends the program. `println` and `exit` perform
-`IO` when the string is delivered. `main` declares that row.
+`mu String { out <= … }` names `out`: the continuation of this expression,
+and the place both exits answer through. The string cut to `out` is the
+value of the `mu` expression. The chain carries that string to `println` and
+stops there, so the statement finishes and `main` runs the next list.
+`println` performs `IO`, and so does the walk, so `report` declares that
+row.
 
-## Leaving early
+[Functions](functions.md) writes the other half of this cut. A function with
+`->` returns to its caller, and that caller is the rest. `product` is given
+its rest, and the cut decides which rest runs.
 
-An arm that cuts to a continuation has type `(;)`. Another arm can return
-`(,)`, and the statements after the `of` still run on that path. The cut
-does not come back.
+[Both arrows](arrows.md) writes `area_of` with `<-` and one continuation.
+`mu` there takes a `Shape` apart. [Commands](commands.md) gives a `proc` a
+menu of exits, one continuation for each way the command can finish.
 
-```sl
-{{#include ../../examples/early.sl}}
-```
-
-```text
-2
-0
-```
-
-`first_even` walks a list. The even arm sends the number to `found` and
-leaves. The odd arm returns `(,)`. The caller names the surrounding
-continuation `out`. On `[1, 2, 3]` the cut carries `2`, so the `0` after
-the call is not sent. On `[1, 3]` the function returns and the caller sends
-`0`.
-
-The same early cut, with the rest of the work written after the `of`, is how
+The same saved rest, abandoned by a cut, is how
+[`examples/programs/tree_search.sl`](https://github.com/KeenS/slc/blob/master/examples/programs/tree_search.sl)
+searches a tree, and how
 [`examples/programs/json_parser.sl`](https://github.com/KeenS/slc/blob/master/examples/programs/json_parser.sl)
-is written.
-
-[Both arrows](arrows.md) writes one function with `->` and the same function
-with `<-`.
+leaves the rest of an input unread.

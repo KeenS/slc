@@ -1,22 +1,44 @@
-// A continuation receives a value. mu names one. -T is its type.
+// `resumed` is the rest of the product. A zero cuts to `stopped`, and that rest never runs.
 
-func emit(text: String, out: -String) -> (;) {
-    <text | out>
-}
+cite list::List;
+cite list::List::*;
 
-func sum_into(out: i64) <- (i64, i64) {
-    mu (i64, i64) {
-        (a, b) => <(a, b) | add | out>,
+func product(resumed: String & stopped: String) <- List<i64> / {IO} {
+    fn(xs: List<i64>) -> (;) {
+        of xs {
+            Nil => <"1" | resumed>,
+            Cons(n, rest) => {
+                <("visit ", <n | int_to_str) | add | println;
+                of n {
+                    0 => <"0" | stopped>,
+                    _ => {
+                        let prepend = fn(tail: String) -> (;) {
+                            let factor = <n | int_to_str;
+                            let suffix = <("*", tail) | add;
+                            let joined = <(factor, suffix) | add;
+                            <joined | resumed>
+                        };
+                        <rest | (<(prepend, stopped) | product)>
+                    },
+                }
+            },
+        }
     }
 }
 
+func report(xs: List<i64>) -> (,) / {IO} {
+    <mu String {
+        out <= {
+            let resumed = fn(text: String) -> (;) { <("resumed ", text) | add | out> };
+            let stopped = fn(text: String) -> (;) { <("stopped ", text) | add | out> };
+            <xs | (<(resumed, stopped) | product)>
+        },
+    } | println
+}
+
 proc main | (exit: i32) / {IO} {
-    <mu i64 { out <= <(2, 3) | add | out> } | println;
-    <mu String { out <= <("Hello, ", "SLC") | add | out> } | println;
-    <mu String { out <= <("SLC", out) | emit> } | println;
-    <(6, 7) | sum_into | println;
-    <"shown" | fn(message: String) -> (;) {
-        <message | println;
-        <0 | exit>
-    }>
+    <Nil | report;
+    <Cons(2, Cons(3, Nil)) | report;
+    <Cons(2, Cons(0, Cons(9, Nil))) | report;
+    <0 | exit>
 }

@@ -51,8 +51,20 @@ func k(return: i32) <- Color {
 
 The consumer transformer receives the consumer continuation `return`; activating
 the constructed continuation with an enum value dispatches to the matching arm,
-which activates that arm's consumer. Arms must cover exactly one enum variant
-each, must be exhaustive, and must not repeat variants.
+which activates that arm's consumer. Those arms cover exactly one enum variant
+each, are exhaustive, and do not repeat variants.
+
+A single arm that is a name, or `_`, binds the enum whole instead. The value
+arrives intact, variants included. That is the same value abstraction an atom
+uses. A variable pattern covers every value, so it is the only arm:
+
+```sl
+func keep(out: Bool) <- Bool {
+    mu Bool {
+        b => <b | out>,
+    }
+}
+```
 
 An arm may bind the payload of its variant and pass it to the consumer, which
 is how a value reaches the continuation the variant selects:
@@ -420,9 +432,9 @@ func show(out: -String) <- +i64 {
 That is the surface spelling of the core's value abstraction `μ̃x. c` — the
 same binder `let` lowers to, written directly; `examples/duality/mu_tilde.sl` writes
 that one co-term every way the surface offers. So `mu` builds the consumer
-of *any* positive type, with no exceptions: one arm per variant for a sum, one
-arm binding every component for a product, one arm binding the value for an
-atom.
+of *any* positive type, with no exceptions: one arm per variant for a sum, or
+one binder for the whole value; one arm binding every component for a product;
+one arm binding the value for an atom.
 
 Traits are specified in [Traits](traits.md). Effects and handlers are
 specified in [Effects](effects.md).

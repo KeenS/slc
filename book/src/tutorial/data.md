@@ -417,10 +417,9 @@ is the same pair of forms.
 
 A joint is a `form` with the name left off. `(-i64 ; -i64)` is two
 continuations of an `i64`, one for each component of a pair. `(k1 ; k2)`
-builds that joint from the two continuations. [Continuations](continuations.md)
-builds the same continuation in one arm, `mu (i64, i64) { (a, b) => … }`,
-where the pair arrives together. A joint has no pattern that splits it back
-into `k1` and `k2`. What is taken apart is the pair that feeds it.
+builds that joint from the two continuations. A joint has no pattern that
+splits it back into `k1` and `k2`. What is taken apart is the pair that
+feeds it.
 
 ```sl
 {{#include ../../examples/joint.sl}}
