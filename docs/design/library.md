@@ -50,7 +50,7 @@ it offers `pub`; the rest is its own.
 | `env` | `get` and `set`, the process environment, performing `Env`; `real` answers from the process |
 | `sleep` | `sleep`, a wait of the given number of nanoseconds, performing `Sleep`; `real` answers from the runtime |
 | `process` | `spawn`, a child process, performing `Process`; `real` answers from the runtime |
-| `control` | `Shift<A, R, E>`, `shift` and the thunk-taking `reset`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
+| `control` | `Shift<A, R, E>`, `shift`, and the hand `reset` installed with `do`: typed, multi-shot composable capture with a positive answer type and explicit residual effects |
 | `trace` | one **tap**, `proc tap(label, x) \| (k)`, which logs what passes through and forwards it: `<("answer", 42) \| trace::tap \| out>` |
 
 `Map<K, V>` is that tree, and it is library code the way `List` is. Keys and

@@ -1,14 +1,13 @@
 # Traits and effects: worked sketches
 
-Neither feature is implemented — both are queued in `PLAN.md`. These are
-**sketches of the planned surface**, not runnable programs: they will not
-parse today, and they live here rather than in `examples/` for exactly that
-reason. They exist to pin down how the decided syntax reads and what each
-construct elaborates to, so the plan can be judged against real code.
+Status: historical. Traits and effects shipped. `docs/design/traits.md` and
+`docs/design/effects.md` define them, and `PLAN.md` no longer queues them.
+The programs below are sketches of an earlier planned surface. They use that
+spelling, they are not the language, and they do not parse.
 
-Syntax is as `PLAN.md` settles it: methods are free functions overloaded on a
-type (never `x.method()`), bounds are `<T: Trait>`, effect rows ride the
-arrow as `/ {E}`, and a handler names its operations and a `resume`.
+In the sketches, methods are free functions overloaded on a type (never
+`x.method()`), bounds are `<T: Trait>`, effect rows ride the arrow as
+`/ {E}`, and a handler names its operations and a `resume`.
 
 ---
 

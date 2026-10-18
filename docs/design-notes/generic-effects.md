@@ -62,7 +62,7 @@ Stored handlers preserve those applications in their capability rows.
 
 `control::Shift<+A, +R, E>` has one operation. Its parameter is
 `(-> ((A -> R / {..E}) -> R / {..E}) / {..E})` and its result is `A`.
-The thunk-taking `control::reset` handles this operation by passing its
+`control::reset` handles this operation by passing its
 resumption to the callback. It uses the existing runtime resumption value;
 no new capture primitive or dispatch representation is needed.
 
@@ -76,7 +76,7 @@ these phases, while `Delayed` keeps their demand boundaries distinct.
 `A` and `R` are positive, and one installation has one fixed answer `R`.
 Nested installations may use different types. This is not unrestricted
 answer-type modification or a rank-polymorphic effect. The bare `reset`
-delimiter still does not handle `Shift`; the library function is named
+delimiter still does not handle `Shift`; the library hand is named
 explicitly as `control::reset`. Neither introduces memoization or
 call-by-need.
 

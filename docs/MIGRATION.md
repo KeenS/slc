@@ -1,16 +1,18 @@
 # Migration Guide
 
 This guide covers the syntax changes made during and after the λ̄μμ̃
-redesign. Removed forms are rejected by the current
-compiler; sections show their replacements or explain compatible additions, and
-every replacement is written in today's syntax, even where a later section is
-what made it so.
+redesign. The current compiler does not recognize a removed form. An old
+keyword is an ordinary identifier. A glyph that is not a token is an
+unexpected character. When a removed form fails to parse, the diagnostic
+does not name the replacement. Sections show the replacements or explain
+compatible additions, and every replacement is written in today's syntax,
+even where a later section is what made it so.
 
 ## Keyword spellings
 
 A declaration is four letters, and an expression that returns a value is two.
 `let` stays, with `let+` and `let-`. `reset` stays,
-because `control::reset` is a function of that name. The lambda `fn` stays.
+because `control::reset` is a hand of that name. The lambda `fn` stays.
 `data`, `enum`, `menu`, `form`, and `impl` were already four letters. `pub`,
 `for`, and `dual` stay.
 
@@ -39,7 +41,9 @@ consumer takes. Every arm in one pair of braces uses the same arrow. Braces
 with no arms are the consumer of the written type. `of` takes a scrutinee
 apart, and it keeps its own keyword.
 
-Writing an old keyword is a parse error that names the new one.
+An old keyword is an ordinary identifier. Where it used to be syntax, the
+program fails as an ordinary parse or name error, and the message does not
+name the spelling in the table.
 
 Unsupported:
 
@@ -89,7 +93,7 @@ answers their clauses supply. A stored handler can be annotated with
 is rejected even if a residual row or outer handler could accept it.
 Invalid effect names and arguments are now rejected on unused signatures too.
 
-For returning, multi-shot capture, pass a thunk to `control::reset` and use
+For returning, multi-shot capture, install `control::reset` with `do` and use
 `control::shift` inside it. Bare `reset e` is unchanged: it only delimits
 abortive jumps and does not handle `Shift`. The callback's resumption
 annotation must retain its effects, such as `(i64 -> i64 / {IO})`; resumptions
@@ -141,26 +145,27 @@ let result = <path | __read_file | (
 ```
 
 The chain can continue through `| println`. Every exit must return the same
-type: do not mix a returning callback with a consumer. `select` remains
-non-returning. `fs::real` and `fs::real_command` now use this adapter rather
+type: do not mix a returning callback with a consumer. A `mu` over data
+does not return. `fs::real` and `fs::real_command` now use this adapter rather
 than explicit `mu` captures. See `examples/duality/yielding_commands.sl`.
 
 ## Stored handlers
 
-Functions that install inline handlers remain valid. To store or select the
-handler itself, use `handler Reader { clauses }` and `with value handle body`.
-The type is `(A hn B / {E} / {F})`: body, answer, handled effects, residual
-effects. A `return` clause can change `A` to `B` even for a pure body.
-`handler` and `with` are reserved syntax, and `Handler` is a built-in type
-name; rename conflicting declarations. The old composition example's
-`Handler` form is now `CommandSink`. See `examples/effects/handler_values.sl`.
+Functions that install inline handlers remain valid. To store or choose the
+handler itself, write `hn Reader { clauses }` and install it with
+`do body reader`. The type is `(A hn B / {E} / {F})`: body, answer, handled
+effects, residual effects. A `return` clause can change `A` to `B` even for
+a pure body. `handler` and `with` are ordinary identifiers. The type name
+`Handler` is refused, because it is written `(A hn B / {E} / {F})`; rename a
+declaration that uses it. The old composition example's `Handler` form is
+now `CommandSink`. See `examples/effects/handler_values.sl`.
 
 ## Lists
 
 The builtin list type `[A]`, the list patterns `[p, …]`, and the
 `list_new`/`list_len`/`list_push`/`list_get` builtins are gone. `List<T>` is
 an ordinary recursive enum in the stdlib's `list` module, with `length`,
-`map`, `append`, and the outcome-offering `command nth` beside it.
+`map`, `append`, and the outcome-offering `proc nth` beside it.
 
 Unsupported:
 
@@ -181,9 +186,8 @@ let xs = Cons(10, Nil);
 ## Arm arrows
 
 The arrow marks which side of the mirror the scrutinee is on: data flows
-forward into an arm (`=>`), a demand reaches back into it (`<=`). `select`
-matches data, so its arms now write `=>`; a `match` over a continuation
-writes `<=`.
+forward into an arm (`=>`), a demand reaches back into it (`<=`). A `mu`
+over data writes `=>`; an `of` over a continuation writes `<=`.
 
 Unsupported:
 
@@ -227,7 +231,8 @@ menu.
 ## Local `mu`
 
 The parenthesised binder group is gone; `mu` is uniformly `mu [Type] { arms }`,
-mirroring `select`. One binder arm captures the ambient continuation whole;
+the same brace shape for a capture and a consumer. One binder arm captures
+the ambient continuation whole;
 request arms build a menu. The decorative name is gone with the group, and
 the type in front is what the expression *produces* (the old annotation's
 dual).
@@ -302,7 +307,7 @@ by `&`. The function produces the consumer of the type written after `<-`.
 
 ## Consumer abstraction
 
-A declaration that takes values and continuations is a `command`, and its two
+A declaration that takes values and continuations is a `proc`, and its two
 kinds of parameter occupy separate parenthesized groups.
 
 ### Separate parameter groups
@@ -319,13 +324,13 @@ Write:
 proc route(x: +i32) | (k: -i32) { <x | k> }
 ```
 
-### `mu` is the expression, `command` is the declaration
+### `mu` is the expression, `proc` is the declaration
 
-For part of the redesign the declaration was spelled `mu`. It is `command`
-again, and `mu` now names only the expression that captures the current
-continuation — the two are different core constructs (`Λα. t`, a parameter the
-caller supplies, against `μα. c`, the ambient continuation), and one keyword
-for both hid that.
+For part of the redesign the declaration was spelled `mu`, and later
+`command`. It is `proc`. `mu` names only the expression that captures the
+current continuation. The two are different core constructs (`Λα. t`, a
+parameter the caller supplies, against `μα. c`, the ambient continuation),
+and one keyword for both hid that.
 
 ```sl
 mu route(x: +i32) | (k: -i32) { x | k }          // old: the declaration
@@ -334,7 +339,8 @@ proc route(x: +i32) | (k: -i32) { <x | k> }   // new
 let source = mu { k <= <path | fs::read | (k & err)> };   // the capture
 ```
 
-A declaration written with `mu` is a parse error naming the difference.
+`mu name(` at declaration position is read as a `mu` expression and then
+fails expecting `{`. The message does not name `proc`.
 
 A `mu` expression binds one thing, the continuation it captures, and writes it
 as its one arm:
@@ -345,8 +351,8 @@ mu String { k <= … }      // new
 ```
 
 It has no value parameters: `mu(v) { … }` used to lower to `λv. …`, exactly
-what `fn(v) { … }` lowers to. A binder whose body is a command rather than an
-expression is `select`.
+what `fn(v) { … }` lowers to. A binder whose body is a command rather than
+an expression is `mu` with `=>`.
 
 ### Remove `to`
 
@@ -366,7 +372,7 @@ proc route(x: +i32) | (k: -i32) { <x | k> }
 
 ### An empty parameter group is left out
 
-A `command` writes only the groups it has.
+A `proc` writes only the groups it has.
 
 ```sl
 proc main() | (exit: -i32) { … }   // old
@@ -453,7 +459,7 @@ function applied to its row: `<Color::Blue | code | answer>`.
 A continuation passed to a function is an ordinary argument, since a
 consumer is a value: `<k | handle`.
 
-A cut has type `⊥`, so a `match` arm that ends in one leaves the type of the
+A cut has type `⊥`, so an `of` arm that ends in one leaves the type of the
 match to the other arms, and code after a cut in a block is unreachable.
 
 ## The top-level `EXIT` is gone
@@ -471,10 +477,10 @@ proc main | (exit: i32) / {IO} {                      // new
 }
 ```
 
-## The entry point is a `command`
+## The entry point is a `proc`
 
-A program is a command, so `main` is a `command` that takes no values and one
-continuation — its exit status:
+A program is a command, so its entry point is a `proc`. `main` takes no
+values and one continuation — its exit status:
 
 ```sl
 func main() -> i32 {          // old
@@ -491,13 +497,13 @@ proc main | (exit: i32) / {IO} {  // new
 The final value is no longer printed: a program's output is exactly what it
 prints, and its status is what it sends to `exit`. A `main` that used to end
 with a value must print it. Inside `main`, cut against the `exit` parameter
-rather than the global `EXIT` — a `command` body must reach a continuation on
+rather than the global `EXIT` — a `proc` body must reach a continuation on
 every path, so a `main` that falls off the end is refused by the type checker.
 
-## `select` covers any positive type
+## `mu` covers any positive type
 
-`select` is no longer restricted to enums, its arms use the same patterns
-`match` uses, and an arm is written `pattern => command`:
+The consumer is `mu`. It covers any positive type, its arms use the same
+patterns `of` uses, and an arm is written `pattern => command`:
 
 ```sl
 mu Color {                     // one arm per variant — the negative additive
@@ -516,7 +522,7 @@ mu (+i64, +i64) {              // a bare product names its type
 
 Two things changed. An arm's shape used to be a variant name with an optional
 payload binder; it is now a pattern, so a struct or tuple shape is written the
-way `match` writes it. And an arm used to be written the other way round, as
+way `of` writes it. And an arm used to be written the other way round, as
 `command => pattern`:
 
 ```sl
@@ -526,9 +532,9 @@ mu Color {
 }
 ```
 
-The shape now comes first, where a `match` puts it, and `=>` points from it to
-the command — data flows forward into the arm. A `match` arm produces a value
-from a shape, and a `select` arm runs a command when a shape arrives. Writing
+The shape now comes first, where an `of` puts it, and `=>` points from it to
+the command — data flows forward into the arm. An `of` arm produces a value
+from a shape, and a `mu` arm runs a command when a shape arrives. Writing
 the old order is a parse error that says so.
 
 ## Struct literals and patterns
@@ -557,13 +563,13 @@ The same applies to `write_file`, `char_at`, `list_get`, `map_get`, and
 continuations now receive a message rather than the original input.
 `str_to_int` is removed; use `parse_int`.
 
-An out-of-range `s[i]` and a division by zero stay fatal: they are operator
-syntax with nowhere to put a continuation, and they report a bug rather than a
-case to handle.
+An index outside a string, and division by zero, stay fatal. Indexing is
+`<(s, i) | index` and division is `div`. Neither takes a failure
+continuation, and each reports a bug rather than a case to handle.
 
 ## Values and continuations together
 
-A declaration that takes both values and continuations is a `command`, not a `fn`:
+A declaration that takes both values and continuations is a `proc`, not a `func`:
 
 ```sl
 // old: a positive function carrying a consumer and returning a position
@@ -573,7 +579,7 @@ func parse_value(input: +String, pos: +i64, report: -ParseResult) -> i64 { ... }
 proc parse_value(input: String, pos: i64) | (ok: i64 & report: ParseResult) { ... }
 ```
 
-The body of a `command` ends in a cut rather than returning: what was a returned
+The body of a `proc` ends in a cut rather than returning: what was a returned
 position is sent to `ok`. Where the old code sequenced two fallible steps with
 `let`, the new code passes the rest of the work as a continuation:
 
@@ -586,13 +592,13 @@ let value_end = parse_value(input, pos, report);
 <(input, pos) | parse_value | (mu i64 { value_end => ... } & report)>
 ```
 
-A helper that only computes with values stays an ordinary positive `fn`.
+A helper that only computes with values stays an ordinary positive `func`.
 
 ## `|` is flow, `<>` is the cut, and `@` is gone
 
-Everything moves left to right through one operator, and every step
-composes. Brackets say where a chain is closed, and the stage beside a
-bracket takes its role from that — so nothing has to be inferred:
+A chain moves left to right, and every step composes. Brackets say where a
+chain is closed, and the stage beside a bracket takes its role from that,
+so nothing has to be inferred:
 
 ```sl
 v @ k                          // old
@@ -625,7 +631,7 @@ add(a, b)                              // old
 ```
 
 Constructors still build — `Cons(h, t)` is unchanged. Everything else
-flows, a `command` included: its values come from the chain and its exits
+flows, a `proc` included: its values come from the chain and its exits
 are the closing stage.
 
 ```sl
@@ -649,11 +655,11 @@ proc forward(…) | (row: (T & String)) {   // or handed on unopened
 }
 ```
 
-## A stdlib helper with values and continuations is a `command`
+## A stdlib helper with values and continuations is a `proc`
 
 `traced` was a positive `fn` returning `-T`, so a caller built the consumer
 and then cut into it. It takes values *and* continuations, which is what a
-`command` is, so it is one — and the call reads like every other call:
+`proc` is, so it is one — and the call reads like every other call:
 
 ```sl
 42 | (("answer", out) | traced)>          // old
@@ -662,7 +668,7 @@ and then cut into it. It takes values *and* continuations, which is what a
 
 `defaulting(fallback, k)` is gone rather than converted. Its job was to
 *be* a consumer in a row slot, and a command is not one; the slot takes
-`select String { m => <fallback | k> }`, which is what the combinator was
+`mu String { m => <fallback | k> }`, which is what the combinator was
 hiding.
 
 ```sl
@@ -691,7 +697,7 @@ proc main | (exit: i32) / {IO} {             // new
 func greet(name: String) -> (,) / {IO} { <("hello, ", name) | add | println }
 ```
 
-A program can now handle its own output: a `handle` with a `write_line`
+A program can now handle its own output: a `do` with a `write_line`
 clause sits nearer the operation than the runtime's handler and answers
 first. See `examples/effects/io.sl`.
 
@@ -920,11 +926,11 @@ path | read_file | (ok & failed)>              // old
 Their outcome rows are unchanged; their names lost the `_file` the module
 now carries — see the next entry.
 
-## The prelude shrank; the rest is a stdlib you `use`
+## The prelude shrank; the rest is a stdlib you `cite`
 
 Only `IO` and `Display` (with `fmt`/`to_string`) stay in scope unasked.
 `List`, `Option`, `Result`, `min`/`max`/`abs`, `Stream`, `Seq`, `Lazy` and
-`traced` (now `trace::tap`) moved to stdlib modules, reached by path or brought in with `use`:
+`traced` (now `trace::tap`) moved to stdlib modules, reached by path or brought in with `cite`:
 
 ```sl
 let xs = Cons(1, Cons(2, Nil));                      // old: in scope unasked
@@ -946,7 +952,7 @@ declaration. A program that needs `exit` inside a helper passes it in, as
 
 ## A module's declarations are private unless `pub`
 
-A `mod` used to expose everything it declared. It now exposes what is
+A section used to expose everything it declared. It now exposes what is
 marked, as in Rust:
 
 ```sl
@@ -979,7 +985,7 @@ func norm(Point { x, y }: Point) -> i64 { <(x, x) | mul | sum => (sum, <(y, y) |
 ```
 
 A binder must be irrefutable — it stands for every value of its type — so a
-many-variant enum is still taken apart with `match`. A continuation
+many-variant enum is still taken apart with `of`. A continuation
 parameter stays a name: control leaves through it.
 
 ## Handler clauses bind their continuation after a colon
@@ -1090,9 +1096,9 @@ experimental struct-based `choose Struct`. No `choose` form exists.
 `t | k` used to lower to a μ binder that shadowed `k`, so the value was sent
 nowhere. The cut `<t | k>` now delivers `t` to `k`, as it always claimed to.
 
-## A `match` arm has no guard
+## An `of` arm has no guard
 
-`p if e => …` is gone. A test on what a pattern bound is a `match` inside the
+`p if e => …` is gone. A test on what a pattern bound is an `of` inside the
 arm:
 
 ```sl
@@ -1128,7 +1134,7 @@ against the builtin's signature, with its whole value group:
 
 ## There is no `if`
 
-A choice on a `Bool` is a `match` on its two variants:
+A choice on a `Bool` is an `of` on its two variants:
 
 ```sl
 if n > 0 { n } else { 0 - n }                          // old
@@ -1144,7 +1150,7 @@ ordinary names. The statement is what is gone.
 
 ## `!` is the prelude's `not`
 
-Logical not is an ordinary function a `bool` flows into.
+Logical not is an ordinary function a `Bool` flows into. `!` is not a token.
 
 ```sl
 !done                  // old
@@ -1153,8 +1159,8 @@ Logical not is an ordinary function a `bool` flows into.
 
 ## `&&` and `||` are gone
 
-A conjunction or a disjunction is a `match` on its left side, which runs the
-right side only when it is needed:
+`&&` and `||` are not tokens. A conjunction or a disjunction is an `of` on
+its left side, which runs the right side only when it is needed:
 
 ```sl
 ok && <x | valid                                   // old
@@ -1182,7 +1188,7 @@ and choices up to eight components.
 
 ## A type parameter states its polarity
 
-Every generic parameter of a `fn`, `command`, `impl`, `enum`, `data`, `menu`
+Every generic parameter of a `func`, `proc`, `impl`, `enum`, `data`, `menu`
 or `form` is declared `+` or `-`. A row variable, used as `..E`, keeps no
 mark.
 
@@ -1285,9 +1291,10 @@ An integer literal takes its width from the other operand, as before:
 ## `bool`, `true` and `false` are the prelude's `Bool`
 
 The built-in boolean is gone. The prelude declares `enum Bool { False, True }`,
-and a program names the type and its variants; the old spellings are refused
-with the names that replace them. A `match` on both variants is exhaustive,
-so the `_` arm a `bool` match needed can name `False`.
+and a program names the type and its variants. `bool`, `true`, and `false`
+are ordinary names. `bool` fails later as an unknown type, and the message
+does not name `Bool`. An `of` on both variants is exhaustive, so the `_`
+arm the old match needed can name `False`.
 
 ```sl
 func positive(n: i64) -> bool { of (<(n, 0) | gt) { true => true, _ => false } }   // old
@@ -1298,9 +1305,9 @@ A `Bool` still prints as `true` or `false`.
 
 ## A chain is `<value | stage | consumer>`
 
-`⟨` and `⟩` are gone. With no operator left to read them, `<` marks what
-flows into a chain and `>` the consumer that closes it, and the old brackets
-are refused with the new ones.
+`⟨` and `⟩` are not tokens. `<` marks what flows into a chain and `>` the
+consumer that closes it. The lexer reports an unexpected character and does
+not name the ASCII brackets.
 
 ```sl
 ⟨x | f | k⟩              // old
@@ -1337,7 +1344,7 @@ do pick() hn {
 A jump from under a handler installed after the capture, by code that was
 handed the continuation, used to leave that handler silently; it is now a
 run-time error, "a continuation left the handler it was captured under".
-Return the continuation out of the `handle` and jump to it there, or pass
+Return the continuation out of the `do` and jump to it there, or pass
 the value out instead of jumping:
 
 ```sl
@@ -1378,7 +1385,7 @@ followed by name. What a program performs is unchanged; where it is charged
 follows the value:
 
 - A `fn` performs its body's effects where it is called, not where it is
-  written. A lambda written inside a `handle` and called after it is refused
+  written. A lambda written inside a `do` and called after it is refused
   unless a handler answers the call; one written outside and called under a
   handler is accepted.
 
@@ -1479,7 +1486,7 @@ let status = <(fn(u: (,)) {                                       // old
 
 A command's exit parameter that writes a row, `program: ((;) / {..E})`, now
 takes what the exit handed to it performs, where it used to be charged at
-the call; and a `handle` whose body is `(;)` runs it.
+the call; and a `do` whose body is `(;)` runs it.
 
 ## A menu or form takes a row parameter
 
@@ -1618,8 +1625,8 @@ directly is refused until adapters preserve its forcing boundary.
 
 ### Consumers do not return unit
 
-A `select` arm must end in a command. Replace a returning sink such as
-`select i64 { value => <value | println }` with
+A `mu` arm must end in a command. Replace a returning sink such as
+`mu i64 { value => <value | println }` with
 `fn(value: i64) { <value | println }` and use ordinary application without
 a closing `>`. To keep a genuine consumer, end its arm by transferring to
 an explicit continuation. Joints do not sequence returning sinks; delivery
@@ -1638,6 +1645,6 @@ Concurrency-like process creation is not part of the λ̄μμ̃ core.
 ### `mu` declarations with value groups
 
 `mu(values) | (continuations)` declared a consumer abstraction. A
-declaration is a `command` (see "`mu` is the expression, `command` is the
+declaration is a `proc` (see "`mu` is the expression, `proc` is the
 declaration"), and `mu` is only the expression that captures the current
 continuation, `mu T { k <= … }`.

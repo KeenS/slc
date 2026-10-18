@@ -21,7 +21,7 @@ function that installs a handler around a computation it is handed was
 refused while effects followed names, because the lambda's `Fs` was charged
 where the lambda was written. With rows in types
 (`docs/design-notes/rows-in-types.md`) the lambda carries `Fs` on its type, and
-the function is accepted. This runs today:
+the function is accepted. The encoding considered then, in that plan's spelling:
 
 ```sl
 effect Fs { fn read_file(path: String, ok: -String, failed: -String) -> (;); }
@@ -49,7 +49,7 @@ passes through both.
 
 1. **Originally no new language feature; now superseded.** The function
    encoding above remains useful, but first-class handler values are now
-   implemented: `handler { … }` constructs one and `with h handle c`
+   implemented: `hn { … }` constructs one and `do c h`
    installs it. `docs/design/effects.md` specifies `(A hn B / {E} / {F})`; the
    `examples/effects/handler_values.sl` example stores, selects and composes them.
 2. **`fs` declares `Fs`,** one operation per primitive: reading a file,
@@ -68,7 +68,7 @@ passes through both.
    not change; their rows say `{Fs}` instead of `{IO}`.
 4. **`fs::real` is the standard handler,** answering each operation with its
    primitive and declaring `{IO, ..E}`. A program's own handler function, or
-   a `handle` written around the code, answers first — which is how a test
+   a `do` written around the code, answers first — which is how a test
    mocks the file system.
 5. **A program installs `fs::real`** around the code that touches files — see
    "Decided".

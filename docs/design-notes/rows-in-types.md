@@ -43,9 +43,9 @@ travels with the value, so a row on the type follows it into a tuple, through a
 
 The surface. Rows are written where they are today: after an arrow,
 `(A -> B / {Exn, ..E})`; on a returned consumer, `-> (-A / {..E})`; on a
-declaration's row, `fn f(…) -> T / {IO}`; on a menu or form declaration,
+declaration's row, `func f(…) -> T / {IO}`; on a menu or form declaration,
 `menu Fallible / {Exn} { … }`. Row variables are generic parameters used with
-`..`. `main`'s row is `{IO}` or empty. A `handle` discharges the effects of the
+`..`. `main`'s row is `{IO}` or empty. A `do` discharges the effects of the
 operations its clauses answer. The diagnostics keep their messages.
 
 ## 1. Representation
@@ -152,11 +152,11 @@ Bodies introduce their own current row:
 - **A lambda.** Its body has a fresh `ε_λ`, and its type is
   `(A -> B / ε_λ)`: the effects happen where the lambda is called. This closes
   "a lambda's effects are charged where it is written".
-- **A `handle`.** Its body has a fresh `ε_body`, with
+- **A `do`.** Its body has a fresh `ε_body`, with
   `ε_body ⊆ ε ∪ {the effects its clauses answer}`. The clauses run below the
-  prompt and add to `ε` directly. The handle's value has the body's type, row
+  prompt and add to `ε` directly. The `do`'s value has the body's type, row
   included: a row on a value has not fired, so it passes through.
-- **A `select` literal.** Each arm's row is the row of the consumer's type,
+- **A `mu` consumer.** Each arm's row is the row of the consumer's type,
   `-A / ε_arm`. Over a rowed form declaration, `ε_arm ⊆ declared row`, as today.
 - **A menu literal `mu M { … }`.** Each arm's row goes onto `M`'s type; over a
   rowed menu declaration, `ε_arm ⊆ declared row`, as today.

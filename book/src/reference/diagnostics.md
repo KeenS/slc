@@ -10,7 +10,7 @@ later ones:
 
 | Phase | What it refuses |
 |---|---|
-| `parse` | A token stream that is not a program, including an older keyword |
+| `parse` | A token stream that is not a program |
 | `resolve` | A name that does not denote, or a cite that collides |
 | `trait` | An impl that does not match its spec, or that overlaps another |
 | `type` | A term whose type does not meet its port |
