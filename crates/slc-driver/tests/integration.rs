@@ -473,6 +473,17 @@ fn a_word_after_the_file_is_an_argument_even_when_it_looks_like_a_flag() {
 }
 
 #[test]
+fn version_and_check_after_the_file_are_program_arguments() {
+    for word in ["--version", "check"] {
+        let (elf, interpreted) = run_both(&[], ARGUMENTS, &[word]);
+        assert_eq!(elf.0, format!("[{word}]\n"), "elf stderr: {}", elf.1);
+        assert!(elf.2, "{word} elf stderr: {}", elf.1);
+        assert_eq!(interpreted.0, elf.0, "{word} interpret stderr: {}", interpreted.1);
+        assert!(interpreted.2, "{word} interpret stderr: {}", interpreted.1);
+    }
+}
+
+#[test]
 fn fuel_stays_a_flag_before_the_file_and_later_words_are_arguments() {
     let (elf, interpreted) = run_both(&["--fuel", "100000"], ARGUMENTS, &["one"]);
     assert_eq!(elf.0, "[one]\n", "elf stderr: {}", elf.1);

@@ -44,6 +44,18 @@ pub fn check_program_with_rows(
 ) -> Result<(slc_syntax::lower::DispatchInfo, Vec<Diagnostic>), Vec<Diagnostic>> {
     let constants = constant_types(p);
     let mut enums = enum_types(p);
+    let mut diags = Vec::new();
+    for clash in &enums.op_clashes {
+        let message = if clash.first == clash.second {
+            format!("effect `{}` declares operation `{}` more than once", clash.first, clash.op)
+        } else {
+            format!(
+                "operation `{}` is declared by both `{}` and `{}`",
+                clash.op, clash.first, clash.second
+            )
+        };
+        diags.push(Diagnostic { message, span: clash.span });
+    }
     for (trait_name, items) in &traits.assocs {
         let params = traits.params_of(trait_name).len();
         for item in items {
@@ -51,7 +63,6 @@ pub fn check_program_with_rows(
         }
     }
     let functions = function_types(p, &enums);
-    let mut diags = Vec::new();
     let mut env = Env::root(&constants, &functions, traits);
     env.elaboration_origins.clone_from(&traits.span_origins);
     env.declarations = Some(&enums);
@@ -2197,11 +2208,6 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     |ty| resolve_rigid(ty, &rigid_vars, enums),
                 )
                 .unwrap_or_default();
-            if name == "not" {
-                eprintln!(
-                    "DEBUG not polarity={polarity:?} body={body_type:?} declared={declared:?}"
-                );
-            }
             let promised = match polarity {
                 slc_syntax::ast::FunctionPolarity::Positive => declared,
                 // A negative function's row is performed on its watch: by
@@ -2210,9 +2216,6 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     declared.map(|ty| Type::rowed(ty.dual(), declared_row.clone()))
                 }
             };
-            if name == "not" {
-                eprintln!("DEBUG not promised={promised:?}");
-            }
             if let (Some(promised), Some(actual)) = (&promised, &body_type)
                 && actual != &Type::BOTTOM
             {
@@ -2285,12 +2288,12 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
             }
             env.push();
             // A value-generic command is copied per instantiation, so uses in its
-            // body stay open until each copy supplies its parameters. A command
-            // with no signed parameters is one body: giving it an owner would
-            // record every local, and a later `let` of the same name would keep
-            // the first binding's type.
+            // body stay open until each copy supplies its parameters. Every
+            // command, including a monomorphic one, owns its locals: the native
+            // compiler reads them for the λ under this declaration. Two bindings
+            // of one name share that slot, and a type is kept only when they agree.
             let instantiates = !type_param_signs.is_empty() || !bounds.is_empty();
-            let outer_enclosing = instantiates.then(|| env.enclosing.replace(name.clone()));
+            let outer_enclosing = env.enclosing.replace(name.clone());
             let row_keys = row_parameter_keys(type_params, type_param_signs, env);
             let mut rigid_vars: HashMap<&str, Type> =
                 type_params.iter().map(|tp| (tp.as_str(), env.uni.fresh_rigid())).collect();
@@ -2373,8 +2376,8 @@ fn check_decl(d: &Node<Decl>, enums: &Declarations, env: &mut Env, diags: &mut V
                     })
                     .collect();
                 env.fn_context.insert(name.clone(), context);
-                env.enclosing = outer_enclosing.flatten();
             }
+            env.enclosing = outer_enclosing;
             env.bounds = outer_bounds;
             env.rigid_vars = outer_rigid;
             env.pop();
@@ -2615,6 +2618,18 @@ fn pattern_type(pattern: &slc_syntax::ast::Pattern) -> Option<Type> {
     })
 }
 
+/// The type a pattern matches, seen through a dual or a row. A record
+/// pattern on `Box<i64>` sees `Box`, and a row on a function does not
+/// change the connective underneath.
+fn peel_scrutinee(ty: &Type) -> &Type {
+    match ty {
+        Type::Dual(inner) | Type::Rowed(inner, _) | Type::Delayed(inner, _) => {
+            peel_scrutinee(inner)
+        }
+        other => other,
+    }
+}
+
 /// The type arguments a scrutinee carries, seen through `Dual` — what a
 /// generic declaration's stored types are instantiated with at this use.
 fn scrutinee_args(scrutinee: &Type) -> &[Type] {
@@ -2789,9 +2804,40 @@ fn check_pattern(
         Pattern::Binding { pattern, .. } => {
             check_pattern(pattern, expected, declarations, span, diags)
         }
-        Pattern::Tuple(items) | Pattern::Bundle(items) => {
-            for item in items {
-                check_pattern(item, expected, declarations, span, diags);
+        Pattern::Tuple(items) => {
+            let peeled = peel_scrutinee(expected);
+            if !matches!(peeled, Type::Var(_)) {
+                let components = match peeled {
+                    Type::Tensor(parts) => Some(parts.as_slice()),
+                    _ => None,
+                };
+                check_product_pattern(
+                    "tuple",
+                    items,
+                    components,
+                    expected,
+                    declarations,
+                    span,
+                    diags,
+                );
+            }
+        }
+        Pattern::Bundle(items) => {
+            let peeled = peel_scrutinee(expected);
+            if !matches!(peeled, Type::Var(_)) {
+                let components = match peeled {
+                    Type::With(parts) => Some(parts.as_slice()),
+                    _ => None,
+                };
+                check_product_pattern(
+                    "bundle",
+                    items,
+                    components,
+                    expected,
+                    declarations,
+                    span,
+                    diags,
+                );
             }
         }
         // A request shape matches a continuation of its menu type — the
@@ -2823,14 +2869,22 @@ fn check_pattern(
                 });
                 return;
             };
-            if expected != &Type::Named(name.clone(), Vec::new()) {
-                diags.push(Diagnostic {
-                    message: format!(
-                        "record pattern `{name}` cannot match a scrutinee of type {expected}"
-                    ),
-                    span,
-                });
-            }
+            let args = match peel_scrutinee(expected) {
+                Type::Named(scrut_name, args) if scrut_name == name => Some(args.as_slice()),
+                // Still a variable: the scrutinee's arguments are not known,
+                // and guessing a rejection would refuse a type that may become
+                // this record.
+                Type::Var(_) => Some(&[][..]),
+                _ => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "record pattern `{name}` cannot match a scrutinee of type {expected}"
+                        ),
+                        span,
+                    });
+                    None
+                }
+            };
             let written: Vec<&String> = fields.iter().map(|(field, _)| field).collect();
             let expected_fields: Vec<&String> = declared.iter().map(|(field, _)| field).collect();
             if written != expected_fields {
@@ -2851,14 +2905,138 @@ fn check_pattern(
                     span,
                 });
             }
-            for (field, pattern) in fields {
-                if let Some((_, field_ty)) = declared.iter().find(|(declared, _)| declared == field)
-                {
-                    check_pattern(pattern, field_ty, declarations, span, diags);
+            if let Some(args) = args {
+                for (field, pattern) in fields {
+                    if let Some((_, field_ty)) =
+                        declared.iter().find(|(declared, _)| declared == field)
+                    {
+                        check_pattern(
+                            pattern,
+                            &field_ty.instantiate(args),
+                            declarations,
+                            span,
+                            diags,
+                        );
+                    }
                 }
             }
         }
+        Pattern::Enum { name, variant, fields } => {
+            let written =
+                if variant.is_empty() { name.clone() } else { format!("{name}::{variant}") };
+            let found = declarations
+                .variant(&written)
+                .map(|(owner, payload)| (owner.clone(), payload.clone()));
+            let Some((owner, payload)) = found else {
+                if !(variant.is_empty() && declarations.is_ambiguous_variant(name)) {
+                    diags.push(Diagnostic {
+                        message: format!("`{written}` is not a declared variant"),
+                        span,
+                    });
+                }
+                return;
+            };
+            match peel_scrutinee(expected) {
+                Type::Var(_) => {}
+                Type::Named(scrut_name, args) if scrut_name == &owner => {
+                    if fields.len() != payload.len() {
+                        diags.push(Diagnostic {
+                            message: format!(
+                                "variant `{written}` carries {} payload value(s); the pattern binds {}",
+                                payload.len(),
+                                fields.len()
+                            ),
+                            span,
+                        });
+                    }
+                    for (field, ty) in fields.iter().zip(payload.iter()) {
+                        check_pattern(field, &ty.instantiate(args), declarations, span, diags);
+                    }
+                }
+                _ => {
+                    diags.push(Diagnostic {
+                        message: format!(
+                            "variant `{written}` of `{owner}` cannot match a scrutinee of type {expected}"
+                        ),
+                        span,
+                    });
+                }
+            }
+        }
+        Pattern::Ident(name) => {
+            let Some((owner, payload)) = declarations.variant(name) else { return };
+            if !payload.is_empty() || matches!(peel_scrutinee(expected), Type::Var(_)) {
+                return;
+            }
+            if let Type::Named(scrut_name, _) = peel_scrutinee(expected)
+                && scrut_name == owner
+            {
+                return;
+            }
+            diags.push(Diagnostic {
+                message: format!(
+                    "variant `{name}` of `{owner}` cannot match a scrutinee of type {expected}"
+                ),
+                span,
+            });
+        }
+        Pattern::Inject { index, pattern } => match peel_scrutinee(expected) {
+            Type::Var(_) => {}
+            Type::Sum(alternatives) => match alternatives.get(*index) {
+                Some(alternative) => check_pattern(pattern, alternative, declarations, span, diags),
+                None => diags.push(Diagnostic {
+                    message: format!(
+                        "`::{index}` is out of range for {expected}, which has {} alternatives",
+                        alternatives.len()
+                    ),
+                    span,
+                }),
+            },
+            _ => diags.push(Diagnostic {
+                message: format!(
+                    "`::{index}` is an alternative of a sum, and it is used as {expected}"
+                ),
+                span,
+            }),
+        },
         _ => {}
+    }
+}
+
+/// A tuple or a bundle matches a product of the same width. Each component
+/// is checked against its own type: `(1, b)` on `(i64, i64)` compares `1`
+/// with `i64`, not with the whole product.
+fn check_product_pattern(
+    kind: &str,
+    items: &[slc_syntax::ast::Pattern],
+    components: Option<&[Type]>,
+    expected: &Type,
+    declarations: &Declarations,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // The caller skips a variable: it may still become this product, and
+    // rejecting it here would refuse a scrutinee whose shape is not known yet.
+    let Some(components) = components else {
+        diags.push(Diagnostic {
+            message: format!("a {kind} pattern cannot match a scrutinee of type {expected}"),
+            span,
+        });
+        return;
+    };
+    if items.len() != components.len() {
+        diags.push(Diagnostic {
+            message: format!(
+                "this pattern binds {} part(s); the scrutinee has {}",
+                items.len(),
+                components.len()
+            ),
+            span,
+        });
+        return;
+    }
+    for (item, ty) in items.iter().zip(components) {
+        check_pattern(item, ty, declarations, span, diags);
     }
 }
 
@@ -3257,10 +3435,56 @@ fn bind_let_pattern(
 ) {
     if let Some(name) = pattern.binder_name() {
         let (binding_ty, generalized) = generalize(binding_ty, &value.kind, enums, env);
-        env.define_scheme(name, binding_ty, generalized);
+        // The sum of `::i(v)` is one of this scheme's variables. Replay the
+        // payload check at each use, against the sum that use actually has.
+        let injections = scheme_injections(env, &generalized);
+        env.define_scheme(name, binding_ty, generalized, injections);
         return;
     }
     bind_match_pattern(pattern, &binding_ty, enums, env);
+}
+
+/// Injections whose sum this scheme owns. They leave the environment and
+/// return, freshened, at each use. A payload that is itself an injection
+/// is owned too, when no other binding has claimed its sum.
+fn scheme_injections(env: &mut Env, generalized: &[usize]) -> Vec<crate::env::PendingInjection> {
+    let mut roots: std::collections::HashSet<usize> = generalized.iter().copied().collect();
+    let mut moved = std::collections::HashSet::new();
+    loop {
+        let mut grew = false;
+        for (index, pending) in env.pending_injections.iter().enumerate() {
+            if moved.contains(&index) {
+                continue;
+            }
+            let Type::Var(var) = env.uni.apply(&pending.sum) else { continue };
+            if !roots.contains(&var) {
+                continue;
+            }
+            moved.insert(index);
+            let mut found = std::collections::HashSet::new();
+            crate::env::collect_vars(&env.uni.apply(&pending.payload), &mut found);
+            let claimed = env.free_vars();
+            for var in found {
+                if !claimed.contains(&var) && !env.uni.is_rigid(var) && roots.insert(var) {
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    let mut kept = Vec::new();
+    let mut taken = Vec::new();
+    for (index, pending) in std::mem::take(&mut env.pending_injections).into_iter().enumerate() {
+        if moved.contains(&index) {
+            taken.push(pending);
+        } else {
+            kept.push(pending);
+        }
+    }
+    env.pending_injections = kept;
+    taken
 }
 
 fn check_let_binding(
@@ -3678,8 +3902,8 @@ fn bind_select_arm(
     diags: &mut Vec<Diagnostic>,
 ) {
     use slc_syntax::ast::Pattern;
-    // A name that is not a variant binds the whole value: a type with no
-    // structure has one shape, whose single component is the value itself.
+    // A name that is not a variant binds the whole value, an enum included.
+    // The variants stay inside it; other arms are what take them apart.
     if let Pattern::Ident(name) = pattern
         && declarations.variant(name).is_none()
     {
@@ -3817,9 +4041,28 @@ fn bind_select_component(
             }
         }
         Pattern::Data { name, fields } => {
+            let peeled = peel_scrutinee(ty);
+            let Type::Named(scrut_name, args) = peeled else {
+                diags.push(Diagnostic {
+                    message: format!(
+                        "this component has type {ty}; a `{name}` pattern needs that record"
+                    ),
+                    span,
+                });
+                return;
+            };
+            if scrut_name != name {
+                diags.push(Diagnostic {
+                    message: format!("this component has type {ty}; the pattern binds `{name}`"),
+                    span,
+                });
+                return;
+            }
             let declared = declarations.fields(name).unwrap_or_default();
-            for ((_, field), ty) in fields.iter().zip(declared.iter()) {
-                bind_select_component(field, ty, declarations, env, span, diags);
+            let instantiated: Vec<Type> =
+                declared.iter().map(|field| field.instantiate(args)).collect();
+            for ((_, field), field_ty) in fields.iter().zip(&instantiated) {
+                bind_select_component(field, field_ty, declarations, env, span, diags);
             }
         }
         _ => diags.push(Diagnostic {
@@ -3865,6 +4108,89 @@ fn contains_injection(pattern: &slc_syntax::ast::Pattern) -> bool {
     }
 }
 
+/// An arm that selects sum alternatives, including `::0(Red) | ::0(Green)`.
+fn arm_selects_alternative(pattern: &slc_syntax::ast::Pattern) -> bool {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Inject { .. } => true,
+        Pattern::Or(items) => items.iter().any(arm_selects_alternative),
+        Pattern::Binding { pattern, .. } => arm_selects_alternative(pattern),
+        _ => false,
+    }
+}
+
+fn flatten_or<'a>(
+    pattern: &'a slc_syntax::ast::Pattern,
+    out: &mut Vec<&'a slc_syntax::ast::Pattern>,
+) {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Or(items) => {
+            for item in items {
+                flatten_or(item, out);
+            }
+        }
+        Pattern::Binding { pattern, .. } => flatten_or(pattern, out),
+        other => out.push(other),
+    }
+}
+
+/// `_`, or a name that is not a variant, matches every value of the payload.
+fn pattern_covers_all(pattern: &slc_syntax::ast::Pattern, enums: &Declarations) -> bool {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Wildcard => true,
+        Pattern::Ident(name) => enums.variant(name).is_none() && !enums.is_ambiguous_variant(name),
+        Pattern::Binding { pattern, .. } => pattern_covers_all(pattern, enums),
+        Pattern::Or(items) => items.iter().any(|item| pattern_covers_all(item, enums)),
+        _ => false,
+    }
+}
+
+fn collect_variant_names(
+    pattern: &slc_syntax::ast::Pattern,
+    out: &mut std::collections::HashSet<String>,
+) {
+    use slc_syntax::ast::Pattern;
+    match pattern {
+        Pattern::Binding { pattern, .. } => collect_variant_names(pattern, out),
+        Pattern::Or(items) => {
+            for item in items {
+                collect_variant_names(item, out);
+            }
+        }
+        Pattern::Ident(name) => {
+            out.insert(name.clone());
+        }
+        Pattern::Enum { name, variant, .. } => {
+            out.insert(if variant.is_empty() { name.clone() } else { variant.clone() });
+        }
+        _ => {}
+    }
+}
+
+/// The payload patterns of one alternative cover its type: a wildcard, a
+/// binder, or every variant of the enum the alternative carries.
+fn patterns_exhaust(
+    patterns: &[&slc_syntax::ast::Pattern],
+    ty: &Type,
+    enums: &Declarations,
+) -> bool {
+    if patterns.is_empty() {
+        return false;
+    }
+    if patterns.iter().any(|pattern| pattern_covers_all(pattern, enums)) {
+        return true;
+    }
+    let Type::Named(name, _) = peel_scrutinee(ty) else { return false };
+    let Some(variants) = enums.variants_of(name) else { return false };
+    let mut covered = std::collections::HashSet::new();
+    for pattern in patterns {
+        collect_variant_names(pattern, &mut covered);
+    }
+    variants.iter().all(|variant| covered.contains(variant))
+}
+
 /// The arms of a `mu` or `of` over a sum, by position. The sum is the
 /// scrutinee's type — or, where that is still unknown, the sum of as many
 /// alternatives as the arms name. A `mu` answers each position exactly
@@ -3880,7 +4206,17 @@ fn check_alternatives(
     diags: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     use slc_syntax::ast::Pattern;
-    let indices: Vec<usize> = arms
+    // `::0(Red) | ::0(Green)` is one arm and two alternatives. A `mu` still
+    // writes one alternative per arm; an or-pattern is not one of those.
+    let mut flat: Vec<&Pattern> = Vec::new();
+    for pattern in arms {
+        if keyword == "of" {
+            flatten_or(pattern, &mut flat);
+        } else {
+            flat.push(pattern);
+        }
+    }
+    let indices: Vec<usize> = flat
         .iter()
         .filter_map(|pattern| match pattern {
             Pattern::Inject { index, .. } => Some(*index),
@@ -3908,7 +4244,8 @@ fn check_alternatives(
     let mut covered = vec![false; arity];
     let mut covers_everything = false;
     let mut well_formed = true;
-    for pattern in arms.iter().copied() {
+    let mut payloads: Vec<Vec<&Pattern>> = vec![Vec::new(); arity];
+    for pattern in flat {
         match pattern {
             Pattern::Inject { index, pattern } => {
                 if *index >= arity {
@@ -3939,8 +4276,8 @@ fn check_alternatives(
                         });
                     }
                     covered[*index] = true;
-                } else if crate::exhaustive::is_irrefutable(pattern, enums) {
-                    covered[*index] = true;
+                } else {
+                    payloads[*index].push(pattern);
                 }
             }
             _ if keyword == "mu" => {
@@ -3953,9 +4290,18 @@ fn check_alternatives(
                 well_formed = false;
             }
             other => {
-                if crate::exhaustive::is_irrefutable(other, enums) {
+                if crate::exhaustive::is_irrefutable(other, enums)
+                    || pattern_covers_all(other, enums)
+                {
                     covers_everything = true;
                 }
+            }
+        }
+    }
+    if keyword != "mu" {
+        for index in 0..arity {
+            if patterns_exhaust(&payloads[index], &alternatives[index], enums) {
+                covered[index] = true;
             }
         }
     }
@@ -4552,11 +4898,7 @@ fn check_expr_unapplied(
             let scrutinee_ty = check_expr(scrutinee, enums, env, diags);
             // A sum's alternatives, by position.
             let scrutinee_ty = match scrutinee_ty {
-                Some(ty)
-                    if arms.iter().any(|arm| {
-                        matches!(arm.pattern, slc_syntax::ast::Pattern::Inject { .. })
-                    }) =>
-                {
+                Some(ty) if arms.iter().any(|arm| arm_selects_alternative(&arm.pattern)) => {
                     let rows: Vec<&slc_syntax::ast::Pattern> =
                         arms.iter().map(|arm| &arm.pattern).collect();
                     check_alternatives("of", &ty, &rows, e.span, enums, env, diags)
@@ -5410,7 +5752,12 @@ fn check_expr_unapplied(
                 .map(packed_group)
         }
         Expr::Block(exprs) => {
+            // A block's value is its last expression. A bodyless `let` binds
+            // a name and yields unit, the same value an empty product has, so
+            // a block that ends in one has type `(,)` — lowering discards
+            // every expression before that `let`.
             let mut result = None;
+            let mut ended_in_let = false;
             env.push();
             for expr in exprs {
                 if let Expr::Let { pattern, ty, value, body: None, mode } = &expr.kind {
@@ -5419,12 +5766,14 @@ fn check_expr_unapplied(
                     let binding_ty =
                         check_let_binding(pattern, ty, value, *mode, enums, env, diags);
                     bind_let_pattern(pattern, binding_ty, value, enums, env);
+                    ended_in_let = true;
                 } else {
                     result = check_expr(expr, enums, env, diags);
+                    ended_in_let = false;
                 }
             }
             env.pop();
-            result
+            if ended_in_let { Some(Type::ONE) } else { result }
         }
         // `a | b | c` — flow. The brackets say what the chain is, so
         // nothing is guessed: `<` makes the first stage a value, `>` makes
@@ -7391,6 +7740,16 @@ mod tests {
     }
 
     #[test]
+    fn a_variable_pattern_binds_an_enum_whole() {
+        assert!(check("func keep(out: Bool) <- Bool { mu Bool { b => <b | out> } }").is_ok());
+        // The binder is the enum, so a string operation does not apply.
+        let diags =
+            check("func keep(out: -String) <- Bool { mu Bool { b => <str_len(b) | out> } }")
+                .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("Bool")), "{diags:?}");
+    }
+
+    #[test]
     fn a_select_arm_over_an_atom_binds_the_whole_value() {
         // An atom has one shape and one component, so its arm's pattern is a
         // plain binder, typed by the type being consumed.
@@ -7405,6 +7764,148 @@ mod tests {
         assert!(
             diags.iter().any(|d| d.message.contains("has type +i64")),
             "the binder should carry the consumed type: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_tuple_pattern_checks_each_component() {
+        assert!(
+            check("func f(p: (i64, i64)) -> i64 { of p { (1, b) => b, _ => 0 } }").is_ok(),
+            "1 matches the first component"
+        );
+        let diags = check("func f(p: (i64, i64)) -> i64 { of p { (\"no\", b) => b, _ => 0 } }")
+            .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("pattern has type")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_generic_record_pattern_instantiates_its_fields() {
+        assert!(
+            check(
+                "data Box<+T> { value: T }
+                 func f(b: Box<i64>) -> i64 { of b { Box { value } => value } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn an_injection_pattern_checks_its_payload() {
+        let diags =
+            check("func f(s: (String | i64)) -> i64 { of s { ::0(1) => 0, _ => 1 } }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("pattern has type")), "{diags:?}");
+        assert!(check("func f(s: (i64 | String)) -> i64 { of s { ::0(1) => 0, _ => 1 } }").is_ok());
+    }
+
+    #[test]
+    fn split_injection_payloads_cover_an_enum() {
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 func f(s: (Color | i64)) -> i64 {
+                     of s { ::0(Red) => 0, ::0(Green) => 1, ::1(_) => 2 }
+                 }"
+            )
+            .is_ok()
+        );
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 func f(s: (Color | i64)) -> i64 {
+                     of s { (::0(Red) | ::0(Green)) => 0, ::1(_) => 2 }
+                 }"
+            )
+            .is_ok()
+        );
+        let diags = check(
+            "enum Color { Red, Green }
+             func f(s: (Color | i64)) -> i64 { of s { ::0(Red) => 0, ::1(_) => 2 } }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("non-exhaustive")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_generalized_injection_is_checked_at_each_use() {
+        let diags = check(
+            "func f() -> i64 {
+                 let x = ::0(1);
+                 let y: (String | i64) = x;
+                 0
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("carries") || d.message.contains("String")),
+            "{diags:?}"
+        );
+        assert!(
+            check(
+                "func f() -> i64 {
+                     let x = ::0(1);
+                     let y: (i64 | String) = x;
+                     let z: (i64 | Bool) = x;
+                     0
+                 }"
+            )
+            .is_ok(),
+            "one injection can inhabit two sums that both carry i64 first"
+        );
+        let diags = check(
+            "func f() -> i64 {
+                 let x = ::0(1);
+                 let y: (i64 | String) = x;
+                 let z: (Bool | i64) = x;
+                 0
+             }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("carries") || d.message.contains("Bool")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn a_block_that_ends_in_a_let_has_type_unit() {
+        let diags = check("func bad() -> i64 { 1; let x = 2; }").unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("the body of `bad`")), "{diags:?}");
+        assert!(check("func ok() -> (,) { 1; let x = 2; }").is_ok());
+    }
+
+    #[test]
+    fn a_nested_record_pattern_uses_the_component_type() {
+        let diags = check(
+            "data A { x: i64 }
+             data B { x: i64 }
+             func f(out: -(,)) <- (B, i64) {
+                 mu (B, i64) { (A { x }, _) => <(,) | out> }
+             }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("`A`")), "{diags:?}");
+        assert!(
+            check(
+                "data Box<+T> { value: T }
+                 func f(out: -i64) <- (Box<i64>, i64) {
+                     mu (Box<i64>, i64) { (Box { value }, n) => <(value, n) | __add | out> }
+                 }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn two_hooks_cannot_declare_the_same_operation() {
+        let diags = check(
+            "hook A { func ping() -> i64; }
+             hook B { func ping() -> i64; func pong() -> i64; }
+             func f() -> i64 { 0 }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("ping") && d.message.contains("A")),
+            "{diags:?}"
         );
     }
 }

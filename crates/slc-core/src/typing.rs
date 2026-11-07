@@ -677,16 +677,13 @@ pub fn infer_term(
                         branch.label
                     )));
                 }
-                // The request's continuation scopes over the branch body only.
-                let shadowed = delta.lookup(&branch.binder).cloned();
-                delta.insert(branch.binder.clone(), Type::BOTTOM);
-                let result = infer_command(&branch.body, gamma, delta);
-                match shadowed {
-                    Some(ty) => delta.insert(branch.binder.clone(), ty),
-                    None => delta.remove(&branch.binder),
-                }
-                result?;
+                // The continuation keeps the type already in the context.
+                // Replacing it with `(;)` checks the branch at the unit, so
+                // the copattern reduct is not that command.
+                infer_command(&branch.body, gamma, delta)?;
             }
+            // The declaration name. A request is `dual` of this, which is
+            // what `infer_command` compares against the menu.
             Ok(Type::Named(owner.clone(), Vec::new()))
         }
 
@@ -712,11 +709,11 @@ pub fn infer_coterm(
         CoTerm::Covar(a) => delta.lookup(a).cloned().ok_or(TypeError::Unbound(a.clone())),
 
         CoTerm::App(v, e) => {
-            // `v · e` refutes a function: with `v : A` and `e` refuting `B`,
-            // the stack consumes `(A -> B)`.
+            // `v · e` is dual to the λ it is cut against. `e` is stored at
+            // the dual of the result, the same way a covariable is.
             let vt = infer_term(v, gamma, delta)?;
             let et = infer_coterm(e, gamma, delta)?;
-            Ok(Type::arrow(vt, et))
+            Ok(Type::arrow(vt, et.dual()).dual())
         }
 
         CoTerm::MuTilde(x, c) => {
@@ -725,16 +722,21 @@ pub fn infer_coterm(
                 .cloned()
                 .ok_or(TypeError::Unbound(format!("(mutilde-param) {x}")))?;
             infer_command(c, gamma, delta)?;
-            Ok(xt)
+            // Dual of the value it binds, so ⟨v ∥ μ̃x. c⟩ checks when `v` has
+            // `x`'s type.
+            Ok(xt.dual())
         }
 
         CoTerm::CoCase { owner, branches } => {
-            // `(|)`: the consumer with no arms refutes 0 itself.
+            // `(|)` refutes the empty sum. The cut stores the consumer at
+            // the dual of that sum.
             if owner == "(|)" && branches.is_empty() {
-                return Ok(Type::ZERO);
+                return Ok(Type::ZERO.dual());
             }
-            // A negative additive consumer refutes the named type its labels
-            // belong to. Every branch must belong to the same declaration.
+            // A labelled consumer is dual to the declaration it consumes.
+            // Every branch must belong to that declaration. Payload binders
+            // keep the component types already in the context; replacing
+            // them with `(,)` makes the redex check and the reduct fail.
             for branch in branches {
                 if owner_of_label(&branch.label) != owner.as_str() {
                     return Err(TypeError::Arity(format!(
@@ -742,58 +744,43 @@ pub fn infer_coterm(
                         branch.label
                     )));
                 }
-                // The payload binders scope over the branch body only.
-                let shadowed: Vec<_> = branch
-                    .binders
-                    .iter()
-                    .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
-                    .collect();
-                for binder in &branch.binders {
-                    gamma.insert(binder.clone(), Type::ONE);
-                }
-                let result = infer_command(&branch.body, gamma, delta);
-                for (binder, previous) in shadowed {
-                    match previous {
-                        Some(ty) => gamma.insert(binder, ty),
-                        None => gamma.remove(&binder),
-                    }
-                }
-                result?;
+                infer_command(&branch.body, gamma, delta)?;
             }
-            Ok(Type::Named(owner.clone(), Vec::new()))
+            Ok(Type::Named(owner.clone(), Vec::new()).dual())
         }
 
         CoTerm::Dtor(label, e) => {
-            // A request refutes the named negative type that owns its
-            // destructor; the payload is the continuation for the answer.
+            // A request is dual to the menu value (the declaration name).
+            // The payload is the continuation for the answer.
             infer_coterm(e, gamma, delta)?;
-            Ok(Type::Named(owner_of_label(label), Vec::new()))
+            Ok(Type::Named(owner_of_label(label), Vec::new()).dual())
         }
 
         CoTerm::MuTildeTensor(binders, body) => {
-            // A consumer of a product refutes the tensor of its components.
-            let shadowed: Vec<_> = binders
-                .iter()
-                .map(|binder| (binder.clone(), gamma.lookup(binder).cloned()))
-                .collect();
+            // Dual of the product of the component types already in the
+            // context. One binder takes the whole value; none take the unit.
+            let mut components = Vec::with_capacity(binders.len());
             for binder in binders {
-                gamma.insert(binder.clone(), Type::ONE);
+                let ty = gamma
+                    .lookup(binder)
+                    .cloned()
+                    .ok_or_else(|| TypeError::Unbound(format!("(product-param) {binder}")))?;
+                components.push(ty);
             }
-            let result = infer_command(body, gamma, delta);
-            for (binder, previous) in shadowed {
-                match previous {
-                    Some(ty) => gamma.insert(binder, ty),
-                    None => gamma.remove(&binder),
-                }
-            }
-            result?;
-            Ok(match binders.len() {
-                1 => Type::ONE,
-                n => Type::Tensor(vec![Type::ONE; n]),
-            })
+            infer_command(body, gamma, delta)?;
+            let product = match components.len() {
+                0 => Type::ONE,
+                1 => components[0].clone(),
+                _ => Type::Tensor(components),
+            };
+            Ok(product.dual())
         }
 
-        CoTerm::Prj(_) => Ok(Type::arrow(Type::ONE, Type::ONE)),
+        // A projection has no type of its own: the index is checked against
+        // the tuple it is cut against.
+        CoTerm::Prj(index) => Err(TypeError::CannotInfer(format!(
+            "prj:{index} is checked against the product it is cut against"
+        ))),
     }
 }
 
@@ -804,6 +791,26 @@ pub fn infer_command(
     delta: &mut CoTermContext,
 ) -> Result<(), TypeError> {
     match c {
+        // ⟨(t₀ ⊗ …) ∥ prj:i⟩ is well-typed when `i` picks a component.
+        // The coterm is not given a type apart from that tuple.
+        Command::Cut(t, CoTerm::Prj(index)) => {
+            let tt = infer_term(t, gamma, delta)?;
+            if contains_var(&tt) {
+                return Err(TypeError::CannotInfer(
+                    "a cut's two sides are unresolved, so their duality is not known".into(),
+                ));
+            }
+            match tt {
+                Type::Tensor(items) if *index < items.len() => Ok(()),
+                Type::Tensor(items) => Err(TypeError::Arity(format!(
+                    "prj:{index} is outside a product of {} components",
+                    items.len()
+                ))),
+                other => {
+                    Err(TypeError::Arity(format!("prj:{index} expects a product, not {other}")))
+                }
+            }
+        }
         Command::Cut(t, e) => {
             let tt = infer_term(t, gamma, delta)?;
             let et = infer_coterm(e, gamma, delta)?;
@@ -877,7 +884,7 @@ mod tests {
         let empty = CoTerm::CoCase { owner: "Empty".into(), branches: Vec::new() };
         assert_eq!(
             infer_coterm(&empty, &mut gamma, &mut delta),
-            Ok(Type::Named("Empty".into(), Vec::new()))
+            Ok(Type::Named("Empty".into(), Vec::new()).dual())
         );
     }
 
@@ -895,16 +902,16 @@ mod tests {
                 body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()))),
             }],
         };
+        // The consumer is dual to the declaration, which is what a cut
+        // against a `Color` value compares. Reifying flips that dual.
         assert_eq!(
             infer_coterm(&consumer, &mut g, &mut d),
-            Ok(Type::Named("Color".into(), Vec::new()))
+            Ok(Type::Named("Color".into(), Vec::new()).dual())
         );
-        // Reified as a value, it is dual to what it refutes — the type the
-        // surface checker gives a `select` expression.
         let reified = Term::Co(Box::new(consumer));
         assert_eq!(
             infer_term(&reified, &mut g, &mut d),
-            Ok(Type::Dual(Box::new(Type::Named("Color".into(), Vec::new()))))
+            Ok(Type::Named("Color".into(), Vec::new()))
         );
     }
 
@@ -1068,6 +1075,112 @@ mod tests {
         d.insert("k".into(), Type::Var(0).dual());
         let c = Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()));
         assert!(matches!(infer_command(&c, &mut g, &mut d), Err(TypeError::CannotInfer(_))));
+    }
+
+    #[test]
+    fn mu_tilde_is_dual_to_its_binder() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("v".into(), pos_i32());
+        g.insert("x".into(), pos_i32());
+        d.insert("k".into(), Type::Neg(Base::I32));
+        let mu = CoTerm::MuTilde(
+            "x".into(),
+            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+        );
+        let cut = Command::Cut(Term::Var("v".into()), mu);
+        assert!(infer_command(&cut, &mut g, &mut d).is_ok());
+        let reduct = Command::Cut(Term::Var("v".into()), CoTerm::Covar("k".into()));
+        assert!(infer_command(&reduct, &mut g, &mut d).is_ok());
+    }
+
+    #[test]
+    fn application_stack_is_dual_to_the_lambda() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("x".into(), pos_i32());
+        g.insert("y".into(), pos_i32());
+        d.insert("k".into(), Type::Neg(Base::I32));
+        let lam = Term::Lam("x".into(), Box::new(Term::Var("x".into())));
+        let stack = CoTerm::App(Term::Var("y".into()), Box::new(CoTerm::Covar("k".into())));
+        assert!(infer_command(&Command::Cut(lam, stack), &mut g, &mut d).is_ok());
+    }
+
+    #[test]
+    fn projection_checks_the_index_against_the_product() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("a".into(), pos_i32());
+        g.insert("b".into(), pos_i32());
+        let pair = Term::Tuple(vec![Term::Var("a".into()), Term::Var("b".into())]);
+        assert!(infer_command(&Command::Cut(pair.clone(), CoTerm::Prj(0)), &mut g, &mut d).is_ok());
+        assert!(infer_command(&Command::Cut(pair.clone(), CoTerm::Prj(1)), &mut g, &mut d).is_ok());
+        assert!(infer_command(&Command::Cut(pair, CoTerm::Prj(99)), &mut g, &mut d).is_err());
+        g.insert("u".into(), Type::ONE);
+        g.insert("v".into(), Type::BOTTOM);
+        let units = Term::Tuple(vec![Term::Var("u".into()), Term::Var("v".into())]);
+        assert!(infer_command(&Command::Cut(units, CoTerm::Prj(99)), &mut g, &mut d).is_err());
+    }
+
+    #[test]
+    fn a_request_is_dual_to_its_menu() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("n".into(), pos_i32());
+        d.insert("out".into(), Type::Neg(Base::I32));
+        d.insert("k".into(), Type::Neg(Base::I32));
+        let menu = Term::CoMatch {
+            owner: "C".into(),
+            branches: vec![crate::term::CoMatchBranch {
+                label: "C::item".into(),
+                binder: "out".into(),
+                body: Box::new(Command::Cut(Term::Var("n".into()), CoTerm::Covar("out".into()))),
+            }],
+        };
+        let request = CoTerm::Dtor("C::item".into(), Box::new(CoTerm::Covar("k".into())));
+        assert!(infer_command(&Command::Cut(menu, request), &mut g, &mut d).is_ok());
+        let reduct = Command::Cut(Term::Var("n".into()), CoTerm::Covar("k".into()));
+        assert!(infer_command(&reduct, &mut g, &mut d).is_ok());
+    }
+
+    #[test]
+    fn co_labelled_redex_preserves_typing() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("f".into(), pos_i32());
+        d.insert("k".into(), Type::Neg(Base::I32));
+        d.insert("k2".into(), Type::Neg(Base::I32));
+        let consumer = CoTerm::CoCase {
+            owner: "C".into(),
+            branches: vec![CoCaseBranch {
+                label: "C::b".into(),
+                binders: vec!["f".into()],
+                body: Box::new(Command::Cut(Term::Var("f".into()), CoTerm::Covar("k2".into()))),
+            }],
+        };
+        let value =
+            Term::Co(Box::new(CoTerm::Dtor("C::b".into(), Box::new(CoTerm::Covar("k".into())))));
+        assert!(infer_command(&Command::Cut(value, consumer), &mut g, &mut d).is_ok());
+        let reduct =
+            Command::Cut(Term::Co(Box::new(CoTerm::Covar("k".into()))), CoTerm::Covar("k2".into()));
+        assert!(infer_command(&reduct, &mut g, &mut d).is_ok());
+    }
+
+    #[test]
+    fn product_consumer_uses_component_types() {
+        let mut g = TermContext::new();
+        let mut d = CoTermContext::new();
+        g.insert("p0".into(), pos_i32());
+        g.insert("p1".into(), Type::Pos(Base::Char));
+        g.insert("x".into(), pos_i32());
+        g.insert("y".into(), Type::Pos(Base::Char));
+        d.insert("k".into(), Type::Neg(Base::I32));
+        let pair = Term::Tuple(vec![Term::Var("p0".into()), Term::Var("p1".into())]);
+        let consumer = CoTerm::MuTildeTensor(
+            vec!["x".into(), "y".into()],
+            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+        );
+        assert!(infer_command(&Command::Cut(pair, consumer), &mut g, &mut d).is_ok());
     }
 
     #[test]

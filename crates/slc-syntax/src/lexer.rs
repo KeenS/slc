@@ -30,6 +30,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             continue;
         }
         if c == '/' && i + 1 < chars.len() && chars[i + 1] == '*' {
+            let comment_start = i;
             let mut depth = 1;
             i += 2;
             while i < chars.len() && depth > 0 {
@@ -46,7 +47,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             if depth > 0 {
                 return Err(LexError {
                     message: "unterminated block comment".into(),
-                    span: Span { start: i, end: i },
+                    span: Span { start: comment_start, end: chars.len().max(comment_start + 1) },
                 });
             }
             continue;
@@ -97,11 +98,9 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
             let mut is_float = false;
             while i < chars.len() {
                 if chars[i] == '.' {
-                    // `1..5` is a range, not a float.
-                    if i + 1 < chars.len() && chars[i + 1] == '.' {
-                        break;
-                    }
-                    if i + 2 < chars.len() && chars[i + 1] == '.' && chars[i + 2] == '=' {
+                    // `1.field` is an integer, a dot, and a name. `1..5` is a
+                    // range. A dot is part of a float only when a digit follows.
+                    if i + 1 >= chars.len() || !chars[i + 1].is_ascii_digit() {
                         break;
                     }
                     is_float = true;
@@ -114,17 +113,19 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
                 i += 1;
             }
             // A literal too large for its type is an error in the program,
-            // not in the compiler.
+            // not in the compiler. Two dots is not an out-of-range integer.
             let kind = if is_float {
                 num.parse().map(TokenKind::Float).ok()
             } else {
                 num.parse().map(TokenKind::Int).ok()
             };
             let Some(kind) = kind else {
-                return Err(LexError {
-                    message: format!("the number `{num}` does not fit in 64 bits"),
-                    span: Span { start, end: i },
-                });
+                let message = if is_float {
+                    format!("`{num}` is not a float literal")
+                } else {
+                    format!("the number `{num}` does not fit in 64 bits")
+                };
+                return Err(LexError { message, span: Span { start, end: i } });
             };
             tokens.push(Token { kind, span: Span { start, end: i } });
             continue;
@@ -320,6 +321,16 @@ mod tests {
     fn lex_float() {
         let toks = lex("3.14").unwrap();
         assert!(matches!(toks[0].kind, TokenKind::Float(_)));
+        // A dot starts a float only when a digit follows. `1.field` is an
+        // integer, a dot, and a name; `1..` is a range.
+        let field = lex("1.field").unwrap();
+        assert!(matches!(field[0].kind, TokenKind::Int(1)));
+        assert_eq!(field[1].kind, TokenKind::Dot);
+        assert!(matches!(&field[2].kind, TokenKind::Ident(name) if name == "field"));
+        let range = lex("1..2").unwrap();
+        assert!(matches!(range[0].kind, TokenKind::Int(1)));
+        assert_eq!(range[1].kind, TokenKind::DotDot);
+        assert!(matches!(range[2].kind, TokenKind::Int(2)));
     }
 
     #[test]

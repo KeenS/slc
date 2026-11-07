@@ -165,8 +165,11 @@ const MAIN_ENTRY_POINT_ERROR: &str = "entry point must be `proc main | (exit: -i
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    // The subcommand is the first argument. A later word, including `check`
+    // or `--version`, belongs to the program being run.
+    let command = args.get(1).map(String::as_str);
 
-    if args.iter().any(|a| a == "--version") {
+    if command == Some("--version") {
         println!("slc {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
     }
@@ -178,35 +181,35 @@ fn main() -> ExitCode {
         eprintln!("       slc fmt [--check | --stdout] <file.sl>...");
         ExitCode::FAILURE
     };
-    if let Some(check_at) = args.iter().position(|a| a == "check") {
-        let files = &args[check_at + 1..];
+    if command == Some("check") {
+        let files = &args[2..];
         if files.is_empty() || files.iter().any(|f| f.starts_with("--")) {
             return usage();
         }
         return check_files(files);
     }
-    if let Some(fmt_at) = args.iter().position(|a| a == "fmt") {
-        return match format_files(&args[fmt_at + 1..]) {
+    if command == Some("fmt") {
+        return match format_files(&args[2..]) {
             Some(code) => code,
             None => usage(),
         };
     }
-    if let Some(compile_at) = args.iter().position(|a| a == "compile") {
-        return match compile_command(&args[compile_at + 1..]) {
+    if command == Some("compile") {
+        return match compile_command(&args[2..]) {
             Some(code) => code,
             None => usage(),
         };
     }
-    let Some(run_at) = args.iter().position(|a| a == "run") else {
+    if command != Some("run") {
         return usage();
-    };
+    }
     // A run is bounded only by memory unless `--fuel N` caps it. Omitted fuel
     // is not the same as `--fuel 0`, which runs no SLC code.
     let mut fuel = None;
     let mut interpret = false;
     let mut file = None;
     let mut program_args = Vec::new();
-    let mut rest = args[run_at + 1..].iter();
+    let mut rest = args[2..].iter();
     while let Some(arg) = rest.next() {
         // Flags are only recognized before the file. Everything after it is
         // a word the program reads, even when it looks like a flag.

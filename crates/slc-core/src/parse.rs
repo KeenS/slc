@@ -439,7 +439,11 @@ impl Parser {
                     self.expect("(")?;
                     let inner = self.ty()?;
                     self.expect(")")?;
-                    return Ok(Type::Dual(Box::new(inner)));
+                    // Store the canonical dual. `dual(+i32)` is `-i32`, not a
+                    // `Dual` wrapper around `+i32`, so `==` in `infer_command`
+                    // sees one type. Names whose dual stays wrapped (`?i`,
+                    // declarations, parameters, rows) still do.
+                    return Ok(inner.dual());
                 }
                 if name == "Delayed" {
                     self.expect("<")?;

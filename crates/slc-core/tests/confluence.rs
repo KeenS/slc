@@ -8,7 +8,10 @@ use slc_core::substitution::alpha_eq_term;
 use slc_core::term::Term;
 
 fn nf(c: &Command) -> Command {
-    normalize(c, 1000).expect("should normalize")
+    match normalize(c, 1000).expect("should normalize") {
+        slc_core::reduce::NormalForm::Command(command) => command,
+        slc_core::reduce::NormalForm::Component(_) => panic!("expected a command"),
+    }
 }
 
 #[test]
@@ -30,7 +33,7 @@ fn tensor_projection_commutes_with_beta() {
     let pair = Term::Tuple(vec![Term::Var("a".into()), Term::Var("b".into())]);
     let c = Command::Cut(pair, CoTerm::Prj(0));
     let r = step(&c);
-    assert!(matches!(r, Step::Reduced(_)));
+    assert!(matches!(r, Step::Component(_)));
 }
 
 #[test]

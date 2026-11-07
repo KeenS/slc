@@ -40,16 +40,36 @@ fn check_node_decl(d: &Node<Decl>, enums: &Declarations, diags: &mut Vec<Diagnos
                 check_expr(body, enums, &HashMap::new(), diags);
             }
         }
+        Decl::Trait { methods, .. } => {
+            for method in methods {
+                if let Some(body) = &method.body {
+                    check_expr(body, enums, &HashMap::new(), diags);
+                }
+            }
+        }
+        Decl::Impl { methods, .. } => {
+            for method in methods {
+                check_node_decl(method, enums, diags);
+            }
+        }
         Decl::Data { .. }
         | Decl::Enum { .. }
         | Decl::Menu { .. }
         | Decl::Form { .. }
         | Decl::Mod { .. }
         | Decl::Use { .. }
-        | Decl::Trait { .. }
-        | Decl::Impl { .. }
         | Decl::Effect { .. } => {}
     }
+}
+
+/// What a scrutinee's written type says. A parameter `(c, d): (Color, Color)`
+/// is a product of two enums. `i64`, and anything else this pass cannot
+/// enumerate, stays unknown — an unknown column still needs `_`.
+#[derive(Clone, Debug)]
+enum ScrutineeShape {
+    Enum(String),
+    Tuple(Vec<ScrutineeShape>),
+    Unknown,
 }
 
 /// A parameter binds a pattern, and the same two laws hold wherever a binder
@@ -82,13 +102,14 @@ fn check_params(
     }
 }
 
-fn declared_bindings(params: &[slc_syntax::ast::Param]) -> HashMap<String, String> {
+fn declared_bindings(params: &[slc_syntax::ast::Param]) -> HashMap<String, ScrutineeShape> {
     params
         .iter()
         .filter(|param| !param.is_continuation)
         .filter_map(|param| {
             let name = param.name()?.to_string();
-            written_type_name(param.ty.as_ref()?).map(|ty| (name, ty))
+            let shape = param.ty.as_ref().map(written_shape).unwrap_or(ScrutineeShape::Unknown);
+            Some((name, shape))
         })
         .collect()
 }
@@ -96,7 +117,7 @@ fn declared_bindings(params: &[slc_syntax::ast::Param]) -> HashMap<String, Strin
 fn check_expr(
     e: &Node<Expr>,
     enums: &Declarations,
-    bindings: &HashMap<String, String>,
+    bindings: &HashMap<String, ScrutineeShape>,
     diags: &mut Vec<Diagnostic>,
 ) {
     match &e.kind {
@@ -230,7 +251,7 @@ fn check_expr(
                 check_expr(i, enums, bindings, diags);
             }
         }
-        Expr::Let { pattern, value, body, .. } => {
+        Expr::Let { pattern, ty, value, body, .. } => {
             // A binder stands for every value of its type: there is no other
             // arm to fall to. Anything that can fail to match belongs in a
             // `of`, which says what happens when it does.
@@ -246,7 +267,9 @@ fn check_expr(
             }
             check_expr(value, enums, bindings, diags);
             if let Some(b) = body {
-                check_expr(b, enums, bindings, diags);
+                let mut local = bindings.clone();
+                record_let_shape(pattern, ty, value, enums, &mut local);
+                check_expr(b, enums, &local, diags);
             }
         }
         Expr::Project { base: body, .. } => check_expr(body, enums, bindings, diags),
@@ -260,11 +283,79 @@ fn check_expr(
             }
         }
         Expr::Block(exprs) => {
+            let mut local = bindings.clone();
             for ex in exprs {
-                check_expr(ex, enums, bindings, diags);
+                check_expr(ex, enums, &local, diags);
+                if let Expr::Let { pattern, ty, value, body: None, .. } = &ex.kind {
+                    record_let_shape(pattern, ty, value, enums, &mut local);
+                }
             }
         }
+        Expr::Flow { stages, .. } => {
+            for stage in stages {
+                check_expr(stage, enums, bindings, diags);
+            }
+        }
+        Expr::Data { fields, .. } => {
+            for (_, value) in fields {
+                check_expr(value, enums, bindings, diags);
+            }
+        }
+        Expr::Request { arg, .. } => check_expr(arg, enums, bindings, diags),
+        Expr::Handler { clauses, ret, .. } => {
+            for clause in clauses {
+                check_expr(&clause.body, enums, bindings, diags);
+            }
+            if let Some((_, body)) = ret {
+                check_expr(body, enums, bindings, diags);
+            }
+        }
+        Expr::WithHandler { handler, body } => {
+            check_expr(handler, enums, bindings, diags);
+            check_expr(body, enums, bindings, diags);
+        }
         _ => {}
+    }
+}
+
+fn record_let_shape(
+    pattern: &Pattern,
+    ty: &Option<slc_syntax::ast::TypeExpr>,
+    value: &Node<Expr>,
+    enums: &Declarations,
+    bindings: &mut HashMap<String, ScrutineeShape>,
+) {
+    let Pattern::Ident(name) = pattern else { return };
+    if enums.variant(name).is_some() || enums.is_ambiguous_variant(name) {
+        return;
+    }
+    if let Some(ty) = ty {
+        bindings.insert(name.clone(), written_shape(ty));
+        return;
+    }
+    if let Some(shape) = shape_of_expr(&value.kind, enums) {
+        bindings.insert(name.clone(), shape);
+    }
+}
+
+fn shape_of_expr(expr: &Expr, enums: &Declarations) -> Option<ScrutineeShape> {
+    match expr {
+        Expr::Ident(name) => {
+            let (owner, _) = enums.variant(name)?;
+            Some(ScrutineeShape::Enum(owner.clone()))
+        }
+        Expr::Call { callee, .. } => {
+            let Expr::Ident(name) = &callee.kind else { return None };
+            let (owner, _) = enums.variant(name)?;
+            Some(ScrutineeShape::Enum(owner.clone()))
+        }
+        Expr::Pair(items) => Some(ScrutineeShape::Tuple(
+            items
+                .iter()
+                .map(|item| shape_of_expr(&item.kind, enums).unwrap_or(ScrutineeShape::Unknown))
+                .collect(),
+        )),
+        _ => None,
     }
 }
 
@@ -341,6 +432,21 @@ fn written_type_name(ty: &slc_syntax::ast::TypeExpr) -> Option<String> {
         slc_syntax::ast::TypeExpr::Positive(inner) => written_type_name(&inner.kind),
         slc_syntax::ast::TypeExpr::Sum(items) if items.is_empty() => Some("(|)".into()),
         _ => None,
+    }
+}
+
+/// The shape coverage can enumerate: an enum name, or a product of shapes.
+fn written_shape(ty: &slc_syntax::ast::TypeExpr) -> ScrutineeShape {
+    match ty {
+        slc_syntax::ast::TypeExpr::Base(name) => ScrutineeShape::Enum(name.clone()),
+        slc_syntax::ast::TypeExpr::Positive(inner) => written_shape(&inner.kind),
+        slc_syntax::ast::TypeExpr::Tensor(items) => {
+            ScrutineeShape::Tuple(items.iter().map(|item| written_shape(&item.kind)).collect())
+        }
+        slc_syntax::ast::TypeExpr::Sum(items) if items.is_empty() => {
+            ScrutineeShape::Enum("(|)".into())
+        }
+        _ => ScrutineeShape::Unknown,
     }
 }
 
@@ -515,32 +621,47 @@ fn check_match(
     scrutinee: &Node<Expr>,
     arms: &[MatchArm],
     enums: &Declarations,
-    bindings: &HashMap<String, String>,
+    bindings: &HashMap<String, ScrutineeShape>,
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // An irrefutable arm covers everything: a wildcard, a plain binding, or
-    // the single shape of a product.
-    if arms.iter().any(|a| is_irrefutable(&a.pattern, enums)) {
+    let shape = match &scrutinee.kind {
+        Expr::Ident(name) => bindings.get(name),
+        _ => None,
+    };
+    let known_enum = match shape {
+        Some(ScrutineeShape::Enum(name)) if enums.variants_of(name).is_some() => Some(name.clone()),
+        _ => None,
+    };
+    // `_`, a binder, or an or-pattern that contains one covers every value.
+    // A tuple or a foreign one-variant enum does not cover a known enum:
+    // `(_, _)` misses every variant of `Color`.
+    if arms.iter().any(|arm| covers_any(&arm.pattern, enums)) {
+        return;
+    }
+    if known_enum.is_none() && arms.iter().any(|arm| is_irrefutable(&arm.pattern, enums)) {
         return;
     }
 
     for arm in arms {
         check_pattern_arity(&arm.pattern, enums, span, diags);
     }
-    // A sum's positions are the type checker's to count.
-    if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Inject { .. })) {
+    // A sum's positions are the type checker's to count, including an
+    // or-pattern of alternatives: `(::0(Red) | ::0(Green))`.
+    if arms.iter().any(|arm| pattern_mentions_inject(&arm.pattern)) {
+        return;
+    }
+    if let Some(ScrutineeShape::Tuple(columns)) = shape
+        && check_constructor_matrix(columns, arms, enums, span, diags)
+    {
         return;
     }
 
     // Collect enum patterns used: Name(variant, _).
     let mut covered: HashSet<String> = HashSet::new();
-    let mut scrutinee_type = match &scrutinee.kind {
-        Expr::Ident(name) => bindings.get(name),
-        _ => None,
-    };
+    let mut scrutinee_type = known_enum;
     // `(|)` has no values, so a match on one needs no arm.
-    if arms.is_empty() && scrutinee_type.is_some_and(|ty| ty.as_str() == "(|)") {
+    if arms.is_empty() && matches!(shape, Some(ScrutineeShape::Enum(name)) if name == "(|)") {
         return;
     }
 
@@ -552,6 +673,12 @@ fn check_match(
             match pattern {
                 Pattern::Binding { pattern, .. } => pending.push(pattern),
                 Pattern::Or(alternatives) => pending.extend(alternatives.iter()),
+                Pattern::Wildcard => return,
+                Pattern::Ident(name)
+                    if enums.variant(name).is_none() && !enums.is_ambiguous_variant(name) =>
+                {
+                    return;
+                }
                 pattern => {
                     // Three spellings reach here, and a bare variant name — with or
                     // without a payload — names its enum only indirectly:
@@ -561,7 +688,7 @@ fn check_match(
                     let (written, payload) = match pattern {
                         Pattern::Ident(x) => (x, None),
                         Pattern::Enum { name, variant, .. } if variant.is_empty() => (name, None),
-                        Pattern::Enum { name, variant, .. } => (variant, Some(name)),
+                        Pattern::Enum { name, variant, .. } => (variant, Some(name.as_str())),
                         // A request shape covers its item, resolved like an unqualified
                         // variant against the menu table.
                         Pattern::Dtor { dtor, .. } => (dtor, None),
@@ -570,15 +697,17 @@ fn check_match(
                     match payload {
                         Some(enum_name) => {
                             if scrutinee_type.is_none() {
-                                scrutinee_type = Some(enum_name);
+                                scrutinee_type = Some(enum_name.to_string());
                             }
                             covered.insert(written.clone());
                         }
                         // Unqualified: if this name is a variant of exactly one known
                         // enum, that enum is what the match is over.
                         None => {
-                            let declaring: Option<&String> =
-                                enums.enums().find(|(_, vs)| vs.contains(written)).map(|(n, _)| n);
+                            let declaring = enums
+                                .enums()
+                                .find(|(_, vs)| vs.contains(written))
+                                .map(|(n, _)| n.clone());
                             if let Some(enum_name) = declaring {
                                 if scrutinee_type.is_none() {
                                     scrutinee_type = Some(enum_name);
@@ -594,7 +723,7 @@ fn check_match(
 
     // If we know the enum type, check coverage.
     if let Some(enum_name) = scrutinee_type
-        && let Some(variants) = enums.variants_of(enum_name)
+        && let Some(variants) = enums.variants_of(&enum_name)
     {
         let missing: Vec<&String> = variants.iter().filter(|v| !covered.contains(*v)).collect();
         if !missing.is_empty() {
@@ -606,13 +735,268 @@ fn check_match(
                 ),
                 span,
             });
+            return;
         }
+        check_payload_coverage(&enum_name, variants, arms, enums, span, diags);
         return;
     }
 
     // Without enum coverage information, a match is exhaustive only when it
     // has a wildcard. This conservatively rejects literal-only matches.
     diags.push(Diagnostic { message: "non-exhaustive of: add a `_` arm".into(), span });
+}
+
+/// `_` or a non-variant binder, including inside an or-pattern.
+fn covers_any(pattern: &Pattern, enums: &Declarations) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+        Pattern::Ident(name) => enums.variant(name).is_none() && !enums.is_ambiguous_variant(name),
+        Pattern::Binding { pattern, .. } => covers_any(pattern, enums),
+        Pattern::Or(alternatives) => {
+            alternatives.iter().any(|alternative| covers_any(alternative, enums))
+        }
+        _ => false,
+    }
+}
+
+fn pattern_mentions_inject(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Inject { .. } => true,
+        Pattern::Or(items) | Pattern::Tuple(items) | Pattern::Bundle(items) => {
+            items.iter().any(pattern_mentions_inject)
+        }
+        Pattern::Binding { pattern, .. } => pattern_mentions_inject(pattern),
+        Pattern::Enum { fields, .. } => fields.iter().any(pattern_mentions_inject),
+        Pattern::Data { fields, .. } => {
+            fields.iter().any(|(_, field)| pattern_mentions_inject(field))
+        }
+        _ => false,
+    }
+}
+
+/// `true` when `columns` is a product of enums and its coverage was decided.
+/// An unknown column returns `false` so the caller still demands `_`.
+fn check_constructor_matrix(
+    columns: &[ScrutineeShape],
+    arms: &[MatchArm],
+    enums: &Declarations,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    let mut column_variants: Vec<&Vec<String>> = Vec::new();
+    let mut names = Vec::new();
+    for column in columns {
+        let ScrutineeShape::Enum(name) = column else { return false };
+        let Some(variants) = enums.variants_of(name) else { return false };
+        column_variants.push(variants);
+        names.push(name.as_str());
+    }
+    let mut size = 1usize;
+    for variants in &column_variants {
+        size = size.saturating_mul(variants.len());
+        if size > 4096 {
+            return false;
+        }
+    }
+    let mut missing = Vec::new();
+    let mut current = Vec::new();
+    walk_combinations(&column_variants, 0, &mut current, arms, enums, &mut missing);
+    if missing.is_empty() {
+        return true;
+    }
+    let shown: Vec<_> = missing.into_iter().take(4).collect();
+    diags.push(Diagnostic {
+        message: format!(
+            "non-exhaustive of: missing combination{} {} of ({})",
+            if shown.len() > 1 { "s" } else { "" },
+            shown.join(", "),
+            names.join(", ")
+        ),
+        span,
+    });
+    true
+}
+
+fn walk_combinations<'a>(
+    columns: &[&'a Vec<String>],
+    index: usize,
+    current: &mut Vec<&'a str>,
+    arms: &[MatchArm],
+    enums: &Declarations,
+    missing: &mut Vec<String>,
+) {
+    if index == columns.len() {
+        let covered = arms.iter().any(|arm| tuple_covers(&arm.pattern, current, enums));
+        if !covered {
+            missing.push(format!("({})", current.join(", ")));
+        }
+        return;
+    }
+    for variant in columns[index] {
+        current.push(variant);
+        walk_combinations(columns, index + 1, current, arms, enums, missing);
+        current.pop();
+    }
+}
+
+fn tuple_covers(pattern: &Pattern, values: &[&str], enums: &Declarations) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+        Pattern::Ident(name)
+            if enums.variant(name).is_none() && !enums.is_ambiguous_variant(name) =>
+        {
+            true
+        }
+        Pattern::Binding { pattern, .. } => tuple_covers(pattern, values, enums),
+        Pattern::Or(alternatives) => {
+            alternatives.iter().any(|alternative| tuple_covers(alternative, values, enums))
+        }
+        Pattern::Tuple(items) if items.len() == values.len() => {
+            items.iter().zip(values).all(|(item, value)| component_covers(item, value, enums))
+        }
+        _ => false,
+    }
+}
+
+fn component_covers(pattern: &Pattern, variant: &str, enums: &Declarations) -> bool {
+    match pattern {
+        Pattern::Wildcard => true,
+        Pattern::Ident(name) if name == variant => true,
+        Pattern::Ident(name)
+            if enums.variant(name).is_none() && !enums.is_ambiguous_variant(name) =>
+        {
+            true
+        }
+        Pattern::Enum { name, variant: written, .. } => {
+            let found = if written.is_empty() { name.as_str() } else { written.as_str() };
+            found == variant
+        }
+        Pattern::Binding { pattern, .. } => component_covers(pattern, variant, enums),
+        Pattern::Or(alternatives) => {
+            alternatives.iter().any(|alternative| component_covers(alternative, variant, enums))
+        }
+        _ => false,
+    }
+}
+
+fn check_payload_coverage(
+    enum_name: &str,
+    variants: &[String],
+    arms: &[MatchArm],
+    enums: &Declarations,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for variant in variants {
+        if arms.iter().any(|arm| variant_ignores_payload(&arm.pattern, variant)) {
+            continue;
+        }
+        let qualified = format!("{enum_name}::{variant}");
+        let payload = enums
+            .variant(&qualified)
+            .or_else(|| enums.variant(variant))
+            .map(|(_, types)| types.clone())
+            .unwrap_or_default();
+        for (index, ty) in payload.iter().enumerate() {
+            let Some((inner, inner_variants)) = enum_payload(ty, enums) else { continue };
+            let mut fields = Vec::new();
+            for arm in arms {
+                collect_payload(&arm.pattern, variant, index, &mut fields);
+            }
+            if fields.iter().any(|field| covers_any(field, enums)) {
+                continue;
+            }
+            let mut covered = HashSet::new();
+            for field in &fields {
+                collect_payload_variants(field, &mut covered);
+            }
+            let missing: Vec<&String> =
+                inner_variants.iter().filter(|name| !covered.contains(*name)).collect();
+            if missing.is_empty() {
+                continue;
+            }
+            diags.push(Diagnostic {
+                message: format!(
+                    "non-exhaustive of: missing variant{} {} of enum `{inner}` in `{variant}`",
+                    if missing.len() > 1 { "s" } else { "" },
+                    missing.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+                ),
+                span,
+            });
+        }
+    }
+}
+
+fn variant_ignores_payload(pattern: &Pattern, variant: &str) -> bool {
+    match pattern {
+        Pattern::Ident(name) => name == variant,
+        Pattern::Binding { pattern, .. } => variant_ignores_payload(pattern, variant),
+        Pattern::Or(alternatives) => {
+            alternatives.iter().any(|alternative| variant_ignores_payload(alternative, variant))
+        }
+        _ => false,
+    }
+}
+
+fn enum_payload<'a>(
+    ty: &'a slc_core::types::Type,
+    enums: &'a Declarations,
+) -> Option<(&'a str, &'a Vec<String>)> {
+    let mut current = ty;
+    loop {
+        match current {
+            slc_core::types::Type::Dual(inner)
+            | slc_core::types::Type::Rowed(inner, _)
+            | slc_core::types::Type::Delayed(inner, _) => current = inner,
+            slc_core::types::Type::Named(name, _) => {
+                return enums.variants_of(name).map(|variants| (name.as_str(), variants));
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn collect_payload<'a>(
+    pattern: &'a Pattern,
+    variant: &str,
+    index: usize,
+    out: &mut Vec<&'a Pattern>,
+) {
+    match pattern {
+        Pattern::Binding { pattern, .. } => collect_payload(pattern, variant, index, out),
+        Pattern::Or(alternatives) => {
+            for alternative in alternatives {
+                collect_payload(alternative, variant, index, out);
+            }
+        }
+        Pattern::Enum { name, variant: written, fields } => {
+            let found = if written.is_empty() { name.as_str() } else { written.as_str() };
+            if found == variant
+                && let Some(field) = fields.get(index)
+            {
+                out.push(field);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_payload_variants(pattern: &Pattern, out: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Binding { pattern, .. } => collect_payload_variants(pattern, out),
+        Pattern::Or(alternatives) => {
+            for alternative in alternatives {
+                collect_payload_variants(alternative, out);
+            }
+        }
+        Pattern::Ident(name) => {
+            out.insert(name.clone());
+        }
+        Pattern::Enum { name, variant, .. } => {
+            out.insert(if variant.is_empty() { name.clone() } else { variant.clone() });
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -914,5 +1298,94 @@ mod tests {
         );
         assert!(r.is_err());
         assert!(r.unwrap_err().iter().any(|d| d.message.contains("unknown type")));
+    }
+
+    #[test]
+    fn a_tuple_does_not_cover_an_enum() {
+        let diags = check(
+            "enum Color { Red, Green }
+             func f(c: Color) -> i64 { of c { (_, _) => 1 } }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("Red") && d.message.contains("Green")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn an_or_with_a_wildcard_covers_the_enum() {
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 func f(c: Color) -> i64 { of c { Red | _ => 1 } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_payload_enum_must_be_covered() {
+        let diags = check(
+            "enum Color { Red, Green }
+             enum Shape { Circle(Color), Dot }
+             func f(s: Shape) -> i64 { of s { Circle(Red) => 1, Dot => 2 } }",
+        )
+        .unwrap_err();
+        assert!(
+            diags.iter().any(|d| d.message.contains("Green") && d.message.contains("Circle")),
+            "{diags:?}"
+        );
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 enum Shape { Circle(Color), Dot }
+                 func f(s: Shape) -> i64 { of s { Circle(c) => 1, Dot => 2 } }"
+            )
+            .is_ok()
+        );
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 enum Shape { Circle(Color), Dot }
+                 func f(s: Shape) -> i64 { of s { Circle(Red) => 1, Circle(Green) => 2, Dot => 3 } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_product_of_enums_is_covered_by_its_combinations() {
+        let diags = check(
+            "enum Color { Red, Green }
+             func f(p: (Color, Color)) -> i64 { of p { (Red, Red) => 1 } }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("missing combination")), "{diags:?}");
+        assert!(
+            check(
+                "enum Color { Red, Green }
+                 func f(p: (Color, Color)) -> i64 {
+                     of p {
+                         (Red, Red) => 1,
+                         (Red, Green) => 2,
+                         (Green, Red) => 3,
+                         (Green, Green) => 4,
+                     }
+                 }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_match_inside_a_flow_is_checked() {
+        let diags = check(
+            "enum Color { Red, Green }
+             func id(c: Color) -> Color { c }
+             func f(c: Color) -> i64 { <of c { Red => 1 } | id }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("Green")), "{diags:?}");
     }
 }

@@ -8,7 +8,15 @@ use slc_core::term::{DELAY_BINDER, Term};
 
 use crate::{Cond, Dest, Function, Inst, Module};
 
-fn pipeline(src: &str) -> crate::Compiled {
+struct Prepared {
+    defs: Vec<(String, Term)>,
+    specs: Vec<slc_syntax::lower::Specialization>,
+    payloads: std::collections::HashMap<String, Vec<slc_core::types::Type>>,
+    traits: slc_syntax::traits::TraitInfo,
+    operations: Vec<String>,
+}
+
+fn prepare(src: &str) -> Prepared {
     let tokens = slc_syntax::lexer::lex(src).unwrap();
     let program = slc_syntax::parser::parse(tokens).unwrap();
     let program = slc_syntax::resolve::resolve_program(&program).unwrap();
@@ -22,15 +30,28 @@ fn pipeline(src: &str) -> crate::Compiled {
     let defs = slc_syntax::lower::lower_program_resolving(&program, &dispatch)
         .unwrap_or_else(|err| panic!("{err}"));
     let operations = program.operation_names();
+    Prepared {
+        defs,
+        specs: dispatch.specializations,
+        payloads: dispatch.payloads,
+        traits,
+        operations,
+    }
+}
+
+fn compile_prepared(prepared: &Prepared) -> Result<crate::Compiled, String> {
     crate::compile(
-        &defs,
-        &dispatch.specializations,
-        &dispatch.payloads,
-        &traits,
-        &operations,
+        &prepared.defs,
+        &prepared.specs,
+        &prepared.payloads,
+        &prepared.traits,
+        &prepared.operations,
         usize::MAX,
     )
-    .unwrap_or_else(|err| panic!("{err}"))
+}
+
+fn pipeline(src: &str) -> crate::Compiled {
+    compile_prepared(&prepare(src)).unwrap_or_else(|err| panic!("{err}"))
 }
 
 fn flat(func: &Function) -> Vec<&Inst> {
@@ -1127,6 +1148,53 @@ fn write_line_after_a_segment_move_still_prints() {
     assert_eq!(stdout, "big\n", "stderr: {stderr}");
 }
 
+fn interpret_main(defs: &[(String, Term)], proc_main: bool) -> Result<i64, String> {
+    use slc_runtime::eval::{EvalError, apply_under_io, apply_value, run_node};
+    use slc_runtime::value::{Env, Value, install_stdlib};
+    let (chunk, roots) = slc_runtime::compile::compile_program(defs);
+    slc_runtime::chunk::with_chunk(chunk, || {
+        let mut env = Env::new();
+        install_stdlib(&mut env);
+        let mut fuel = 1_000_000usize;
+        let mut main = None;
+        for (name, root) in &roots {
+            if name == "main" {
+                main = Some(*root);
+                continue;
+            }
+            let value = run_node(*root, &mut env, &mut fuel).map_err(|err| err.to_string())?;
+            env.define_global(name.clone(), value);
+        }
+        let entry =
+            run_node(main.ok_or("no main")?, &mut env, &mut fuel).map_err(|err| err.to_string())?;
+        let entry = apply_value(entry, Value::Unit, &mut fuel).map_err(|err| err.to_string())?;
+        if proc_main {
+            match apply_under_io(entry, Value::Builtin("EXIT".into()), &mut fuel) {
+                Err(EvalError::Exit(code)) => Ok(i64::from(code)),
+                Ok(value) => Err(format!("proc main returned {}", value.display())),
+                Err(err) => Err(err.to_string()),
+            }
+        } else {
+            match entry {
+                Value::Int(n) => Ok(n),
+                value => Err(format!("func main returned {}", value.display())),
+            }
+        }
+    })
+}
+
+/// Native status and the interpreter's `i64`, which must be the same number.
+fn agree(src: &str, proc_main: bool) -> i64 {
+    let prepared = prepare(src);
+    let compiled = compile_prepared(&prepared).unwrap_or_else(|err| panic!("{err}"));
+    let (status, stdout, stderr, _) = link_run_fuel(&compiled.object, "~(uint64_t)0");
+    let interpreted = interpret_main(&prepared.defs, proc_main).unwrap_or_else(|err| {
+        panic!("interpreter: {err}\nnative status {status}\nstdout: {stdout}\nstderr: {stderr}")
+    });
+    assert_eq!(i64::from(status), interpreted, "stdout: {stdout}\nstderr: {stderr}");
+    interpreted
+}
+
 fn core_compile(defs: Vec<(String, Term)>) -> crate::Compiled {
     crate::compile(
         &defs,
@@ -1157,4 +1225,207 @@ fn app(arg: Term, cont: &str) -> CoTerm {
 
 fn mu_call(callee: Term, coterm: CoTerm) -> Term {
     Term::Mu("__call".into(), Box::new(Cut::Cut(callee, coterm)))
+}
+
+const BOOL_ORDER: &str = r#"
+enum Bool { False, True }
+func score() -> i64 {
+    let lt = of (<(False, True) | __lt) { True => 1, False => 0 };
+    let backwards = of (<(True, False) | __lt) { True => 1, False => 0 };
+    let same = of (<(False, False) | __eq) { True => 1, False => 0 };
+    let n = <(lt, <(backwards, 2) | __mul) | __add;
+    <(n, <(same, 4) | __mul) | __add
+}
+func main() -> i64 { score() }
+"#;
+
+#[test]
+fn call_operands_match_the_interpreter() {
+    assert_eq!(
+        agree(
+            r#"
+            enum Bool { False, True }
+            func g() -> String { "ab" }
+            func main() -> i64 {
+                of (<(g(), "ab") | __eq) { True => 1, False => 0 }
+            }
+            "#,
+            false,
+        ),
+        1
+    );
+    assert_eq!(agree("func g() -> i64 { 40 } func main() -> i64 { <(g(), 2) | __add }", false), 42);
+    assert_eq!(
+        agree(
+            r#"
+            enum Bool { False, True }
+            func g() -> f64 { 1.5 }
+            func main() -> i64 {
+                let s = <(g(), 2.5) | __add;
+                of (<(s, 4.0) | __eq) { True => 1, False => 0 }
+            }
+            "#,
+            false,
+        ),
+        1
+    );
+    assert_eq!(
+        agree(
+            r#"
+            func g() -> i64 { 3 }
+            func main() -> i64 { of (<g() | __neg) { -3 => 7, _ => 0 } }
+            "#,
+            false,
+        ),
+        7
+    );
+    assert_eq!(
+        agree(
+            r#"
+            enum Bool { False, True }
+            func g() -> String { "a" }
+            func main() -> i64 {
+                let s = <(g(), "b") | __add;
+                of (<(s, "ab") | __eq) { True => 1, False => 0 }
+            }
+            "#,
+            false,
+        ),
+        1
+    );
+    assert_eq!(
+        agree(
+            r#"
+            enum Bool { False, True }
+            func g() -> i64 { 3 }
+            func main() -> i64 {
+                let s = <g() | __to_f64;
+                of (<(s, 3.0) | __eq) { True => 1, False => 0 }
+            }
+            "#,
+            false,
+        ),
+        1
+    );
+    assert_eq!(agree("func g() -> f64 { 4.0 } func main() -> i64 { <g() | __to_i64 }", false), 4);
+
+    let overflow = prepare("func g() -> f64 { 1.5 } func main() -> i64 { <g() | __to_i64 }");
+    let compiled = compile_prepared(&overflow).unwrap_or_else(|err| panic!("{err}"));
+    let (status, stdout, stderr, _) = link_run_fuel(&compiled.object, "~(uint64_t)0");
+    assert_eq!(status, 1, "stdout: {stdout}\nstderr: {stderr}");
+    assert!(stderr.contains("arithmetic overflow: 1.5 does not fit in i64"), "{stderr}");
+    let err = interpret_main(&overflow.defs, false).unwrap_err();
+    assert!(err.contains("arithmetic overflow: 1.5 does not fit in i64"), "{err}");
+
+    assert_eq!(
+        agree(
+            r#"
+            enum Bool { False, True }
+            func z() -> i64 { 0 }
+            func f() -> f64 { 1.5 }
+            func c() -> char { 'A' }
+            func shown(text: String, want: String) -> i64 {
+                of (<(text, want) | __eq) { True => 1, False => 0 }
+            }
+            func main() -> i64 {
+                let zero = <((<z() | __display), "0") | shown;
+                let frac = <((<f() | __display), "1.5") | shown;
+                let letter = <((<c() | __display), "A") | shown;
+                let n = <(zero, <(frac, 2) | __mul) | __add;
+                <(n, <(letter, 4) | __mul) | __add
+            }
+            "#,
+            false,
+        ),
+        7
+    );
+    let printed = pipeline(
+        r#"
+        hook IO { func write_line(text: String) -> (,); }
+        func println(x: String) -> (,) / {IO} { <x | write_line }
+        func z() -> i64 { 0 }
+        func f() -> f64 { 1.5 }
+        func c() -> char { 'A' }
+        proc main | (exit: i32) / {IO} {
+            let text = <z() | __display;
+            let _ = <text | println;
+            let text = <f() | __display;
+            let _ = <text | println;
+            let text = <c() | __display;
+            let _ = <text | println;
+            <0 | exit>
+        }
+        "#,
+    );
+    let (status, stdout, stderr, _) = link_run_fuel(&printed.object, "~(uint64_t)0");
+    assert_eq!(status, 0, "stdout: {stdout}\nstderr: {stderr}");
+    assert_eq!(stdout, "0\n1.5\nA\n", "stderr: {stderr}");
+}
+
+#[test]
+fn proc_local_matches_the_interpreter() {
+    assert_eq!(
+        agree(
+            r#"
+            func g() -> i64 { 40 }
+            proc main | (exit: i32) {
+                let a = g();
+                let n = <(a, 2) | __add;
+                of n { 42 => <7 | exit>, _ => <0 | exit> }
+            }
+            "#,
+            true,
+        ),
+        7
+    );
+    assert_eq!(
+        agree(
+            r#"
+            func main() -> i64 {
+                let a = 1;
+                let a = 40;
+                <(a, 2) | __add
+            }
+            "#,
+            false,
+        ),
+        42
+    );
+    let shadowed = prepare(
+        r#"
+        func main() -> i64 {
+            let a = 1;
+            let a = 1.5;
+            <a | __to_i64
+        }
+        "#,
+    );
+    let err = match compile_prepared(&shadowed) {
+        Err(err) => err,
+        Ok(_) => panic!("a shadowed int and float must not compile as an integer word"),
+    };
+    assert!(
+        err.contains("needs a known integer or float") || err.contains("no operand kind"),
+        "{err}"
+    );
+}
+
+#[test]
+fn bool_order_is_false_before_true() {
+    assert_eq!(agree(BOOL_ORDER, false), 5);
+    let swapped = BOOL_ORDER.replacen("enum Bool { False, True }", "enum Bool { True, False }", 1);
+    assert_eq!(agree(&swapped, false), 5);
+}
+
+#[test]
+fn inverted_range_covers_nothing() {
+    assert_eq!(agree("func main() -> i64 { of 3 { 5..=1 => 1, 3 => 2, _ => 0 } }", false), 2);
+    assert_eq!(
+        agree("func main() -> i64 { of 'c' { 'z'..='a' => 1, 'c' => 2, _ => 0 } }", false),
+        2
+    );
+    assert_eq!(
+        agree("func main() -> i64 { of 1.5 { 5.0..=1.0 => 1, 1.5 => 2, _ => 0 } }", false),
+        2
+    );
 }

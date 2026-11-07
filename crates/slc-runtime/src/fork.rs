@@ -162,13 +162,18 @@ pub(crate) fn both(left: Value, right: Value) -> Result<Value, EvalError> {
 
 /// Both arms pass this before either force charges fuel, so a loop in the
 /// arm that the scheduler runs first cannot spend the shared budget during
-/// the other arm's startup.
-fn arrive(entered: &AtomicUsize) {
+/// the other arm's startup. If the other force never starts, `overlap` sets
+/// `stop` and joins this worker; waiting for a second arrival would deadlock.
+fn arrive(clock: &Clock, entered: &AtomicUsize) -> Result<(), EvalError> {
     entered.fetch_add(1, Ordering::Release);
     while entered.load(Ordering::Acquire) < 2 {
+        if clock.stop.load(Ordering::Relaxed) {
+            return Err(EvalError::Stopped);
+        }
         std::thread::yield_now();
     }
     std::thread::yield_now();
+    Ok(())
 }
 
 fn overlap(clock: &Clock, left: Value, right: Value) -> Result<Value, EvalError> {
@@ -186,8 +191,10 @@ fn overlap(clock: &Clock, left: Value, right: Value) -> Result<Value, EvalError>
             let clock = unsafe { &*clock_ptr.get() };
             let _clock = install_clock(clock);
             let _pace = install_pace(&pace, index);
-            arrive(&entered);
-            let result = with_chunk(chunk, || force_thunk(thunk));
+            let result = match arrive(clock, &entered) {
+                Ok(()) => with_chunk(chunk, || force_thunk(thunk)),
+                Err(error) => Err(error),
+            };
             if result.is_ok() {
                 pace.steps[index].store(usize::MAX, Ordering::Relaxed);
             } else {
@@ -270,4 +277,39 @@ fn force_thunk(thunk: Value) -> Result<Value, EvalError> {
     };
     let state = menu_dispatch(menu, env, &label, Value::Kont(Kont::empty()))?;
     machine::run(state, Kont::empty(), &mut fuel)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrive_returns_when_the_other_force_does_not_start() {
+        let clock = Clock { fuel: AtomicUsize::new(4), stop: AtomicBool::new(false) };
+        let entered = AtomicUsize::new(0);
+        let result = std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let _guard = install_clock(&clock);
+                arrive(&clock, &entered)
+            });
+            while entered.load(Ordering::Acquire) == 0 {
+                std::thread::yield_now();
+            }
+            clock.halt();
+            worker.join().expect("worker")
+        });
+        assert!(matches!(result, Err(EvalError::Stopped)));
+    }
+
+    #[test]
+    fn both_forces_leave_arrive_once_each_has_entered() {
+        let clock = Clock { fuel: AtomicUsize::new(4), stop: AtomicBool::new(false) };
+        let entered = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let left = scope.spawn(|| arrive(&clock, &entered));
+            let right = scope.spawn(|| arrive(&clock, &entered));
+            assert!(left.join().expect("left").is_ok());
+            assert!(right.join().expect("right").is_ok());
+        });
+    }
 }

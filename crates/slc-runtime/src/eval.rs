@@ -84,6 +84,63 @@ pub fn run_node(
     crate::machine::run_term(root, env, fuel)
 }
 
+/// `Debug` for a string. One left-to-right scan: `\\` is a single backslash,
+/// so the `n` in `\\n` is not a newline.
+fn unescape_debug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(ch) = rest.chars().next() {
+        if ch != '\\' {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let after = &rest[1..];
+        let Some(esc) = after.chars().next() else {
+            out.push('\\');
+            break;
+        };
+        if esc == 'u' {
+            if let Some((decoded, tail)) = unicode_escape(after) {
+                out.push(decoded);
+                rest = tail;
+            } else {
+                out.push('\\');
+                rest = after;
+            }
+            continue;
+        }
+        match esc {
+            '\\' => out.push('\\'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            '0' => out.push('\0'),
+            '"' => out.push('"'),
+            _ => {
+                out.push('\\');
+                rest = after;
+                continue;
+            }
+        }
+        rest = &after[esc.len_utf8()..];
+    }
+    out
+}
+
+/// `\u{hex}` as `Debug` emits it. `text` starts at `u`. `None` leaves the
+/// backslash for the caller to keep.
+fn unicode_escape(text: &str) -> Option<(char, &str)> {
+    let rest = text.strip_prefix("u{")?;
+    let close = rest.find('}')?;
+    let hex = &rest[..close];
+    if hex.is_empty() || hex.len() > 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let code = u32::from_str_radix(hex, 16).ok()?;
+    Some((char::from_u32(code)?, &rest[close + 1..]))
+}
+
 /// A variable is a lowered literal, a builtin constant, or a binding.
 pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> {
     match x {
@@ -95,12 +152,7 @@ pub(crate) fn literal_or_lookup(x: &str, env: &Env) -> Result<Value, EvalError> 
         n if n.starts_with("$str_") => {
             let s = &n[5..];
             let s = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s);
-            let s = s
-                .replace("\\n", "\n")
-                .replace("\\t", "\t")
-                .replace("\\\"", "\"")
-                .replace("\\\\", "\\");
-            return Ok(Value::Str(s));
+            return Ok(Value::Str(unescape_debug(s)));
         }
         n if n.starts_with("$float_") => {
             let v: f64 = n[7..].parse().map_err(|_| EvalError::Unbound(x.to_string()))?;
@@ -439,6 +491,17 @@ mod tests {
         let mut env = Env::new();
         let mut fuel = 100;
         assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Str("hello".into()));
+    }
+
+    #[test]
+    fn debug_escapes_round_trip_including_a_backslashed_n() {
+        // `a\\nb` is a, backslash, n, b. Debug prints `\\n`, which must not
+        // become a newline. `\r`, `\0`, and `\u{...}` are what Debug emits.
+        let text = "a\\nb\n\r\0\t\"\\\u{1}\u{a0}\u{301}";
+        let t = Term::Var(format!("$str_{text:?}"));
+        let mut env = Env::new();
+        let mut fuel = 100;
+        assert_eq!(eval(&t, &mut env, &mut fuel).unwrap(), Value::Str(text.into()));
     }
 
     #[test]

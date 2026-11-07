@@ -1227,6 +1227,15 @@ fn inline_hands_decl(decl: &mut Decl, hands: &HashMap<String, HandBody>) {
                 inline_hands_decl(&mut method.kind, hands);
             }
         }
+        // A trait default is copied into each impl that inherits it, so the
+        // hand has to be pasted into the default before that copy.
+        Decl::Trait { methods, .. } => {
+            for method in methods {
+                if let Some(body) = &mut method.body {
+                    inline_hands_expr(&mut body.kind, hands);
+                }
+            }
+        }
         Decl::Mod { decls, .. } => {
             for decl in decls {
                 inline_hands_decl(&mut decl.kind, hands);
@@ -1337,6 +1346,15 @@ fn rewrite_decl_imports(d: &mut Decl, imported: &HashMap<String, String>) {
         Decl::Impl { methods, .. } => {
             for method in methods {
                 rewrite_decl_imports(&mut method.kind, imported);
+            }
+        }
+        // `cite Paint::*` inside a default has to name `Paint::Red` before
+        // elaboration copies the default into an impl.
+        Decl::Trait { methods, .. } => {
+            for method in methods {
+                if let Some(body) = &mut method.body {
+                    rewrite_expr_imports(&mut body.kind, imported);
+                }
             }
         }
         _ => {}

@@ -2,7 +2,10 @@
 
 use crate::command::Command;
 use crate::coterm::CoTerm;
-use crate::substitution::{subst_command, subst_covar_command};
+use crate::substitution::{
+    free_vars_command, free_vars_coterm, free_vars_term, fresh, subst_command, subst_covar_command,
+    subst_covar_term, subst_term,
+};
 use crate::term::Term;
 
 /// The `index`-th component of a tuple.
@@ -15,6 +18,9 @@ fn project_term(product: &Term, index: usize) -> Option<Term> {
 pub enum Step {
     /// The command reduced to a new command.
     Reduced(Command),
+    /// Projection extracted a component. It is not placed back in a cut:
+    /// doing so would invent a covariable that `μ` then substitutes.
+    Component(Term),
     /// The command is in normal form.
     Normal,
 }
@@ -89,10 +95,15 @@ pub fn step(c: &Command) -> Step {
 
         // →-rule: ⟨ λx.t ∥ v·e ⟩ → ⟨ v ∥ μ̃x. ⟨ t ∥ e ⟩ ⟩ — application:
         // the argument goes to the binder, and the body meets the tail.
-        Command::Cut(Term::Lam(x, t), CoTerm::App(v, e)) => Step::Reduced(Command::Cut(
-            v.clone(),
-            CoTerm::MuTilde(x.clone(), Box::new(Command::Cut((**t).clone(), (**e).clone()))),
-        )),
+        // The μ̃ is a new binder. If its name is free in the tail, the next
+        // μ̃-step would replace that free name with the argument.
+        Command::Cut(Term::Lam(x, t), CoTerm::App(v, e)) => {
+            let (binder, body) = open_lambda(x, t, e);
+            Step::Reduced(Command::Cut(
+                v.clone(),
+                CoTerm::MuTilde(binder, Box::new(Command::Cut(body, (**e).clone()))),
+            ))
+        }
 
         // co-rule: ⟨ co(e′) ∥ v·e ⟩ → ⟨ v ∥ e′ ⟩ — applying a reified consumer
         // opens the box; a consumer does not return, so the tail is dropped.
@@ -101,9 +112,10 @@ pub fn step(c: &Command) -> Step {
         }
 
         // Projection: ⟨ (t₀ ⊗ … ⊗ tₙ) ∥ prj:i ⟩ → tᵢ.
+        // A component, not a command: cutting it against □ would fire μ.
         Command::Cut(product @ Term::Tuple(..), CoTerm::Prj(index)) => {
             match project_term(product, *index) {
-                Some(t) => Step::Reduced(Command::Cut(t, CoTerm::Covar("□".into()))),
+                Some(t) => Step::Component(t),
                 None => Step::Normal,
             }
         }
@@ -124,20 +136,60 @@ fn bind_components(binders: &[String], value: &Term, body: &Command) -> Option<C
         _ if binders.is_empty() => &[],
         _ => return None,
     };
+    // c[vᵢ/xᵢ] is simultaneous. A temporary stands for each binder first;
+    // that name is not free in any component, so substituting a component
+    // does not rewrite one that was already inserted.
+    let mut used = free_vars_command(body);
+    for component in components {
+        used.extend(free_vars_term(component));
+    }
+    for binder in binders {
+        used.insert(binder.clone());
+    }
+    let temps: Vec<String> = binders.iter().map(|binder| fresh(binder, &mut used)).collect();
     let mut command = body.clone();
-    for (binder, component) in binders.iter().zip(components) {
-        command = subst_command(binder, component, &command);
+    for (binder, temp) in binders.iter().zip(&temps) {
+        command = subst_command(binder, &Term::Var(temp.clone()), &command);
+    }
+    for (temp, component) in temps.iter().zip(components) {
+        command = subst_command(temp, component, &command);
     }
     Some(command)
 }
 
+/// Rename the λ binder when it is free in the tail, and rename its bound
+/// occurrences in the body to match. The tail itself is not under the λ.
+fn open_lambda(binder: &str, body: &Term, tail: &CoTerm) -> (String, Term) {
+    if !free_vars_coterm(tail).contains(binder) {
+        return (binder.to_string(), body.clone());
+    }
+    let mut used = free_vars_coterm(tail);
+    used.extend(free_vars_term(body));
+    used.insert(binder.to_string());
+    let fresh_binder = fresh(binder, &mut used);
+    let renamed = subst_covar_term(
+        binder,
+        &CoTerm::Covar(fresh_binder.clone()),
+        &subst_term(binder, &Term::Var(fresh_binder.clone()), body),
+    );
+    (fresh_binder, renamed)
+}
+
+/// A normal form is a command, or a component taken out of one by projection.
+pub enum NormalForm {
+    Command(Command),
+    Component(Term),
+}
+
 /// Reduce a command to normal form with fuel. Returns `None` on fuel exhaustion.
-pub fn normalize(c: &Command, fuel: usize) -> Option<Command> {
+/// A projected component stops the loop: it is not cut against a covariable.
+pub fn normalize(c: &Command, fuel: usize) -> Option<NormalForm> {
     let mut current = c.clone();
     for _ in 0..fuel {
         match step(&current) {
             Step::Reduced(next) => current = next,
-            Step::Normal => return Some(current),
+            Step::Component(term) => return Some(NormalForm::Component(term)),
+            Step::Normal => return Some(NormalForm::Command(current)),
         }
     }
     None
@@ -161,7 +213,7 @@ mod tests {
             Step::Reduced(c) => {
                 assert_eq!(c, Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into())));
             }
-            Step::Normal => panic!("expected the μ-rule to substitute"),
+            _ => panic!("expected the μ-rule to substitute"),
         }
     }
 
@@ -174,7 +226,7 @@ mod tests {
             Step::Reduced(c) => {
                 assert_eq!(c, Command::Cut(identity(), CoTerm::Covar("k".into())));
             }
-            Step::Normal => panic!("expected reduction"),
+            _ => panic!("expected reduction"),
         }
     }
 
@@ -193,7 +245,7 @@ mod tests {
                 );
                 assert_eq!(c, expected);
             }
-            Step::Normal => panic!("expected reduction"),
+            _ => panic!("expected reduction"),
         }
     }
 
@@ -210,7 +262,7 @@ mod tests {
             Step::Reduced(c) => {
                 assert_eq!(c, Command::Cut(Term::Var("y".into()), consumer));
             }
-            Step::Normal => panic!("expected reduction"),
+            _ => panic!("expected reduction"),
         }
     }
 
@@ -218,11 +270,11 @@ mod tests {
     fn tensor_projection() {
         let pair = Term::Tuple(vec![Term::Var("a".into()), Term::Var("b".into())]);
         match step(&Command::Cut(pair.clone(), CoTerm::Prj(0))) {
-            Step::Reduced(Command::Cut(Term::Var(v), _)) => assert_eq!(v, "a"),
+            Step::Component(Term::Var(v)) => assert_eq!(v, "a"),
             _ => panic!("expected projection to `a`"),
         }
         match step(&Command::Cut(pair, CoTerm::Prj(1))) {
-            Step::Reduced(Command::Cut(Term::Var(v), _)) => assert_eq!(v, "b"),
+            Step::Component(Term::Var(v)) => assert_eq!(v, "b"),
             _ => panic!("expected projection to `b`"),
         }
     }
@@ -251,7 +303,7 @@ mod tests {
             Step::Reduced(c) => {
                 assert_eq!(c, Command::Cut(Term::Var("v".into()), CoTerm::Covar("g".into())));
             }
-            Step::Normal => panic!("expected the Green branch to fire"),
+            _ => panic!("expected the Green branch to fire"),
         }
     }
 
@@ -284,7 +336,7 @@ mod tests {
             Step::Reduced(c) => {
                 assert_eq!(c, Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into())));
             }
-            Step::Normal => panic!("expected the C::b branch to fire"),
+            _ => panic!("expected the C::b branch to fire"),
         }
     }
 
@@ -319,7 +371,84 @@ mod tests {
                 );
                 assert_eq!(c, expected);
             }
-            Step::Normal => panic!("expected the C::b arm to fire"),
+            _ => panic!("expected the C::b arm to fire"),
+        }
+    }
+
+    #[test]
+    fn application_does_not_capture_a_free_name_in_the_tail() {
+        // ⟨λx. z ∥ w · μ̃y. ⟨x ∥ a⟩⟩ — the free x in the tail stays free.
+        let lam = Term::Lam("x".into(), Box::new(Term::Var("z".into())));
+        let tail = CoTerm::MuTilde(
+            "y".into(),
+            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("a".into()))),
+        );
+        let app = CoTerm::App(Term::Var("w".into()), Box::new(tail));
+        let Step::Reduced(once) = step(&Command::Cut(lam, app)) else {
+            panic!("expected the application rule");
+        };
+        let Step::Reduced(twice) = step(&once) else {
+            panic!("expected the μ̃ rule");
+        };
+        let Command::Cut(term, coterm) = twice;
+        assert_eq!(term, Term::Var("z".into()));
+        let CoTerm::MuTilde(binder, body) = coterm else { panic!("expected μ̃") };
+        assert_ne!(binder, "x");
+        assert_eq!(*body, Command::Cut(Term::Var("x".into()), CoTerm::Covar("a".into())));
+    }
+
+    #[test]
+    fn product_substitution_is_simultaneous() {
+        // ⟨(y ⊗ z) ∥ μ̃(x, y). ⟨x ∥ k⟩⟩ → ⟨y ∥ k⟩, not ⟨z ∥ k⟩
+        let pair = Term::Tuple(vec![Term::Var("y".into()), Term::Var("z".into())]);
+        let consumer = CoTerm::MuTildeTensor(
+            vec!["x".into(), "y".into()],
+            Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+        );
+        match step(&Command::Cut(pair, consumer)) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into())));
+            }
+            _ => panic!("expected the product rule"),
+        }
+    }
+
+    #[test]
+    fn a_multi_field_tag_substitutes_simultaneously() {
+        let payload = Term::Tuple(vec![Term::Var("y".into()), Term::Var("z".into())]);
+        let value = Term::Tag("Color::P".into(), Box::new(payload));
+        let consumer = CoTerm::CoCase {
+            owner: "Color".into(),
+            branches: vec![crate::coterm::CoCaseBranch {
+                label: "Color::P".into(),
+                binders: vec!["x".into(), "y".into()],
+                body: Box::new(Command::Cut(Term::Var("x".into()), CoTerm::Covar("k".into()))),
+            }],
+        };
+        match step(&Command::Cut(value, consumer)) {
+            Step::Reduced(c) => {
+                assert_eq!(c, Command::Cut(Term::Var("y".into()), CoTerm::Covar("k".into())));
+            }
+            _ => panic!("expected the labelled rule"),
+        }
+    }
+
+    #[test]
+    fn projection_does_not_activate_mu() {
+        let mu = Term::Mu(
+            "a".into(),
+            Box::new(Command::Cut(Term::Var("z".into()), CoTerm::Covar("a".into()))),
+        );
+        let pair = Term::Tuple(vec![mu.clone(), Term::Var("w".into())]);
+        let command = Command::Cut(pair, CoTerm::Prj(0));
+        match step(&command) {
+            Step::Component(t) => assert_eq!(t, mu),
+            Step::Reduced(c) => panic!("projection re-embedded the component: {c}"),
+            Step::Normal => panic!("expected a component"),
+        }
+        match normalize(&command, 10) {
+            Some(NormalForm::Component(t)) => assert_eq!(t, mu),
+            _ => panic!("normalizing projection must not activate μ"),
         }
     }
 

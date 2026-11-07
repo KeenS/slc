@@ -30,6 +30,10 @@ pub(crate) struct BoundInScope {
 pub(crate) struct Binding {
     pub(crate) ty: Type,
     pub(crate) generalized: std::rc::Rc<Vec<usize>>,
+    /// `::i(v)` obligations whose sum is one of `generalized`. Each use
+    /// replays them against a fresh copy of those variables, so the payload
+    /// is checked at every sum the use actually has.
+    pub(crate) injections: Vec<PendingInjection>,
 }
 
 /// One bound of a call awaiting its dictionary: the trait, the type that
@@ -327,32 +331,37 @@ impl<'a> Env<'a> {
         if let Some(frame) = self.locals.last_mut() {
             frame.insert(
                 name.to_string(),
-                Binding { ty, generalized: std::rc::Rc::new(Vec::new()) },
+                Binding { ty, generalized: std::rc::Rc::new(Vec::new()), injections: Vec::new() },
             );
         }
     }
 
-    /// The first binding of `name` in the enclosing function. A later shadow
-    /// does not replace it: the native slot is the first one too.
+    /// One binding in the enclosing declaration. A later shadow is recorded
+    /// too: both occupy the first native slot, and lowering keeps a type only
+    /// when they agree. A lambda's binders are another frame, so `word_depth`
+    /// skips them.
     fn note_word(&mut self, name: &str, ty: &Type) {
         if self.word_depth != 0 {
             return;
         }
         let Some(owner) = self.enclosing.clone() else { return };
-        if self.bound_words.iter().any(|(fn_name, word, _)| fn_name == &owner && word == name) {
-            return;
-        }
         self.bound_words.push((owner, name.to_string(), ty.clone()));
     }
 
     /// A `let` of a value form: the listed variables are the binding's own,
     /// and every use gets fresh copies of them.
-    pub(crate) fn define_scheme(&mut self, name: &str, ty: Type, generalized: Vec<usize>) {
+    pub(crate) fn define_scheme(
+        &mut self,
+        name: &str,
+        ty: Type,
+        generalized: Vec<usize>,
+        injections: Vec<PendingInjection>,
+    ) {
         self.note_word(name, &ty);
         if let Some(frame) = self.locals.last_mut() {
             frame.insert(
                 name.to_string(),
-                Binding { ty, generalized: std::rc::Rc::new(generalized) },
+                Binding { ty, generalized: std::rc::Rc::new(generalized), injections },
             );
         }
     }
@@ -376,6 +385,14 @@ impl<'a> Env<'a> {
         let mut map: HashMap<usize, Type> = HashMap::new();
         for var in binding.generalized.iter() {
             map.insert(*var, self.uni.fresh_var());
+        }
+        for pending in &binding.injections {
+            self.pending_injections.push(PendingInjection {
+                span: pending.span,
+                index: pending.index,
+                payload: replace_vars(&pending.payload, &map),
+                sum: replace_vars(&pending.sum, &map),
+            });
         }
         Some(replace_vars(&binding.ty, &map))
     }

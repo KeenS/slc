@@ -7,6 +7,17 @@ use slc_syntax::ast::{Decl, EffectRow, ParamPolarity, Program, TypeExpr};
 use slc_syntax::lower::lower_type;
 use std::collections::HashMap;
 
+/// One operation name claimed by two declarations. The first effect keeps
+/// the name; the program is rejected so a handler cannot become complete by
+/// stealing it.
+#[derive(Debug, Clone)]
+pub(crate) struct OpClash {
+    pub(crate) op: String,
+    pub(crate) first: String,
+    pub(crate) second: String,
+    pub(crate) span: slc_syntax::token::Span,
+}
+
 /// A written row as a type carries it: its effects, and its row variable
 /// wherever `tail` can say which one the name stands for.
 /// What the checker knows about the program's type declarations: the variants
@@ -40,8 +51,11 @@ pub struct Declarations {
     /// Declaration name → each type parameter and the polarity it declares,
     /// in order; `None` where it declares none.
     param_signs: HashMap<String, Vec<(String, Option<ParamPolarity>)>>,
-    /// Operation name → the effect that declares it.
+    /// Operation name → the effect that declares it. The first declaration
+    /// keeps the name; a later one is recorded in `op_clashes` and rejected.
     pub(crate) op_effects: HashMap<String, String>,
+    /// The same operation name declared by two effects, or twice by one.
+    pub(crate) op_clashes: Vec<OpClash>,
     /// Qualified `hand` names. A hand is installed with `do`, not used as a value.
     pub(crate) hands: std::collections::HashSet<String>,
     pub(crate) effects: std::collections::HashSet<String>,
@@ -468,6 +482,15 @@ pub(crate) fn enum_types(p: &Program) -> Declarations {
         if let Decl::Effect { name, operations, .. } = &d.kind {
             enums.effects.insert(name.clone());
             for op in operations {
+                if let Some(first) = enums.op_effects.get(&op.name) {
+                    enums.op_clashes.push(OpClash {
+                        op: op.name.clone(),
+                        first: first.clone(),
+                        second: name.clone(),
+                        span: d.span,
+                    });
+                    continue;
+                }
                 enums.op_effects.insert(op.name.clone(), name.clone());
             }
         }

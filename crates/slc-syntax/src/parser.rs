@@ -99,6 +99,15 @@ fn resolve_consumer_binders(
     Ok(stages)
 }
 
+/// `a | b | c` is one or-pattern. A later alternative parsed with
+/// `parse_pattern` may already be an `Or`.
+fn push_or(alternatives: &mut Vec<Pattern>, pattern: Pattern) {
+    match pattern {
+        Pattern::Or(more) => alternatives.extend(more),
+        other => alternatives.push(other),
+    }
+}
+
 fn pattern_is_copattern(pattern: &Pattern) -> bool {
     match pattern {
         Pattern::Dtor { .. } => true,
@@ -129,9 +138,23 @@ fn collect_menu_items(tokens: &[Token]) -> HashMap<String, HashSet<String>> {
             cursor += 1;
         }
         // A declared row, `menu Seq<+T, E> / {..E} { … }`, comes before the
-        // items: its braces are not the item list's.
+        // items: its braces are not the item list's. Nested braces in the
+        // row, `{Shift<i64, {IO}>}`, belong to the row.
         if cursor > 0 && tokens[cursor - 1].kind == TokenKind::Slash {
-            while cursor < tokens.len() && tokens[cursor].kind != TokenKind::RBrace {
+            let mut depth = 0usize;
+            while cursor < tokens.len() {
+                match tokens[cursor].kind {
+                    TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                    TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                        depth = depth.saturating_sub(1);
+                        cursor += 1;
+                        if depth == 0 {
+                            break;
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
                 cursor += 1;
             }
             while cursor < tokens.len() && tokens[cursor].kind != TokenKind::LBrace {
@@ -296,7 +319,7 @@ impl Parser {
     }
 
     /// The source offset a node starting at the current token begins at.
-    /// Spans are byte offsets into the source, so a diagnostic can quote the
+    /// Spans count chars, matching the lexer, so a diagnostic can quote the
     /// text it is about.
     fn span_start(&self) -> usize {
         self.peek().map(|t| t.span.start).unwrap_or_else(|| self.span_end())
@@ -756,13 +779,14 @@ impl Parser {
     fn parse_command_params(&mut self) -> Result<(Vec<Param>, Vec<Param>), ParseError> {
         let value_params = match self.peek_kind() {
             Some(TokenKind::LParen) => {
+                let start = self.span_start();
                 let (params, separator) = self.parse_group("value")?;
                 if separator.as_ref() == Some(&TokenKind::Amp) {
                     return Err(ParseError {
                         message: "a value group is a product, separated by `,`; `&` makes \
                                   the menu of exits, which is the second group"
                             .into(),
-                        span: Span { start: 0, end: self.span_end() },
+                        span: Span { start, end: self.span_end() },
                     });
                 }
                 params
@@ -774,11 +798,12 @@ impl Parser {
         }
         // A parameter in the second group is a continuation parameter because
         // of where it is declared, not because of anything that follows it.
+        let start = self.span_start();
         let (params, separator) = self.parse_group("continuation")?;
         if params.len() > 1 && separator.as_ref() != Some(&TokenKind::Amp) {
             return Err(ParseError {
                 message: "a continuation group is a menu of exits, separated by `&`".into(),
-                span: Span { start: 0, end: self.span_end() },
+                span: Span { start, end: self.span_end() },
             });
         }
         Ok((value_params, Self::imply_continuation_signs(params)))
@@ -1092,18 +1117,16 @@ impl Parser {
         match self.peek_kind() {
             Some(TokenKind::Func) => {
                 self.pos += 1;
+                let func_span = self
+                    .tokens
+                    .get(self.pos - 1)
+                    .map(|t| t.span)
+                    .unwrap_or(Span { start: 0, end: 0 });
                 let name = self.expect_ident("method name")?;
                 let (params, separator) = self.parse_params_with()?;
                 let (polarity, return_type) = self.parse_fn_arrow()?;
-                let value_params = match polarity {
-                    FunctionPolarity::Positive => params,
-                    FunctionPolarity::Negative => Self::group_for_polarity(
-                        params,
-                        separator,
-                        polarity,
-                        Span { start: 0, end: 0 },
-                    )?,
-                };
+                let value_params =
+                    Self::group_for_polarity(params, separator, polarity, func_span)?;
                 let body = self.parse_method_body()?;
                 Ok(TraitMethod {
                     name,
@@ -1655,16 +1678,31 @@ impl Parser {
     }
 
     fn unexpected_token(&self) -> ParseError {
-        let span = self.peek().map(|token| token.span).unwrap_or(Span { start: 0, end: 0 });
-        ParseError {
-            message: format!(
-                "unexpected {}",
-                self.peek_kind()
-                    .map(|kind| format!("{kind}"))
-                    .unwrap_or_else(|| "end of input".into())
-            ),
-            span,
+        let (found, span) = self.stuck_token();
+        ParseError { message: format!("unexpected {found}"), span }
+    }
+
+    /// The token an expression cannot start with. Two touching `&` or `|`
+    /// are the signs `&&` and `||`, which are not operators.
+    fn stuck_token(&self) -> (String, Span) {
+        let Some(token) = self.peek() else {
+            let end = self.span_end();
+            return ("end of input".into(), Span { start: end, end });
+        };
+        if let Some(next) = self.tokens.get(self.pos + 1)
+            && next.span.start == token.span.end
+            && token.kind == next.kind
+        {
+            let written = match token.kind {
+                TokenKind::Amp => Some("`&&`"),
+                TokenKind::Pipe => Some("`||`"),
+                _ => None,
+            };
+            if let Some(written) = written {
+                return (written.into(), Span { start: token.span.start, end: next.span.end });
+            }
         }
+        (format!("{}", token.kind), token.span)
     }
 
     /// `<-1 | k>` lexes its opening as the reverse arrow `<-`. A number
@@ -1842,6 +1880,11 @@ impl Parser {
                         };
                         continue;
                     }
+                    let dot = self.tokens.get(self.pos - 1).map(|t| t.span).unwrap_or(e.span);
+                    return Err(ParseError {
+                        message: "expected a field name or an index after `.`".into(),
+                        span: dot,
+                    });
                 }
                 _ => break,
             }
@@ -2400,15 +2443,10 @@ impl Parser {
                 parsed
             }
             Some(TokenKind::LBrace) => self.parse_block(),
-            other => {
-                let span = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
-                Err(ParseError {
-                    message: format!(
-                        "expected expression, found {}",
-                        other.map(|k| format!("{k}")).unwrap_or_else(|| "end of input".into())
-                    ),
-                    span,
-                })
+            _ => {
+                // `&&` and `||` are two tokens. Name the pair the source wrote.
+                let (found, span) = self.stuck_token();
+                Err(ParseError { message: format!("expected expression, found {found}"), span })
             }
         }
     }
@@ -2623,7 +2661,7 @@ impl Parser {
                 let mut alternatives =
                     vec![Pattern::Range { start: Box::new(first), end: Box::new(end) }];
                 while self.eat(&TokenKind::Pipe) {
-                    alternatives.push(self.parse_pattern()?);
+                    push_or(&mut alternatives, self.parse_pattern()?);
                 }
                 return Ok(Pattern::Or(alternatives));
             }
@@ -2632,7 +2670,7 @@ impl Parser {
         if self.peek_kind() == Some(&TokenKind::Pipe) {
             let mut alternatives = vec![first];
             while self.eat(&TokenKind::Pipe) {
-                alternatives.push(self.parse_single_pattern()?);
+                push_or(&mut alternatives, self.parse_pattern()?);
             }
             return Ok(Pattern::Or(alternatives));
         }
@@ -2668,13 +2706,26 @@ impl Parser {
                 Ok(Pattern::Inject { index, pattern: Box::new(pattern) })
             }
             Some(TokenKind::Minus) => {
-                self.pos += 1;
-                match self.parse_single_pattern()? {
-                    Pattern::Int(n) => Ok(Pattern::Int(-n)),
-                    Pattern::Float(n) => Ok(Pattern::Float(-n)),
+                // A `-` touching a number is part of it, as in an expression.
+                // `--1` and `- 1` are not negative literals.
+                let minus = self.peek().map(|t| t.span).unwrap_or(Span { start: 0, end: 0 });
+                let touching = self
+                    .tokens
+                    .get(self.pos + 1)
+                    .filter(|t| t.span.start == minus.end)
+                    .map(|t| t.kind.clone());
+                match touching {
+                    Some(TokenKind::Int(n)) => {
+                        self.pos += 2;
+                        Ok(Pattern::Int(-n))
+                    }
+                    Some(TokenKind::Float(n)) => {
+                        self.pos += 2;
+                        Ok(Pattern::Float(-n))
+                    }
                     _ => Err(ParseError {
                         message: "negative patterns require a numeric literal".into(),
-                        span: Span { start: self.pos - 1, end: self.span_end() },
+                        span: minus,
                     }),
                 }
             }
@@ -2802,7 +2853,11 @@ impl Parser {
                     self.expect(TokenKind::RParen, "`)` after a bundle pattern")?;
                     return Ok(Pattern::Bundle(items));
                 }
+                // `(p)` is the pattern `p`. A comma keeps a tuple, including
+                // the one-field form `(p,)`. There is no 1-tuple type.
+                let mut comma = false;
                 if self.eat(&TokenKind::Comma) {
+                    comma = true;
                     loop {
                         if self.eat(&TokenKind::RParen) {
                             break;
@@ -2815,6 +2870,9 @@ impl Parser {
                     }
                 } else {
                     self.expect(TokenKind::RParen, "`)`")?;
+                }
+                if !comma && items.len() == 1 {
+                    return Ok(items.pop().expect("the single pattern"));
                 }
                 Ok(Pattern::Tuple(items))
             }
@@ -3684,5 +3742,66 @@ mod tests {
             panic!("expected main declaration");
         };
         assert!(matches!(&body.kind, Expr::Let { ty: Some(_), .. }));
+    }
+
+    fn fn_body(source: &str) -> Expr {
+        let p = parse_str(source);
+        let Decl::Fn { body, .. } = &p.decls[0].kind else {
+            panic!("expected a function, got {:?}", p.decls[0].kind);
+        };
+        body.kind.clone()
+    }
+
+    #[test]
+    fn a_trailing_dot_is_not_part_of_the_name() {
+        let err = parse(lex("foo.").unwrap()).unwrap_err();
+        assert!(err.iter().any(|e| e.message.contains("expected a field name")), "{err:?}");
+    }
+
+    #[test]
+    fn an_integer_projection_is_not_a_float() {
+        assert!(matches!(
+            fn_body("1.field"),
+            Expr::Project { base, key: ProjKey::Field(name) }
+                if matches!(base.kind, Expr::Int(1)) && name == "field"
+        ));
+    }
+
+    #[test]
+    fn a_parenthesised_alternative_is_not_a_one_tuple() {
+        let Expr::Match { arms, .. } = fn_body("of n { (1 | 2) => 7, _ => 9 }") else {
+            panic!("expected a match");
+        };
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Or(alts) if alts.len() == 2),
+            "{:?}",
+            arms[0].pattern
+        );
+    }
+
+    #[test]
+    fn a_double_minus_is_not_a_negative_literal() {
+        let err = parse(lex("of n { --1 => n, _ => 0 }").unwrap()).unwrap_err();
+        assert!(
+            err.iter().any(|e| {
+                e.message.contains("negative patterns require a numeric literal")
+                    && e.span.start > 0
+            }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_menu_row_with_nested_braces_is_not_its_item_list() {
+        let plain = parse_str("menu M / {Exn} { item: i64 }");
+        let Decl::Menu { items, .. } = &plain.decls[0].kind else { panic!("menu") };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "item");
+
+        let nested = parse_str("menu M / {Shift<i64, {IO}>, Other<{Exn}>} { item: i64 }");
+        let Decl::Menu { items, effects, .. } = &nested.decls[0].kind else { panic!("menu") };
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "item");
+        assert!(effects.effects.len() >= 2, "{effects:?}");
     }
 }

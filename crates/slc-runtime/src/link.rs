@@ -287,9 +287,11 @@ fn poke(session: &mut Session) -> Option<Step> {
     None
 }
 
-/// Walk the talk list from this end's cursor. An earlier arm that has not
-/// given and has not finished is waited for, even when a later giver is
-/// already blocked. The arm that takes is not a giver.
+/// Walk the talk list from this end's cursor. An earlier arm that can still
+/// give on this token is waited for, even when a later giver is already
+/// blocked. A `BlockedTake`, a `Done`, or a `BlockedGive` of another token
+/// cannot give this one, so it must not hide a ready giver. The arm that
+/// takes is not a giver.
 fn select_giver(session: &Session, token: i64, taker: Option<usize>) -> Choice {
     let count = session.arms.len();
     if count == 0 {
@@ -310,12 +312,12 @@ fn select_giver(session: &Session, token: i64, taker: Option<usize>) -> Choice {
                     Choice::Ready(index)
                 };
             }
-            Arm::Done(_) => {}
-            _ => {
+            Arm::Fresh(_) | Arm::Runnable { .. } | Arm::Running => {
                 if waiting.is_none() {
                     waiting = Some(index);
                 }
             }
+            Arm::Done(_) | Arm::BlockedTake { .. } | Arm::BlockedGive { .. } => {}
         }
     }
     waiting.map(Choice::Wait).unwrap_or(Choice::Unmatched)
@@ -514,4 +516,65 @@ fn list_value(mut values: Vec<Value>) -> Value {
         tail = Value::Tagged("list::List::Cons".into(), Box::new(Value::Tuple(vec![head, tail])));
     }
     tail
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Arm, Choice, End, Session, Step, schedule, select_giver};
+    use crate::machine::{Frame, Kont};
+    use crate::value::Value;
+    use std::collections::HashMap;
+
+    fn arm_session(arms: Vec<Arm>) -> Session {
+        Session {
+            prompt: Frame::Force,
+            prompt_id: 0,
+            final_resume: Kont::empty(),
+            arms,
+            running: None,
+            ends: HashMap::new(),
+        }
+    }
+
+    fn give(token: i64) -> Arm {
+        Arm::BlockedGive { token, value: Value::Unit, resume: Kont::empty() }
+    }
+
+    fn take(token: i64) -> Arm {
+        Arm::BlockedTake { token, resume: Kont::empty() }
+    }
+
+    #[test]
+    fn a_blocked_neighbor_does_not_hide_a_ready_giver() {
+        let session = arm_session(vec![take(2), give(9), give(1), take(1)]);
+        assert!(matches!(select_giver(&session, 1, Some(3)), Choice::Ready(2)));
+
+        let session = arm_session(vec![Arm::Done(Value::Unit), give(1)]);
+        assert!(matches!(select_giver(&session, 1, None), Choice::Ready(1)));
+
+        // The cursor has passed the fresh arm, so the giver already in hand is next.
+        let mut session = arm_session(vec![Arm::Fresh(Value::Unit), give(1)]);
+        session.ends.insert(1, End { taker: None, cursor: 1 });
+        assert!(matches!(select_giver(&session, 1, None), Choice::Ready(1)));
+    }
+
+    #[test]
+    fn an_earlier_arm_that_can_still_give_is_waited_for() {
+        let session = arm_session(vec![Arm::Fresh(Value::Unit), give(1), take(1)]);
+        assert!(matches!(select_giver(&session, 1, Some(2)), Choice::Wait(0)));
+        assert!(matches!(schedule(&session, Some(0), 2), Step::Begin { index: 0, .. }));
+
+        let session = arm_session(vec![
+            Arm::Runnable { resume: Kont::empty(), delivery: Value::Unit },
+            give(1),
+        ]);
+        assert!(matches!(select_giver(&session, 1, None), Choice::Wait(0)));
+
+        let session = arm_session(vec![Arm::Running, give(1)]);
+        assert!(matches!(select_giver(&session, 1, None), Choice::Wait(0)));
+
+        // A fresh arm after the giver is not earlier in the walk.
+        let session = arm_session(vec![give(1), Arm::Fresh(Value::Unit)]);
+        assert!(matches!(select_giver(&session, 1, None), Choice::Ready(0)));
+    }
 }

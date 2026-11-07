@@ -334,9 +334,10 @@ fn written_polarity(
         TypeExpr::Negative(inner) | TypeExpr::Dual(inner) => {
             written_polarity(&inner.kind, own, declared).map(ParamPolarity::flipped)
         }
-        TypeExpr::Par(_) | TypeExpr::With(_) | TypeExpr::Fun(..) | TypeExpr::Effectful(..) => {
-            Some(ParamPolarity::Negative)
-        }
+        TypeExpr::Par(_) | TypeExpr::With(_) | TypeExpr::Fun(..) => Some(ParamPolarity::Negative),
+        // A row does not flip the type it rides on: `Box<(i64 / {IO})>` is
+        // still the positive `Box` of a negative computation.
+        TypeExpr::Effectful(inner, _) => written_polarity(&inner.kind, own, declared),
         // A row is no type, and has no polarity.
         TypeExpr::Row(_) => None,
     }
@@ -572,6 +573,24 @@ mod tests {
         );
         let diags = check("menu Lazy<T> { force: T }").unwrap_err();
         assert!(diags.iter().any(|d| d.message.contains("`<+T>`")), "{diags:?}");
+    }
+
+    #[test]
+    fn a_row_keeps_the_polarity_of_its_type() {
+        assert!(
+            check(
+                "data Box<+T> { value: T }
+                 func f(b: Box<(i64 / {IO})>) -> (,) { (,) }"
+            )
+            .is_ok(),
+            "a rowed positive type is still positive"
+        );
+        let diags = check(
+            "data Sink<-T> { gone: (,) }
+             func f(s: Sink<(i64 / {IO})>) -> (,) { (,) }",
+        )
+        .unwrap_err();
+        assert!(diags.iter().any(|d| d.message.contains("positive")), "{diags:?}");
     }
 
     #[test]

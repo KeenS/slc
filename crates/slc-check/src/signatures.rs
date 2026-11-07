@@ -475,6 +475,9 @@ pub(crate) fn function_types(
                         enums,
                         &mut next_template,
                     );
+                    if out.contains_key(&op.name) {
+                        continue;
+                    }
                     out.insert(
                         op.name.clone(),
                         FunctionSignature {

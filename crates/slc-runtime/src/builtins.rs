@@ -887,8 +887,16 @@ fn rename_path(from: &str, to: &str) -> Result<(), BuiltinError> {
         .map_err(|err| BuiltinError::Failed(format!("cannot rename {from}: {err}")))
 }
 
+/// Held across `set_var` and `var_os`. `spawn` performs IO on another host
+/// thread, and `set_var` is unsafe if that races a lookup.
+fn env_lock() -> &'static std::sync::Mutex<()> {
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    &ENV
+}
+
 /// A present variable, lossy where the bytes are not Unicode. Absence is `None`.
 pub fn lookup_env(name: &str) -> Option<String> {
+    let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
     std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
 }
 
@@ -896,7 +904,7 @@ fn assign_env(name: &str, value: &str) -> Result<(), BuiltinError> {
     if name.is_empty() || name.contains('=') || name.contains('\0') || value.contains('\0') {
         return Err(BuiltinError::Failed(format!("cannot set environment variable {name}")));
     }
-    // The runtime is the only writer, and a program runs on one thread.
+    let _guard = env_lock().lock().unwrap_or_else(|err| err.into_inner());
     unsafe { std::env::set_var(name, value) };
     Ok(())
 }

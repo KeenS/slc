@@ -448,6 +448,32 @@ mod tests {
     }
 
     #[test]
+    fn parsed_dual_is_canonical() {
+        let parsed = |source| crate::parse::parse_type(source).unwrap();
+        assert_eq!(parsed("dual(+i32)"), parsed("-i32"));
+        assert_eq!(parsed("dual((+i32, +char))"), parsed("(-i32 ; -char)"));
+        for source in [
+            "+i32",
+            "-i32",
+            "dual(+i32)",
+            "dual((+i32, +char))",
+            "(+i32, +char)",
+            "(-i32 ; -char)",
+            "Color",
+            "dual(Color)",
+            "dual(dual(Color))",
+            "?0",
+            "dual(?0)",
+            "dual(dual(?0))",
+            "%0",
+            "dual(%0)",
+        ] {
+            let ty = parsed(source);
+            assert_eq!(ty.dual().dual(), ty, "{source}");
+        }
+    }
+
+    #[test]
     fn dual_collapses_explicit_dual() {
         // Dual is a no-op wrapper: dual(Dual(A)) == A
         assert_eq!(Type::Dual(Box::new(Type::Pos(Base::I32))).dual(), Type::Pos(Base::I32));

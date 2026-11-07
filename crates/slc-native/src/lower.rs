@@ -95,6 +95,9 @@ struct Builder {
     func_result: HashMap<String, bool>,
     /// Symbol → slot name → the type of the word stored there.
     fn_types: HashMap<String, HashMap<String, Type>>,
+    /// What a monomorphic function returns. A call is a `μ`, so the operand
+    /// class is this type, not the shape of the term.
+    result_ty: HashMap<String, Type>,
     /// Variant or record label → payload field types.
     payloads: HashMap<String, Vec<Type>>,
     /// Type of the value in `r13` while a dispatch match is compiled, when it is known.
@@ -234,16 +237,13 @@ fn prelude_primitive(symbol: &str) -> Option<&'static str> {
     }
 }
 
-/// The runtime symbol for a width conversion. Integer destinations with no
-/// known class stay on the integer path. A float destination does not guess.
+/// The runtime symbol for a width conversion. The operand class selects
+/// `slc_rt_f_to_*` or the integer pair. An unknown class is not an integer word.
 fn width_symbol(name: &str, class: Option<Class>) -> Result<&'static str, String> {
     let from_float = match class {
         Some(Class::Float) => true,
         Some(Class::Int) => false,
-        None if matches!(name, "__to_f32" | "__to_f64") => {
-            return Err(format!("{name} needs a known integer or float"));
-        }
-        None => false,
+        None => return Err(format!("{name} needs a known integer or float")),
         Some(other) => return Err(format!("{name} of {other:?}")),
     };
     match (name, from_float) {
@@ -331,6 +331,35 @@ fn patch(funcs: &mut [Function]) {
             }
         }
     }
+}
+
+/// Binders, then locals. The same name is one slot. Keep a type only when
+/// every binding agrees; otherwise the class is unknown. A pointer among the
+/// disagreeing types stays traced, under a name `from_type` does not classify.
+fn specialization_words(spec: &Specialization) -> HashMap<String, Type> {
+    let mut words = HashMap::new();
+    let mut conflict: HashMap<String, bool> = HashMap::new();
+    for (name, ty) in spec.binders.iter().chain(spec.locals.iter()) {
+        if let Some(pointer) = conflict.get_mut(name) {
+            *pointer |= type_is_pointer(ty);
+            continue;
+        }
+        if let Some(prev) = words.get(name) {
+            if prev != ty {
+                let pointer = type_is_pointer(prev) || type_is_pointer(ty);
+                conflict.insert(name.clone(), pointer);
+                words.remove(name);
+            }
+        } else {
+            words.insert(name.clone(), ty.clone());
+        }
+    }
+    for (name, pointer) in conflict {
+        if pointer {
+            words.insert(name, Type::Named("__shadow".into(), Vec::new()));
+        }
+    }
+    words
 }
 
 fn type_is_pointer(ty: &Type) -> bool {
@@ -435,10 +464,67 @@ fn func_layout(funcs: &[Function], symbol: &str) -> (u32, u32) {
     (func.frame_words, func.map_id)
 }
 
-/// `$str_` payload, quotes included. Same unescape order as the interpreter.
+/// `$str_` payload, quotes included. Same left-to-right scan as the
+/// interpreter: `\\` is one backslash, then `\n` `\r` `\t` `\0` `\"` `\u{...}`.
 fn decode_lit(text: &str) -> String {
     let text = text.strip_prefix('"').and_then(|text| text.strip_suffix('"')).unwrap_or(text);
-    text.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\\\", "\\")
+    unescape_debug(text)
+}
+
+/// `Debug` for a string. `\\` is consumed before `\n`, so `\\n` stays a
+/// backslash and an `n`.
+fn unescape_debug(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(ch) = rest.chars().next() {
+        if ch != '\\' {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let after = &rest[1..];
+        let Some(esc) = after.chars().next() else {
+            out.push('\\');
+            break;
+        };
+        if esc == 'u' {
+            if let Some((decoded, tail)) = unicode_escape(after) {
+                out.push(decoded);
+                rest = tail;
+            } else {
+                out.push('\\');
+                rest = after;
+            }
+            continue;
+        }
+        match esc {
+            '\\' => out.push('\\'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            '0' => out.push('\0'),
+            '"' => out.push('"'),
+            _ => {
+                out.push('\\');
+                rest = after;
+                continue;
+            }
+        }
+        rest = &after[esc.len_utf8()..];
+    }
+    out
+}
+
+/// `\u{hex}` as `Debug` emits it. `text` starts at `u`.
+fn unicode_escape(text: &str) -> Option<(char, &str)> {
+    let rest = text.strip_prefix("u{")?;
+    let close = rest.find('}')?;
+    let hex = &rest[..close];
+    if hex.is_empty() || hex.len() > 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let code = u32::from_str_radix(hex, 16).ok()?;
+    Some((char::from_u32(code)?, &rest[close + 1..]))
 }
 
 fn escapes(name: &str, command: &Command) -> bool {
@@ -732,6 +818,7 @@ impl Builder {
             func_param: HashMap::new(),
             func_result: HashMap::new(),
             fn_types: HashMap::new(),
+            result_ty: HashMap::new(),
             payloads: payloads.clone(),
             val_ty: None,
             val_ptr: false,
@@ -778,24 +865,21 @@ impl Builder {
                 && param != DELAY_BINDER
             {
                 let spec = specs.iter().find(|spec| spec.symbol == *name);
+                let words = spec.map(specialization_words);
                 // Several parameters arrive as one tuple in `__args`, even when each is a scalar.
-                let param_ptr = spec.is_some_and(|spec| {
-                    (param == "__args" && spec.binders.len() >= 2)
-                        || spec
-                            .binders
-                            .iter()
-                            .chain(spec.locals.iter())
-                            .find(|(binder, _)| binder == param)
-                            .is_some_and(|(_, ty)| type_is_pointer(ty))
-                });
+                let param_ptr = match spec {
+                    Some(spec) if param == "__args" && spec.binders.len() >= 2 => true,
+                    _ => words
+                        .as_ref()
+                        .is_some_and(|words| words.get(param).is_some_and(type_is_pointer)),
+                };
                 let result_ptr = spec.is_some_and(|spec| type_is_pointer(&spec.result));
                 builder.func_param.insert(name.clone(), param_ptr);
                 builder.func_result.insert(name.clone(), result_ptr);
                 if let Some(spec) = spec {
-                    let mut words = HashMap::new();
-                    for (binder, ty) in spec.binders.iter().chain(spec.locals.iter()) {
-                        words.insert(binder.clone(), ty.clone());
-                    }
+                    builder.result_ty.insert(name.clone(), spec.result.clone());
+                }
+                if let Some(words) = words {
                     builder.fn_types.insert(name.clone(), words);
                 }
             }
@@ -3282,43 +3366,46 @@ impl Builder {
         Ok(true)
     }
 
-    fn operand_class(&self, term: &Term) -> Option<Class> {
-        fn from_type(ty: &Type) -> Option<Class> {
-            match ty {
-                Type::Rowed(inner, _) | Type::Dual(inner) | Type::Delayed(inner, _) => {
-                    from_type(inner)
+    /// Solved type of a word, including the result of a call. A tuple's class
+    /// is its first component; the tuple itself is not that word.
+    fn value_type(&self, term: &Term) -> Option<Type> {
+        match term {
+            Term::Tuple(items) => self.value_type(items.first()?),
+            Term::Var(name) if name == "$unit" => Some(Type::ONE),
+            Term::Var(name) if name.starts_with("$int_") => Some(Type::Pos(Base::I64)),
+            Term::Var(name) if name.starts_with("$float_") => Some(Type::Pos(Base::F64)),
+            Term::Var(name) if name.starts_with("$str_") => Some(Type::Pos(Base::Str)),
+            Term::Var(name) if name.starts_with("$char_") => Some(Type::Pos(Base::Char)),
+            Term::Var(name) => {
+                if let Some(ty) = self.word_ty(name).cloned() {
+                    return Some(ty);
                 }
-                Type::Pos(base) | Type::Neg(base) => match base {
-                    Base::F32 | Base::F64 => Some(Class::Float),
-                    Base::Str => Some(Class::Str),
-                    Base::Char => Some(Class::Char),
-                    Base::File => Some(Class::File),
-                    Base::I64 | Base::I32 | Base::I8 | Base::U8 | Base::U32 | Base::U64 => {
-                        Some(Class::Int)
-                    }
-                },
-                Type::Named(name, _) if name == "Bool" => Some(Class::Bool),
-                Type::Tensor(items) => items.first().and_then(from_type),
-                _ => None,
+                // `False` lowers to the constant `Bool::False`, a tag installed
+                // with the enum. The comparison sees that tag's declaration.
+                let lit = self.literals.get(name).cloned()?;
+                self.value_type(&lit)
             }
-        }
-        fn from_term(builder: &Builder, term: &Term) -> Option<Class> {
-            match term {
-                Term::Tuple(items) => items.first().and_then(|item| from_term(builder, item)),
-                Term::Var(name) if name.starts_with("$int_") => Some(Class::Int),
-                Term::Var(name) if name.starts_with("$float_") => Some(Class::Float),
-                Term::Var(name) if name.starts_with("$str_") => Some(Class::Str),
-                Term::Var(name) if name.starts_with("$char_") => Some(Class::Char),
-                Term::Var(name) => builder.word_ty(name).and_then(from_type),
-                _ => None,
+            Term::Mu(binder, command) if is_call_binder(binder) => {
+                self.result_ty.get(call_symbol(command)?).cloned()
             }
+            // A nullary variant is its declaration. `Bool::False` is a bool
+            // even when no variable carries the type.
+            Term::Tag(label, _) => label.split_once("::").and_then(|(owner, _)| {
+                (owner == "Bool").then(|| Type::Named("Bool".into(), Vec::new()))
+            }),
+            _ => None,
         }
-        from_term(self, term)
+    }
+
+    fn operand_class(&self, term: &Term) -> Option<Class> {
+        self.value_type(term).as_ref().and_then(class_of)
     }
 
     fn compile_builtin(&mut self, name: &str, arg: &Term, mode: Mode) -> Result<bool, String> {
         if matches!(name, "__eq" | "__ne" | "__lt" | "__gt" | "__le" | "__ge") {
-            let class = self.operand_class(arg).unwrap_or(Class::Int);
+            let class = self
+                .operand_class(arg)
+                .ok_or_else(|| format!("{name} in {} has no operand kind", self.current))?;
             let cond = match name {
                 "__eq" => Cond::E,
                 "__ne" => Cond::Ne,
@@ -3381,16 +3468,11 @@ impl Builder {
                 Ok(true)
             }
             "__display" => {
-                // A tuple's first word is not the tuple. Shape 5 prints the value.
+                // A tuple's first word is not the tuple, and a delay is not the
+                // value it would produce. Shape 5 prints the value as it is.
                 let dynamic = match arg {
                     Term::Tuple(_) | Term::Tag(_, _) => true,
-                    Term::Var(name) if name == "$unit" => true,
-                    Term::Var(name) => match self.word_ty(name) {
-                        Some(Type::Tensor(_)) | Some(Type::Delayed(_, _)) => true,
-                        Some(Type::Named(owner, _)) => owner != "Bool",
-                        _ => false,
-                    },
-                    _ => false,
+                    _ => display_dynamic(self.value_type(arg).as_ref()),
                 };
                 let shape = if dynamic {
                     5
@@ -3818,7 +3900,10 @@ impl Builder {
                 Some(Class::Bool) if matches!(name, "__lt" | "__gt" | "__le" | "__ge") => {
                     CmpKind::Labels(cond)
                 }
-                _ => CmpKind::Words(cond),
+                None => {
+                    return Err(format!("{name} in {} has no operand kind", self.current));
+                }
+                Some(_) => CmpKind::Words(cond),
             };
             return self.compile_cmp_ready(kind, mode);
         }
@@ -3960,6 +4045,25 @@ impl Builder {
         self.compile_cmp_ready(kind, mode)
     }
 
+    /// `false` before `true`, even when `Bool::True` was interned first.
+    fn bool_rank_cond(&self, cond: Cond) -> Cond {
+        let false_id = self.labels.iter().position(|item| item == "Bool::False");
+        let true_id = self.labels.iter().position(|item| item == "Bool::True");
+        let (Some(false_id), Some(true_id)) = (false_id, true_id) else {
+            return cond;
+        };
+        if false_id <= true_id {
+            return cond;
+        }
+        match cond {
+            Cond::L => Cond::G,
+            Cond::G => Cond::L,
+            Cond::Le => Cond::Ge,
+            Cond::Ge => Cond::Le,
+            other => other,
+        }
+    }
+
     /// The two words are already in `V(0)` and `V(1)`.
     fn compile_cmp_ready(&mut self, kind: CmpKind, mode: Mode) -> Result<bool, String> {
         let yes = self.new_block();
@@ -3972,7 +4076,9 @@ impl Builder {
                 self.emit(Inst::FCmp { left: Dest::V(0), right: Dest::V(1), cond, target: yes })
             }
             CmpKind::Labels(cond) => {
-                // `false` is interned before `true`, so the label id is the boolean order.
+                // `as_bool` orders `Bool::False` before `Bool::True`. A user enum
+                // may intern the labels the other way round, so the ids are not the order.
+                let cond = self.bool_rank_cond(cond);
                 self.emit(Inst::Load {
                     dst: Dest::V(2),
                     base: Dest::V(0),
@@ -4610,6 +4716,56 @@ fn split_outcome(rows: &[Row], col: usize, outcome: &Pat) -> (Vec<Row>, Vec<Row>
     (success, failure)
 }
 
+/// The function a curried `__call` chain applies. Its specialization result
+/// is the type of a full application.
+fn call_symbol(command: &Command) -> Option<&str> {
+    let Command::Cut(callee, coterm) = command;
+    let CoTerm::App(_, cont) = coterm else { return None };
+    let CoTerm::Covar(name) = cont.as_ref() else { return None };
+    // Lowering freshens `__call` to `__call1` when that name is free in the
+    // callee or the argument. The continuation is still this call's.
+    if !is_call_binder(name) {
+        return None;
+    }
+    match callee {
+        Term::Var(symbol) => Some(symbol.as_str()),
+        Term::Mu(binder, inner) if binder == name => call_symbol(inner),
+        _ => None,
+    }
+}
+
+fn is_call_binder(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("__call") else { return false };
+    rest.is_empty() || rest.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn class_of(ty: &Type) -> Option<Class> {
+    match ty {
+        Type::Rowed(inner, _) | Type::Dual(inner) | Type::Delayed(inner, _) => class_of(inner),
+        Type::Pos(base) | Type::Neg(base) => match base {
+            Base::F32 | Base::F64 => Some(Class::Float),
+            Base::Str => Some(Class::Str),
+            Base::Char => Some(Class::Char),
+            Base::File => Some(Class::File),
+            Base::I64 | Base::I32 | Base::I8 | Base::U8 | Base::U32 | Base::U64 => Some(Class::Int),
+        },
+        Type::Named(name, _) if name == "Bool" => Some(Class::Bool),
+        Type::Tensor(items) => items.first().and_then(class_of),
+        _ => None,
+    }
+}
+
+/// Shape 5. A delay stays a delay: peeling it would print the value it produces.
+fn display_dynamic(ty: Option<&Type>) -> bool {
+    match ty {
+        Some(Type::Rowed(inner, _)) | Some(Type::Dual(inner)) => display_dynamic(Some(inner)),
+        Some(Type::Tensor(_)) | Some(Type::Delayed(_, _)) => true,
+        Some(Type::Named(owner, _)) => owner != "Bool",
+        Some(_) => false,
+        None => true,
+    }
+}
+
 fn peel_binds(pat: &Pat) -> (Pat, Vec<String>) {
     let mut names = Vec::new();
     let mut pat = pat.clone();
@@ -4624,8 +4780,7 @@ fn float_bounds(pat: &Pat) -> Option<(f64, f64)> {
     match pat {
         Pat::Float(value) => Some((*value, *value)),
         Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref()) {
-            (Pat::Float(lo), Pat::Float(hi)) if lo <= hi => Some((*lo, *hi)),
-            (Pat::Float(lo), Pat::Float(hi)) => Some((*hi, *lo)),
+            (Pat::Float(lo), Pat::Float(hi)) => Some((*lo, *hi)),
             _ => None,
         },
         Pat::Binding(_, inner) => float_bounds(inner),
@@ -4638,17 +4793,26 @@ fn int_bounds(pat: &Pat) -> Option<(i64, i64)> {
         Pat::Int(value) => Some((*value, *value)),
         Pat::Char(value) => Some((i64::from(*value as u32), i64::from(*value as u32))),
         Pat::Range(lo, hi) => match (lo.as_ref(), hi.as_ref()) {
-            (Pat::Int(lo), Pat::Int(hi)) => Some((*lo.min(hi), *lo.max(hi))),
-            (Pat::Char(lo), Pat::Char(hi)) => {
-                let lo = i64::from(*lo as u32);
-                let hi = i64::from(*hi as u32);
-                Some((lo.min(hi), lo.max(hi)))
-            }
+            (Pat::Int(lo), Pat::Int(hi)) => Some((*lo, *hi)),
+            (Pat::Char(lo), Pat::Char(hi)) => Some((i64::from(*lo as u32), i64::from(*hi as u32))),
             _ => None,
         },
         Pat::Binding(_, inner) => int_bounds(inner),
         _ => None,
     }
+}
+
+/// `v >= lo && v <= hi`, the same inclusive test the back end emits.
+/// `start > end` matches nothing, so it is covered. `lo > hi` covers nothing.
+fn covers_span<T: Copy + PartialOrd>(lo: T, hi: T, start: T, end: T) -> bool {
+    if start > end {
+        return true;
+    }
+    lo <= hi && lo <= start && end <= hi
+}
+
+fn spans_meet<T: Copy + PartialOrd>(lo: T, hi: T, start: T, end: T) -> bool {
+    lo <= hi && start <= end && lo <= end && start <= hi
 }
 
 /// Every value that matches `inner` matches `outer`.
@@ -4667,11 +4831,11 @@ fn subsumes(outer: &Pat, inner: &Pat) -> bool {
         // the tested row in the failure set, and the same `or` was compiled again.
         Pat::Range(_, _) => {
             if let (Some((lo, hi)), Some((start, end))) = (int_bounds(outer), int_bounds(inner)) {
-                lo <= start && end <= hi
+                covers_span(lo, hi, start, end)
             } else if let (Some((lo, hi)), Some((start, end))) =
                 (float_bounds(outer), float_bounds(inner))
             {
-                lo <= start && end <= hi
+                covers_span(lo, hi, start, end)
             } else {
                 false
             }
@@ -4712,9 +4876,9 @@ fn intersects(left: &Pat, right: &Pat) -> bool {
                 && fields.iter().zip(inner_fields).all(|(left, right)| intersects(left, right))
         }
         _ => match (int_bounds(left), int_bounds(right)) {
-            (Some((lo, hi)), Some((start, end))) => lo <= end && start <= hi,
+            (Some((lo, hi)), Some((start, end))) => spans_meet(lo, hi, start, end),
             _ => match (float_bounds(left), float_bounds(right)) {
-                (Some((lo, hi)), Some((start, end))) => lo <= end && start <= hi,
+                (Some((lo, hi)), Some((start, end))) => spans_meet(lo, hi, start, end),
                 _ => false,
             },
         },

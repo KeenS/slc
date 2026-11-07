@@ -372,21 +372,22 @@ pub struct Swap {
 /// consumer it is, with `μ̃`, whose binder is then a genuine value. The inner
 /// cut sends `f`'s result to `k`, or `k` to it, by `right`'s polarity.
 fn swap_adapter(f: Term, swap: Swap) -> Term {
-    const K: &str = "__swap_k";
-    const X: &str = "__swap_x";
-    let result = call_curried(f, vec![Term::Var(X.into())]);
+    let mut used = slc_core::substitution::free_vars_term(&f);
+    let k = slc_core::substitution::fresh("__swap_k", &mut used);
+    let x = slc_core::substitution::fresh("__swap_x", &mut used);
+    let result = call_curried(f, vec![Term::Var(x.clone())]);
     let tail = || Box::new(CoTerm::Covar("__tail".into()));
     let cut = if swap.right_positive {
-        Command::Cut(Term::Var(K.into()), CoTerm::App(result, tail()))
+        Command::Cut(Term::Var(k.clone()), CoTerm::App(result, tail()))
     } else {
-        Command::Cut(result, CoTerm::App(Term::Var(K.into()), tail()))
+        Command::Cut(result, CoTerm::App(Term::Var(k.clone()), tail()))
     };
     let body = if swap.left_positive {
-        Term::Mu(X.into(), Box::new(cut))
+        Term::Mu(x, Box::new(cut))
     } else {
-        Term::Co(Box::new(CoTerm::MuTilde(X.into(), Box::new(cut))))
+        Term::Co(Box::new(CoTerm::MuTilde(x, Box::new(cut))))
     };
-    Term::Lam(K.into(), Box::new(body))
+    Term::Lam(k, Box::new(body))
 }
 
 /// The dictionary parameter name for a bound: one value threaded into a
@@ -741,13 +742,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 None => call_args.push(pack_group(lowered)),
             }
             for arg in call_args {
-                result = Term::Mu(
-                    "__call".into(),
-                    Box::new(Command::Cut(
-                        result,
-                        CoTerm::App(arg, Box::new(CoTerm::Covar("__call".into()))),
-                    )),
-                );
+                result = apply_to(result, arg);
             }
             Ok(result)
         }
@@ -768,16 +763,26 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             let positives = par_polarities(e.span).ok_or_else(|| {
                 LowerError::Unsupported("a form value was not resolved by the checker".into())
             })?;
-            let parts: Vec<String> = (0..items.len()).map(|i| format!("__part{i}")).collect();
+            let mut wantings = Vec::new();
+            for item in items {
+                wantings.push(lower_expr(item, continuations)?);
+            }
+            let mut used = std::collections::HashSet::new();
+            for wanting in &wantings {
+                used.extend(slc_core::substitution::free_vars_term(wanting));
+            }
+            let parts: Vec<String> = (0..items.len())
+                .map(|i| slc_core::substitution::fresh(&format!("__part{i}"), &mut used))
+                .collect();
             let mut commands = Vec::new();
-            for ((item, positive), part) in items.iter().zip(positives).zip(&parts) {
-                let wanting = lower_expr(item, continuations)?;
+            for ((wanting, positive), part) in wantings.into_iter().zip(positives).zip(&parts) {
                 commands.push(if positive {
                     // A value: the part is its consumer.
                     Command::Cut(wanting, CoTerm::Covar(part.clone()))
                 } else {
                     // A consumer: it takes the part.
-                    let consumer = format!("{part}_consumer");
+                    let consumer =
+                        slc_core::substitution::fresh(&format!("{part}_consumer"), &mut used);
                     Command::Cut(
                         wanting,
                         CoTerm::MuTilde(
@@ -792,9 +797,13 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             }
             let mut command = commands.pop().expect("a form value has at least two components");
             while let Some(first) = commands.pop() {
+                let mut seq_used = command_free(&first);
+                seq_used.extend(command_free(&command));
+                let seq = slc_core::substitution::fresh("__part_seq", &mut seq_used);
+                let discarded = slc_core::substitution::fresh("__discarded", &mut seq_used);
                 command = Command::Cut(
-                    Term::Mu("__part_seq".into(), Box::new(first)),
-                    CoTerm::MuTilde("__discarded".into(), Box::new(command)),
+                    Term::Mu(seq, Box::new(first)),
+                    CoTerm::MuTilde(discarded, Box::new(command)),
                 );
             }
             Ok(Term::Co(Box::new(CoTerm::MuTildeTensor(parts, Box::new(command)))))
@@ -839,9 +848,6 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     turned: Vec::new(),
                 });
             let mut lowered = Vec::new();
-            if shape.eta {
-                lowered.push(Term::Var(FLOW_ARGUMENT.into()));
-            }
             for (index, stage) in stages.iter().enumerate() {
                 let term = lower_flow_stage(stage, continuations)?;
                 // What flows in stands by name.
@@ -853,6 +859,19 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     },
                 );
             }
+            // The eta argument is a generated binder. It keeps `__flow_value`
+            // unless a stage already uses that name.
+            let flow_arg = if shape.eta {
+                let mut used = std::collections::HashSet::new();
+                for term in &lowered {
+                    used.extend(slc_core::substitution::free_vars_term(term));
+                }
+                let arg = slc_core::substitution::fresh(FLOW_ARGUMENT, &mut used);
+                lowered.insert(0, Term::Var(arg.clone()));
+                Some(arg)
+            } else {
+                None
+            };
             // A command takes both its groups from the chain: what flowed
             // in that far is its values, and the closing stage its menu of
             // exits. That is a call, not a cut — a partially applied
@@ -890,10 +909,9 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     Some(count) => yielding_command(callee, values, row, count),
                     None => call_curried(callee, vec![values, row]),
                 };
-                return Ok(if shape.eta {
-                    Term::Lam(FLOW_ARGUMENT.into(), Box::new(term))
-                } else {
-                    term
+                return Ok(match flow_arg.clone() {
+                    Some(arg) => Term::Lam(arg, Box::new(term)),
+                    None => term,
                 });
             }
             let last = shape.cut.then(|| lowered.pop().expect("a closed flow has a consumer"));
@@ -912,24 +930,38 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                     };
                     let command = match named_consumer(closing) {
                         Some(name) => Command::Cut(acc, CoTerm::Covar(name.clone())),
-                        None => Command::Cut(
-                            acc,
-                            CoTerm::MuTilde(
-                                "$cut_value".into(),
-                                Box::new(Command::Cut(
-                                    last,
-                                    CoTerm::App(
-                                        Term::Var("$cut_value".into()),
-                                        Box::new(CoTerm::Covar("__tail".into())),
-                                    ),
-                                )),
-                            ),
-                        ),
+                        None => {
+                            // `$cut_value` is the binder of this cut. A consumer
+                            // that already uses the name gets a fresh one; the
+                            // return covar stays the ambient `__tail`.
+                            let mut used = slc_core::substitution::free_vars_term(&last);
+                            used.extend(slc_core::substitution::free_vars_term(&acc));
+                            let cut_value = slc_core::substitution::fresh("$cut_value", &mut used);
+                            Command::Cut(
+                                acc,
+                                CoTerm::MuTilde(
+                                    cut_value.clone(),
+                                    Box::new(Command::Cut(
+                                        last,
+                                        CoTerm::App(
+                                            Term::Var(cut_value),
+                                            Box::new(CoTerm::Covar("__tail".into())),
+                                        ),
+                                    )),
+                                ),
+                            )
+                        }
                     };
-                    Term::Mu(cut_binder(closing), Box::new(command))
+                    Term::Mu(
+                        fresh_command_binder(&cut_binder(closing), &command),
+                        Box::new(command),
+                    )
                 }
             };
-            Ok(if shape.eta { Term::Lam(FLOW_ARGUMENT.into(), Box::new(term)) } else { term })
+            Ok(match flow_arg {
+                Some(arg) => Term::Lam(arg, Box::new(term)),
+                None => term,
+            })
         }
         Expr::Mu { continuation_params, body, .. } => {
             let mut body_scope = continuations.to_vec();
@@ -952,11 +984,12 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             // request, with the μ binder as the answer's continuation.
             if let Some(label) = demand(e.span) {
                 let base = lower_expr(base, continuations)?;
+                let answer = fresh_binder("__ask", &[&base]);
                 return Ok(Term::Mu(
-                    "__ask".into(),
+                    answer.clone(),
                     Box::new(Command::Cut(
                         base,
-                        CoTerm::Dtor(label, Box::new(CoTerm::Covar("__ask".into()))),
+                        CoTerm::Dtor(label, Box::new(CoTerm::Covar(answer))),
                     )),
                 ));
             }
@@ -968,10 +1001,14 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 // A record's fields are bound under its label, one binder each
                 // — so a record of one field is read the same way.
                 Some(record) => {
-                    let fields: Vec<String> = (0..arity).map(|i| format!("__field{i}")).collect();
+                    let mut used = slc_core::substitution::free_vars_term(&base);
+                    let ret = slc_core::substitution::fresh("__prj", &mut used);
+                    let fields: Vec<String> = (0..arity)
+                        .map(|i| slc_core::substitution::fresh(&format!("__field{i}"), &mut used))
+                        .collect();
                     let chosen = Term::Var(fields[index].clone());
                     Term::Mu(
-                        "__prj".into(),
+                        ret.clone(),
                         Box::new(Command::Cut(
                             base,
                             CoTerm::CoCase {
@@ -979,10 +1016,7 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                                 branches: vec![CoCaseBranch {
                                     label: record,
                                     binders: fields,
-                                    body: Box::new(Command::Cut(
-                                        chosen,
-                                        CoTerm::Covar("__prj".into()),
-                                    )),
+                                    body: Box::new(Command::Cut(chosen, CoTerm::Covar(ret))),
                                 }],
                             },
                         )),
@@ -990,7 +1024,10 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 }
                 // A product of one is its component.
                 None if arity == 1 => base,
-                None => Term::Mu("__prj".into(), Box::new(Command::Cut(base, CoTerm::Prj(index)))),
+                None => {
+                    let ret = fresh_binder("__prj", &[&base]);
+                    Term::Mu(ret, Box::new(Command::Cut(base, CoTerm::Prj(index))))
+                }
             })
         }
         // `.item(k)` — a request literal: the continuation boxed under its
@@ -1007,18 +1044,21 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 ))));
             }
             let payload = lower_expr(arg, continuations)?;
+            let mut used = slc_core::substitution::free_vars_term(&payload);
+            let req = slc_core::substitution::fresh("__req", &mut used);
+            let continuation = slc_core::substitution::fresh("__k", &mut used);
             Ok(Term::Mu(
-                "__req".into(),
+                req.clone(),
                 Box::new(Command::Cut(
                     payload,
                     CoTerm::MuTilde(
-                        "__k".into(),
+                        continuation.clone(),
                         Box::new(Command::Cut(
                             Term::Co(Box::new(CoTerm::Dtor(
                                 label,
-                                Box::new(CoTerm::Covar("__k".into())),
+                                Box::new(CoTerm::Covar(continuation)),
                             ))),
-                            CoTerm::Covar("__req".into()),
+                            CoTerm::Covar(req),
                         )),
                     ),
                 )),
@@ -1040,7 +1080,8 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
                 let inner = lower_expr(&clause.body, &body_scope)?;
                 let answered = Term::Lam(clause.resume.clone(), Box::new(inner));
                 let closure = if clause.params.is_empty() {
-                    Term::Lam("__op_arg".into(), Box::new(answered))
+                    let arg = fresh_binder("__op_arg", &[&answered]);
+                    Term::Lam(arg, Box::new(answered))
                 } else {
                     bind_names(&clause.params, "op", answered)
                 };
@@ -1062,10 +1103,9 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             };
             // The body stands as a command when it is one: a program of type
             // `(;)` handed in by name runs under the handler.
-            let body_thunk = Term::Lam(
-                "__handle_thunk".into(),
-                Box::new(lower_in_command_position(body, continuations)?),
-            );
+            let body_term = lower_in_command_position(body, continuations)?;
+            let thunk = fresh_binder("__handle_thunk", &[&body_term]);
+            let body_thunk = Term::Lam(thunk, Box::new(body_term));
             // The clause tree is wrapped so the runtime's argument collection,
             // which flattens pairs, passes it as one value.
             Ok(call_curried(Term::Var("__handle".into()), vec![encoded, body_thunk]))
@@ -1096,25 +1136,37 @@ fn lower_expr_facing(e: &Node<Expr>, continuations: &[String]) -> Result<Term, L
             let s = lower_expr(scrutinee, continuations)?;
             // Encode arms as thunks: one closure per arm.
             // Each arm is a Lam so it is only evaluated when selected.
-            let mut arm_terms = Vec::new();
+            let mut bodies = Vec::new();
             for arm in arms {
-                let descriptor = Term::Var(format!("$str_{}", pattern_descriptor(&arm.pattern)));
-                let b = lower_in_command_position(&arm.body, continuations)?;
+                bodies.push((
+                    pattern_descriptor(&arm.pattern),
+                    lower_in_command_position(&arm.body, continuations)?,
+                ));
+            }
+            let mut used = slc_core::substitution::free_vars_term(&s);
+            for (_, body) in &bodies {
+                used.extend(slc_core::substitution::free_vars_term(body));
+            }
+            let match_name = slc_core::substitution::fresh("__match", &mut used);
+            let mut arm_terms = Vec::new();
+            for (descriptor, body) in bodies {
+                let mut arm_used = slc_core::substitution::free_vars_term(&body);
+                let arg = slc_core::substitution::fresh("__match_arg", &mut arm_used);
                 arm_terms.push(Term::Tag(
                     "__match_arm".into(),
                     Box::new(Term::Tuple(vec![
-                        descriptor,
-                        Term::Lam("__match_arg".into(), Box::new(b)),
+                        Term::Var(format!("$str_{descriptor}")),
+                        Term::Lam(arg, Box::new(body)),
                     ])),
                 ));
             }
             // One tuple: the scrutinee, then the arms in order.
             let payload = Term::Tuple(std::iter::once(s).chain(arm_terms).collect());
             Ok(Term::Mu(
-                "__match".into(),
+                match_name.clone(),
                 Box::new(Command::Cut(
                     Term::Var("__match_dispatch".into()),
-                    CoTerm::App(payload, Box::new(CoTerm::Covar("__match".into()))),
+                    CoTerm::App(payload, Box::new(CoTerm::Covar(match_name))),
                 )),
             ))
         }
@@ -1391,7 +1443,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                     // it binds the unit its callers pass. A negative one produces
                     // a continuation and is used by name.
                     if params.is_empty() && *polarity == FunctionPolarity::Positive {
-                        term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
+                        let arg = fresh_binder(NO_ARGUMENTS, &[&term]);
+                        term = Term::Lam(arg, Box::new(term));
                     }
                     // A bounded function takes its dictionaries outermost, before
                     // the value arguments.
@@ -1442,7 +1495,8 @@ pub fn lower_program(p: &Program) -> Result<Vec<(String, Term)>, LowerError> {
                     // The value group is a group even when it is empty: a caller
                     // writes `(,) | retries | …`, so the unit still arrives.
                     if value_params.is_empty() {
-                        term = Term::Lam(NO_ARGUMENTS.into(), Box::new(term));
+                        let arg = fresh_binder(NO_ARGUMENTS, &[&term]);
+                        term = Term::Lam(arg, Box::new(term));
                     }
                     // A bounded command takes its dictionaries outermost, before
                     // the value arguments.
@@ -1543,6 +1597,72 @@ fn cut_binder(consumer: &Expr) -> String {
 
 const CUT_BINDER: &str = "__cut";
 
+/// A generated binder that does not capture a name free in `terms`. When
+/// nothing free uses `base`, the binder keeps that spelling.
+fn fresh_binder(base: &str, terms: &[&Term]) -> String {
+    let mut used = std::collections::HashSet::new();
+    for term in terms {
+        used.extend(slc_core::substitution::free_vars_term(term));
+    }
+    slc_core::substitution::fresh(base, &mut used)
+}
+
+fn command_free(command: &Command) -> std::collections::HashSet<String> {
+    // μ removes its own binder, so the probe name must not occur in `command`.
+    let probe = Term::Mu("\u{0}".into(), Box::new(command.clone()));
+    slc_core::substitution::free_vars_term(&probe)
+}
+
+fn fresh_command_binder(base: &str, command: &Command) -> String {
+    let mut used = command_free(command);
+    slc_core::substitution::fresh(base, &mut used)
+}
+
+/// Names a pattern binds. A generated binder around that pattern must not use one.
+fn pattern_binders(pattern: &Pattern, out: &mut std::collections::HashSet<String>) {
+    match pattern {
+        Pattern::Ident(name) => {
+            out.insert(name.clone());
+        }
+        Pattern::Binding { name, pattern } => {
+            out.insert(name.clone());
+            pattern_binders(pattern, out);
+        }
+        Pattern::Tuple(items) | Pattern::Bundle(items) | Pattern::Or(items) => {
+            for item in items {
+                pattern_binders(item, out);
+            }
+        }
+        Pattern::Range { start, end } => {
+            pattern_binders(start, out);
+            pattern_binders(end, out);
+        }
+        Pattern::Inject { pattern, .. } => pattern_binders(pattern, out),
+        Pattern::Data { fields, .. } => {
+            for (_, field) in fields {
+                pattern_binders(field, out);
+            }
+        }
+        Pattern::Enum { fields, .. } => {
+            for field in fields {
+                pattern_binders(field, out);
+            }
+        }
+        Pattern::Dtor { params, arg, .. } => {
+            for param in params {
+                pattern_binders(param, out);
+            }
+            pattern_binders(arg, out);
+        }
+        Pattern::Wildcard
+        | Pattern::Int(_)
+        | Pattern::Str(_)
+        | Pattern::Char(_)
+        | Pattern::Float(_)
+        | Pattern::Rest => {}
+    }
+}
+
 /// The owners the nullary additive tables retain: `mu (|) {}` and `(&)`
 /// have no declaration to name them.
 const EMPTY_SUM: &str = "(|)";
@@ -1592,21 +1712,27 @@ fn lower_binding(
         } else {
             value
         };
-        return Ok(lower_let(DISCARDED_BINDING, value, body));
+        let discarded = fresh_binder(DISCARDED_BINDING, &[&body]);
+        return Ok(lower_let(&discarded, value, body));
     }
     // The one-arm match it abbreviates: the pattern's binders scope over the
-    // body, so the body is the arm's own command.
-    let arm = (pattern, Command::Cut(body, CoTerm::Covar(MATCH_COVAR.into())));
-    let consumer = branch_table(vec![arm])?.ok_or_else(|| {
-        LowerError::Unsupported("a binder pattern the core cannot express".into())
-    })?;
+    // body, so the body is the arm's own command. The μ name is `__match`
+    // unless the body or the value already uses it.
     let value = lower_expr(value, continuations)?;
     let value = if mode == crate::ast::LetMode::Now {
         call_curried(Term::Var("$force".into()), vec![value])
     } else {
         value
     };
-    Ok(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(value, consumer))))
+    let mut used = slc_core::substitution::free_vars_term(&body);
+    used.extend(slc_core::substitution::free_vars_term(&value));
+    pattern_binders(pattern, &mut used);
+    let match_name = slc_core::substitution::fresh(MATCH_COVAR, &mut used);
+    let arm = (pattern, Command::Cut(body, CoTerm::Covar(match_name.clone())));
+    let consumer = branch_table(vec![arm])?.ok_or_else(|| {
+        LowerError::Unsupported("a binder pattern the core cannot express".into())
+    })?;
+    Ok(Term::Mu(match_name, Box::new(Command::Cut(value, consumer))))
 }
 
 /// The binder a `let _` introduces and never mentions.
@@ -1655,8 +1781,10 @@ fn bind_group(params: &[Param], group: &str, body: Term) -> Result<Term, LowerEr
         [only] => only.pattern.clone(),
         several => Pattern::Tuple(several.iter().map(|p| p.pattern.clone()).collect()),
     };
-    let packed = format!("__{group}");
-    let out = format!("__{group}_body");
+    let mut used = slc_core::substitution::free_vars_term(&body);
+    pattern_binders(&pattern, &mut used);
+    let packed = slc_core::substitution::fresh(&format!("__{group}"), &mut used);
+    let out = slc_core::substitution::fresh(&format!("__{group}_body"), &mut used);
     let consumer = branch_table(vec![(&pattern, Command::Cut(body, CoTerm::Covar(out.clone())))])?
         .ok_or_else(|| {
             LowerError::Unsupported("a parameter pattern the core cannot express".into())
@@ -1680,8 +1808,13 @@ fn bind_names(names: &[String], group: &str, body: Term) -> Term {
         [] => body,
         [only] => Term::Lam(only.clone(), Box::new(body)),
         several => {
-            let packed = format!("__{group}");
-            let out = format!("__{group}_body");
+            // `__args` packs the group and `__args_body` is where the body
+            // returns. Either name moves aside when the body or a parameter
+            // already uses it.
+            let mut used = slc_core::substitution::free_vars_term(&body);
+            used.extend(several.iter().cloned());
+            let packed = slc_core::substitution::fresh(&format!("__{group}"), &mut used);
+            let out = slc_core::substitution::fresh(&format!("__{group}_body"), &mut used);
             Term::Lam(
                 packed.clone(),
                 Box::new(Term::Mu(
@@ -1722,7 +1855,11 @@ fn select_arm_shape(
             Some(label) => Ok((Some(label), Vec::new(), command)),
             None => Ok((None, vec![name.clone()], command)),
         },
-        Pattern::Wildcard => Ok((None, vec![UNUSED_BINDER.to_string()], command)),
+        Pattern::Wildcard => {
+            let mut used = command_free(&command);
+            let name = slc_core::substitution::fresh(UNUSED_BINDER, &mut used);
+            Ok((None, vec![name], command))
+        }
         // `Color::Red(x)` or `Red(x)`.
         Pattern::Enum { name, variant, fields } => {
             let written =
@@ -1765,7 +1902,11 @@ fn components<'p>(
     ) -> Result<(String, Command), LowerError> {
         match pattern {
             Pattern::Ident(name) => Ok((name.clone(), command)),
-            Pattern::Wildcard => Ok((UNUSED_BINDER.to_string(), command)),
+            Pattern::Wildcard => {
+                let mut used = command_free(&command);
+                let name = slc_core::substitution::fresh(UNUSED_BINDER, &mut used);
+                Ok((name, command))
+            }
             Pattern::Tuple(items) => {
                 let (binders, command) = nested(items.iter(), &fresh, command)?;
                 let cut = Command::Cut(
@@ -1800,10 +1941,17 @@ fn components<'p>(
         parent: &str,
         command: Command,
     ) -> Result<(Vec<String>, Command), LowerError> {
+        let patterns: Vec<&Pattern> = patterns.collect();
+        let mut used = command_free(&command);
+        for pattern in &patterns {
+            pattern_binders(pattern, &mut used);
+        }
         let mut command = command;
         let mut binders = Vec::new();
-        for (i, pattern) in patterns.enumerate() {
-            let (name, wrapped) = component(pattern, format!("{parent}_{i}"), command)?;
+        for (i, pattern) in patterns.into_iter().enumerate() {
+            let fresh_name = slc_core::substitution::fresh(&format!("{parent}_{i}"), &mut used);
+            let (name, wrapped) = component(pattern, fresh_name, command)?;
+            used.insert(name.clone());
             command = wrapped;
             binders.push(name);
         }
@@ -1826,13 +1974,33 @@ fn lower_match_canonical(
     arms: &[MatchArm],
     continuations: &[String],
 ) -> Result<Option<Term>, LowerError> {
-    let mut lowered = Vec::new();
+    let scrutinee_term = lower_expr(scrutinee, continuations)?;
+    let mut pieces = Vec::new();
     for arm in arms {
-        lowered.push((&arm.pattern, lower_match_body(&arm.body, continuations)?));
+        if let Some(command) = lower_closed_flow(&arm.body, continuations)? {
+            pieces.push(Err(command));
+        } else {
+            pieces.push(Ok(lower_in_command_position(&arm.body, continuations)?));
+        }
+    }
+    let mut used = slc_core::substitution::free_vars_term(&scrutinee_term);
+    for piece in &pieces {
+        match piece {
+            Ok(term) => used.extend(slc_core::substitution::free_vars_term(term)),
+            Err(command) => used.extend(command_free(command)),
+        }
+    }
+    let name = slc_core::substitution::fresh(MATCH_COVAR, &mut used);
+    let mut lowered = Vec::new();
+    for (arm, piece) in arms.iter().zip(pieces) {
+        let command = match piece {
+            Ok(term) => Command::Cut(term, CoTerm::Covar(name.clone())),
+            Err(command) => command,
+        };
+        lowered.push((&arm.pattern, command));
     }
     let Some(consumer) = branch_table(lowered)? else { return Ok(None) };
-    let scrutinee = lower_expr(scrutinee, continuations)?;
-    Ok(Some(Term::Mu(MATCH_COVAR.into(), Box::new(Command::Cut(scrutinee, consumer)))))
+    Ok(Some(Term::Mu(name, Box::new(Command::Cut(scrutinee_term, consumer)))))
 }
 
 /// The consumer a set of arms builds, each already lowered to the command it
@@ -1891,7 +2059,9 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
                 if !branches.is_empty() || product.is_some() || atom.is_some() || arm_count != 1 {
                     return Ok(None);
                 }
-                atom = Some(CoTerm::MuTilde(UNUSED_BINDER.into(), Box::new(body)));
+                let mut used = command_free(&body);
+                let name = slc_core::substitution::fresh(UNUSED_BINDER, &mut used);
+                atom = Some(CoTerm::MuTilde(name, Box::new(body)));
             }
             Pattern::Ident(name) => match lookup_variant(name) {
                 // A constant pattern is a literal; dispatch handles it.
@@ -1933,7 +2103,10 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
                 }
                 let binder = match arg.as_ref() {
                     Pattern::Ident(name) => name.clone(),
-                    Pattern::Wildcard => UNUSED_BINDER.to_string(),
+                    Pattern::Wildcard => {
+                        let mut used = command_free(&body);
+                        slc_core::substitution::fresh(UNUSED_BINDER, &mut used)
+                    }
                     _ => return Ok(None),
                 };
                 let Some(label) = lookup_dtor(dtor) else { return Ok(None) };
@@ -1956,19 +2129,6 @@ fn branch_table(arms: Vec<(&Pattern, Command)>) -> Result<Option<CoTerm>, LowerE
         (false, None, None) => lower_cocase(None, branches)?,
         _ => return Ok(None),
     }))
-}
-
-/// The command a canonical `of` arm runs: its value goes to the match's
-/// own continuation, unless the arm is already a cut against a named
-/// consumer, which stands as written.
-fn lower_match_body(body: &Node<Expr>, continuations: &[String]) -> Result<Command, LowerError> {
-    if let Some(command) = lower_closed_flow(body, continuations)? {
-        return Ok(command);
-    }
-    Ok(Command::Cut(
-        lower_in_command_position(body, continuations)?,
-        CoTerm::Covar(MATCH_COVAR.into()),
-    ))
 }
 
 /// Build a labelled consumer while retaining the declaration it refutes.
@@ -2044,11 +2204,9 @@ fn lower_comatch(
             branches.push(CoMatchBranch { label, binder: name.clone(), body: Box::new(body) });
         } else if let [(&[], Pattern::Wildcard, command)] = *group.as_slice() {
             let body = lower_select_command(command, continuations)?;
-            branches.push(CoMatchBranch {
-                label,
-                binder: UNUSED_BINDER.into(),
-                body: Box::new(body),
-            });
+            let mut used = command_free(&body);
+            let binder = slc_core::substitution::fresh(UNUSED_BINDER, &mut used);
+            branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
         } else if let [(params, arg, command)] = *group.as_slice()
             && !params.is_empty()
         {
@@ -2056,9 +2214,9 @@ fn lower_comatch(
             // arm's command runs when that function is applied, and `out`
             // is where its result goes. The demand's own continuation
             // receives the function.
-            let cont = match arg {
-                Pattern::Ident(name) => (*name).clone(),
-                Pattern::Wildcard => UNUSED_BINDER.to_string(),
+            let named = match arg {
+                Pattern::Ident(name) => Some((*name).clone()),
+                Pattern::Wildcard => None,
                 _ => {
                     return Err(LowerError::Unsupported(format!(
                         "item `{dtor}` binds its continuation by name: `{dtor}(p): out`"
@@ -2066,11 +2224,23 @@ fn lower_comatch(
                 }
             };
             let mut arm_scope = continuations.to_vec();
-            arm_scope.push(cont.clone());
+            if let Some(name) = &named {
+                arm_scope.push(name.clone());
+            }
             let command = lower_select_command(command, &arm_scope)?;
+            // A wildcard continuation is never written, so its binder stays out
+            // of any name the arm already uses.
+            let cont = match named {
+                Some(name) => name,
+                None => {
+                    let mut used = command_free(&command);
+                    slc_core::substitution::fresh(UNUSED_BINDER, &mut used)
+                }
+            };
             let value = Term::Mu(cont, Box::new(command));
             let function = bind_value_patterns(params, value)?;
-            let binder = format!("__menu_k{depth}");
+            let mut used = slc_core::substitution::free_vars_term(&function);
+            let binder = slc_core::substitution::fresh(&format!("__menu_k{depth}"), &mut used);
             let body = Command::Cut(function, CoTerm::Covar(binder.clone()));
             branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
         } else if group
@@ -2082,7 +2252,8 @@ fn lower_comatch(
             let nested: Vec<(&Pattern, &Node<Expr>)> =
                 group.iter().map(|(_, arg, command)| (*arg, *command)).collect();
             let inner = lower_comatch(None, nested, continuations, depth + 1)?;
-            let binder = format!("__k{depth}");
+            let mut used = slc_core::substitution::free_vars_term(&inner);
+            let binder = slc_core::substitution::fresh(&format!("__k{depth}"), &mut used);
             let body = Command::Cut(inner, CoTerm::Covar(binder.clone()));
             branches.push(CoMatchBranch { label, binder, body: Box::new(body) });
         } else {
@@ -2126,10 +2297,10 @@ fn lower_select_command(
     if let Some(command) = lower_closed_flow(command, continuations)? {
         return Ok(command);
     }
-    Ok(Command::Cut(
-        lower_in_command_position(command, continuations)?,
-        CoTerm::Covar(ARM_COVAR.into()),
-    ))
+    let term = lower_in_command_position(command, continuations)?;
+    // `__arm` is the arm's return. A user binding of that name is left alone.
+    let arm = fresh_binder(ARM_COVAR, &[&term]);
+    Ok(Command::Cut(term, CoTerm::Covar(arm)))
 }
 
 /// One stage of a chain. A bare name the checker resolved as a trait method
@@ -2192,7 +2363,9 @@ fn lower_closed_flow(
 /// `μk. ⟨stage(k) ∥ value · k⟩`. The step at `at` names its own continuation,
 /// so steps nested in one another never capture each other's.
 fn turned_step(stage: Term, value: Term, at: usize) -> Term {
-    let k = format!("__turn{at}");
+    let mut used = slc_core::substitution::free_vars_term(&stage);
+    used.extend(slc_core::substitution::free_vars_term(&value));
+    let k = slc_core::substitution::fresh(&format!("__turn{at}"), &mut used);
     Term::Mu(
         k.clone(),
         Box::new(Command::Cut(
@@ -2271,10 +2444,8 @@ fn enter_poly<'a>(
     // One string, not a tuple: a builtin of arity two spreads a tuple into
     // its argument list, and an empty tuple would then not count as an argument.
     let aware = Term::Var(format!("$str_\"{}\"", aware.join(",")));
-    call_curried(
-        Term::Var("__enter_poly".into()),
-        vec![Term::Lam("__poly".into(), Box::new(body)), aware],
-    )
+    let poly = fresh_binder("__poly", &[&body]);
+    call_curried(Term::Var("__enter_poly".into()), vec![Term::Lam(poly, Box::new(body)), aware])
 }
 
 fn effect_operations(p: &Program) -> HashMap<String, Vec<String>> {
@@ -2328,15 +2499,19 @@ fn collect_type_effects(ty: &TypeExpr, out: &mut std::collections::HashSet<Strin
 fn call_curried(callee: Term, args: Vec<Term>) -> Term {
     let mut result = callee;
     for arg in args {
-        result = Term::Mu(
-            "__call".into(),
-            Box::new(Command::Cut(
-                result,
-                CoTerm::App(arg, Box::new(CoTerm::Covar("__call".into()))),
-            )),
-        );
+        result = apply_to(result, arg);
     }
     result
+}
+
+/// One application. The μ binder is the call's continuation, so it takes a
+/// fresh name when the callee or the argument already uses `__call`.
+fn apply_to(callee: Term, argument: Term) -> Term {
+    let name = fresh_binder("__call", &[&callee, &argument]);
+    Term::Mu(
+        name.clone(),
+        Box::new(Command::Cut(callee, CoTerm::App(argument, Box::new(CoTerm::Covar(name))))),
+    )
 }
 
 fn yielding_command(callee: Term, values: Term, row: Term, count: usize) -> Term {
@@ -2849,6 +3024,46 @@ mod tests {
         let f = out.iter().find(|(name, _)| name == "f").expect("f is lowered");
         let printed = format!("{}", f.1);
         assert!(printed.contains("__match_dispatch"), "literals need equality: {printed}");
+    }
+
+    #[test]
+    fn a_generated_binder_does_not_capture_a_user_variable() {
+        // The binder keeps `__call` when that name is not free. It moves
+        // aside when the callee or the argument already uses it.
+        let call = lower_str("func f(__call: String) -> i64 { <__call | str_len }");
+        let printed = format!("{}", call[0].1);
+        assert!(printed.contains("μ__call1."), "the call binder captured `__call`: {printed}");
+
+        let matched = lower_str("func f(__match: i64) -> i64 { of __match { 1 => 1, _ => 0 } }");
+        let printed = format!("{}", matched[0].1);
+        assert!(printed.contains("μ__match1."), "the match binder captured `__match`: {printed}");
+        assert!(printed.contains("__match_dispatch"), "{printed}");
+
+        let cut = lower_str("func f(__cut: i64) -> i64 { mu i64 { k <= <__cut | k> } }");
+        let printed = format!("{}", cut[0].1);
+        assert!(printed.contains("μ__cut1."), "the cut binder captured `__cut`: {printed}");
+        assert!(printed.contains("__cut"), "{printed}");
+
+        let pattern = lower_str("func f(__match: i64) -> i64 { let (a, b) = (1, 2); __match }");
+        let printed = format!("{}", pattern[0].1);
+        assert!(
+            printed.contains("μ__match1."),
+            "the pattern-let binder captured `__match`: {printed}"
+        );
+
+        let group = lower_str("func f(a: i64, b: i64) -> i64 { __args_body }");
+        let printed = format!("{}", group[0].1);
+        assert!(
+            printed.contains("μ__args_body1."),
+            "the group binder captured `__args_body`: {printed}"
+        );
+
+        let nullary = lower_str("func __no_args() -> i64 { 7 } func zero() -> i64 { __no_args() }");
+        let printed = format!("{}", nullary.iter().find(|(name, _)| name == "zero").unwrap().1);
+        assert!(
+            printed.contains("λ__no_args1."),
+            "the nullary binder captured `__no_args`: {printed}"
+        );
     }
 
     #[test]
